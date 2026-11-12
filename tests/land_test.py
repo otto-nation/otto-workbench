@@ -325,13 +325,14 @@ def test_a_held_push_is_its_own_answer_rather_than_a_failure(status):
     assert not (landed.held and landed.ok)
 
 
-def test_a_divergence_carries_the_force_push_the_operator_must_run(wt):
+def test_a_divergence_carries_the_pull_rebase_the_operator_must_run(wt):
     (wt / "src.py").write_text("edited\n")
     landed, _ = _land(wt, result=git.push.PushResult(
         git.push.PushStatus.REFUSED, sha="9bc3f64ab", branch="feat/x",
         refusal=git.push.Refusal.DIVERGED,
     ))
-    assert "--force-with-lease" in landed.resume
+    assert "pull --rebase" in landed.resume
+    assert "--force" not in landed.resume
 
 
 def test_a_refusal_carries_what_git_said(wt):

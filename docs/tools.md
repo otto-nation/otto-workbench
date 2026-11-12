@@ -915,7 +915,7 @@ Takes no flags.
 | `--post` | Gate, not a phase: publish whatever the chosen phase produced — replies, summaries, resolutions (default: print drafts to stderr and post nothing). |
 | `--reply` `<thread-comment-or-review-id>` | Reply to one thread, editing our standing reply if it is still the last comment. Accepts a thread node ID, a comment ID, or a #discussion_r... URL. Also answers a review body — a review ID, rb-REVIEW_ID or rb-REVIEW_ID-N — in the summary comment, since GitHub cannot reply to one. A write like any other: needs --post to leave the machine. |
 | `--body-file` `<path>` | File holding the --reply body ('-' for stdin). |
-| `--settle` `<thread-id>` | Phase: record that you settled this thread by hand (repeatable). Writes local state and nothing else; --finish then replies, resolves and reports it like any other settled thread. |
+| `--settle` `<thread-id>` | Phase: record that you settled this thread by hand (repeatable). An id on the PR but not in the fix snapshot is recorded from the PR rather than refused. Writes local state and nothing else; --finish then replies, resolves and reports it like any other settled thread. |
 | `--as` `<fixed\|dismissed\|already_addressed>` | What --settle records (default: fixed). |
 | `--reason` `<text>` | Why, for --settle --as dismissed — it becomes the reply the reviewer reads. |
 | `--commit` `<sha>` | The commit carrying a --settle --as fixed change, for a fix that landed away from the line the thread is anchored to (default: inferred from that line). Applies to every --settle in the run, so a batch where only some threads need it takes two runs. |
@@ -946,7 +946,7 @@ Takes no flags.
 
 | Flag | Description |
 |------|-------------|
-| `--expect` `<sha>` | Push only if origin's branch is still at SHA. Required. |
+| `--expect` `<sha>` | The remote tip you planned from. A fast-forward from any ancestor of it pushes under a lease on what origin holds. A moved origin is refused with no force advice. Required. |
 | `--no-verify` | Skip the pre-push hook. For a hook failure already understood — a flake, or one the branch did not cause. |
 
 **`pr describe`** — Revise the PR description

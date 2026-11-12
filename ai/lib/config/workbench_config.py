@@ -152,6 +152,7 @@ ISSUE_TEAM_KEY = "issues.team"
 ISSUE_LABELS_KEY = "issues.labels"
 FIX_VERIFY_COMMAND_KEY = "fix.verify_command"
 FIX_VERIFY_TIMEOUT_KEY = "fix.verify_timeout"
+FIX_VERIFY_PROGRESS_INTERVAL_KEY = "fix.verify_progress_interval"
 WIKI_DIR_KEY = "wiki.dir"
 WIKI_ROOT_KEY = "wiki.root"
 WIKI_LINK_KEY = "wiki.link"
@@ -501,6 +502,10 @@ class FixConfig:
     a pass whose checks time out records that they timed out after N seconds,
     and leaves its claims where the verify gate put them.
 
+    ``verify_progress_interval`` is seconds between heartbeat lines while those
+    checks run. ``<= 0`` disables the heartbeat. The base-commit re-run gets its
+    own ``verify_timeout``, so the worst case is twice the bound.
+
     Scoped to the repo. The command names paths inside one checkout, so a
     machine-wide value would point every other repo at a script it does not
     have — and the timeout belongs beside the command it bounds, since what is
@@ -521,6 +526,14 @@ class FixConfig:
             frozenset({CONTAINER_SCOPE, PROJECT_SCOPE}),
             "it bounds this repo's own checks, and the budget that is generous"
             " for one repo's selected tests cuts another's off mid-run",
+        )},
+    )
+    verify_progress_interval: int = field(
+        default=60,
+        metadata={"scope": ScopeRule(
+            frozenset({CONTAINER_SCOPE, PROJECT_SCOPE}),
+            "it paces heartbeats for this repo's own checks, beside the timeout"
+            " it reports against",
         )},
     )
 

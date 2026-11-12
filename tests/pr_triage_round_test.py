@@ -163,6 +163,31 @@ class TestClassifyAlreadyAddressed:
         assert len(result.dismissed) == 1
         assert result.already_addressed == []
 
+    def test_unset_classification_with_already_addressed_is_kept(self):
+        """A resumed --fix logs UNSET+ALREADY_ADDRESSED; that is still a bucket."""
+        entry = CommentItem(
+            id="t1", file="f.go", line=10, reviewer="kgn",
+            summary="drop the nil-logger guard",
+            classification=Classification.UNSET,
+            verification=Verification.ALREADY_ADDRESSED,
+            state=ThreadState.NEW,
+        )
+        result = pr.triage_round.classify_entries([entry])
+        assert len(result.already_addressed) == 1
+        assert result.dismissed == []
+
+    def test_unset_classification_with_invalid_is_dismissed(self):
+        entry = CommentItem(
+            id="t1", file="f.go", line=10, reviewer="kgn",
+            summary="drop the nil-logger guard",
+            classification=Classification.UNSET,
+            verification=Verification.INVALID,
+            state=ThreadState.NEW,
+        )
+        result = pr.triage_round.classify_entries([entry])
+        assert len(result.dismissed) == 1
+        assert result.already_addressed == []
+
 
 class TestHoldIfSuperseded:
     """What the preflight's findings are allowed to do to this run.

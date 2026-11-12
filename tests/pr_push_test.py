@@ -18,11 +18,14 @@ import pytest  # noqa: E402
 import cli.pr  # noqa: E402
 import cli.pr_push  # noqa: E402
 import core.publishing  # noqa: E402
+import git.client  # noqa: E402
+import git.push  # noqa: E402
 import gh.owners  # noqa: E402
 import pr.context  # noqa: E402
 import pr.state  # noqa: E402
 import rebase.commands  # noqa: E402
 import rebase.inspect  # noqa: E402
+import rebase.land  # noqa: E402
 
 
 def _ctx(work):
@@ -55,6 +58,62 @@ def test_a_tip_somebody_moved_is_not_overwritten(tmp_path):
     _commit(pair.work)
     assert _push(pair.work, planned) == 1
     assert remote_tip(pair.origin, "feat") == theirs
+
+
+def test_expect_naming_local_head_fast_forwards(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    head = _commit(pair.work)
+    assert _push(pair.work, head) == 0
+    assert remote_tip(pair.origin, "feat") == head
+
+
+def test_an_abbreviated_expect_leases_on_the_full_remote_tip(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    tip = remote_tip(pair.origin, "feat")
+    _commit(pair.work)
+    with mock.patch.object(
+            rebase.land, "land_rebased", wraps=rebase.land.land_rebased) as landed:
+        assert _push(pair.work, git.client.abbrev(tip)) == 0
+    assert landed.call_args.kwargs["args"] == (
+        f"--force-with-lease=refs/heads/feat:{tip}",
+    )
+
+
+def test_a_branch_missing_from_origin_gets_its_own_error(tmp_path, capsys):
+    pair = remote_and_clone(tmp_path)
+    planned = remote_tip(pair.origin, "feat")
+    _commit(pair.work)
+    missing = rebase.lease.PushPlan(
+        rebase.lease.PushPlanKind.STALE, "", planned, "feat")
+    with mock.patch.object(rebase.lease, "for_push", return_value=missing):
+        assert _push(pair.work, planned) == 1
+    err = capsys.readouterr().err
+    assert "origin has no branch feat" in err
+    assert "stale --expect" not in err
+
+
+def test_a_moved_origin_is_refused_without_force_advice(tmp_path, capsys):
+    pair = remote_and_clone(tmp_path)
+    planned = remote_tip(pair.origin, "feat")
+    theirs = advance(pair.seed, "feat", "theirs.txt")
+    _commit(pair.work)
+    assert _push(pair.work, planned) == 1
+    err = capsys.readouterr().err
+    assert "stale --expect" in err
+    assert "--force" not in err
+    assert remote_tip(pair.origin, "feat") == theirs
+
+
+def test_a_race_after_planning_is_a_stale_lease(tmp_path, capsys):
+    pair = remote_and_clone(tmp_path)
+    planned = remote_tip(pair.origin, "feat")
+    _commit(pair.work)
+    advance(pair.seed, "feat", "theirs.txt")
+    with mock.patch.object(git.push, "remote_head", return_value=planned):
+        assert _push(pair.work, planned) == 1
+    err = capsys.readouterr().err
+    assert "stale lease" in err
+    assert "--force" not in err
 
 
 def test_a_landed_push_records_where_the_branch_stands_and_no_rebase(tmp_path):

@@ -100,6 +100,32 @@ def test_a_review_guard_refusal_is_counted_once(tmp_path):
     assert agent.backend_events.guard_refusals(log) == ("unscoped `pytest`",)
 
 
+def test_a_malformed_call_is_not_a_refusal(tmp_path):
+    """Pi's JSON-arg parse error is the same untimed shape as a guard block."""
+    log = tmp_path / "s.jsonl"
+    malformed = 'Invalid arguments for tool "edit": Expected \',\' after property name'
+    log.write_text("\n".join([
+        _tool_end("ran", duration=12, is_error=False),
+        _tool_end(malformed),
+        _tool_end(PIPE_REFUSAL),
+    ]) + "\n")
+    assert agent.backend_events.guard_refusals(log) == (PIPE_REFUSAL,)
+    assert agent.backend_events.failed_calls(log) == (malformed,)
+
+
+def test_failed_calls_names_schema_and_malformed_errors(tmp_path):
+    log = tmp_path / "s.jsonl"
+    invalid = 'Validation failed for tool "bash":\n  - command: must be string'
+    malformed = 'Invalid arguments for tool "edit": Expected \',\''
+    log.write_text("\n".join([
+        _tool_end("ran", duration=4, is_error=False),
+        _tool_end(invalid),
+        _tool_end(malformed),
+        _tool_end(PIPE_REFUSAL),
+    ]) + "\n")
+    assert agent.backend_events.failed_calls(log) == (invalid, malformed)
+
+
 def test_a_validation_error_is_not_a_refusal(tmp_path):
     """Arguments failing schema validation come back untimed too, under pi-ai's fixed prefix."""
     log = tmp_path / "s.jsonl"

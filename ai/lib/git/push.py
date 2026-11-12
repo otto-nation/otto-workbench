@@ -164,6 +164,7 @@ class Refusal(StrEnum):
 
     HOOK = "hook"
     DIVERGED = "diverged"
+    STALE_LEASE = "stale_lease"
     TRANSPORT = "transport"
     AUTH = "auth"
     UNREACHABLE = "unreachable"
@@ -240,10 +241,13 @@ _DIVERGED_MARKERS = (
     "! [rejected]",
     "non-fast-forward",
     "fetch first",
-    "stale info",
     "updates were rejected",
     "behind its remote",
 )
+
+# A --force-with-lease whose named commit is no longer the remote tip. Not
+# divergence: origin moved, and the answer is to look again, not to force.
+_STALE_LEASE_MARKER = "stale info"
 
 # Only these two ever reach this check: `classify` tests `_AUTH_MARKERS` and
 # `_UNREACHABLE_MARKERS` first, and between them those cover every other
@@ -326,6 +330,8 @@ def classify(output: str) -> Refusal:
     three would otherwise win and tell the operator their checks failed.
     """
     lowered = output.lower()
+    if _STALE_LEASE_MARKER in lowered:
+        return Refusal.STALE_LEASE
     if any(marker in lowered for marker in _DIVERGED_MARKERS):
         return Refusal.DIVERGED
     if any(marker in lowered for marker in _DROPPED_MARKERS):
@@ -665,9 +671,9 @@ def resume_command(result: PushResult, wt_path: str | Path) -> str:
     The arguments the caller pushed with are replayed, because a resume that
     drops them is a second refusal waiting to happen: `pr rebase` pushes with
     `--force-with-lease`, and after its pre-push hook is fixed a plain `git push`
-    is still non-fast-forward. A divergence adds that flag when the push did not
-    already carry it — this names it and never runs it, since reconciling with a
-    remote somebody else may have moved is the operator's call.
+    is still non-fast-forward. A force is never suggested for a push that was
+    not already forced: an un-forced divergence is `pull --rebase`, and a stale
+    lease is `ls-remote` on the full ref.
 
     `UNVERIFIED` is the one answer that is a check rather than a retry — the push
     has very likely landed, so re-pushing it would be acting on a question
@@ -677,10 +683,16 @@ def resume_command(result: PushResult, wt_path: str | Path) -> str:
         return ""
     if result.status is PushStatus.UNVERIFIED:
         return f"git -C '{wt_path}' ls-remote {result.remote} {result.branch}"
-    args = list(result.args)
-    if result.refusal is Refusal.DIVERGED and not _forced(args):
-        args.append("--force-with-lease")
-    return _push_command(wt_path, args)
+    if result.refusal is Refusal.STALE_LEASE:
+        return (
+            f"git -C '{wt_path}' ls-remote {result.remote} "
+            f"refs/heads/{result.branch}"
+        )
+    if result.refusal is Refusal.DIVERGED and not _forced(result.args):
+        return (
+            f"git -C '{wt_path}' pull --rebase {result.remote} {result.branch}"
+        )
+    return _push_command(wt_path, list(result.args))
 
 
 # What `ssh -v` prints once the server has taken the key. On its own it says the
@@ -877,6 +889,9 @@ def _refused_headline(result: PushResult) -> str:
         return "push refused — the remote would not accept your credentials"
     if result.refusal is Refusal.UNREACHABLE:
         return "push refused — the remote could not be reached"
+    if result.refusal is Refusal.STALE_LEASE:
+        return ("push refused — origin moved off the commit the lease named "
+                "(stale lease); nothing reached the remote")
     return f"push refused ({result.refusal}) — nothing reached the remote"
 
 

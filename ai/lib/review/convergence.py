@@ -78,9 +78,7 @@ def anchor_key(path: str, line: int | None) -> str:
 
 def blob_of(wt_path: str | Path, path: str) -> str:
     """The object id *path* has in the working tree at *wt_path*, or "" when absent."""
-    if not path or not (Path(wt_path) / path).is_file():
-        return ""
-    return git.client.out("hash-object", "--", path, cwd=wt_path)
+    return git.client.worktree_blob(path, cwd=wt_path)
 
 
 @dataclass(frozen=True)

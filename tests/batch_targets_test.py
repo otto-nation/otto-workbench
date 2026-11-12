@@ -126,7 +126,7 @@ def test_a_child_gets_through_its_own_item_and_is_refused_on_another(repo):
         own = _claim_in_child(a, env)
         other = _claim_in_child(b, env)
     assert own.returncode == 0, own.stderr
-    assert other.returncode == 1
+    assert other.returncode == core.run_lock.EXIT_BUSY
     assert "pr batch run R" in other.stderr
 
 

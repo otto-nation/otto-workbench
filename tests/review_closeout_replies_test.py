@@ -465,6 +465,7 @@ class TestTriageOnlyPassQueue:
         fix, threads_by_id = self._queue(
             FixOutcome.ALREADY_ADDRESSED, replies_pending=False,
         )
+        threads_by_id[self._ADDRESSED].is_resolved = True
         state = _make_state(fix)
         with patch("pr.comments.post_thread_reply") as mock_reply:
             review.closeout.post_pending_fix_replies(state, "owner/repo", 1, threads_by_id)

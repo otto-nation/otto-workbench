@@ -21,7 +21,7 @@ from pathlib import Path, PurePosixPath
 import core.log
 import fix.containment
 from core.trail import Trail, tinfo, twarn
-from git.land import LandResult
+from git.land import CommitStatus, LandResult
 
 
 @dataclass(frozen=True)
@@ -94,6 +94,7 @@ def _backup_note(
 def report(
     workdir: str | Path, found: Leftovers, landed: LandResult, trail: Trail | None,
     backup_dir: str | Path | None = None, backed_up: tuple[str, ...] = (),
+    dirty_before: set[str] | frozenset[str] = frozenset(),
 ) -> None:
     """Warn on the console and record ``fix_pass_left_dirty`` when *found* has paths.
 
@@ -101,7 +102,19 @@ def report(
     operator can restore the pre-pass bytes ``fix.dirty_backup`` copied there.
     Only the already-dirty paths in *backed_up* are claimed as copied; the rest
     were skipped (see ``dirty-backup.skipped.json``).
+
+    *dirty_before* is what was already uncommitted when the pass started. A
+    failed commit against that set is not the pass refusing its own work — a
+    fix pass never stages a file that was dirty on entry — so the warning names
+    that rule rather than leaving the operator to infer it from leftover paths.
     """
+    if landed.status is CommitStatus.COMMIT_FAILED and dirty_before:
+        core.log.warn(
+            "the worktree already held uncommitted edits before this pass "
+            f"({', '.join(sorted(dirty_before))}): a fix pass never commits a "
+            "file that was dirty when it started — commit or stash them, or "
+            "re-run so an interrupted pass's edits are resumed"
+        )
     if not found.known:
         tinfo(trail, "fix_leftovers_unread",
               "could not read the worktree to find what the pass left uncommitted",

@@ -111,7 +111,7 @@ def test_self_review_takes_the_run_lock(cr, tmp_path, reviews_dir, monkeypatch):
     assert disowned is not None
     with pytest.raises(SystemExit) as exc:
         core.run_lock.claim_for_process(target, command="review --self", started="t")
-    assert exc.value.code == 1
+    assert exc.value.code == core.run_lock.EXIT_BUSY
 
 
 def test_self_review_passes_through_the_lock_pr_already_holds(
@@ -540,7 +540,7 @@ def test_a_pr_review_never_resets_a_tree_another_run_holds(tmp_path, monkeypatch
             review_file, trail=MagicMock(),
         )
 
-    assert exc.value.code == 1
+    assert exc.value.code == core.run_lock.EXIT_BUSY
     assert resets == []
 
 

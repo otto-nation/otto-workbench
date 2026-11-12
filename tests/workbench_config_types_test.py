@@ -167,6 +167,8 @@ def test_the_fix_verification_keys_are_on_the_surface():
     """`fix.engine` reads these off a loaded config; an absent key reads as unset."""
     assert config.workbench_config.defines_key(config.workbench_config.FIX_VERIFY_COMMAND_KEY)
     assert config.workbench_config.defines_key(config.workbench_config.FIX_VERIFY_TIMEOUT_KEY)
+    assert config.workbench_config.defines_key(
+        config.workbench_config.FIX_VERIFY_PROGRESS_INTERVAL_KEY)
 
 
 def test_a_repo_that_declares_no_verify_command_gets_the_empty_default():
@@ -176,18 +178,21 @@ def test_a_repo_that_declares_no_verify_command_gets_the_empty_default():
     has, which is the reason the key exists instead of a hardcoded runner.
     """
     assert config.workbench_config.WorkbenchConfig().fix.verify_command == ""
+    assert config.workbench_config.WorkbenchConfig().fix.verify_progress_interval == 60
 
 
 def test_the_declared_command_round_trips_from_the_project_scope(roots):
     _, project = roots
     _write(project / config.workbench_config.PROJECT_CONFIG_NAME,
            "fix:\n  verify_command: bin/local/run-tests --changed\n"
-           "  verify_timeout: 120\n")
+           "  verify_timeout: 120\n"
+           "  verify_progress_interval: 15\n")
 
     loaded = config.workbench_config.load_config(project)
 
     assert loaded.fix.verify_command == "bin/local/run-tests --changed"
     assert loaded.fix.verify_timeout == 120
+    assert loaded.fix.verify_progress_interval == 15
 
 
 def test_the_verify_timeout_refuses_a_value_that_is_not_a_number():
@@ -201,7 +206,9 @@ def test_the_verification_keys_are_refused_at_the_machine_scope():
     A machine-wide command points every other repo at a script it does not
     have, and the pass would report ERROR on repos that never opted in.
     """
-    for key in (config.workbench_config.FIX_VERIFY_COMMAND_KEY, config.workbench_config.FIX_VERIFY_TIMEOUT_KEY):
+    for key in (config.workbench_config.FIX_VERIFY_COMMAND_KEY,
+                config.workbench_config.FIX_VERIFY_TIMEOUT_KEY,
+                config.workbench_config.FIX_VERIFY_PROGRESS_INTERVAL_KEY):
         assert config.workbench_config_write.check_scope(key, config.workbench_config.GLOBAL_SCOPE).ok is False
         assert config.workbench_config_write.check_scope(key, config.workbench_config.PROJECT_SCOPE).ok is True
         assert config.workbench_config_write.check_scope(key, config.workbench_config.CONTAINER_SCOPE).ok is True

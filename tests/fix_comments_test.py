@@ -559,13 +559,18 @@ class TestTheRoundWithNothingToFixTakesTheSameTail:
                                   comments=[{"databaseId": 100}])],
         )
         ctx = _fake_ctx(tmp_path)
+
+        def _git(*c, **kw):
+            if c[:2] == ("rev-parse", "--short") and len(c) >= 3 and c[2] != "HEAD":
+                return _git_ran(0, stdout=f"{git.client.abbrev(c[2])}\n")
+            return _git_ran(0, stdout="abc1234\n")
+
         with patch.object(pr.thread_context, "diff_context_for_file", return_value=""), \
              patch.object(fix.comment_checklist, "find_and_update_main_worktree", return_value=None), \
              patch.object(git.topology, "default_branch_cached", return_value="main"), \
              patch.object(pr.fix_state, "persist") as persist, \
              patch.object(git.client, "run",
-                          side_effect=_answering_the_owner(
-                              lambda *c, **kw: _git_ran(0, stdout="abc1234\n"))), \
+                          side_effect=_answering_the_owner(_git)), \
              patch("pr.comments.post_thread_reply", return_value=True), \
              patch("pr.comments.post_issue_comment", return_value="https://u"), \
              patch("pr.comments.resolve_thread", return_value=True):

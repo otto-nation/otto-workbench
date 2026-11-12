@@ -14,7 +14,7 @@ if str(LIB_DIR) not in sys.path:
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
 from review_threads_support import _fetches, _fix, _no_published_summary, _our_reply  # noqa: E402
-from conftest import make_ctx
+from conftest import git_in, make_ctx
 import pr.state
 from pr.comments_state import ThreadState
 import core.log
@@ -335,6 +335,18 @@ class TestStaleSnapshotIsAnnounced:
     def test_head_unchanged_says_nothing(self, worktree):
         self._state(worktree, "aaaaaaa")
         assert self._warnings(worktree, "aaaaaaa") == []
+
+    def test_a_full_snapshot_sha_is_not_stale_against_short_head(self, worktree):
+        (worktree / "f.txt").write_text("one")
+        git_in(worktree, "add", "--", "f.txt")
+        git_in(worktree, "-c", "user.email=t@example.com", "-c", "user.name=T",
+               "commit", "-m", "add")
+        full = git.client.head_sha(cwd=worktree)
+        state = self._state(worktree, full)
+        seen = []
+        with patch.object(core.log, "warn", side_effect=seen.append):
+            review.closeout.warn_if_snapshot_stale(state, worktree)
+        assert seen == []
 
     def test_missing_snapshot_sha_is_treated_as_stale(self, worktree):
         """Legacy state predates the field; it cannot be vouched for."""

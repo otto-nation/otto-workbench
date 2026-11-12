@@ -78,6 +78,7 @@ def _refusal(line: str) -> str:
 _PI_ABORTED = "Operation aborted"
 _PI_UNKNOWN_TOOL = re.compile(r"^Tool \S+ not found$")
 _PI_INVALID_ARGS = 'Validation failed for tool "'
+_PI_MALFORMED_ARGS = 'Invalid arguments for tool "'
 _PI_TRUNCATED = re.compile(
     r'^Tool call ".*?" was not executed: the response hit the output token limit')
 
@@ -109,14 +110,22 @@ def _refused_call(event: dict) -> str:
     # exception as a refusal, key on that instead.
     if event.get("isError") is not True or "durationMs" in event:
         return ""
-    result = event.get("result")
-    content = result.get("content") if isinstance(result, dict) else None
-    text = " ".join(c.get("text", "") for c in content or () if isinstance(c, dict)).strip()
+    text = _result_text(event)
     if text == _PI_ABORTED or _PI_UNKNOWN_TOOL.match(text):
         return ""
-    if text.startswith(_PI_INVALID_ARGS) or _PI_TRUNCATED.match(text):
+    if (text.startswith(_PI_INVALID_ARGS) or text.startswith(_PI_MALFORMED_ARGS)
+            or _PI_TRUNCATED.match(text)):
         return ""
     return text
+
+
+def _result_text(event: dict) -> str:
+    """The concatenated text of a pi tool-result payload, or ""."""
+    result = event.get("result")
+    content = result.get("content") if isinstance(result, dict) else None
+    return " ".join(
+        c.get("text", "") for c in content or () if isinstance(c, dict)
+    ).strip()
 
 
 def guard_refusals(session_log: str | Path) -> tuple[str, ...]:
@@ -145,6 +154,27 @@ def guard_refusals(session_log: str | Path) -> tuple[str, ...]:
     if any("durationMs" in event for event in events):
         return tuple(reason for reason in map(_refused_call, events) if reason)
     return tuple(reason for reason in map(_refusal, lines) if reason)
+
+
+def failed_calls(session_log: str | Path) -> tuple[str, ...]:
+    """Untimed argument-errors in *session_log*: schema validation or malformed JSON.
+
+    These are not guard refusals — pi never ran the tool — so `guard_refusals`
+    excludes them. A gate that could not write its checklist still needs to
+    see them, because a malformed `edit` of that file is the same failure as a
+    guard blocking the write.
+    """
+    path = Path(session_log)
+    if not path.is_file():
+        return ()
+    found: list[str] = []
+    for event in map(_tool_end, path.read_text(errors="replace").splitlines()):
+        if event is None or event.get("isError") is not True or "durationMs" in event:
+            continue
+        text = _result_text(event)
+        if text.startswith(_PI_INVALID_ARGS) or text.startswith(_PI_MALFORMED_ARGS):
+            found.append(text)
+    return tuple(found)
 
 
 @dataclass

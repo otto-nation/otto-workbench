@@ -91,8 +91,9 @@ class TestSettleTargets:
         ])
 
     def test_resolves_the_named_outcomes(self):
-        picked = pr.settlement.settle_targets(self._record(), ["t3", "t1"])
-        assert [o.id for o in picked] == ["t3", "t1"]
+        result = pr.settlement.settle_targets(self._record(), ["t3", "t1"])
+        assert [o.id for o in result.picked] == ["t3", "t1"]
+        assert result.adopted == frozenset()
 
     def test_one_unknown_id_settles_none_of_them(self, capsys):
         """"Settled nothing" and "settled the thread you meant" read alike."""

@@ -121,6 +121,20 @@ def test_a_fix_the_gate_confirms_stays_fixed(tmp_path, landed, head):
     assert run.outcomes[0].verified is True
 
 
+def test_an_unrecorded_verdict_stays_fixed_and_unverified(tmp_path, landed, head, capsys):
+    """A write the gate could not record is not a falsification."""
+    adapter = StubAdapter(tmp_path, count=1)
+    run, _ = _run(
+        adapter,
+        verify=_verdicts(("i0", fix.gate.Verdict(
+            ok=False, detail="looked broken", recorded=False))),
+    )
+
+    assert run.outcomes[0].outcome is FixOutcome.FIXED
+    assert run.outcomes[0].verified is False
+    assert "could not record" in capsys.readouterr().err
+
+
 def test_a_fix_the_gate_cannot_judge_stays_fixed_but_unverified(tmp_path, landed, head):
     """Inconclusive is not falsified.
 

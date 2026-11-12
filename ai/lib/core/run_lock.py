@@ -159,6 +159,12 @@ VACATED_PAUSE_S = 0.01
 VACATED_PAUSE_MAX_S = 0.2
 VACATED_BUDGET_S = 2.0
 
+# 75 is sysexits.h's EX_TEMPFAIL. Same value as
+# cli.pr_commands.EXIT_BUDGET_EXHAUSTED, because both mean retry later — a
+# live holder here, a spent hourly GitHub quota there. Duplicated rather than
+# imported: this module is layer 1 and cannot reach cli.
+EXIT_BUSY = 75
+
 
 class Scope(enum.Enum):
     """The scopes keyed on what a run resolved: its target, and the checkout it writes to."""
@@ -721,7 +727,7 @@ def retry_delays() -> Iterator[float]:
 
 def claim_for_process(target_dir: Path, command: str, started: str, *,
                       worktree: Path | None = None, target_label: str = "") -> None:
-    """Take the locks for the rest of this process's life, or exit 1.
+    """Take the locks for the rest of this process's life, or exit EXIT_BUSY.
 
     For entry points whose entire body is the critical section. The kernel
     releases the flocks at exit, so there is nothing to unwind for the lock
@@ -749,7 +755,7 @@ def claim_for_process(target_dir: Path, command: str, started: str, *,
             _take(spec, command, started)
         except LockBusy as exc:
             report_busy(exc)
-            sys.exit(1)
+            sys.exit(EXIT_BUSY)
 
 
 class LockOrderError(RuntimeError):
@@ -776,7 +782,7 @@ def _owns(spec: _LockSpec) -> bool:
 
 
 def lock_checkout(target_dir: Path, worktree: Path, *, command: str, started: str) -> None:
-    """Lock *worktree* for the rest of the process, once *target_dir* is held; exit 1 if busy.
+    """Lock *worktree* for the rest of the process, once *target_dir* is held; exit EXIT_BUSY if busy.
 
     The one late acquisition: a review that learns which tree it writes only
     after setting up or switching to it (`review.run`, the `--self` switch in
@@ -832,13 +838,15 @@ def _probe(path: Path) -> bool:
 def report_busy(exc: LockBusy) -> None:
     """Print a contention error with the remediation hint."""
     core.log.error(str(exc))
+    retry = " (exit 75 — retry once it finishes)"
     if exc.kind == "checkout":
         # Not the same work twice: another target is being written to in this
         # tree, so waiting is one answer and running elsewhere is the other.
         core.log.info("that run is writing to this working tree — wait for it, run "
                  "this from the branch's own worktree, or stop it with: "
-                 f"kill {exc.holder.get('pid', '<pid>')}")
+                 f"kill {exc.holder.get('pid', '<pid>')}" + retry)
         return
     core.log.info(
         f"wait for it to finish, or stop it with: kill {exc.holder.get('pid', '<pid>')}"
+        + retry
     )

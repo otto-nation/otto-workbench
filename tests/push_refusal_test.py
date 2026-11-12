@@ -105,7 +105,7 @@ def test_the_refused_report_omits_the_line_when_there_is_no_artifact(capsys):
     ("! [rejected]  main -> main (non-fast-forward)", git.push.Refusal.DIVERGED),
     ("Updates were rejected because the remote contains work.\nfetch first",
      git.push.Refusal.DIVERGED),
-    ("! [rejected] main -> main (stale info)", git.push.Refusal.DIVERGED),
+    ("! [rejected] main -> main (stale info)", git.push.Refusal.STALE_LEASE),
     ("Updates were rejected because the tip is behind its remote counterpart.",
      git.push.Refusal.DIVERGED),
     ("ssh: Could not resolve host: github.com", git.push.Refusal.UNREACHABLE),

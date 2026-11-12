@@ -61,6 +61,14 @@ _VERIFICATION_ROUTES = {
 }
 
 
+def _infers_actionable(tt: CommentItem) -> bool:
+    """True when routing treats *tt* as an actionable suggestion by inference."""
+    return (
+        tt.classification is Classification.UNSET
+        and tt.verification is not Verification.UNSET
+    )
+
+
 def _route(
     tt: CommentItem,
 ) -> tuple[Disposition, pr.summary_model.HumanReason | None] | None:
@@ -68,13 +76,19 @@ def _route(
 
     Order is the rule. Contested state overrides the model; a question never
     reaches verification; valid + high is a person before VALID is fixable.
+    A verification with no classification is treated as an actionable
+    suggestion: verification is only asked for those, so a resumed --fix that
+    logged UNSET+ALREADY_ADDRESSED still has a bucket to land in.
     """
     if tt.state == ThreadState.CONTESTED:
         return (Disposition.NEEDS_HUMAN, pr.summary_model.HumanReason.CONTESTED)
     reason = _HUMAN_CLASSIFICATIONS.get(tt.classification)
     if reason is not None:
         return (Disposition.NEEDS_HUMAN, reason)
-    if tt.classification is not Classification.ACTIONABLE_SUGGESTION:
+    classification = tt.classification
+    if _infers_actionable(tt):
+        classification = Classification.ACTIONABLE_SUGGESTION
+    if classification is not Classification.ACTIONABLE_SUGGESTION:
         return None
     if (
         tt.verification is Verification.VALID
@@ -126,6 +140,12 @@ def classify_entries(
     result = ClassificationResult()
 
     for tt in triage_entries:
+        if trail and _infers_actionable(tt):
+            trail.info(
+                "triage_inferred_classification",
+                f"{tt.id}: verification={tt.verification.name} without "
+                f"classification — treating as actionable_suggestion",
+            )
         routed = _route(tt)
         if routed is None:
             _report_drop(tt, trail)

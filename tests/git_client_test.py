@@ -290,6 +290,27 @@ def test_head_sha_is_empty_before_the_first_commit(repo):
     assert git.client.head_sha(cwd=repo) == ""
 
 
+def test_same_commit_full_and_abbrev_are_equal(repo):
+    sha = _commit(repo)
+    short = git.client.head_sha(cwd=repo, short=True)
+    assert git.client.same_commit(sha, short, cwd=repo)
+    assert git.client.same_commit(short, sha, cwd=repo)
+
+
+def test_same_commit_distinct_commits_are_not_equal(repo):
+    first = _commit(repo)
+    second = _commit(repo, "g.txt")
+    assert not git.client.same_commit(first, second, cwd=repo)
+
+
+def test_same_commit_unresolvable_abbrev_matches_by_prefix(tmp_path):
+    full = "aaaaaaa1111bbbb2222cccc3333dddd4444eeee"
+    assert git.client.same_commit(full[:7], full, cwd=tmp_path)
+    assert not git.client.same_commit("aaaaaaa", "bbbbbbb", cwd=tmp_path)
+    assert not git.client.same_commit("", full, cwd=tmp_path)
+    assert not git.client.same_commit("", "", cwd=tmp_path)
+
+
 def test_current_branch_names_the_checked_out_branch(repo):
     _commit(repo)
     assert git.client.current_branch(cwd=repo) == "main"

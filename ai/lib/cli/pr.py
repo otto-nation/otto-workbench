@@ -710,4 +710,4 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
             )
     except core.run_lock.LockBusy as exc:
         core.run_lock.report_busy(exc)
-        return 1
+        return core.run_lock.EXIT_BUSY

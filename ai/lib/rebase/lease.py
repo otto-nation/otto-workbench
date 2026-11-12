@@ -37,6 +37,11 @@ Passing a SHA for a ref the remote does not have fails with ``stale info``, and
 passing the empty string for a ref it does have fails the same way. Neither is
 recoverable mid-push, so ``resolve`` is the only place that chooses between
 them, and it chooses by asking whether the ref is there.
+
+``pr push --expect`` is a different contract: *expect* is the remote tip the
+caller planned from, but the lease is built from the tip this tool reads itself
+(:func:`for_push`). A fast-forward from any ancestor of that tip pushes under a
+lease on what origin holds. A moved origin is refused with no force advice.
 """
 
 # doc-group: platform
@@ -44,8 +49,11 @@ them, and it chooses by asking whether the ref is there.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
 
+import core.log
 import git.client
+import git.push
 
 from . import inspect as rebase_inspect
 
@@ -119,3 +127,66 @@ def resolve(cwd: str, branch: str, remembered: str) -> PushLease | None:
     if not remembered:
         return None
     return PushLease(branch=branch, expect=remembered)
+
+
+class PushPlanKind(StrEnum):
+    """How `pr push --expect` should lease, given what origin holds now."""
+
+    LEASE = "lease"
+    FAST_FORWARD = "fast_forward"
+    STALE = "stale"
+    UNASKED = "unasked"
+
+
+@dataclass(frozen=True)
+class PushPlan:
+    """The lease `pr push` should use, and whether that push is allowed."""
+
+    kind: PushPlanKind
+    remote_sha: str
+    expect: str
+    branch: str
+
+    @property
+    def args(self) -> tuple[str, ...]:
+        """A lease on the tip origin holds, or on *expect* when origin could not be asked."""
+        return PushLease(self.branch, self.remote_sha or self.expect).args
+
+    @property
+    def ok(self) -> bool:
+        """Whether this plan may be pushed. A stale origin is not."""
+        return self.kind is not PushPlanKind.STALE
+
+
+def for_push(cwd: str, branch: str, expect: str) -> PushPlan:
+    """The lease `pr push --expect` should use, given what origin holds now.
+
+    *expect* is the remote tip the caller planned from. The lease is built from
+    the tip this tool reads itself, so a caller that named local HEAD still
+    fast-forwards under a lease on origin, and a moved origin is refused rather
+    than force-pushed.
+    """
+    remote = git.push.remote_head(cwd, branch)
+    if remote is None:
+        core.log.warn(
+            "could not ask origin what it holds — leasing on --expect as given"
+        )
+        return PushPlan(PushPlanKind.UNASKED, "", expect, branch)
+    if remote == "":
+        return PushPlan(PushPlanKind.STALE, "", expect, branch)
+    full = git.client.out(
+        "rev-parse", "--verify", "--quiet", f"{expect}^{{commit}}", cwd=cwd,
+    )
+    if remote == full or (
+        remote.startswith(expect) and len(expect) >= git.client.MIN_SHA_PREFIX
+    ):
+        return PushPlan(PushPlanKind.LEASE, remote, expect, branch)
+    head = git.client.head_sha(cwd=cwd)
+    if (
+        full
+        and git.client.ok("merge-base", "--is-ancestor", remote, full, cwd=cwd)
+        and head
+        and git.client.ok("merge-base", "--is-ancestor", full, head, cwd=cwd)
+    ):
+        return PushPlan(PushPlanKind.FAST_FORWARD, remote, expect, branch)
+    return PushPlan(PushPlanKind.STALE, remote, expect, branch)

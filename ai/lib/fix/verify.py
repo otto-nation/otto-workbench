@@ -58,36 +58,90 @@ def _chunks(items: list[FixItem], size: int) -> list[list[FixItem]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
+_REWRITE_HINT = (
+    "Your previous edits to this checklist failed. Rewrite the whole file "
+    "in one call with the file-write tool, not edit."
+)
+
+
 def _run_chunk(
     phase: Phase, items: list[FixItem], adapter, label: str, chunk: int,
 ) -> dict[str, Verdict]:
     """One gate invoke, budgeted for this chunk's size."""
     path = adapter.verify_tracking_path(chunk)
     fix.tracking.write(path, "Verify Fixes", items, fix.tracking.VERIFY_BOXES)
+    session = adapter.verify_session_log(chunk)
 
+    core.log.info(
+        f"{label} — checking {len(items)} claimed fix"
+        f"{'es' if len(items) != 1 else ''}..."
+    )
+    verdicts, failed = _invoke_gate(
+        phase, items, adapter, label, path, session)
+    unanswered = [item for item in items if item.id not in verdicts]
+    blocked = _blocked_writes(failed, str(path))
+    last_failed = failed
+    suspect: set[str] = set()
+    if blocked and unanswered:
+        fix.tracking.write(
+            path, "Verify Fixes", unanswered, fix.tracking.VERIFY_BOXES)
+        retry_log = adapter.artifacts / f"verify-session-{chunk}-retry.jsonl"
+        retry_verdicts, retry_failed = _invoke_gate(
+            phase, unanswered, adapter, label, path, retry_log,
+            extra=_REWRITE_HINT)
+        verdicts = {**verdicts, **retry_verdicts}
+        last_failed = retry_failed
+        # Only verdicts the failing last attempt produced are in doubt.
+        if _blocked_writes(retry_failed, str(path)):
+            suspect = set(retry_verdicts)
+    core.log.blank()
+
+    # Guard blocks only: argument errors are the write-failure path below.
+    guard = agent.backend_events.guard_refusals(session)
+    retry_session = adapter.artifacts / f"verify-session-{chunk}-retry.jsonl"
+    if retry_session.is_file():
+        guard = guard + agent.backend_events.guard_refusals(retry_session)
+    result = _with_unrecorded(
+        _with_refusals(verdicts, guard), items, last_failed, str(path))
+    if suspect:
+        result = {
+            item_id: (replace(v, ok=None, recorded=False)
+                      if v.ok is False and item_id in suspect else v)
+            for item_id, v in result.items()
+        }
+    return result
+
+
+def _blocked_writes(failed: tuple[str, ...], tracking_file: str) -> tuple[str, ...]:
+    return tuple(reason for reason in failed if tracking_file in reason)
+
+
+def _invoke_gate(
+    phase: Phase, items: list[FixItem], adapter, label: str, path, session,
+    extra: str = "",
+) -> tuple[dict[str, Verdict], tuple[str, ...]]:
+    """One agent invoke over *items*, plus every untimed failure in its log."""
     turns = agent.phases.phase_turns(phase, items=len(items))
+    answer = fix.tracking.verify_instructions(_NOUN)
+    if extra:
+        answer = f"{answer}\n\n{extra}"
     prompt = agent.templates.render(
         PHASES[phase].template_for(),
         branch_name=adapter.branch,
         repo=adapter.repo,
         tracking_content=path.read_text(),
         tracking_file=str(path),
-        answer_format=fix.tracking.verify_instructions(_NOUN),
+        answer_format=answer,
         execution_claim_guard=agent.templates.build_execution_claim_guard(
             occasion=agent.templates.ClaimOccasion.FIX_EVIDENCE,
         ),
         worktree_block=agent.templates.build_worktree_block(str(adapter.workdir)),
         max_turns=str(turns),
     )
-
-    core.log.info(
-        f"{label} — checking {len(items)} claimed fix"
-        f"{'es' if len(items) != 1 else ''}..."
-    )
     agent.invoke.run_fix(
         phase, prompt,
         cwd=adapter.workdir,
-        session_log=str(adapter.verify_session_log(chunk)),
+        session_log=str(session),
         # Any verdict at all is production. A gate that reached none is the
         # unproductive case the retry exists for, and a gate that answered
         # "not verified" everywhere did its job.
@@ -105,15 +159,15 @@ def _run_chunk(
         effort=adapter.effort,
         model=adapter.model or None,
     )
-    core.log.blank()
-
     verdicts = {
         item_id: Verdict(ok=ok, detail=detail)
         for item_id, (ok, detail) in fix.tracking.parse_verdicts(path).items()
     }
-    refusals = agent.backend_events.guard_refusals(adapter.verify_session_log(chunk))
-    return _with_unrecorded(
-        _with_refusals(verdicts, refusals), items, refusals, str(path))
+    failed = (
+        agent.backend_events.guard_refusals(session)
+        + agent.backend_events.failed_calls(session)
+    )
+    return verdicts, failed
 
 
 def _with_refusals(
@@ -164,12 +218,14 @@ def _with_unrecorded(
         return verdicts
     first = textwrap.shorten(blocked[0], REFUSAL_SHOWN)
     core.log.warn(
-        f"Verify gate: {len(blocked)} write(s) to its checklist refused — "
-        f"answers could not be recorded (first: {first})")
+        f"Verify gate: {len(blocked)} write(s) to its checklist failed "
+        f"(refused by a guard or malformed) — answers could not be recorded "
+        f"(first: {first})")
     note = (f"the gate could not record its answer: {len(blocked)} write(s) to "
-            f"{tracking_file} were refused (first: {first})")
+            f"{tracking_file} failed (refused by a guard or malformed) "
+            f"(first: {first})")
     return {
-        **{item.id: Verdict(ok=None, detail=note) for item in items},
+        **{item.id: Verdict(ok=None, detail=note, recorded=False) for item in items},
         **verdicts,
     }
 

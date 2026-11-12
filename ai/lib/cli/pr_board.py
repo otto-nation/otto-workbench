@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 
 import board.document
+import board.flight
 import core.log
 import core.report
 import pr.context
@@ -81,11 +82,21 @@ def cmd_board(
     if args.offline and args.phase is not Phase.LISTING:
         core.log.error(f"{SCRIPT}: --offline is only valid with --phase listing")
         return EXIT_USAGE
-    core.report.emit_json(board.document.build(
-        args.phase,
-        args.checkout,
-        prs=args.prs,
-        if_changed=args.if_changed,
+    req = board.flight.Request(
+        phase=args.phase,
+        checkouts=tuple(args.checkout),
+        prs=tuple(args.prs) if args.prs is not None else None,
         offline=args.offline,
+        if_changed=args.if_changed,
+    )
+    core.report.emit_json(board.flight.serve(
+        req,
+        lambda: board.document.build(
+            args.phase,
+            args.checkout,
+            prs=args.prs,
+            if_changed=args.if_changed,
+            offline=args.offline,
+        ),
     ), compact=True)
     return 0

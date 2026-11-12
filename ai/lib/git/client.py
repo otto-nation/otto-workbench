@@ -100,6 +100,7 @@ from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import TextIO
 
+import core.flock_wait
 import core.log
 import core.proc
 import core.timeouts
@@ -302,27 +303,13 @@ def _mutex_path(cwd: str | Path | None, env: dict[str, str] | None) -> Path | No
     return Path(cwd or os.getcwd()) / common / FETCH_MUTEX
 
 
-def _try_lock(fd: int) -> bool:
-    """One non-blocking `LOCK_EX` attempt on *fd*."""
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        return False
-    return True
-
-
 def _acquire(fd: int) -> bool:
     """Take `LOCK_EX` on *fd* within `_FETCH_WAIT`, polling rather than blocking.
 
     A blocking `flock` has no timeout, and `signal.alarm` would break a caller
     running fetches off the main thread.
     """
-    deadline = time.monotonic() + _FETCH_WAIT
-    while not _try_lock(fd):
-        if time.monotonic() >= deadline:
-            return False
-        time.sleep(_FETCH_POLL)
-    return True
+    return core.flock_wait.acquire(fd, _FETCH_WAIT, _FETCH_POLL)
 
 
 @contextlib.contextmanager

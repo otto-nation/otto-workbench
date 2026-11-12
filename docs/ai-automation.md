@@ -754,13 +754,10 @@ commit:
 | no commit on that line — the code predates the branch | `Already addressed:` | `Already addressed` |
 | the thread's line no longer means what it did when it was read | `Already addressed:` | `Already addressed` |
 
-The newest commit `git log -L` names for the thread's line dates the reading —
-whether the code became true after the reviewer asked — and is never cited as
-the commit that carried the change. Two threads on one file still get two dates,
-and both the line and the date it is judged by are checked so a rebase cannot
-invent a reading — `pr/attribution.py` carries the rules. Either timestamp
-missing reads as pre-existing: claiming credit for a fix is the assertion that
-needs evidence, and there is none when one side cannot be dated.
+The newest commit `git log -L` names for the thread's line only dates the
+reading and is never cited. Both the line and the date are checked so a rebase
+cannot invent a reading — `pr/attribution.py` carries the rules. A missing
+timestamp reads as pre-existing: claiming credit needs evidence.
 
 `pr comments --finish` reaches this reply from a second direction. A fixed
 thread whose commit the resolver cannot cite — a hook rejected the pass's

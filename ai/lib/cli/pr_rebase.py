@@ -8,10 +8,10 @@ which take a bare branch name, the value here is a ref used verbatim: a bare
 rebase onto the remote.
 
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
-Without --fix, generated-class conflicts rebuild via a declared
-rebase.regenerate (or lockfile regenerators); anything else aborts to a
-clean tree. --fix resolves with AI. --stop-on-conflict keeps today's paused
-tree instead of aborting.
+Without --fix, generated-class conflicts rebuild via a regenerate=
+gitattributes attribute, a declared rebase.regenerate, or lockfile
+regenerators; anything else aborts to a clean tree. --fix resolves with AI.
+--stop-on-conflict keeps today's paused tree instead of aborting.
 Outputs structured JSON on stdout and status messages on stderr.
 Updates local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
 on the run's target rather than on the checkout it was invoked from.

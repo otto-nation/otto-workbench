@@ -13,7 +13,7 @@ output_schema:
 
 Rebases a feature branch onto its base. The `pr rebase` script handles
 fetch, rebase, conflict handling, and force-push. Default mode rebuilds
-declared generated files and lockfiles, then **aborts to a clean tree**
+attributed or declared generated files and lockfiles, then **aborts to a clean tree**
 (exit 3) on any other conflict. Pass `--fix` for AI resolution. Pass
 `--stop-on-conflict` to keep today's paused tree instead of aborting.
 There is no `--no-fix` flag.
@@ -128,12 +128,14 @@ no bearing on what the run then decides.
   pr rebase --branch <branch>
   ```
 
-  Generated-class files (`accept_theirs` with a declared `rebase.regenerate`,
-  or lockfiles in `LOCKFILE_REGENERATORS`) rebuild and the rebase continues.
-  The conventional `mise run generate` fallback does **not** qualify here — it
-  stays `--fix`-only. Any other class, a missing declaration, a failed rebuild,
-  or `files_stale` aborts (`tree: clean`, exit 3). Foreground is fine: there is
-  no AI call.
+  Generated-class files (`accept_theirs` with a `regenerate=` gitattributes
+  attribute or a declared `rebase.regenerate`, or lockfiles in
+  `LOCKFILE_REGENERATORS`) rebuild and the rebase continues. An unattributed
+  generated file lands in `files_stale` unless a declared `rebase.regenerate`
+  covers it. The conventional `mise run generate` fallback does **not**
+  qualify here — it stays `--fix`-only. Any other class, a missing
+  declaration, a failed rebuild, or `files_stale` aborts (`tree: clean`,
+  exit 3). Foreground is fine: there is no AI call.
 
 - **`--fix` mode** (AI resolution). The first run, unless the user asked for no
   AI; if a default-mode run exits 3, rerun with this without asking:
@@ -212,10 +214,11 @@ no unreviewed resolution is recorded for a later rebase.
 
 Report commits replayed and any conflicts resolved. When `files_stale` is
 non-empty, those files were staged from the incoming side and never rebuilt —
-either the repo's regeneration command failed, or it declares none and has no
-conventional `generate` task. Regenerate them yourself — see *After the rebase* — then finish at
-step 3. A repo that keeps landing in the second case wants a
-`rebase.regenerate` entry in its `.workbench.yml`.
+either the repo's regeneration command failed, the path has no `regenerate=`
+attribute and no declared `rebase.regenerate` / conventional `generate` task,
+or the rebuild was unknown. Regenerate them yourself — see *After the rebase*
+— then finish at step 3. A repo that keeps landing on unattributed generated
+files wants `regenerate=<command>` on those paths in `.gitattributes`.
 
 **Exit 3 — conflicts a human must look at.** Parse the JSON. `aborted` and
 `tree` say whether the replay was thrown away (`tree: clean`) or left paused

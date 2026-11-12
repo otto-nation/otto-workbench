@@ -147,7 +147,7 @@ Component installation state is recorded in `$INSTALL_YML_FILE` — `~/.local/st
 
 ## Generated Files
 
-These files are derived from source data and must never be edited directly. Edit the source and regenerate.
+These files are derived from source data and must never be edited directly. Edit the source and regenerate. A file a rebase can rebuild carries `regenerate=<command>` next to `linguist-generated=true` in [`.gitattributes`](../.gitattributes). Unattributed generated files (release-please outputs, `tests/weights.tsv`) are reported stale rather than rebuilt.
 
 | File | Generator | Source |
 |------|-----------|--------|
@@ -161,6 +161,7 @@ These files are derived from source data and must never be edited directly. Edit
 | `docs/ai-libraries.md` | [`compose-docs`](../bin/local/compose-docs) | `docs/ai-libraries.src.md` + the `ai/lib/*/*.py` module docstrings |
 | `.claude/anatomy.md` | [`generate-anatomy.sh`](../ai/skills/anatomy/generate-anatomy.sh) | `git ls-files` |
 | [`config.schema.json`](../config.schema.json) | [`generate-config-schema`](../bin/local/generate-config-schema) | [`ai/lib/config/workbench_config.py`](../ai/lib/config/workbench_config.py) |
+| [`tests/fixtures/mcp_tools.json`](../tests/fixtures/mcp_tools.json) | [`generate-mcp-tools-fixture`](../bin/local/generate-mcp-tools-fixture) | `pr` tool schema + registries |
 
 A composed doc names the generators it wants; nothing maps a doc to a generator centrally. `docs/libraries.md` reaches three that way: [`generate-doc-reference`](../bin/local/generate-doc-reference) for the module sections, and — from inside a module header, since compose-docs expands what a generator prints — [`generate-doc-reference --roots-table`](../lib/roots.sh) and [`generate-config-schema --emit config-reference`](../lib/config.sh).
 

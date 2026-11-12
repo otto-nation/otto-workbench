@@ -175,20 +175,72 @@ def try_run(
 # ── Regeneration runner ─────────────────────────────────────────────────────
 
 
+def _job_files_relative_to_regen(job: RegenJob, *, cwd: str) -> set[str]:
+    """``job.files`` as paths relative to ``job.regen_dir``.
+
+    Callers pass repo-relative or absolute paths; ``git diff --relative``
+    lists unmerged paths relative to the regeneration directory.
+    """
+    regen = Path(job.regen_dir).resolve()
+    root = Path(cwd).resolve()
+    relative: set[str] = set()
+    for f in job.files:
+        p = Path(f)
+        absolute = p if p.is_absolute() else root / p
+        try:
+            relative.add(absolute.resolve().relative_to(regen).as_posix())
+        except ValueError:
+            core.log.warn(f"{f} is outside {job.regen_dir}; cannot match it to unmerged paths")
+            relative.add(Path(f).as_posix())
+    return relative
+
+
+def _stage_dir_failed(job: RegenJob, trail: Trail | None) -> bool:
+    if trail:
+        trail.error("regeneration", f"git add -u failed in {job.regen_dir}")
+    core.log.warn(
+        f"git add -u failed after regeneration in {Path(job.regen_dir).name}/",
+    )
+    return False
+
+
 def _stage_regenerated(
     job: RegenJob, *, cwd: str, trail: Trail | None,
 ) -> bool:
-    """Stage the files a regeneration produced. Returns True on success."""
+    """Stage the files a regeneration produced. Returns True on success.
+
+    ``stage_dir`` runs ``git add -u`` so a command that rewrites more than
+    ``job.files`` still stages everything it touched. Hand-written files that
+    are still unmerged must stay unresolved: a bare ``add -u`` would stage
+    their conflict markers and let the rebase continue.
+    """
     if not job.stage_dir:
         # Stage every file even if one fails — don't short-circuit.
         results = [git.client.ok("add", f, cwd=cwd) for f in job.files]
         return all(results)
-    if git.client.ok("add", "-u", ".", cwd=job.regen_dir):
+
+    unmerged = git.client.run(
+        "diff", "--name-only", "--diff-filter=U", "--relative", "-z",
+        cwd=job.regen_dir,
+    )
+    changed = git.client.run(
+        "diff", "--name-only", "--relative", "-z", cwd=job.regen_dir,
+    )
+    if not (unmerged.ok and changed.ok):
+        return _stage_dir_failed(job, trail)
+
+    # An exclude pathspec does not hold back an unmerged entry from
+    # `add -u`, so name what to stage instead of what to skip.
+    held = set(unmerged.stdout.split("\0")) - _job_files_relative_to_regen(
+        job, cwd=cwd,
+    )
+    paths = [p for p in changed.stdout.split("\0") if p and p not in held]
+    if not paths:
         return True
-    if trail:
-        trail.error("regeneration", f"git add -u failed in {job.regen_dir}")
-    core.log.warn(f"git add -u failed after regeneration in {Path(job.regen_dir).name}/")
-    return False
+    literal = [f":(literal){p}" for p in paths]
+    if git.client.ok("add", "-u", "--", *literal, cwd=job.regen_dir):
+        return True
+    return _stage_dir_failed(job, trail)
 
 
 def run_regeneration(

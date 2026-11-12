@@ -147,6 +147,70 @@ def test_conventional_generate_task_does_not_qualify(tmp_path, capsys):
     assert report["tree"] == "clean"
 
 
+def test_generated_only_with_regenerate_attribute_continues(tmp_path):
+    repo, pre = _conflicted(tmp_path, {
+        "gen.txt": (
+            "DO NOT EDIT\nbase\n",
+            "DO NOT EDIT\nmain\n",
+            "DO NOT EDIT\nfeat\n",
+        ),
+    })
+    (repo / "regen.py").write_text(
+        "#!/usr/bin/env python3\n"
+        "from pathlib import Path\n"
+        "Path('gen.txt').write_text('DO NOT EDIT\\nregen\\n')\n"
+    )
+    (repo / "regen.py").chmod(0o755)
+    _write(
+        repo, ".gitattributes",
+        "gen.txt linguist-generated=true regenerate=./regen.py\n",
+    )
+    rebase.repo_regen.clear_caches()
+    tally = _tally(pre)
+    rc = rebase.lifecycle.step_conflicts(
+        str(repo), _ctx(repo), rebase.types.RunMode.REBASE_ONLY,
+        rebase.inspect.detect_conflicts(str(repo)), tally,
+        target_ref="main",
+    )
+    assert rc is None
+    assert tally.resolution == "generated"
+    assert tally.stale == []
+    assert not rebase.inspect.rebase_in_progress(str(repo))
+    assert "regen" in (repo / "gen.txt").read_text()
+
+
+def test_unattributed_generated_file_aborts_without_declared_fallback(
+    tmp_path, capsys,
+):
+    """A generated file with no regenerate= attribute stays stale.
+
+    Revert-check: falling through to a declared/conventional command when the
+    repo has neither would queue a rebuild this file does not have, and this
+    case would continue instead of aborting.
+    """
+    repo, pre = _conflicted(tmp_path, {
+        "CHANGELOG.md": (
+            "DO NOT EDIT\nbase\n",
+            "DO NOT EDIT\nmain\n",
+            "DO NOT EDIT\nfeat\n",
+        ),
+    })
+    _write(
+        repo, ".gitattributes",
+        "gen.txt linguist-generated=true regenerate=./regen.py\n",
+    )
+    rebase.repo_regen.clear_caches()
+    rc = rebase.lifecycle.step_conflicts(
+        str(repo), _ctx(repo), rebase.types.RunMode.PUSH,
+        rebase.inspect.detect_conflicts(str(repo)), _tally(pre),
+        target_ref="main",
+    )
+    report = _report(capsys)
+    assert rc == rebase.types.CONFLICTS_EXIT
+    assert report["aborted"] is True
+    assert "CHANGELOG.md" in report["files_stale"]
+
+
 def test_failed_rebuild_aborts(tmp_path, capsys):
     repo, pre = _conflicted(tmp_path, {
         "gen.txt": (

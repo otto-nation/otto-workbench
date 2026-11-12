@@ -7641,9 +7641,10 @@ with ``files_stale`` empty; otherwise ``git rebase --abort`` leaves a clean
 tree and exit 3. ``--stop-on-conflict`` and a resumed rebase keep the paused
 tree instead — those paths stay in ``lifecycle._report_conflicts_and_stop``.
 
-``rebase.regenerate`` must be declared for ACCEPT_THEIRS files; the conventional
-``mise run generate`` fallback is ``--fix``-only. REGENERATE files still use
-``git.regenerate.LOCKFILE_REGENERATORS``.
+ACCEPT_THEIRS files rebuild from a ``regenerate=`` gitattributes attribute or a
+declared ``rebase.regenerate``; the conventional ``mise run generate`` fallback
+is ``--fix``-only. An unattributed generated file with neither is reported
+stale. REGENERATE files still use ``git.regenerate.LOCKFILE_REGENERATORS``.
 
 ### rebase/conflicts.py
 
@@ -7896,9 +7897,12 @@ The repo-specific half of regeneration — what *this* repo rebuilds, and how.
 
 ``git.regenerate`` owns the repo-agnostic half: which command rebuilds a
 lockfile of a given kind. This module answers the question that needs a repo to
-answer it — what a repo declares under ``rebase.regenerate``, or what its task
-runner conventionally offers — which is why it sits at layer 6 with ``config``
-in reach rather than beside the registry at layer 2.
+answer it — the ``regenerate=<command>`` gitattributes attribute, what a repo
+declares under ``rebase.regenerate``, or what its task runner conventionally
+offers — which is why it sits at layer 6 with ``config`` in reach rather than
+beside the registry at layer 2. An unattributed generated file with no
+fallback is reported stale rather than queued, so a command that does not
+produce that file cannot silently keep the branch's copy.
 
 ### rebase/resolve_ai.py
 
@@ -8575,10 +8579,10 @@ which take a bare branch name, the value here is a ref used verbatim: a bare
 rebase onto the remote.
 
 Manages the git rebase lifecycle: start, resume, abort, and force-push.
-Without --fix, generated-class conflicts rebuild via a declared
-rebase.regenerate (or lockfile regenerators); anything else aborts to a
-clean tree. --fix resolves with AI. --stop-on-conflict keeps today's paused
-tree instead of aborting.
+Without --fix, generated-class conflicts rebuild via a regenerate=
+gitattributes attribute, a declared rebase.regenerate, or lockfile
+regenerators; anything else aborts to a clean tree. --fix resolves with AI.
+--stop-on-conflict keeps today's paused tree instead of aborting.
 Outputs structured JSON on stdout and status messages on stderr.
 Updates local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
 on the run's target rather than on the checkout it was invoked from.

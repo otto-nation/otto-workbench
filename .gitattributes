@@ -3,27 +3,36 @@
 # in GitHub diffs and drops them from the repo language stats; they stay
 # diffable locally so a regeneration is still reviewable.
 #
+# regenerate=<command> is the producer a rebase runs, a repo-relative
+# executable with no whitespace. Unattributed generated files are reported
+# stale unless rebase.regenerate or the conventional generate task covers them.
+#
 # The other generated files (ai/guidelines/rules/tools.generated*.md,
 # git.generated.md) are gitignored, so they need no attributes here.
 
 # bin/local/generate-config-schema, from ai/lib/config/workbench_config.py
-config.schema.json linguist-generated=true
+config.schema.json linguist-generated=true regenerate=bin/local/generate-config-schema
 
 # bin/local/compose-docs, from the docs/*.src.md of the same name
-docs/ai-automation.md linguist-generated=true
-docs/ai-libraries.md linguist-generated=true
-docs/components.md linguist-generated=true
-docs/getting-started.md linguist-generated=true
-docs/libraries.md linguist-generated=true
-docs/tools.md linguist-generated=true
+docs/ai-automation.md linguist-generated=true regenerate=bin/local/compose-docs
+docs/ai-libraries.md linguist-generated=true regenerate=bin/local/compose-docs
+docs/components.md linguist-generated=true regenerate=bin/local/compose-docs
+docs/getting-started.md linguist-generated=true regenerate=bin/local/compose-docs
+docs/libraries.md linguist-generated=true regenerate=bin/local/compose-docs
+docs/tools.md linguist-generated=true regenerate=bin/local/compose-docs
 
 # bin/local/generate-test-weights, from the junit reports the CI bats shards
 # upload. Measured runtimes, so every line changes a little on each refresh.
+# Not regenerate=: the generator needs those reports or --run (a full suite),
+# which a rebase does not have.
 tests/weights.tsv linguist-generated=true
 
 # bin/local/generate-herdr-app-themes, from ai/herdr/app/palettes/*.toml
-ai/herdr/app/themes/*.generated.json linguist-generated=true
+ai/herdr/app/themes/*.generated.json linguist-generated=true regenerate=bin/local/generate-herdr-app-themes
 
-# release-please
+# bin/local/generate-mcp-tools-fixture, from the pr tool schema (ai/lib/cli/schema.py) and the registries
+tests/fixtures/mcp_tools.json linguist-generated=true regenerate=bin/local/generate-mcp-tools-fixture
+
+# release-please writes these; no input-free generator a rebase can run.
 CHANGELOG.md linguist-generated=true
 .github/.release-please-manifest.json linguist-generated=true

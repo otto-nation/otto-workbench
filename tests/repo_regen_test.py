@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from conftest import init_repo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -85,6 +86,99 @@ def test_queue_repo_regeneration_false_when_unknown(tmp_path):
     queue = git.regenerate.RegenQueue()
     with _repo_declaring([], root=tmp_path, mise_task=False):
         assert not rebase.repo_regen.queue_repo_regeneration("x.gen", str(tmp_path), queue)
+
+    assert list(queue) == []
+
+
+def _attr_repo(tmp_path, attributes: str, files=("a.txt", "b.txt")):
+    """A real git repo so ``git check-attr regenerate`` reads .gitattributes."""
+    repo = init_repo(tmp_path / "repo")
+    (repo / ".gitattributes").write_text(attributes)
+    for name in files:
+        path = repo / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x\n")
+    return repo
+
+
+def test_queue_repo_regeneration_attributed_file_queues_its_command(tmp_path):
+    repo = _attr_repo(
+        tmp_path,
+        "a.txt linguist-generated=true regenerate=./regen.py\n",
+        files=("a.txt",),
+    )
+    queue = git.regenerate.RegenQueue()
+    with _repo_declaring([], root=repo, mise_task=False):
+        assert rebase.repo_regen.queue_repo_regeneration("a.txt", str(repo), queue)
+
+    jobs = list(queue)
+    assert len(jobs) == 1
+    assert jobs[0].cmd == ("./regen.py",)
+    assert jobs[0].files == ["a.txt"]
+
+
+def test_queue_repo_regeneration_shared_command_dedupes(tmp_path):
+    repo = _attr_repo(
+        tmp_path,
+        "a.txt linguist-generated=true regenerate=./regen.py\n"
+        "b.txt linguist-generated=true regenerate=./regen.py\n",
+    )
+    queue = git.regenerate.RegenQueue()
+    with _repo_declaring([], root=repo, mise_task=False):
+        assert rebase.repo_regen.queue_repo_regeneration("a.txt", str(repo), queue)
+        assert rebase.repo_regen.queue_repo_regeneration("b.txt", str(repo), queue)
+
+    jobs = list(queue)
+    assert len(jobs) == 1
+    assert jobs[0].cmd == ("./regen.py",)
+    assert jobs[0].files == ["a.txt", "b.txt"]
+
+
+def test_queue_repo_regeneration_unattributed_stale_without_fallback(tmp_path):
+    repo = _attr_repo(
+        tmp_path,
+        "a.txt linguist-generated=true regenerate=./regen.py\n",
+        files=("a.txt", "CHANGELOG.md"),
+    )
+    queue = git.regenerate.RegenQueue()
+    with _repo_declaring([], root=repo, mise_task=False):
+        assert not rebase.repo_regen.queue_repo_regeneration(
+            "CHANGELOG.md", str(repo), queue,
+        )
+
+    assert list(queue) == []
+
+
+def test_queue_repo_regeneration_declared_fallback_for_unattributed(tmp_path):
+    repo = _attr_repo(
+        tmp_path,
+        "a.txt linguist-generated=true regenerate=./regen.py\n",
+        files=("a.txt", "CHANGELOG.md"),
+    )
+    queue = git.regenerate.RegenQueue()
+    with _repo_declaring(["mise run generate"], root=repo, mise_task=False):
+        assert rebase.repo_regen.queue_repo_regeneration(
+            "CHANGELOG.md", str(repo), queue,
+        )
+
+    jobs = list(queue)
+    assert len(jobs) == 1
+    assert jobs[0].cmd == ("mise", "run", "generate")
+    assert jobs[0].files == ["CHANGELOG.md"]
+
+
+def test_queue_repo_regeneration_ignores_unspecified_attr(tmp_path):
+    repo = _attr_repo(
+        tmp_path,
+        "a.txt linguist-generated=true regenerate=./regen.py\n",
+        files=("a.txt", "plain.txt"),
+    )
+    queue = git.regenerate.RegenQueue()
+    with _repo_declaring([], root=repo, mise_task=False):
+        assert rebase.repo_regen.regenerate_attr("plain.txt", str(repo)) is None
+        assert not rebase.repo_regen.queue_repo_regeneration(
+            "plain.txt", str(repo), queue,
+        )
 
     assert list(queue) == []
 

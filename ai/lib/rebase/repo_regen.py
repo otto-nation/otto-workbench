@@ -2,9 +2,12 @@
 
 ``git.regenerate`` owns the repo-agnostic half: which command rebuilds a
 lockfile of a given kind. This module answers the question that needs a repo to
-answer it — what a repo declares under ``rebase.regenerate``, or what its task
-runner conventionally offers — which is why it sits at layer 6 with ``config``
-in reach rather than beside the registry at layer 2.
+answer it — the ``regenerate=<command>`` gitattributes attribute, what a repo
+declares under ``rebase.regenerate``, or what its task runner conventionally
+offers — which is why it sits at layer 6 with ``config`` in reach rather than
+beside the registry at layer 2. An unattributed generated file with no
+fallback is reported stale rather than queued, so a command that does not
+produce that file cannot silently keep the branch's copy.
 """
 
 # doc-group: platform
@@ -28,11 +31,16 @@ RegenQueue = git.regenerate.RegenQueue
 # Used when a repo declares no `rebase.regenerate`, which is most of them.
 CONVENTIONAL_REGEN_TASK = "generate"
 
+# git check-attr reports these when the path has no usable regenerate= value.
+_ATTR_NONE = frozenset({"unspecified", "unset", "set", ""})
+_ATTR_MARKER = ": regenerate: "
 
-# The three reads below are cached for the run, not for the process: neither
-# `.workbench.yml` nor a repo's task list changes under a rebase that is only
-# replaying commits, and each is asked once per generated file. A caller that
-# outlives one repo state — a test suite, in practice — clears them.
+
+# The cached reads below last for the run, not the process: neither
+# `.gitattributes`, `.workbench.yml`, nor a repo's task list changes under a
+# rebase that is only replaying commits, and each is asked once per generated
+# file. A caller that outlives one repo state — a test suite, in practice —
+# clears them.
 @cache
 def mise_has_task(root: str, task: str) -> bool:
     """Whether `mise tasks ls` in this repo lists a task by exactly this name.
@@ -56,6 +64,27 @@ def mise_has_task(root: str, task: str) -> bool:
 def repo_root(cwd: str) -> str:
     """The toplevel of the repo `cwd` sits in, falling back to `cwd` itself."""
     return git.client.out("rev-parse", "--show-toplevel", cwd=cwd) or cwd
+
+
+@cache
+def regenerate_attr(filepath: str, cwd: str) -> str | None:
+    """The ``regenerate`` gitattributes value for this path, or None.
+
+    ``unspecified``, ``unset``, and ``set`` (flag with no value) mean the file
+    has no regenerator of its own. Cached for the run; ``clear_caches``
+    forgets it.
+    """
+    r = git.client.run("check-attr", "regenerate", "--", filepath, cwd=cwd)
+    if not r.ok:
+        return None
+    line = r.stdout.strip().splitlines()[0] if r.stdout.strip() else ""
+    idx = line.rfind(_ATTR_MARKER)
+    if idx < 0:
+        return None
+    value = line[idx + len(_ATTR_MARKER):]
+    if value in _ATTR_NONE:
+        return None
+    return value
 
 
 @cache
@@ -91,15 +120,28 @@ def queue_repo_regeneration(
 ) -> bool:
     """Queue this repo's regeneration for a generated file. False if unknown.
 
+    The ``regenerate=<command>`` attribute wins for that file. Otherwise the
+    declared ``rebase.regenerate`` list, then the conventional ``generate``
+    task, exactly as before — other repos that have not set the attribute are
+    unchanged. A repo that attributes some files but not others reports the
+    unattributed ones stale only when it also has no declared list and no
+    conventional task.
+
     Keyed on the repo root rather than the file's directory, so the dozen
     generated files one rebase touches collapse into a single run of each
-    command — RegenQueue dedupes on (directory, command).
+    command — RegenQueue dedupes on (directory, command). ``stage_dir`` stays
+    true with that root.
     """
+    root = Path(repo_root(cwd))
+    attr = regenerate_attr(filepath, cwd)
+    if attr:
+        queue.add(root, filepath, tuple(shlex.split(attr)), stage_dir=True)
+        return True
     regenerators = repo_regenerators(cwd, conventional=conventional)
     if not regenerators:
         return False
     for regenerator in regenerators:
-        queue.add(Path(repo_root(cwd)), filepath, regenerator.cmd, stage_dir=True)
+        queue.add(root, filepath, regenerator.cmd, stage_dir=True)
     return True
 
 
@@ -112,4 +154,5 @@ def clear_caches() -> None:
     """
     mise_has_task.cache_clear()
     repo_root.cache_clear()
+    regenerate_attr.cache_clear()
     repo_regenerators.cache_clear()

@@ -7,12 +7,14 @@ from pathlib import Path
 from unittest import mock
 
 import pytest
+from conftest import commit_all, git_out, init_repo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import git.client
 import git.regenerate
 
 
@@ -330,7 +332,8 @@ class TestRunRegeneration:
 
         def fake_run(cmd, **kwargs):
             calls.append((list(cmd), kwargs.get("cwd")))
-            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+            listing = "go.sum\0" if "diff" in cmd and "--diff-filter=U" not in cmd else ""
+            return subprocess.CompletedProcess(args=cmd, returncode=0, stdout=listing, stderr="")
 
         with mock.patch("subprocess.run", side_effect=fake_run), \
              mock.patch.object(git.regenerate, "detect_mise", return_value=False):
@@ -344,7 +347,46 @@ class TestRunRegeneration:
 
         assert result is True
         cmds = [c[0] for c in calls]
-        assert ["git", "add", "-u", "."] in cmds
+        assert ["git", "add", "-u", "--", ":(literal)go.sum"] in cmds
+
+    def testrun_regeneration_stage_dir_skips_unmerged_handwritten(self, tmp_path):
+        """stage_dir must not git-add still-unmerged hand-written files."""
+        repo = init_repo(tmp_path / "repo")
+        (repo / "generated.txt").write_text("base\n")
+        (repo / "hand.txt").write_text("base\n")
+        commit_all(repo, "base")
+
+        git_out(repo, "checkout", "-b", "feat")
+        (repo / "generated.txt").write_text("feat-gen\n")
+        (repo / "hand.txt").write_text("feat-hand\n")
+        commit_all(repo, "feat")
+
+        git_out(repo, "checkout", "main")
+        (repo / "generated.txt").write_text("main-gen\n")
+        (repo / "hand.txt").write_text("main-hand\n")
+        commit_all(repo, "main2")
+
+        git_out(repo, "checkout", "feat")
+        paused = git.client.run("rebase", "main", cwd=str(repo))
+        assert not paused.ok
+
+        result = git.regenerate.run_regeneration(
+            git.regenerate.RegenJob(
+                regen_dir=str(repo),
+                cmd=("sh", "-c", "printf 'regenerated\\n' > generated.txt"),
+                stage_dir=True,
+                files=["generated.txt"],
+            ),
+            cwd=str(repo),
+        )
+        assert result is True
+
+        unmerged = git_out(repo, "diff", "--name-only", "--diff-filter=U")
+        assert "hand.txt" in unmerged.splitlines()
+        assert "generated.txt" not in unmerged.splitlines()
+
+        staged = git_out(repo, "diff", "--cached", "--name-only")
+        assert "generated.txt" in staged.splitlines()
 
     def testrun_regeneration_failure_returns_false(self, tmp_path):
         def fake_run(cmd, **kwargs):

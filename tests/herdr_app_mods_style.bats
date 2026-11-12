@@ -85,11 +85,17 @@ teardown() {
 @test "every pinned header gets its hairline from pinned(), and long text is one selectableCode" {
   grep -q 'pinned(v_flex()' "$MODS/_ui/ui.js"
   grep -q 'pinned(h_flex().gap(SP.md)' "$MODS/prs/batch_page.js"
-  grep -q 'pinned(h_flex().id("prs-header")' "$MODS/prs/board_view.js"
+  grep -q 'pinned(v_flex().id("prs-header")' "$MODS/prs/board_view.js"
   grep -q 'pinned(v_flex().px(SP.md)' "$MODS/prs/board_view.js"
   grep -q 'pinned(h_flex().px(SP.lg).py(SP.md).child(segmented(segs)))' "$MODS/prs/detail.js"
   run grep -ln 'TextView.markdown(`output-\|TextView.markdown(`step-log' "$MODS"/prs/*.js
   [ "$status" -eq 1 ]
   grep -q 'selectableCode("output"' "$MODS/prs/detail.js"
   grep -q 'selectableCode(`step-log-' "$MODS/prs/workflows_view.js"
+}
+
+@test "board load line is one statusRow used by the wide header" {
+  [ "$(grep -c 'renderLoadLine(' "$MODS/prs/board_view.js")" -eq 1 ]
+  grep -A 6 '^  statusRow(' "$MODS/prs/board_view.js" | grep -q 'renderLoadLine('
+  grep -A 30 '^  header(' "$MODS/prs/board_view.js" | grep -q 'this.statusRow'
 }

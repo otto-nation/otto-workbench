@@ -10,6 +10,7 @@
  */
 
 import { busyPrs } from './batch.js';
+import { boardArgv, PHASE_TIMEOUT_MS } from './board_doc.js';
 import { busyMap, getArgv, lsArgv, terminalsOf } from './busy.js';
 import {
   batches,
@@ -52,6 +53,8 @@ function classifyCaught(err, on, command) {
   return { kind, command, message };
 }
 
+const OUTDATED_RE = /invalid choice: 'board'|unsupported --schema-version|--schema-version is served by .*not by this command|pr board: error: (unrecognized arguments|argument --phase: invalid choice)/;
+
 export function classifyCode(result) {
   const stderr = result.stderr ?? '';
   if (result.code === 127) {
@@ -71,6 +74,8 @@ export function classifyCode(result) {
       message: "a different `pr` is first on PATH, not the workbench's (try `otto-workbench sync`)",
     };
   }
+  // An older workbench `pr` on that machine: it lacks `board`, this schema or a flag.
+  if (OUTDATED_RE.test(stderr)) return { kind: 'outdated', message: stderr.trim() };
   if (result.code !== 0) {
     return { kind: 'failed', message: stderr || `exit ${result.code}` };
   }
@@ -280,6 +285,28 @@ export async function loadListing(exec, ctx, prior = null) {
   if (!parsed.ok) return parsed;
   if (parsed.value?.unchanged === true && prior != null) return prior;
   return { ok: true, listing: parsed.value, reviewsRoot: parsed.value.reviews_root };
+}
+
+// One `pr board` phase for one checkout. Resolves to {ok:true, doc} or {ok:true, unchanged:true},
+// or {ok:false, error}; a document that is not the one asked for is an outdated `pr`, never a
+// partial read. `stamp` is the prior answer's stamp, which pr answers `unchanged` against.
+export async function loadBoard(exec, ctx, phase, opts = {}) {
+  const ran = await invoke(exec, ctx, 'pr', boardArgv(ctx.cwd, phase, opts), {
+    timeout: PHASE_TIMEOUT_MS[phase],
+  });
+  if (!ran.ok) return ran;
+  const parsed = readJson(ran.stdout);
+  if (!parsed.ok) return parsed;
+  const doc = parsed.value;
+  if (doc?.unchanged === true && doc.schema_version === 1 && doc.phase === phase) {
+    return { ok: true, unchanged: true, stamp: doc.stamp };
+  }
+  const valid = doc?.schema_version === 1 && doc.phase === phase && 'reviews_root' in doc
+    && Array.isArray(doc.rows) && doc.rows.every((r) => r.presentation != null);
+  if (!valid) {
+    return { ok: false, error: { kind: 'outdated', message: `pr board answered an unexpected document for ${phase}` } };
+  }
+  return { ok: true, doc };
 }
 
 export async function loadFiles(exec, ctx, slug, number) {

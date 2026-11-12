@@ -8,8 +8,9 @@
 import { prIssues } from './columns.js';
 import { cardState, words } from './batch.js';
 
-// ceiling: an interim client twin of board.presentation, kept equal by the golden fixture. Upgrade
-// trigger: once the mod and the web read `pr board` rows, draw row.presentation and delete this.
+// ceiling: legacyPresentation is an interim client twin of board.presentation, kept equal by the
+// golden fixture, for the web server's rows, which carry no `presentation`. Upgrade trigger: once
+// the web reads `pr board` rows, delete it and draw row.presentation through presentationOf alone.
 
 // _lib/batch.js cardState tones as status kinds (board.presentation.TONE_STATUS).
 export const TONE_STATUS = Object.freeze({ failed: 'fail', attention: 'warn', busy: 'running', done: 'pass' });
@@ -72,8 +73,33 @@ function tagsOf(pr) {
   return out;
 }
 
-// `item` is the PR's batch run item (prs/workflows.js itemFor), or null.
-export function prPresentation(pr, { item = null } = {}) {
+// A document row's presentation with the two client-only slots laid over it: a live review
+// terminal and the PR's batch run item. Python's layout is badges = issues + live + reviews +
+// labels and row_badges = issues + live, and the document's `review` is always null, so the
+// overlay only re-splices the live slot. `item` is prs/workflows.js itemFor, or null.
+export function presentationOf(pr, { item = null } = {}) {
+  const p = pr.presentation;
+  const review = pr.reviewing ? status('running', 'Review running') : null;
+  const fromItem = batchStatus(item);
+  const busy = fromItem ? { ...fromItem, text: `Batch · ${fromItem.text}` } : p.busy;
+  if (review === p.review && busy === p.busy) return p;
+  const shown = (b) => b != null && b.status !== 'pass';
+  const live = [review, busy].filter(shown);
+  const n = p.issues.length;
+  const docLive = [p.review, p.busy].filter(shown).length;
+  return {
+    ...p, review, busy,
+    badges: [...p.badges.slice(0, n), ...live, ...p.badges.slice(n + docLive)],
+    row_badges: [...p.row_badges.slice(0, n), ...live],
+  };
+}
+
+// What every view draws: the document's presentation when the row has one, else the client twin.
+export function prPresentation(pr, opts = {}) {
+  return pr.presentation ? presentationOf(pr, opts) : legacyPresentation(pr, opts);
+}
+
+function legacyPresentation(pr, { item = null } = {}) {
   const raw = prIssues(pr);
   const issues = raw.map(fromIssue);
   const review = pr.reviewing ? status('running', 'Review running') : null;

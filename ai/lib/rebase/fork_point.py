@@ -2,7 +2,7 @@
 
 ``select`` is the one owner of that choice. An explicit ``--fork-point REF``
 wins and replays only the commits after REF, whether or not a prefix was
-detected. ``--force`` turns detection off and replays the whole branch.
+detected. ``--force-landed`` turns detection off and replays the whole branch.
 Otherwise a landed prefix is skipped rather than refused.
 
 When a leading run of commits is already in the base — a squash-landed
@@ -76,7 +76,7 @@ def select(
     """The replay start for this run, or None when a named ref is unusable.
 
     *requested* is checked first, so an explicit fork point still wins over
-    ``--force``. Force with no request returns an empty start — the whole
+    ``--force-landed``. Force with no request returns an empty start — the whole
     branch — and does not look for a landed prefix.
     """
     if requested:
@@ -131,7 +131,7 @@ def select(
         "Skipping already-landed commit(s): "
         + "; ".join(c.subject for c in skipped)
     )
-    core.log.dim("Pass --force to replay the whole branch.")
+    core.log.dim("Pass --force-landed to replay the whole branch.")
     return ReplayStart(
         sha=sha,
         source=ForkPointSource.DETECTED,

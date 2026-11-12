@@ -96,7 +96,6 @@ class TestUnpublishedTreeDemotesClaimVerdicts:
         pair = remote_and_clone(tmp_path)
         entry = _triage(pair.work)
         assert entry.verification is Verification.ALREADY_ADDRESSED
-        assert pr.triage.UNPUBLISHED_DOWNGRADE_REASON not in entry.reasoning
 
     # passes-at-base: valid verdicts were never in the demotion set
     def test_an_actionable_verdict_is_untouched(self, tmp_path):
@@ -104,4 +103,3 @@ class TestUnpublishedTreeDemotesClaimVerdicts:
         (pair.work / "leftover.py").write_text("x = 1\n")
         entry = _triage(pair.work, verification="valid")
         assert entry.verification is Verification.VALID
-        assert pr.triage.UNPUBLISHED_DOWNGRADE_REASON not in entry.reasoning

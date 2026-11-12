@@ -41,7 +41,23 @@ export const MINE_COLUMNS = [
   { key: 'merged', label: 'Merged' },
 ];
 
+// A document row carries its lanes (Python owns them); `reviewing` picks the variant the live
+// review terminal changes. `board` is 'team' or 'mine'.
+export function laneOf(pr, board) {
+  const l = pr.lanes ?? {};
+  return pr.reviewing ? l[`${board}_reviewing`] : l[board];
+}
+
+// The document's column specs for one board, in order.
+export function columnsFor(columns, board) {
+  return (columns ?? []).filter((c) => c.board === board).sort((a, b) => a.order - b.order);
+}
+
+// ceiling: teamColumn and mineColumn below are the client twin of board.columns, kept for the web
+// server, whose rows are not document rows. Upgrade trigger: once the web reads `pr board`, rows
+// always carry lanes and these (and prIssues) are deleted.
 export function teamColumn(pr) {
+  if (pr.lanes) return laneOf(pr, 'team');
   if (pr.reviewing) {
     return 'in-queue';
   }
@@ -69,6 +85,7 @@ export function teamColumn(pr) {
 }
 
 export function mineColumn(pr) {
+  if (pr.lanes) return laneOf(pr, 'mine');
   if (pr.state === 'MERGED') return 'merged';
   if (pr.inMergeQueue) return 'in-queue';
   // A review running right now: the PR is the reviewer's until it finishes, whatever else is wrong.
@@ -121,6 +138,7 @@ export function filterOn(filters, key) {
 }
 
 export function isMine(pr, me) {
+  if (typeof pr.isMine === 'boolean') return pr.isMine;
   const login = String(pr.author ?? '').toLowerCase();
   const who = String(pr.viewer ?? me ?? '').toLowerCase();
   return login === who;

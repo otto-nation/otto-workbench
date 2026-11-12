@@ -6,7 +6,10 @@
 
 const SKIPPABLE_RE = /not a git repository|not in a repository|origin is not a GitHub remote/i;
 
+const SKIPPABLE_KINDS = new Set(['no-checkout', 'no-origin', 'not-git', 'not-github']);
+
 export function skippable(err) {
+  if (SKIPPABLE_KINDS.has(err?.kind)) return true;
   return err?.kind === 'failed' && SKIPPABLE_RE.test(err.message ?? '');
 }
 
@@ -16,6 +19,15 @@ export function friendlyError(err, on, scope = 'this', here = 'this Mac') {
   if (!err) return '';
   const where = on != null ? String(on) : here;
   if (err.kind === 'auth') return `run gh auth login on ${where}`;
+  if (err.kind === 'outdated') {
+    return `the workbench \`pr\` on ${where} does not match this board (run otto-workbench sync there)`;
+  }
+  if (err.kind === 'not-git' || err.kind === 'no-origin' || err.kind === 'no-checkout') {
+    const hint = scope !== 'all' ? '; open a space in a repo or use All spaces' : '';
+    return `this space is not in a git repository${hint}`;
+  }
+  if (err.kind === 'not-github') return 'origin is not a GitHub remote';
+  if (err.kind === 'gh-failed') return err.message ?? '';
   const what = err.command || 'a command';
   if (err.kind === 'timeout') return `${what} took too long on ${where}`;
   if (err.kind === 'exec') {
@@ -79,8 +91,10 @@ export function mergeStates(states) {
   const repoSlugs = [];
   let me = '';
   let slug = null;
+  let columns = null;
   for (const st of states) {
     if (!st?.repo || !st.prs) continue;
+    columns = columns ?? (st.columns?.length ? st.columns : null);
     const id = repoId(st.repo);
     if (seen.has(id)) continue;
     seen.add(id);
@@ -94,7 +108,7 @@ export function mergeStates(states) {
       });
     }
   }
-  return { prs, me, repos: seen.size, slug, repoSlugs };
+  return { prs, me, repos: seen.size, slug, repoSlugs, columns };
 }
 
 export function repoId(repo) {

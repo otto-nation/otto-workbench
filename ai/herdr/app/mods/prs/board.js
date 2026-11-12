@@ -1,7 +1,7 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, filterOn, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
+import { columnsFor, teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, filterOn, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
 import { columnPreset } from "./_lib/batch_launch.js";
 import { prPresentation } from "./_lib/pr_status.js";
 import { cardId } from "./_lib/scope.js";
@@ -34,14 +34,16 @@ export function batchAction(col, onBatch) {
 }
 
 export function renderBoard({
-  tab, prs, filters, me, onOpen, loading, workflowOf, onBatch,
+  tab, prs, filters, me, onOpen, loading, workflowOf, onBatch, columns = null,
 }) {
   const t = theme();
   const mine = tab === "mine";
   const list = mine
     ? prs.filter((p) => isMine(p, me) && (filterOn(filters, "mineDrafts") || !p.isDraft))
     : filterPrs(prs, filters, me);
-  const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
+  // The document's columns when one has landed; the static list labels the lanes before the first.
+  const fromDoc = columnsFor(columns, mine ? "mine" : "team");
+  const spec = fromDoc.length ? fromDoc : mine ? MINE_COLUMNS : TEAM_COLUMNS;
   const cols = groupColumns(list, mine ? mineColumn : teamColumn, spec);
   const shown = visibleColumns(cols, filterOn(filters, "empty"));
   const board = type(h_flex().id("prs-board").flex_1().h_full().min_h(0).min_w(0).gap(SP.sm).px(SP.lg).py(SP.sm)

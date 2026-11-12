@@ -7,10 +7,10 @@ import {
 } from "./_lib/batch.js";
 import { relativeTime } from "./_lib/history.js";
 import { itemStatus } from "./_lib/pr_status.js";
-import { SP, RADIUS } from "./_lib/tokens.js";
+import { SP, RADIUS, LAYOUT } from "./_lib/tokens.js";
 import {
   hoverRow, card, inset, scrollBody, type, text, caption, placeholder, errorLine,
-  badge,
+  badge, selectableCode,
 } from "./_ui/ui.js";
 
 function prCount(n) {
@@ -101,7 +101,7 @@ function renderNotes(item) {
     .when(moved, (e) => e.child(text("body", "Head moved since the run", t.ansi3)));
 }
 
-function renderLog(state) {
+function renderLog(state, id) {
   const log = state.log;
   if (log == null) {
     return placeholder("Loading log…");
@@ -110,8 +110,8 @@ function renderLog(state) {
     return errorLine(log.error);
   }
   const lines = String(log.text ?? "").split("\n");
-  return type(inset().text_color(theme().foreground), "code")
-    .children(lines.map((l) => div().child(l === "" ? " " : l)));
+  return type(inset({ scroll: false }).text_color(theme().foreground), "code")
+    .child(selectableCode(`step-log-${id}`, lines, LAYOUT.bodyMaxH));
 }
 
 function renderStepCard(item, name, state) {
@@ -133,7 +133,7 @@ function renderStepCard(item, name, state) {
   return card(`step-${name}`).gap(SP.xs)
     .on_click(() => state.onStep(name))
     .child(head)
-    .when(state.step === name, (e) => e.child(renderLog(state)));
+    .when(state.step === name, (e) => e.child(renderLog(state, `${item.key ?? ""}-${name}`)));
 }
 
 export function renderBatchTab(item, state) {

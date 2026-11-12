@@ -12,6 +12,7 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `_lib`, `_ui
 
 ## The Mine board
 
+- The app reads the board from `pr board` (`_lib/board_data.js` `loadBoard`, `_lib/board_pull.js` `pullTarget`, rows renamed by `_lib/board_doc.js` `rowToPr`): Python owns facts, lanes, badges and columns; the app adds only the live review terminal and the batch item (`presentationOf`, `laneOf`). An older `pr` on a machine reads as `outdated`, never a partial board. `teamColumn`/`mineColumn`/`prIssues`/`legacyPresentation` remain only for the web server's rows.
 - Lanes, in precedence order: Merged, In Queue, In Review (a review running now), Has Conflicts, CI Failing, Has Comments, Changes Requested, Approved, Awaiting Review (`_lib/columns.js` `mineColumn`)
 - Card problems and every PR slot come from `_lib/pr_status.js` `prPresentation` (client twin of `board/presentation.py`), shared by prs/board.js, prs/compact.js, prs/detail.js and the web; state tags sit top right in the title row; positive state shows only in the detail; batch run/step/item status kinds and step labels come from `_lib/batch.js` (`RUN_STATUS`, `STEP_STATUS`, `STEP_LABEL`, `AI_STEPS`), never a view map
 - Has Comments is feedback `pr comments` would answer, read with `pr batch plan --needs comments` only while Mine shows. It ranks above Changes Requested: owed feedback is the author's work, while a request with every comment answered waits on the reviewer

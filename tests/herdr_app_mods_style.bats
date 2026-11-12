@@ -81,3 +81,15 @@ teardown() {
   run bash -c "grep -nE \"\\[ *['\\\"]rebase['\\\"]\" '$MODS'/_ui/*.js '$MODS'/prs/*.js '$MODS'/_lib/*.js | grep -v '/_lib/batch.js:'"
   [ "$status" -eq 1 ]
 }
+
+@test "every pinned header gets its hairline from pinned(), and long text is one selectableCode" {
+  grep -q 'pinned(v_flex()' "$MODS/_ui/ui.js"
+  grep -q 'pinned(h_flex().gap(SP.md)' "$MODS/prs/batch_page.js"
+  grep -q 'pinned(h_flex().id("prs-header")' "$MODS/prs/board_view.js"
+  grep -q 'pinned(v_flex().px(SP.md)' "$MODS/prs/board_view.js"
+  grep -q 'pinned(h_flex().px(SP.lg).py(SP.md).child(segmented(segs)))' "$MODS/prs/detail.js"
+  run grep -ln 'TextView.markdown(`output-\|TextView.markdown(`step-log' "$MODS"/prs/*.js
+  [ "$status" -eq 1 ]
+  grep -q 'selectableCode("output"' "$MODS/prs/detail.js"
+  grep -q 'selectableCode(`step-log-' "$MODS/prs/workflows_view.js"
+}

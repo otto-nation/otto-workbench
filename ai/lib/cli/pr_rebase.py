@@ -43,6 +43,9 @@ import rebase.lease
 import rebase.types
 
 SCRIPT = "pr-rebase"
+# Trails and the usage ledger are keyed on the hyphenated name; help shows
+# the command as typed (`pr rebase`).
+TRAIL_KEY = SCRIPT
 
 _LEASE = rebase.lease.PushLease(branch="<branch>", expect="<expect>").args[0]
 _HOOK = ("The git pre-push hook runs unless --no-verify; the workbench owner check "
@@ -147,6 +150,7 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.Example("pr rebase --onto origin/release/1.2", "rebase onto a ref, used verbatim"),
         core.command_contract.Example("pr rebase --force-landed --fix", "rebase even though the work landed"),
     ),
+    notes=("`--force` is a deprecated alias of `--force-landed`.",),
     json_output=core.command_contract.JsonOutput(
         "exit 0/1: the outcome (status, commits_replayed, conflicts_resolved, "
         "files_resolved, files_stale, force_pushed, fork_point, squashed_commits); "
@@ -183,7 +187,7 @@ def build_parser() -> ToolParser:
     number or a branch.
     """
     parser = ToolParser(
-        # The command as typed; SCRIPT stays `pr-rebase` because trails and
+        # The command as typed; TRAIL_KEY stays `pr-rebase` because trails and
         # the usage ledger are keyed on it.
         prog="pr rebase",
         description="Rebase onto the branch's base with conflict detection and force-push",
@@ -273,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
     cli.locks.claim_declared("rebase", argv, ctx, command=" ".join([SCRIPT, *argv]))
 
     trail = Trail.start(
-        script=SCRIPT,
+        script=TRAIL_KEY,
         context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
         debug=args.debug,
     )

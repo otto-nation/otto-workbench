@@ -202,7 +202,7 @@ _SIGNAL_DOCS = {
         RebaseStatus.ALREADY_LANDED.value, "the branch has commits but no diff against its base — what a "
                           "squash merge leaves behind"),
     RefusalSignal.COMMITS_UPSTREAM: SignalDoc(
-        RebaseStatus.ALREADY_LANDED.value, "every commit already has an upstream equivalent by patch id"),
+        RebaseStatus.ALREADY_LANDED.value, "every commit already has an upstream equivalent by patch id (same diff, per `git patch-id`)"),
     RefusalSignal.NO_MERGE_BASE: SignalDoc(
         RebaseStatus.UNRELATED_HISTORY.value, "the branch and its base share no commit"),
     RefusalSignal.CONFLICTS_OVER_BUDGET: SignalDoc(

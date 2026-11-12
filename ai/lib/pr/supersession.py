@@ -118,8 +118,9 @@ _SYMBOL_DEF_RE = re.compile(
 
 
 # The exit code a command uses to refuse a branch it judges superseded, and the
-# flag that overrides the refusal. Both are the ones `pr rebase` already uses
-# for its already-landed refusal: the two checks answer different questions, but
+# flag that overrides the refusal. Only the exit code is shared with `pr rebase`'s
+# already-landed refusal; each command names its own override (`pr rebase` uses
+# `--force-landed`). The two checks answer different questions, but
 # a caller reading the exit code only needs to know "this branch was refused",
 # and one code for that beats two it has to tell apart.
 EXIT_SUPERSEDED = core.exit_codes.ExitCode.REFUSED

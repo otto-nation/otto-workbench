@@ -182,13 +182,13 @@ def render_help(contract: CommandContract) -> str:
             out.append(f"       {label}: " + " → ".join(step.lines))
     out.append("")
     out.append("Examples:")
-    width = max(len(x.command) for x in contract.examples)
+    width = max((len(x.command) for x in contract.examples), default=0)
     out += [f"  {x.command:<{width}}  # {x.does}" for x in contract.examples]
     if contract.json_output is not None:
         out += ["", "JSON on stdout:", f"  {contract.json_output.shape}"]
         for doc in contract.json_output.enums:
             out.append(f"  {doc.field}:")
-            vw = max(len(v.value) for v in doc.values)
+            vw = max((len(v.value) for v in doc.values), default=0)
             out += [f"    {v.value:<{vw}}  {v.meaning}" for v in doc.values]
     if contract.notes:
         out += ["", "Notes:"] + [f"  {n}" for n in contract.notes]

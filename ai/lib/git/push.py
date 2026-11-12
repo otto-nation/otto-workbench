@@ -685,7 +685,8 @@ def plan_line(wt_path: str | Path, *, sha: str, branch: str, remote: str,
     else:
         count = git.client.out("rev-list", "--count", sha, "--not",
                                f"--remotes={remote}", cwd=wt_path)
-    n = f"{count} commit{'' if count == '1' else 's'}" if count.isdigit() else "commit count unknown"
+    n = (f"{count} commit{'' if count == '1' else 's'}" if count.isdigit()
+         else "commit count unknown (rev-list could not count it; is the lease SHA known locally?)")
     verb = "force-push" if _forced(args) else "push"
     remote_at = git.client.abbrev(tracked) or "(none)"
     parts = [f"Will {verb} {branch} to {remote}: remote {remote_at} -> local "

@@ -302,7 +302,7 @@ def test_a_spent_budget_skips_the_baseline_and_stays_red():
     assert labelled is result
     run_at.assert_not_called()
     trail.info.assert_called_once()
-    assert trail.info.call_args.args[0] == "fix_baseline_skipped"
+    assert trail.info.call_args.args[0] == "fix_baseline_budget_spent"
 
 
 def test_run_checks_hands_the_baseline_the_time_left(tmp_path):

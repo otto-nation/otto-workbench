@@ -77,6 +77,8 @@ def _filled(ctx, **kw) -> ckpt_mod.CommentsFixCheckpoint:
     kw.setdefault("branch", ctx.branch)
     kw.setdefault("head_sha", ctx.head_sha)
     ckpt = ckpt_mod.CommentsFixCheckpoint(**kw)
+    # `load` discards a checkpoint at AGENT_RUNNING or later that has no
+    # `head_before`, so fill one in for those phases.
     if (
         ckpt.phase.reached(ckpt_mod.CheckpointPhase.AGENT_RUNNING)
         and not ckpt.engine.head_before
@@ -363,6 +365,7 @@ class TestSettleAndFinishFromPartial:
         ))
         path = pr.comments.artifacts_dir(tmp_path) / fix.batches.TRACKING_FILENAME
         fix.tracking.write(path, "threads", [FixItem(id="t1", file="a.py", line=1)])
+        assert "- [ ] needs a person — <why>" in path.read_text()
         text = path.read_text().replace(
             "- [ ] needs a person — <why>",
             "- [x] needs a person — wants a design call",

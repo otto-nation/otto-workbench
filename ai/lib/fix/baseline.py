@@ -71,7 +71,7 @@ def label_preexisting(
         core.log.warn(
             "Checks used all of fix.verify_timeout — base re-run skipped; "
             "verdict stays red")
-        tinfo(trail, "fix_baseline_skipped",
+        tinfo(trail, "fix_baseline_budget_spent",
               "checks used all of fix.verify_timeout; base re-run skipped; "
               "verdict stays red",
               data={"timeout_s": timeout_s, "status": str(result.status)})

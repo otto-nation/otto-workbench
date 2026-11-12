@@ -185,22 +185,19 @@ def _head_matches(
     live_full = _rev(wt_path, live)
     if not live_full:
         return False
-    if ckpt.phase.reached(CheckpointPhase.AGENT_RUNNING):
-        before = ckpt.engine.head_before
-        if live_full == _rev(wt_path, before):
-            return True
-        if ckpt.phase is CheckpointPhase.LANDED:
-            landed = ckpt.engine.commit_sha
-            if landed and live_full == _rev(wt_path, landed):
-                return True
-        if (
-            ckpt.phase is CheckpointPhase.CHECKED
-            and fix.pass_resume.head_is_one_past(wt_path, before)
-        ):
-            return True
-        return False
-    recorded = _rev(wt_path, ckpt.head_sha)
-    return bool(recorded) and live_full == recorded
+    if not ckpt.phase.reached(CheckpointPhase.AGENT_RUNNING):
+        recorded = _rev(wt_path, ckpt.head_sha)
+        return bool(recorded) and live_full == recorded
+    before = ckpt.engine.head_before
+    if live_full == _rev(wt_path, before):
+        return True
+    if ckpt.phase is CheckpointPhase.LANDED:
+        landed = ckpt.engine.commit_sha
+        return bool(landed) and live_full == _rev(wt_path, landed)
+    return (
+        ckpt.phase is CheckpointPhase.CHECKED
+        and fix.pass_resume.head_is_one_past(wt_path, before)
+    )
 
 
 def _rev(wt_path: Path, sha: str) -> str:

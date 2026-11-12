@@ -174,7 +174,8 @@ def test_terminal_phases_ignored(tmp_path):
         assert "no interrupted" in req.refusal
 
 
-def test_new_open_thread_at_triaged_auto_fresh(tmp_path):
+def test_new_open_thread_at_triaged_auto_fresh(tmp_path, capsys):
+    """Deliberate fresh start: new feedback before any work began."""
     repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
     ctx = _ctx(repo, tmp_path / "target")
     _write(
@@ -186,6 +187,7 @@ def test_new_open_thread_at_triaged_auto_fresh(tmp_path):
     )
     assert not decision.resumes
     assert not decision.refused
+    assert "starting a fresh fix pass" in capsys.readouterr().err
 
 
 def test_new_open_thread_at_agent_done_resumes(tmp_path):

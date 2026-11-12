@@ -163,6 +163,9 @@ class CommentFixAdapter(fix.engine.FixAdapter):
         if blobs is not None:
             files, shas = sorted(blobs), dict(blobs)
         else:
+            core.log.warn(
+                "Could not read the worktree to record the agent's edits — "
+                "keeping the checkpoint's last known file list")
             files, shas = list(engine.agent_files), dict(engine.file_shas)
         self.advance(
             ckpt.phase,
@@ -501,7 +504,9 @@ def addressed_verdicts(
     """The already-addressed verdicts after the verify gate has spoken.
 
     Empty when `verify` is None or the round has nothing already addressed,
-    matching `check_addressed`'s early return.
+    matching `check_addressed`'s early return. The outcomes returned have
+    already been mutated by `verify_claims`: they are post-gate verdicts, which
+    is why the checkpoint can store and replay them.
     """
     if verify is None or not round_.already_addressed:
         return []
@@ -633,6 +638,9 @@ def run_pass(
         if outcomes:
             round_ = apply_addressed(round_, outcomes, adapter)
         adapter.advance(CheckpointPhase.ADDRESSED, outcomes=list(outcomes))
+    # Empty `outcomes` here means the gate had nothing to say: the save above
+    # writes `outcomes` in the same step that advances to ADDRESSED, so a
+    # checkpoint past it never lacks them through normal writes. No validation.
     elif ckpt.outcomes:
         round_ = apply_addressed(round_, ckpt.outcomes, adapter)
 

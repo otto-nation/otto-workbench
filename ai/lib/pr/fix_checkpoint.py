@@ -395,11 +395,11 @@ def _fold_answers(
                 by_id[answer.id] = answer
         return list(by_id.values()) + anonymous
     if phase is CheckpointPhase.AGENT_RUNNING:
-        for group in (engine, answers):
-            for answer in group:
-                if not answer.id or answer.outcome is FixOutcome.DEFERRED:
-                    continue
-                by_id[answer.id] = answer
+        settled = (
+            a for a in (*engine, *answers)
+            if a.id and a.outcome is not FixOutcome.DEFERRED
+        )
+        by_id.update({a.id: a for a in settled})
     return list(by_id.values()) + anonymous
 
 

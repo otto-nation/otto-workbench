@@ -83,10 +83,10 @@ def build_parser() -> argparse.ArgumentParser:
     resume = parser.add_mutually_exclusive_group()
     resume.add_argument("--resume", action="store_true",
                         help="Require an interrupted --fix pass to resume "
-                             "(exit 1 if none). Needs --fix")
+                             "(exit 1 if none). Only with --fix")
     resume.add_argument("--no-resume", action="store_true",
                         help="Discard an interrupted --fix pass and start over. "
-                             "Needs --fix")
+                             "Only with --fix")
     parser.add_argument("--no-verify", action="store_true",
                         help="Skip the verify gate after --fix. The gate runs the "
                              "project's own checks against each claimed fix and "

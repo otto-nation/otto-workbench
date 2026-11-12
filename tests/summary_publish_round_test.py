@@ -452,7 +452,7 @@ class TestAnsweredSummariesArePostedAgain:
         posted = pr.comments.MarkerHistory(
             found=True, comments=(self._marker(),))
         with patch.object(pr.comments, "find_marker_comments",
-                          side_effect=[empty, posted]), \
+                          side_effect=[empty, posted]) as find, \
                 patch("pr.comments.post_issue_comment",
                       return_value="https://url") as post:
             pr.summary_publish.publish_summary(
@@ -461,6 +461,7 @@ class TestAnsweredSummariesArePostedAgain:
             pr.summary_publish.publish_summary(
                 "owner/repo", 1,
                 lambda carried_over, scope, chain: "body")
+        assert find.call_count == 2
         assert post.call_count == 2
         first, second = post.call_args_list
         first_existing = first.kwargs.get("existing")

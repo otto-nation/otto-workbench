@@ -116,6 +116,21 @@ class TestAReplyBatchIsIdempotent:
         post.assert_not_called()
         edit.assert_not_called()
 
+    def test_a_reviewer_reply_after_ours_is_not_a_standing_reply(self):
+        """Our matching body is not the last word, so the answer is posted."""
+        body = pr.published_record.stamp_reply("body-t1")
+        thread = ReportThread(
+            id="t1", my_login="me", comments=[
+                {"databaseId": 111, "author": {"login": "kgn"}, "body": "point"},
+                {"databaseId": 222, "author": {"login": "me"}, "body": body},
+                {"databaseId": 333, "author": {"login": "kgn"}, "body": "still no"},
+            ],
+        )
+        with patch.object(pr.comments, "post_thread_reply", return_value=True) as post, \
+                patch.object(pr.comments, "patch_thread_reply", return_value=True) as edit:
+            self._run([_entry("t1")], {"t1": thread})
+        assert post.call_count + edit.call_count == 1
+
     def test_a_different_body_still_edits_our_standing_reply(self):
         """Idempotence is same-body, not a freeze of the standing reply."""
         thread = ReportThread(

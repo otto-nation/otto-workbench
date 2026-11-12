@@ -932,7 +932,10 @@ def _run_agent(adapter: FixAdapter, start: _PassStart) -> _AgentRun:
 
 
 def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
-    """The pass after extra-worktree snapshots are in place."""
+    """The pass after extra-worktree snapshots are in place.
+
+    Skips every phase `start.resume_phase` has already reached.
+    """
     items = list(start.items)
     trail, verify = start.trail, start.verify
     phase = start.resume_phase

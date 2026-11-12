@@ -176,6 +176,31 @@ def read_report(ctx, pr_data: PRData) -> PRReport:
     return report
 
 
+def _resume_decision(args, ctx, toplevel, report, trail):
+    """The checkpoint `--fix` resumes from, and whether the resume was refused."""
+    decision = fix.comments_resume.decide(
+        ctx, toplevel,
+        fix.comments_resume.mode_for(
+            bool(getattr(args, "resume", False)),
+            bool(getattr(args, "no_resume", False)),
+        ),
+        report,
+    )
+    if decision.refused:
+        core.log.error(decision.refusal)
+        return None, True
+    if not decision.resumes:
+        return None, False
+    ckpt = decision.checkpoint
+    trail.decision(
+        "fix_resume",
+        f"resuming interrupted fix pass after {ckpt.phase.value}",
+        reason="a checkpoint for this PR, branch and HEAD is resumable",
+        data={"phase": ckpt.phase.value},
+    )
+    return ckpt, False
+
+
 def run_threads(trail, args, ctx) -> int:
     repo = ctx.repo
     pr_number = ctx.pr_number
@@ -295,25 +320,9 @@ def run_threads(trail, args, ctx) -> int:
     if args.triage:
         resume_ckpt = None
         if args.fix:
-            decision = fix.comments_resume.decide(
-                ctx, toplevel,
-                fix.comments_resume.mode_for(
-                    bool(getattr(args, "resume", False)),
-                    bool(getattr(args, "no_resume", False)),
-                ),
-                report,
-            )
-            if decision.refused:
-                core.log.error(decision.refusal)
+            resume_ckpt, refused = _resume_decision(args, ctx, toplevel, report, trail)
+            if refused:
                 return 1
-            if decision.resumes:
-                resume_ckpt = decision.checkpoint
-                trail.decision(
-                    "fix_resume",
-                    f"resuming interrupted fix pass after {resume_ckpt.phase.value}",
-                    reason="a checkpoint for this PR, branch and HEAD is resumable",
-                    data={"phase": resume_ckpt.phase.value},
-                )
         triage_mode = "fix" if args.fix else "triage"
         trail.decision("triage_mode", f"running {triage_mode}",
                        reason="--fix flag" if args.fix else "--triage flag",

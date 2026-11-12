@@ -1143,6 +1143,13 @@ HEAD past the review that produced it.
 
 `change_set` is what "did not change" means for all of them.
 
+### review/currency.py
+
+Whether a stored self-review covers a commit.
+
+`self_review_verdict` is the one owner of that answer: batch planning and
+`pr create` both ask it, so they cannot disagree about currency.
+
 ### review/document.py
 
 The header vocabulary of a review, and the read view of a stored one.
@@ -2539,16 +2546,26 @@ Open a pull request for the current branch — what ``pr create`` does.
 
 Ports the go-task create flow that lived in ``lib/ai/pr.sh``: preflight
 (an already-open PR, default-branch and base refusals, no commits ahead of
-the base (D7), the ``--closes`` contract), the publishing token, the nesting
-gate, the branch push, content generation and ``gh pr create``.
-``--dry-run`` stops after the content is generated and prints it; it runs no
-gate, pushes nothing and never reaches ``gh``.
+the base (D7), the ``--closes`` contract), the self-review gate, the
+publishing token, the nesting gate, the branch push, content generation and
+``gh pr create``. ``--dry-run`` still runs preflight and the self-review
+gate (advisory when HEAD is uncovered); it then generates content and
+prints it. It runs no nesting gate, pushes nothing and never reaches
+``gh``. ``--no-verify`` skips the pre-push hook, not the self-review gate.
 
-The order is the contract. Every refusal that costs nothing comes before the
-nesting gate, the gate comes before anything leaves the machine, and the push
-comes before the AI call so a refused push never pays for one. ``--base`` is
-always passed to ``gh`` (D5): the base the gate and the content measured is
-the base the PR targets.
+The gate compares the worktree HEAD to the self-review's ``covered_sha``,
+else its ``head_sha`` (``review.document.covers``), in the review file
+``review.paths.self_review_file_path`` names. ``--skip-review "<reason>"``
+proceeds anyway; the reason must be non-empty and is recorded on the trail
+as the ``self_review_gate`` decision (``otto-log query --script pr
+--event-type decision``).
+
+The order is the contract. Every refusal that costs nothing comes first
+(preflight, then the self-review gate), the nesting gate comes before
+anything leaves the machine, and the push comes before the AI call so a
+refused push never pays for one. ``--base`` is always passed to ``gh``
+(D5): the base the gate and the content measured is the base the PR
+targets.
 
 Progress and ✗ lines go to stderr, like ``pr.branch_sync``'s; stdout carries
 only the answer — the PR URL, or the dry-run preview — so a caller can capture
@@ -2653,6 +2670,14 @@ for each other.
 What is not here: what a row's identity *is* (`summary_model.row_key_from_cells`)
 and the reading of a comment written before markers existed
 (`summary_scope.published_rows`, `thread_replies.is_generated_reply`).
+
+### pr/self_review_gate.py
+
+The verdict type and callable contract for whether a self-review covers HEAD.
+
+`SelfReviewVerdict` is what a gate returns; `SelfReviewGate` is a callable
+from a HEAD sha to that verdict. `pr create` takes the callable so this
+layer never reads the review pipeline.
 
 ### pr/settlement.py
 
@@ -8503,6 +8528,10 @@ string. It is also `pr`'s parser factory for create, which is what answers
 a usage error (exit 2, D11), and the orchestration only ever sees the body.
 The target comes from `pr`'s global `--branch`/`--repo-dir`, already resolved
 into the context — create declares no positional and no target flag.
+`--skip-review` needs a non-empty reason; a blank value is a usage error
+and never reaches `run_create`. The self-review gate is built here from
+the resolved repo and branch so `pr.create` never imports the review
+pipeline.
 
 ### cli/pr_describe.py
 

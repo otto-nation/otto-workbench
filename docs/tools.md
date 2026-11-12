@@ -841,6 +841,7 @@ is in [AI Libraries](ai-libraries.md).
 | `--body-file` `<path>` | Read the body from this file instead of generating one. Not with `--body`. |
 | `--issue` `<id>` | Issue to give the description context about; closes nothing. |
 | `--closes` `<id>` | Issue to close on merge (repeatable). |
+| `--skip-review` `<reason>` | Skip the self-review gate; REASON is recorded on the trail. |
 
 **`pr status`** — Show CI, review, and comment status dashboard
 

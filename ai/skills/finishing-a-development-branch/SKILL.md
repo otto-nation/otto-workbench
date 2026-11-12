@@ -102,7 +102,9 @@ pass did, and work through whatever it left open as your human partner directs
 `git rev-parse HEAD` against the review's `covered_sha`, else its `head_sha`;
 if it is neither, re-run (`self-review.md` § The Review Covers One Commit).
 
-Skip only if your human partner explicitly says to.
+Skip only if your human partner explicitly says to. Then pass their words to
+`pr create --draft --skip-review "<the user's words>"` in step 4; `pr create`
+refuses an unreviewed HEAD otherwise.
 
 ## Step 4: Open the PR
 
@@ -176,6 +178,7 @@ and the push owes `pr review --self --fix --push`
 | "I'll open it ready, it's finished" | `--draft`. Ready is the reviewer's signal, not yours. |
 | "`gh pr create` is right here" | `pr create` applies the template, issue linking, and assignee rules. |
 | "The review passed earlier" | It covered one SHA and, at most, the fix commit it qualified. If HEAD moved past both — a hand commit included — re-run. |
+| "`pr create` refused: no self-review covers HEAD" | Run `pr review --self --fix`; never `--skip-review` on your own. |
 | "I'll review first and fix what it finds myself" | That is the churn `--fix` exists to remove. Run it with the flag. |
 | "I'll push the last fix quietly by hand" | A branch with an open PR is shared. Say what changed. |
 | "They said drop it, so I'll delete the branch" | Show what would be lost and get the word `discard` back. It exists nowhere else. |

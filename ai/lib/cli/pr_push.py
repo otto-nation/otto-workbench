@@ -1,16 +1,18 @@
-"""Push HEAD to origin with a lease on the remote head the caller expects.
+"""Push HEAD to origin with a lease on the remote tip the caller planned from.
 
-Both `pr push` and `pr rebase --push-only` are lease-guarded pushes of HEAD
-through `rebase.commands.push_head` — a rewrite satisfies the lease the same
-way a fast-forward does, so `pr push` is not "not a force push". Use
-`pr rebase --push-only` after a rebase; use `pr push` for anything else. It
-records where the branch stands (`PushDomain`) and records no rebase, so
-`pr status` does not describe a push as a rewrite.
+`--expect` is that tip. A fast-forward from any ancestor of it pushes under a
+lease on what origin holds now. A moved origin is refused with no force advice.
+Both `pr push` and `pr rebase --push-only` are lease-guarded pushes of HEAD — a
+rewrite satisfies the lease the same way a fast-forward does, so `pr push` is
+not "not a force push". Use `pr rebase --push-only` after a rebase; use
+`pr push` for anything else. It records where the branch stands (`PushDomain`)
+and records no rebase, so `pr status` does not describe a push as a rewrite.
 
 Exit codes:
   0  Pushed, and the remote holds HEAD
   1  Refused, lost, unverified, or a rebase is still in progress
   2  Usage error
+  75 Another pr run holds the lock (EX_TEMPFAIL — retry once it finishes)
 
 Usage:
   pr push --expect <sha>               # push HEAD if origin still holds <sha>
@@ -43,7 +45,9 @@ def build_parser() -> ToolParser:
     parser.add_argument("--pr", metavar="NUM|URL",
                         help="PR number or URL (injected by pr dispatcher)")
     parser.add_argument("--expect", metavar="SHA", required=True,
-                        help="Push only if origin's branch is still at SHA")
+                        help="The remote tip you planned from. A fast-forward from "
+                             "any ancestor of it pushes under a lease on what origin "
+                             "holds. A moved origin is refused with no force advice.")
     parser.add_argument("--no-verify", action="store_true",
                         help="Skip the pre-push hook. For a hook failure already "
                              "understood — a flake, or one the branch did not cause")

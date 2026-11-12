@@ -29,6 +29,7 @@ import dataclasses
 import functools
 from pathlib import Path
 
+import core.log
 import core.publishing
 from core.phases import Phase
 from core.trail import Trail
@@ -36,6 +37,7 @@ import fix.comment_checklist
 import fix.comment_replies
 import fix.engine
 import fix.gate
+import fix.resume
 import fix.suite
 import fix.types
 import fix.verify
@@ -86,6 +88,7 @@ class CommentFixAdapter(fix.engine.FixAdapter):
     # it the gate is sized and prompted as the fix pass, which hands a checking
     # agent a template telling it to edit source.
     verify_phase = Phase.COMMENTS_VERIFY
+    resumes_interrupted = True
     action = "applying review comment suggestions"
     item_noun = "thread"
 
@@ -315,12 +318,18 @@ class CommentFixAdapter(fix.engine.FixAdapter):
         """The commit this round's outcomes were measured against.
 
         HEAD after the pass, not `ctx.head_sha`: the fix pass commits, so the
-        snapshot has to name the commit it made. A round that ran no agent
-        committed nothing, so HEAD has not moved and the context already holds
-        the same answer without the subprocess.
+        snapshot has to name the commit it made. Always a short SHA, so a later
+        comparison against `head_sha(short=True)` cannot read a full context SHA
+        as a moved HEAD. A round that ran no agent committed nothing, so the
+        context already holds the answer — abbreviated through git so the form
+        matches a round that did run.
         """
         if not self.ran:
-            return self.ctx.head_sha
+            return (
+                git.client.out(
+                    "rev-parse", "--short", self.ctx.head_sha, cwd=self.workdir,
+                ) or self.ctx.head_sha
+            )
         return git.client.head_sha(short=True, cwd=self.workdir)
 
     def _replies_pending(self, tracking: TrackingResult) -> bool:
@@ -528,5 +537,13 @@ def run_pass(
         # write, so the tail is called here with the run that did not happen.
         # One tail either way: the second copy this replaces had drifted from
         # the first in three ways before anyone noticed.
+        leftover = fix.resume.pending(adapter.artifacts)
+        if leftover and leftover.leftovers:
+            listed = ", ".join(sorted(leftover.leftovers))
+            core.log.warn(
+                f"{len(leftover.leftovers)} edit(s) an interrupted pass left "
+                "uncommitted will not be committed this round — nothing in "
+                f"this round to fix: {listed}"
+            )
         adapter.record(fix.engine.FixRun())
     return adapter.result

@@ -179,7 +179,7 @@ def reconciled_commit(
     if record.commit_sha or not wt_path or not record.head_sha:
         return CommitPushResult(record.commit_sha or None, status, "")
     current = git.client.head_sha(cwd=wt_path, short=True)
-    if not current or current == record.head_sha:
+    if not current or git.client.same_commit(current, record.head_sha, cwd=wt_path):
         return CommitPushResult(None, status, "")
     if not git.push.holds(wt_path, current):
         return CommitPushResult(None, CommitStatus.RECONCILED, "")

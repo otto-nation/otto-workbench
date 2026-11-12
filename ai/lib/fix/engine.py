@@ -58,6 +58,7 @@ import fix.dirty_backup
 import fix.head_guard
 import fix.leftovers
 import fix.regression
+import fix.resume
 import fix.scope
 import fix.suite
 import fix.tracking
@@ -276,6 +277,9 @@ class FixAdapter(ABC):
     # to edit source — which the gate's own rules forbid. A domain that passes
     # no `verify=` never reaches the gate and leaves this alone.
     verify_phase: Phase | None = None
+    # Comments resumes leftovers an interrupted pass left uncommitted; review
+    # keeps its stash instead (`review.convergence.set_aside_leftovers`).
+    resumes_interrupted: bool = False
 
     @property
     def tracking_path(self) -> Path:
@@ -790,7 +794,7 @@ def _settle(
     deferred = [o for o in live if o.outcome is FixOutcome.DEFERRED]
     settled = [o for o in live if o.outcome is not FixOutcome.DEFERRED]
     worst = max((b.exit_code for b in batches), default=0)
-    scopes = _scopes(batches)
+    scopes = {o.id: b.scope for b in batches for o in b.outcomes}
 
     again = [by_id[o.id] for o in deferred if o.id in by_id]
     if not again:
@@ -809,7 +813,8 @@ def _settle(
     return _Settled(
         stalled + settled + unknown + [o for b in retried for o in b.outcomes],
         max(worst, max((b.exit_code for b in retried), default=0)),
-        _merge_scopes(scopes, _scopes(retried)),
+        fix.scope.merge_by_id(
+            scopes, {o.id: b.scope for b in retried for o in b.outcomes}),
         stop=_first_stop(retried),
     )
 
@@ -823,53 +828,6 @@ def _first_stop(batches: list[_Batch]) -> Diagnosis | None:
     pass that lost items as complete.
     """
     return next((b.stop for b in batches if b.stop is not None), None)
-
-
-def _scopes(batches: list[_Batch]) -> dict[str, fix.scope.BatchScope]:
-    """Each answered id mapped to the observation of the run that answered it."""
-    return {o.id: b.scope for b in batches for o in b.outcomes}
-
-
-def _merge_scopes(
-    first: dict[str, fix.scope.BatchScope],
-    retry: dict[str, fix.scope.BatchScope],
-) -> dict[str, fix.scope.BatchScope]:
-    """One observation per id, accumulated across the runs that answered it.
-
-    The union, not the later reading. A retried item's outcomes supersede — the
-    retry re-decided them — but its *observations* must not, because the
-    question reconciliation asks spans the whole pass: was this item's file
-    changed at any point while the pass was recording that no work was done?
-
-    Superseding loses exactly the case this exists for. An item edited in the
-    first batch and deferred there, then deferred again by a retry that touched
-    nothing, has an empty retry scope — attribution is by path and the file was
-    already dirty when the retry began, so the retry cannot see the edit that
-    the first batch made. Keeping only the retry's reading would report that
-    item as an honest deferral and commit its edit anyway, which is the original
-    defect surviving in the one path most likely to produce it.
-
-    The union cannot manufacture a contradiction against a retry that worked: an
-    item the retry actually fixed comes back FIXED, and a fixed item is not a
-    claim that no work was done, so no amount of accumulated observation
-    contradicts it.
-
-    An unknown reading on either side makes the union unknown. Half an
-    observation is not a smaller observation — the missing half is where the
-    file would have been.
-    """
-    merged = dict(first)
-    for item_id, scope in retry.items():
-        prior = merged.get(item_id)
-        if prior is None:
-            merged[item_id] = scope
-            continue
-        merged[item_id] = (
-            fix.scope.UNKNOWN_SCOPE
-            if not (prior.known and scope.known)
-            else fix.scope.BatchScope(files=prior.files | scope.files)
-        )
-    return merged
 
 
 def _verify_suite(
@@ -951,11 +909,13 @@ def _run_checks(
         listed = Path(scratch) / "paths"
         listed.write_text("".join(f"{p}\n" for p in sorted(paths)))
         command, timeout_s = config.fix.verify_command, config.fix.verify_timeout
+        interval = config.fix.verify_progress_interval
         result = fix.suite.run(adapter.workdir, command, timeout_s, trail,
-                               base=base, paths_file=str(listed))
+                               base=base, paths_file=str(listed),
+                               progress_s=interval)
         return fix.baseline.label_preexisting(
             adapter.workdir, result, command, timeout_s, trail,
-            ref=baseline_ref, paths_file=str(listed))
+            ref=baseline_ref, paths_file=str(listed), progress_s=interval)
 
 
 def _anchors(
@@ -1034,6 +994,10 @@ def run(
             f"could not read the state of {adapter.workdir} — skipping fix pass"
         )
         return FixRun()
+    if adapter.resumes_interrupted:
+        dirty_before = fix.resume.adopt(
+            adapter.artifacts, adapter.workdir, dirty_before,
+            head_now=head_before, trail=trail)
     foreign = core.session_lock.held_by_others(adapter.workdir)
     if foreign and not _lock_override():
         # Refused before the agent runs. This is the observable the dirty-tree
@@ -1238,7 +1202,7 @@ def _run_contained_pass(
         adapter.workdir, pre_pass, dirty_before,
         exclude=fix.leftovers.artifacts_prefix(adapter.workdir, adapter.artifacts),
     ), landed, trail, backup_dir=backup_dir,
-                        backed_up=backed_up)
+                        backed_up=backed_up, dirty_before=dirty_before)
 
     exit_code = settled.exit_code
     if landed.status is git.land.CommitStatus.COMMIT_FAILED:
@@ -1313,5 +1277,8 @@ def _interrupted(
               data={"paths": paths, "head_before": head_before,
                     "workdir": str(adapter.workdir)})
         adapter.interrupted(leftovers, head_before)
+        if adapter.resumes_interrupted:
+            fix.resume.record(
+                adapter.artifacts, adapter.workdir, head_before, leftovers)
     except Exception as exc:  # noqa: BLE001 - recording must not replace the stop
         core.log.warn(f"could not record the interrupted fix pass: {exc}")

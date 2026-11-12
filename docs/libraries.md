@@ -203,6 +203,7 @@ Every key any of them accepts:
 | `rebase.squash` | `auto`, `always`, `never` | `auto` |
 | `fix.verify_command` | string | — |
 | `fix.verify_timeout` | integer | `900` |
+| `fix.verify_progress_interval` | integer | `60` |
 | `wiki.dir` | string | `wiki` |
 | `wiki.link` | boolean | `false` |
 | `wiki.root` | string | — |
@@ -217,6 +218,8 @@ Every key any of them accepts:
 `context.compact_at` may only be written at global scope: both harnesses keep it in machine-wide settings, and Pi takes no per-run override, so a repo's value would never reach Pi.
 
 `fix.verify_command` may only be written at container, project scope: it names a command inside one repo's checkout, which a machine-wide value would point every other repo at.
+
+`fix.verify_progress_interval` may only be written at container, project scope: it paces heartbeats for this repo's own checks, beside the timeout it reports against.
 
 `fix.verify_timeout` may only be written at container, project scope: it bounds this repo's own checks, and the budget that is generous for one repo's selected tests cuts another's off mid-run.
 

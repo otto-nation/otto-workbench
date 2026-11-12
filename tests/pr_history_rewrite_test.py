@@ -25,7 +25,8 @@ import pr.thread_replies
 import pr.history_rewrite
 import pr.summary_publish
 import pr.settlement
-from pr.fix import FixOutcome, ItemOutcome
+from pr.attribution import CommitClaim, CommitPushResult
+from pr.fix import FixOutcome, FixRecord, ItemOutcome
 from pr.state import PRIdentity, PRState
 from pr.thread_models import PRReport
 import review.closeout
@@ -377,3 +378,14 @@ class TestFollowHistoryRewrite:
         assert "carries that change" not in from_record
         assert "record does not say" in from_record
         assert "carries that change" in from_content
+
+
+def test_reconciled_commit_a_full_snapshot_sha_is_not_a_moved_head(tmp_path):
+    """HEAD abbreviated vs a full recorded SHA is the same commit, not a hand landing."""
+    work = _feature_off_origin(tmp_path)
+    full = git.client.head_sha(cwd=work)
+    result = pr.history_rewrite.reconciled_commit(
+        FixRecord(head_sha=full), CommitStatus.NO_CHANGES, work,
+    )
+    assert result == CommitPushResult(None, CommitStatus.NO_CHANGES, "")
+    assert result.claim is not CommitClaim.UNDETERMINED

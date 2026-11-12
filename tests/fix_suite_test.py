@@ -216,6 +216,23 @@ def test_a_command_that_does_not_exist_is_an_error_not_a_red_suite(tmp_path):
     assert result.ran is False
 
 
+def test_a_long_run_emits_progress_and_still_goes_green(tmp_path, capsys):
+    cmd = _script(tmp_path, "slow_ok", "sleep 2")
+
+    result = fix.suite.run(tmp_path, cmd, 10, progress_s=1)
+
+    assert result.status is fix.suite.SuiteStatus.GREEN
+    assert "checks still running" in capsys.readouterr().err
+
+
+def test_progress_does_not_stop_a_timeout_from_timing_out(tmp_path):
+    cmd = _script(tmp_path, "slow_fail", "sleep 5")
+
+    result = fix.suite.run(tmp_path, cmd, 1, progress_s=1)
+
+    assert result.status is fix.suite.SuiteStatus.TIMED_OUT
+
+
 def test_a_timeout_establishes_nothing_either_way(tmp_path):
     cmd = _script(tmp_path, "slow", "sleep 5")
 

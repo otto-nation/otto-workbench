@@ -60,6 +60,10 @@ class Verdict:
 
     ok: bool | None
     detail: str = ""
+    # False when the gate produced an answer it could not write down (a refused
+    # or malformed checklist edit). Those are not falsifications: demoting on
+    # them would punish a fix for the gate's own write failing.
+    recorded: bool = True
 
 
 class GateAdapter(Protocol):
@@ -432,6 +436,7 @@ def verify_claims(
 
     falsified = 0
     promoted = 0
+    unrecorded = 0
     for outcome in claimed:
         verdict = verdicts.get(outcome.id)
         if outcome.id in contradicted:
@@ -444,6 +449,10 @@ def verify_claims(
             outcome.verified = False
             continue
         outcome.verify_detail = verdict.detail
+        if not verdict.recorded:
+            outcome.verified = False
+            unrecorded += 1
+            continue
         if verdict.ok is True:
             outcome.verified = True
             continue
@@ -460,6 +469,11 @@ def verify_claims(
         outcome.verified = False
         falsified += 1
 
+    if unrecorded:
+        core.log.warn(
+            f"Verify gate: could not record answers for {unrecorded} of "
+            f"{len(claimed)} item(s) — left as claimed, unverified (not demoted)"
+        )
     if falsified:
         core.log.warn(
             f"Verify gate: {falsified} of {len(claimed)} claimed "
@@ -568,8 +582,12 @@ def _resolve_contradiction(
     nothing happened here — over a commit that carries the edit. The outcome
     stands as recorded; only the sentence published about it stops overclaiming.
     """
-    if verdict is None:
-        outcome.reason = outcome.reason or _UNSETTLED_CONTRADICTION
+    if verdict is None or not verdict.recorded:
+        if verdict is not None:
+            outcome.verify_detail = verdict.detail
+        outcome.reason = outcome.reason or (
+            (verdict.detail if verdict else "") or _UNSETTLED_CONTRADICTION
+        )
         return 0
     outcome.verify_detail = verdict.detail
     if verdict.ok is None:

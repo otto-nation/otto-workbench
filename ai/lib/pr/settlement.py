@@ -19,20 +19,22 @@ decides what happened and records it; the surfaces read the record.
 
 `--settle <id>` is how the operator tells the CLI what they did by hand. It is
 repeatable, and `--as` picks which of the three terminal outcomes to record —
-`fixed` (the default), `dismissed`, or `already_addressed`. From there the
-thread is indistinguishable from one the pass settled: `--finish` replies on
-it, resolves it, and gives it a summary row attributed to the commit that
-carries the change. `--as dismissed` requires `--reason <text>`, which becomes
-the body of the reply; the other two outcomes render no reason and refuse the
-flag rather than swallowing it. `--as fixed` cites a commit only when `--commit
-<sha>` names one the remote holds — a link to a commit still sitting on the
-machine 404s for the reviewer it was written for, and line history is not
-inferred. A `--commit` the remote does not hold is an error rather than a
-dropped citation. Without `--commit`, the row reads `Addressed outside the fix
-pass` and the run says so. Naming an id no fix pass recorded is an error
-listing the threads that are waiting on a person. Recording the outcome a
-thread already carries is a no-op that says so; recording a different terminal
-outcome replaces it.
+`fixed` (the default), `dismissed`, or `already_addressed`. From there the thread
+is indistinguishable from one the pass settled: `--finish` replies on it,
+resolves it, and gives it a summary row attributed to the commit that carries
+the change. `--as dismissed` requires `--reason <text>`, which becomes the body
+of the reply; the other two outcomes render no reason and refuse the flag rather
+than swallowing it. `--as fixed` finds the commit from the branch history of the
+line the thread is anchored to, and cites it only once the remote has it — a
+link to a commit still sitting on the machine 404s for the reviewer it was
+written for. Pass `--commit <sha>` when the fix landed somewhere else; a
+`--commit` the remote does not hold is an error rather than a dropped citation.
+When neither resolves, the row reads `Addressed outside the fix pass` and the
+run says so. Naming an id no fix pass recorded is an error listing the threads
+that are waiting on a person, unless that id is still open on the PR — then
+it is recorded from the PR rather than refused. Recording the outcome a
+thread already carries is a no-op that says so; recording a different
+terminal outcome replaces it.
 Recording is its own step: `--settle` publishes nothing and refuses `--post` and
 every other phase flag alongside it (the argparse layer in `cli.review_threads`).
 """
@@ -53,7 +55,7 @@ every other phase flag alongside it (the argparse layer in `cli.review_threads`)
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Mapping
+from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -338,6 +340,23 @@ def settled_locations(
     return located
 
 
+def _thread_outcome(
+    thread: ReportThread, outcome: FixOutcome, settled_by: SettledBy, reason: str,
+) -> ItemOutcome:
+    """A snapshot row taken from a PR thread the fix pass never recorded."""
+    root = thread.comments[0] if thread.comments else {}
+    return ItemOutcome(
+        id=thread.id,
+        outcome=outcome,
+        decided_at=decision_stamp(),
+        settled_by=settled_by,
+        reason=reason,
+        summary=core.text.summarize_comment_body(str(root.get("body", ""))),
+        file=thread.file,
+        line=thread.line or 0,
+    )
+
+
 def adopt_settled_threads(
     state: pr.state.PRState, threads_by_id: dict[str, ReportThread],
 ) -> int:
@@ -378,16 +397,8 @@ def adopt_settled_threads(
         settlement = settlement_for(thread)
         if settlement is None:
             continue
-        root = thread.comments[0] if thread.comments else {}
-        state.fix.fix.items.append(ItemOutcome(
-            id=thread.id,
-            outcome=settlement,
-            decided_at=decision_stamp(),
-            settled_by=SettledBy.RECONCILIATION,
-            reason=RECONCILED_REASON,
-            summary=core.text.summarize_comment_body(str(root.get("body", ""))),
-            file=thread.file,
-            line=thread.line or 0,
+        state.fix.fix.items.append(_thread_outcome(
+            thread, settlement, SettledBy.RECONCILIATION, RECONCILED_REASON,
         ))
         # Only when GitHub named one — see `fix_state.reviewers_for`. An absent
         # key misses on lookup rather than asserting an anonymous reviewer.
@@ -656,7 +667,19 @@ def format_item_line(item: ItemOutcome) -> str:
     return "  ".join(parts)
 
 
-def settle_targets(record: FixRecord, targets: list[str]) -> list[ItemOutcome] | None:
+@dataclass(frozen=True)
+class SettleTargets:
+    """The snapshot rows `--settle` will write, plus ids taken from the PR."""
+
+    picked: list[ItemOutcome]
+    adopted: frozenset[str] = frozenset()
+
+
+def settle_targets(
+    record: FixRecord,
+    targets: list[str],
+    threads: Mapping[str, ReportThread] | None = None,
+) -> SettleTargets | None:
     """The recorded outcomes `--settle` named, or None once it has said what is missing.
 
     Every id is checked before any is written. A run that settled the first two
@@ -667,24 +690,41 @@ def settle_targets(record: FixRecord, targets: list[str]) -> list[ItemOutcome] |
     An unknown id is an error rather than a silent skip, for the reason
     `review.deferred_issue.validate_track` gives: "settled nothing" and "settled
     the thread you meant" are indistinguishable from the outside, so a typo
-    would read as agreement.
+    would read as agreement. An id missing from the snapshot but present in
+    `threads` is adopted instead: a new row is appended, then treated like any
+    other named target.
     """
     by_id = {o.id: o for o in record.items if o.id}
     unknown = sorted({t for t in targets if t not in by_id})
-    if not unknown:
-        return [by_id[t] for t in targets]
-    core.log.error(f"--settle named threads the fix pass never recorded: {unknown}")
-    settleable = sorted(
-        (o for o in record.items if o.outcome in UNSETTLED_OUTCOMES),
-        key=lambda o: o.id,
-    )
-    if not settleable:
-        core.log.info("No thread in the fix snapshot is waiting on a person.")
+    thread_map = threads or {}
+    adoptable = [tid for tid in unknown if tid in thread_map]
+    leftover = [tid for tid in unknown if tid not in set(adoptable)]
+    if leftover:
+        core.log.error(
+            f"--settle named threads the fix pass never recorded: {leftover}"
+        )
+        settleable = sorted(
+            (o for o in record.items if o.outcome in UNSETTLED_OUTCOMES),
+            key=lambda o: o.id,
+        )
+        if not settleable:
+            core.log.info("No thread in the fix snapshot is waiting on a person.")
+            return None
+        core.log.info("Threads a person still owes an answer:")
+        for item in settleable:
+            core.log.info(format_item_line(item))
         return None
-    core.log.info("Threads a person still owes an answer:")
-    for item in settleable:
-        core.log.info(format_item_line(item))
-    return None
+    adopted: set[str] = set()
+    for tid in adoptable:
+        record.items.append(_thread_outcome(
+            thread_map[tid], FixOutcome.NEEDS_HUMAN, SettledBy.OPERATOR, "",
+        ))
+        by_id[tid] = record.items[-1]
+        adopted.add(tid)
+    return SettleTargets(
+        picked=[by_id[t] for t in targets],
+        adopted=frozenset(adopted),
+    )
 
 
 def record_settlement(
@@ -787,6 +827,8 @@ def run_settle(
     as_name: str,
     reason: str,
     commit: str,
+    *,
+    fetch_threads: Callable[[], Mapping[str, ReportThread]] | None = None,
 ) -> int:
     """Record that the operator settled these threads by hand.
 
@@ -799,6 +841,9 @@ def run_settle(
     a command that recorded *and* published in one step would leave the operator
     no way to read the closeout back before it left the machine. What this leaves
     behind is a snapshot `--finish` treats like any other settled thread.
+
+    `fetch_threads` is lazy: it is only called when an id is missing from the
+    snapshot. A thread it returns can be recorded even when no fix pass ran.
     """
     kind = FixOutcome(as_name)
     flag_error = settle_flag_error(kind, reason, commit)
@@ -808,28 +853,65 @@ def run_settle(
 
     wt_path = ctx.require_worktree()
     state = pr.state.load_state(ctx.target_dir)
+    known = {
+        o.id for o in (state.fix.fix.items if state is not None else []) if o.id
+    }
+    missing = [tid for tid in targets if tid not in known]
+    threads: Mapping[str, ReportThread] | None = None
+    if missing and fetch_threads is not None:
+        threads = fetch_threads()
+
     if state is None or not state.fix.fix.items:
-        core.log.error(
-            "No fix snapshot to settle against — run `pr comments --fix` first"
-        )
+        found = bool(threads) and any(tid in threads for tid in targets)
+        if found:
+            state = pr.state.load_or_init(
+                target_dir=ctx.target_dir,
+                repo=ctx.repo,
+                branch=ctx.branch,
+                pr_number=ctx.pr_number,
+                head_sha=ctx.head_sha,
+                worktree_root=str(wt_path),
+            )
+        elif fetch_threads is None:
+            core.log.error(
+                "No fix snapshot to settle against — run "
+                "`pr comments --fix` first"
+            )
+            return 1
+        else:
+            # Nothing is recorded here: the throwaway record exists only so
+            # settle_targets reports the targets it never recorded.
+            settle_targets(FixRecord(), targets, threads=threads or {})
+            return 1
+
+    result = settle_targets(state.fix.fix, targets, threads=threads)
+    if result is None:
         return 1
 
-    picked = settle_targets(state.fix.fix, targets)
-    if picked is None:
-        return 1
-
-    shas = settled_commits(wt_path, picked, kind, commit)
+    shas = settled_commits(wt_path, result.picked, kind, commit)
     if shas is None:
         return 1
 
     settled = 0
-    for outcome, sha in zip(picked, shas):
+    for outcome, sha in zip(result.picked, shas):
         was = outcome.outcome
         if not record_settlement(outcome, kind, reason, sha):
-            core.log.info(f"{outcome.id}: already recorded as {kind.value} — nothing to do")
+            core.log.info(
+                f"{outcome.id}: already recorded as {kind.value} — nothing to do"
+            )
             continue
         settled += 1
-        report_settlement(outcome, kind, was, sha)
+        if outcome.id not in result.adopted:
+            report_settlement(outcome, kind, was, sha)
+            continue
+        core.log.info(
+            f"{outcome.id}: recorded as {kind.value} "
+            f"(not in the fix snapshot — taken from the PR)"
+        )
+        thread = (threads or {}).get(outcome.id)
+        reviewer = thread.reviewer if thread else ""
+        if reviewer:
+            state.fix.reviewers[outcome.id] = reviewer
 
     if not settled:
         return 0

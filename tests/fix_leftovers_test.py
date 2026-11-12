@@ -181,6 +181,22 @@ class TestReportBackup:
         assert "backup" not in trail.warn.call_args.kwargs["data"]
 
 
+class TestFailedCommitNamesPreexistingDirt:
+    def test_a_failed_commit_names_the_pre_existing_dirt(self, tmp_path, capsys):
+        found = fix.leftovers.Leftovers(paths=(), already_dirty=())
+        landed = git.land.LandResult(
+            git.land.CommitStatus.COMMIT_FAILED, error="hook refused")
+
+        fix.leftovers.report(
+            tmp_path, found, landed, None, dirty_before={"a.py"},
+        )
+
+        err = capsys.readouterr().err
+        assert "already held uncommitted edits" in err
+        assert "a.py" in err
+        assert "interrupted pass" in err
+
+
 class TestReportSkippedBackup:
     def test_names_only_copied_files(self, tmp_path, capsys):
         found = fix.leftovers.Leftovers(

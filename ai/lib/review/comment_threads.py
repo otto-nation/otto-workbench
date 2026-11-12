@@ -183,6 +183,15 @@ def run_threads(trail, args, ctx) -> int:
             "unreachable right now, so their last-known records are being kept "
             "rather than treated as resolved")
 
+    # Before resolve: a `--finish --post` that still owes a push must not write
+    # resolutions to GitHub and then claim nothing was published.
+    if args.finish and fetched.complete and core.publishing.enabled():
+        block = review.closeout.unpublished_commit(
+            ctx, trail, no_push_verify=args.no_push_verify)
+        if block:
+            core.log.error(block.message)
+            return 1
+
     # Sync
     threads = pr.comments.sync_threads(fetched, prior_threads, my_login)
     synced_resolved = sum(1 for t in threads.values() if t.state == ThreadState.RESOLVED)
@@ -336,6 +345,8 @@ def run_threads(trail, args, ctx) -> int:
                 no_push_verify=args.no_push_verify):
             return 1
 
-    json.dump(output, sys.stdout, indent=2)
-    print()
+    bare_finish = args.finish and not args.triage
+    if not bare_finish:
+        json.dump(output, sys.stdout, indent=2)
+        print()
     return rc

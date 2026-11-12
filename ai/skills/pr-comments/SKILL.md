@@ -137,7 +137,8 @@ turns a wrong guess into a retraction under your name.
 
 A green suite is not automatically a verdict: where the tests covering a path
 mock the thing that was fixed, the gate is told to report `not verified` rather
-than pass it.
+than pass it. A gate that could not record its answers (a refused or malformed
+checklist edit) leaves the item as claimed, unverified — it does not demote.
 
 `--no-verify` skips the gate. Everything then publishes as unverified, which is
 honest but weaker — reach for it when the gate cannot run at all, not to save a
@@ -153,7 +154,10 @@ batch's allowance — not the whole pass, and not a per-item rate.
 The dashboard and agent progress appear first (stderr), followed by the JSON
 report starting with `{` on its own line — parse from there.
 
-If the script fails (non-zero exit code), show the error and stop.
+If the script fails (non-zero exit code), show the error and stop — except
+exit 75 (`EX_TEMPFAIL`): another `pr` run holds the lock, the error names the
+owning command, and the right move is to wait and retry. Do not treat 75 as a
+usage error.
 
 ### Step 3: Report and handle results
 
@@ -215,10 +219,17 @@ same review (one answer); `--settle` still names the item id.
 **Report auto-fixes:** "Fixed N threads/items (commit SHA). M need your input. K skipped."
 
 **If `commit_status` is `commit_failed`:** the commit never landed. The edits
-are still staged. Do not run `--finish --post` as if the work were on the
-remote — FIXED replies stay queued until a commit the remote holds exists.
-Inspect `git status`, repair whatever the hook refused, restage, and commit.
-An empty SHA is not a hand-landing.
+are still staged. Stderr prints the cause under `commit failed:` (paths still
+uncommitted, or `git commit` exiting with no output). Do not run
+`--finish --post` as if the work were on the remote — FIXED replies stay queued
+until a commit the remote holds exists. Inspect `git status`, repair whatever
+the hook refused, restage, and commit. An empty SHA is not a hand-landing.
+
+A comments pass stopped mid-agent records leftovers. The next comments `--fix`
+at the same HEAD resumes matching blobs so they can be committed. Files that
+were already dirty when the pass started are never committed; commit or stash
+those, or re-run so the interrupted edits resume. An empty round will not
+commit leftovers.
 
 **If `commit_status` is `push_held`:** the fixes are committed locally and
 nothing has been published, because something in the run judged the branch not
@@ -241,6 +252,14 @@ so an amend or a reword is followed too — before deciding whether anything is
 owed. When it reports the fix commit as carried by no commit on the branch, or
 by two, the hold is real and the message names the two ways out. Do not reach for `--fix` to unstick a closeout otherwise: it
 re-triages from scratch and discards the replies already reviewed.
+
+When a closeout is blocked on a push, use `pr push --expect <origin tip>` — the
+remote tip you planned from, not local HEAD. A fast-forward from any ancestor of
+that tip still pushes. Never recover a fast-forward or a stale lease with
+`--force` or `--force-with-lease`; a moved origin is refused with no force
+advice. `--finish --post` may refuse first with
+`nothing was published: push <sha> first` (exit 1, no JSON) — push that SHA,
+then re-run `pr comments --finish --post`.
 
 **If `commit_status` is `push_lost`:** git reported the push and the remote does
 not hold the commit, so the operator's terminal showed a clean push while the
@@ -324,9 +343,12 @@ letting the row publish uncited.
 Recording is not publishing: `--settle` writes local state only and refuses
 `--post` and every other phase flag. Read back what it reports — it names the
 outcome and the quoted finding for each thread, and says so when a thread
-already carried it. An unknown id is refused, not skipped: the run lists every
-settleable item as `<id>  <outcome>` plus `"<finding>"` when the item has a
-finding (and the commit SHA when it has one). Then continue to Step 4.
+already carried it. An id on the PR but missing from the fix snapshot is
+recorded from the PR (`recorded as … (not in the fix snapshot — taken from the
+PR)`), not refused. An id found neither in the snapshot nor on the PR is
+refused, not skipped: the run lists every settleable item as `<id>  <outcome>`
+plus `"<finding>"` when the item has a finding (and the commit SHA when it has
+one). Then continue to Step 4.
 
 A settled thread stays out of later `--triage` and `--fix` runs, so the agent
 never commits against it and its recorded outcome is kept. If the reviewer
@@ -364,7 +386,14 @@ pr comments --finish --post [--track <thread_id> ...] [--repo-dir <PATH>]
 
 That sends the drafted replies (including those whose commit had not yet been
 pushed), posts the summary, files the tracking issue for the threads named by
-`--track`, and resolves verified threads. The summary is meant to describe
+`--track`, and resolves verified threads. If the last stderr line starts
+`nothing was published: push`, the run exited 1 before resolving threads —
+push the named SHA with `pr push --expect`, then re-run `--finish --post`.
+Do not treat that as a clean closeout. After a published closeout, a warning
+`<id>: left open — …` means that thread stayed open; except `not on the PR`,
+closeout is still owed (`pr status` still shows it). A successful bare
+`--finish` (no `--triage`) prints no JSON; `--fix --finish` still does.
+The summary is meant to describe
 a finished conversation, so don't publish before the discussion is done. A
 handed-back (`needs_human` / `declined`) thread with no answer on GitHub
 refuses the summary (exit 1, closeout still owed); answer it with

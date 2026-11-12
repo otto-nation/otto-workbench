@@ -268,7 +268,7 @@ def test_claim_for_process_exits_when_another_run_owns_the_target(worktree, caps
         _disown(target=worktree)
         with pytest.raises(SystemExit) as excinfo:
             core.run_lock.claim_for_process(worktree, command="ci-check", started="t")
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == core.run_lock.EXIT_BUSY
     assert "pr review --fix" in capsys.readouterr().err
 
 
@@ -657,7 +657,7 @@ def test_a_contended_checkout_says_so_and_suggests_another_worktree(
                 worktree=worktree,
             )
 
-    assert excinfo.value.code == 1
+    assert excinfo.value.code == core.run_lock.EXIT_BUSY
     err = capsys.readouterr().err
     assert "owns this checkout" in err
     assert "worktree" in err

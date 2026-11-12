@@ -21,7 +21,8 @@ A comment `pr comments` has already read is dropped from triage decomposition
 `main` returns rather than exits, as every module under `cli/` does; the shim at
 `ai/bin/review-threads` owns the process exit. That now holds through the
 phases too: `closeout.finish_deferred_work` reports a refused `--track` rather
-than exiting from under this module.
+than exiting from under this module. A contended run lock exits 75
+(EX_TEMPFAIL) rather than 1 — retry once the holder finishes.
 
 Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
@@ -45,6 +46,7 @@ import cli.needs
 import core.log
 import core.publishing
 from core.trail import Trail, add_trail_args
+import gh.pr_data
 import pr.comments_fix
 import pr.context
 import pr.settlement
@@ -114,9 +116,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help="File holding the --reply body ('-' for stdin)")
     parser.add_argument("--settle", action="append", default=[], metavar="THREAD_ID",
                         help="Phase: record that you settled this thread by hand "
-                             "(repeatable). Writes local state and nothing else; "
-                             "--finish then replies, resolves and reports it like "
-                             "any other settled thread")
+                             "(repeatable). An id on the PR but not in the fix "
+                             "snapshot is recorded from the PR rather than refused. "
+                             "Writes local state and nothing else; --finish then "
+                             "replies, resolves and reports it like any other "
+                             "settled thread")
     parser.add_argument("--as", dest="settle_as", default=FixOutcome.FIXED.value,
                         choices=[o.value for o in pr.settlement.SETTLE_OUTCOMES],
                         help="What --settle records (default: fixed)")
@@ -144,6 +148,12 @@ def _github_only(
         )
     return pr.settlement.run_settle(
         ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
+        fetch_threads=lambda: {
+            t.id: t
+            for t in review.comment_threads.read_report(
+                ctx, gh.pr_data.fetch_pr_data(ctx.repo, str(ctx.pr_number)),
+            ).threads
+        },
     )
 
 

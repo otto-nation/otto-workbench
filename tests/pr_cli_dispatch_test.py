@@ -384,7 +384,7 @@ def test_gc_cut_short_records_a_trail_event(
 
 
 @patch("pr.context.resolve")
-def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
+def test_main_reports_contention_and_exits_75(mock_resolve, worktree, capsys):
     target = worktree / "target"
     mock_resolve.return_value = make_ctx(worktree_root=worktree, target_dir=target)
     busy = core.run_lock.LockBusy(
@@ -392,7 +392,7 @@ def test_main_reports_contention_and_exits_1(mock_resolve, worktree, capsys):
 
     with patch("core.run_lock.hold", side_effect=busy):
         code = _run_main("--repo-dir", str(worktree), "comments")
-    assert code == 1
+    assert code == core.run_lock.EXIT_BUSY
     err = capsys.readouterr().err
     assert "pr review --self --fix" in err
     assert "15461" in err

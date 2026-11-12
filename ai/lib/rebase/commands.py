@@ -82,24 +82,34 @@ def _mid_rebase(cwd: str, trail: Trail | None) -> bool:
     return True
 
 
-def push_head(cwd: str, branch: str, *, expect: str, verify: bool = True,
-              trail: Trail | None = None,
-              regen: str = rebase.land.REGEN_MESSAGE) -> bool:
-    """Push HEAD to origin's *branch* with a lease on *expect*; True when it landed.
+def _land(cwd: str, args: tuple[str, ...], *, verify: bool,
+          trail: Trail | None, regen: str) -> bool:
+    """Push HEAD with *args*; True when it landed.
 
-    The one push `pr rebase`'s force-push (`cmd_push`) and `pr push`
-    (`cmd_push_head`) both make. A fast-forward satisfies the lease as well as
-    a rewrite does, so one path serves both. Whether it reaches the remote is
-    the publishing gate's answer: the entry point opens it.
+    Shared by `push_head` (rebase force-push, lease on *expect*) and
+    `cmd_push_head` (`pr push`, lease from :func:`rebase.lease.for_push`).
     """
-    lease = rebase.lease.PushLease(branch=branch, expect=expect)
     landed = rebase.land.land_rebased(
-        cwd, args=lease.args, verify=verify, trail=trail, regen=regen,
+        cwd, args=args, verify=verify, trail=trail, regen=regen,
     )
     if not landed.ok:
         core.trail.terr(trail, "push", "push failed",
                         data={"status": str(landed.status), "resume": landed.resume})
     return landed.ok
+
+
+def push_head(cwd: str, branch: str, *, expect: str, verify: bool = True,
+              trail: Trail | None = None,
+              regen: str = rebase.land.REGEN_MESSAGE) -> bool:
+    """Push HEAD to origin's *branch* with a lease on *expect*; True when it landed.
+
+    The push `pr rebase`'s force-push (`cmd_push`) makes. `pr push`
+    (`cmd_push_head`) plans its own lease first. A fast-forward satisfies the
+    lease as well as a rewrite does. Whether it reaches the remote is the
+    publishing gate's answer: the entry point opens it.
+    """
+    lease = rebase.lease.PushLease(branch=branch, expect=expect)
+    return _land(cwd, lease.args, verify=verify, trail=trail, regen=regen)
 
 
 def cmd_push(
@@ -185,9 +195,34 @@ def cmd_push_head(
     """
     if _mid_rebase(cwd, trail):
         return 1
-    core.log.info(f"Pushing {ctx.branch} (lease on {git.client.abbrev(expect)})...")
-    if not push_head(cwd, ctx.branch, expect=expect, verify=verify, trail=trail,
-                     regen=rebase.types.PUSH_REGEN_MESSAGE):
+    plan = rebase.lease.for_push(cwd, ctx.branch, expect)
+    if not plan.ok:
+        if not plan.remote_sha:
+            core.log.error(
+                f"Cannot push — origin has no branch {ctx.branch} "
+                f"(never pushed, or deleted)"
+            )
+            core.log.dim(f"git -C '{cwd}' ls-remote origin refs/heads/{ctx.branch}")
+            return 1
+        core.log.error(
+            f"Cannot push — origin/{ctx.branch} is at "
+            f"{git.client.abbrev(plan.remote_sha)}, not "
+            f"{git.client.abbrev(expect)} or an ancestor of it (stale --expect)"
+        )
+        core.log.dim(f"git -C '{cwd}' ls-remote origin refs/heads/{ctx.branch}")
+        core.log.dim("if HEAD belongs on top of it, run `pr rebase` first")
+        return 1
+    if plan.kind is rebase.lease.PushPlanKind.FAST_FORWARD:
+        origin_at = git.client.abbrev(plan.remote_sha)
+        core.log.info(
+            f"origin is at {origin_at}, behind --expect "
+            f"{git.client.abbrev(expect)} — pushing a fast-forward under a "
+            f"lease on {origin_at}"
+        )
+    lease_on = git.client.abbrev(plan.remote_sha or expect)
+    core.log.info(f"Pushing {ctx.branch} (lease on {lease_on})...")
+    if not _land(cwd, plan.args, verify=verify, trail=trail,
+                 regen=rebase.types.PUSH_REGEN_MESSAGE):
         return 1
     state = rebase.types.load_or_init(ctx)
     pr.state.apply(state, pr.domains.PushDomain.observed(

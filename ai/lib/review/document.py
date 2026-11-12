@@ -17,6 +17,7 @@ from enum import StrEnum
 from pathlib import Path
 
 from core.phases import Mode
+from git.client import MIN_SHA_PREFIX
 from pr.domains import ReviewStatus
 from pr.target import display_repo
 from review.record import ReviewRecord
@@ -194,11 +195,11 @@ class ReviewHeader:
 
 
 # The shortest header SHA read as an abbreviation of the subject rather than a
-# coincidence. Seven is git's own floor in a small repository. A header the
-# pipeline wrote holds the full SHA and matches exactly. A header an agent
-# wrote from a template may hold an abbreviation, and a prefix shorter than
-# this proves nothing: one hex character prefixes a sixteenth of all commits.
-MIN_SHA_PREFIX = 7
+# coincidence. The floor lives on `git.client.MIN_SHA_PREFIX` so identity and
+# display cannot pick different lengths. A header the pipeline wrote holds the
+# full SHA and matches exactly. A header an agent wrote from a template may
+# hold an abbreviation, and a prefix shorter than this proves nothing: one hex
+# character prefixes a sixteenth of all commits.
 
 
 def covers(reviewed_sha: str, sha: str) -> bool:

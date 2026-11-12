@@ -132,11 +132,8 @@ def landing_of(record: FixRecord, wt_path: Path | None) -> FixLanding:
         return FixLanding.UNPUSHED
     current = git.client.head_sha(cwd=wt_path)
     snap = record.head_sha or ""
-    moved = bool(current and snap and current != snap)
-    if moved:
-        resolved = git.client.out("rev-parse", snap, cwd=wt_path)
-        if resolved and current == resolved:
-            moved = False
+    moved = bool(current and snap and not git.client.same_commit(
+        current, snap, cwd=wt_path))
     if moved:
         if git.push.holds(wt_path, current):
             return FixLanding.LANDED

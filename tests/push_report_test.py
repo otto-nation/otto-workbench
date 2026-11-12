@@ -39,20 +39,28 @@ def test_every_unfinished_status_names_a_command(status):
 @pytest.mark.parametrize("refusal", list(git.push.Refusal))
 def test_every_refusal_names_a_command(refusal):
     """A refusal kind with no answer would render an empty "Resume:" line."""
-    assert git.push.resume_command(
+    resume = git.push.resume_command(
         _result(git.push.PushStatus.REFUSED, refusal), "/tmp/wt",
-    ).startswith("git -C '/tmp/wt' push")
+    )
+    assert resume.startswith("git -C '/tmp/wt' ")
+    if refusal is git.push.Refusal.STALE_LEASE:
+        assert "ls-remote" in resume
 
 
-def test_a_divergence_answers_force_with_lease():
+def test_a_divergence_answers_pull_rebase():
+    """An un-forced push that diverged is reconciled, not overwritten."""
     assert git.push.resume_command(
         _result(git.push.PushStatus.REFUSED, git.push.Refusal.DIVERGED), "/tmp/wt",
-    ) == "git -C '/tmp/wt' push --force-with-lease"
+    ) == "git -C '/tmp/wt' pull --rebase origin feat/x"
+    assert "--force" not in git.push.resume_command(
+        _result(git.push.PushStatus.REFUSED, git.push.Refusal.DIVERGED), "/tmp/wt",
+    )
 
 
 @pytest.mark.parametrize("refusal", [git.push.Refusal.HOOK, git.push.Refusal.TRANSPORT,
                                      git.push.Refusal.AUTH, git.push.Refusal.UNREACHABLE,
-                                     git.push.Refusal.DROPPED, git.push.Refusal.OTHER])
+                                     git.push.Refusal.DROPPED, git.push.Refusal.OTHER,
+                                     git.push.Refusal.STALE_LEASE])
 def test_no_other_refusal_answers_a_force_push(refusal):
     """A pre-push hook rejection is not divergence — force-pushing is wrong advice."""
     assert "--force" not in git.push.resume_command(

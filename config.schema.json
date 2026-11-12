@@ -305,6 +305,9 @@
         },
         "verify_timeout": {
           "type": "integer"
+        },
+        "verify_progress_interval": {
+          "type": "integer"
         }
       }
     },

@@ -54,7 +54,7 @@ def snapshot(workdir: Path) -> str:
 
 def label_preexisting(
     workdir: Path, result: fix.suite.SuiteResult, command: str, timeout_s: int,
-    trail: Trail | None, *, ref: str, paths_file: str = "",
+    trail: Trail | None, *, ref: str, paths_file: str = "", progress_s: int = 0,
 ) -> fix.suite.SuiteResult:
     """*result*, labelled by what of its failure the tree at *ref* shares.
 
@@ -65,7 +65,7 @@ def label_preexisting(
     """
     if not result.demotes or not result.failures or not ref:
         return result
-    baseline = _run_at(workdir, ref, command, timeout_s, paths_file)
+    baseline = _run_at(workdir, ref, command, timeout_s, paths_file, progress_s)
     if baseline is None or not baseline.ran:
         return result
     before = set(baseline.failures)
@@ -87,6 +87,7 @@ def label_preexisting(
 
 def _run_at(
     workdir: Path, ref: str, command: str, timeout_s: int, paths_file: str,
+    progress_s: int = 0,
 ) -> fix.suite.SuiteResult | None:
     """The command's verdict over a throwaway checkout of *ref*, or None when none could be made.
 
@@ -110,7 +111,8 @@ def _run_at(
         try:
             core.log.info(f"Re-running the checks at the pass's base ({git.client.abbrev(ref)})")
             return fix.suite.run(tree, command, timeout_s, base=ref,
-                                 paths_file=paths_file, baseline=True)
+                                 paths_file=paths_file, baseline=True,
+                                 progress_s=progress_s)
         finally:
             git.client.run("worktree", "remove", "--force", str(tree), cwd=workdir)
             git.client.run("worktree", "prune", cwd=workdir)

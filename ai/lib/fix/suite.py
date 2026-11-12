@@ -349,6 +349,7 @@ def run(
     base: str = "",
     paths_file: str = "",
     baseline: bool = False,
+    progress_s: int = 0,
 ) -> SuiteResult:
     """Run the repo's declared checks in `workdir` and report what they said.
 
@@ -396,11 +397,13 @@ def run(
         )
 
     core.log.info(f"Verifying the pass against the repo's checks: {command}")
+    core.log.dim(f"timeout {timeout_s}s (fix.verify_timeout)")
     started = time.monotonic()
     try:
         result = _invoke(
             argv, workdir, command, timeout_s, started,
             base=base, paths_file=paths_file, baseline=baseline,
+            progress_s=progress_s,
         )
     except OSError as exc:
         # The command could not be started at all — missing, not executable, a
@@ -421,10 +424,36 @@ def run(
 _TERM_GRACE_S = 5
 
 
+def _heartbeat(proc, timeout_s: int, started: float) -> None:
+    """Log a progress line, or raise if the overall timeout has elapsed."""
+    elapsed = time.monotonic() - started
+    if elapsed >= timeout_s:
+        raise subprocess.TimeoutExpired(proc.args, timeout_s)
+    core.log.dim(
+        f"checks still running — {int(elapsed)}s of {timeout_s}s "
+        "(fix.verify_timeout)"
+    )
+
+
+def _communicate(proc, timeout_s: int, started: float, progress_s: int):
+    """Drain *proc* until it exits, the timeout, or a progress heartbeat."""
+    if progress_s <= 0:
+        return proc.communicate(timeout=timeout_s)
+    while True:
+        remaining = timeout_s - (time.monotonic() - started)
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(proc.args, timeout_s)
+        try:
+            return proc.communicate(timeout=min(progress_s, remaining))
+        except subprocess.TimeoutExpired:
+            _heartbeat(proc, timeout_s, started)
+
+
 def _invoke(
     argv: list[str], workdir: Path, command: str,
     timeout_s: int, started: float, *,
     base: str = "", paths_file: str = "", baseline: bool = False,
+    progress_s: int = 0,
 ) -> SuiteResult:
     """Run `argv` to completion or to the timeout, and read its exit status.
 
@@ -452,7 +481,7 @@ def _invoke(
         text=True, start_new_session=True, env=env,
     )
     try:
-        stdout, stderr = proc.communicate(timeout=timeout_s)
+        stdout, stderr = _communicate(proc, timeout_s, started, progress_s)
     except subprocess.TimeoutExpired:
         _terminate_tree(proc)
         return SuiteResult(

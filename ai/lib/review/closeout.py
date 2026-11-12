@@ -29,6 +29,8 @@ was written.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import StrEnum
 from pathlib import Path
 
 import core.log
@@ -42,6 +44,7 @@ import gh.owner_hooks
 import gh.owners
 import pr.attribution
 import pr.comments
+import pr.comments_fix
 import pr.context
 import pr.history_rewrite
 import pr.settlement
@@ -50,7 +53,7 @@ import pr.summary_publish
 import pr.thread_replies
 from pr.comments_state import ThreadState
 from pr.fix import FixOutcome, ItemOutcome
-from pr.thread_models import CommentItem, PRReport, ReportThread
+from pr.thread_models import CommentItem, CommentSourceKind, PRReport, ReportThread
 import review.deferred_issue
 
 
@@ -65,7 +68,8 @@ def warn_if_snapshot_stale(state: pr.state.PRState, wt_path: Path) -> None:
     if not state.fix.fix.items:
         return
     current = git.client.head_sha(short=True, cwd=wt_path)
-    if state.fix.fix.head_sha and state.fix.fix.head_sha == current:
+    if state.fix.fix.head_sha and git.client.same_commit(
+            state.fix.fix.head_sha, current, cwd=wt_path):
         return
     core.log.warn(
         f"Fix snapshot was taken at {state.fix.fix.head_sha or '(unrecorded)'} "
@@ -118,6 +122,7 @@ def finish_deferred_work(
     # flip count report work it did not do. Before the summary, because these
     # rows are exactly what that render is being re-armed for.
     adopted = pr.settlement.adopt_settled_threads(state, threads_by_id)
+    _warn_open_threads_without_snapshot(state, threads_by_id)
     if flipped or adopted:
         state.fix.summary_deferred = True
         state.fix.updated_at = pr.state.now_iso()
@@ -181,7 +186,8 @@ def push_held_commit(
     # No SHA is handed down: the owner reads full HEAD for itself, and
     # `ls-remote` answers in full SHAs, so comparing one against the abbreviation
     # this state file carries reports every push as lost. `report` names the
-    # force-push remedy for a divergence, so nothing is added on top of it.
+    # resume for a refusal (ls-remote for a stale lease, pull --rebase for an
+    # un-forced divergence) so nothing is added on top of it.
     nv = ("--no-verify",) if no_push_verify else ()
     result = git.push.push(
         wt_path, gated=True, owner_check=gh.owner_hooks.refuse_outgoing,
@@ -197,6 +203,172 @@ def push_held_commit(
 
     core.log.info(f"Pushed held fixes ({record.commit_sha})")
     record.commit_status = CommitStatus.PUSHED
+
+
+@dataclass(frozen=True)
+class PushBlock:
+    """Why `--finish --post` must not publish: the commit is not on the remote."""
+
+    sha: str
+    remote_sha: str
+    orphaned: bool = False
+
+    @property
+    def message(self) -> str:
+        """The last line `--finish --post` prints when it refuses to publish."""
+        if self.orphaned:
+            return ("nothing was published: the fix commit was rewritten away, "
+                    "see the warning above")
+        expect = git.client.abbrev(self.remote_sha) or "<origin tip>"
+        return (
+            f"nothing was published: push {git.client.abbrev(self.sha)} first — "
+            f"pr push --expect {expect} — then re-run "
+            f"{pr.comments_fix.CLOSEOUT_COMMAND}"
+        )
+
+
+def unpublished_commit(
+    ctx: pr.context.ResolvedContext,
+    trail: Trail | None = None,
+    *,
+    no_push_verify: bool = False,
+) -> PushBlock | None:
+    """The commit `--finish --post` still owes the remote, if any.
+
+    Attempts the held-fix push first. Operator commits that moved HEAD past the
+    snapshot are not pushed from here — they are the operator's, and the block
+    names `pr push` instead.
+    """
+    wt = ctx.require_worktree()
+    state = pr.state.load_state(ctx.target_dir)
+    if state is None or not state.fix.fix.items:
+        return None
+    pr.history_rewrite.follow_history_rewrite(state, wt)
+    push_held_commit(state, wt, trail, no_push_verify=no_push_verify)
+    pr.state.save_state(ctx.target_dir, state)
+    record = state.fix.fix
+    landing = pr.attribution.landing_of(record, wt)
+    if landing is pr.attribution.FixLanding.UNPUSHED:
+        sha = record.commit_sha or git.client.head_sha(cwd=wt)
+        remote = git.push.remote_head(wt, ctx.branch) or ""
+        return PushBlock(sha=sha, remote_sha=remote)
+    if landing is pr.attribution.FixLanding.ORPHANED:
+        sha = record.commit_sha or git.client.head_sha(cwd=wt)
+        remote = git.push.remote_head(wt, ctx.branch) or ""
+        return PushBlock(sha=sha, remote_sha=remote, orphaned=True)
+    return None
+
+
+class SkipReason(StrEnum):
+    """Why a FIXED or ALREADY_ADDRESSED thread is still open after closeout."""
+
+    PUSH_PENDING = "push pending"
+    NEVER_COMMITTED = "never committed"
+    ORPHANED = "fix commit rewritten away"
+    RESOLVE_FAILED = "resolve failed"
+    NOT_ON_PR = "not on the PR"
+
+
+@dataclass(frozen=True)
+class SkippedThread:
+    """A closeout item that should have been resolved and was not."""
+
+    id: str
+    reason: SkipReason
+
+
+def _is_review_thread_id(item_id: str) -> bool:
+    """True for a real review-thread id, not a synthetic ic-/rb- comment item."""
+    if not item_id:
+        return False
+    prefix = item_id.split("-", 1)[0]
+    return CommentSourceKind.from_id_prefix(prefix) is CommentSourceKind.UNSET
+
+
+def _unanswered_closeout_item(
+    item: ItemOutcome, threads_by_id: dict[str, ReportThread],
+) -> bool:
+    """Whether this row still owes a reply on an open unanswered thread."""
+    if item.outcome not in (FixOutcome.FIXED, FixOutcome.ALREADY_ADDRESSED):
+        return False
+    thread = threads_by_id.get(item.id)
+    if thread is None or thread.is_resolved:
+        return False
+    return pr.settlement.settlement_for(thread) is None
+
+
+def _skip_reason_for(
+    item: ItemOutcome,
+    thread: ReportThread | None,
+    landing: pr.attribution.FixLanding,
+) -> SkipReason | None:
+    """Why a settled item keeps closeout debt, or None.
+
+    A resolved thread never does; NOT_ON_PR only for real review-thread ids.
+    """
+    if item.outcome not in (FixOutcome.FIXED, FixOutcome.ALREADY_ADDRESSED):
+        return None
+    if not _is_review_thread_id(item.id):
+        return None
+    if thread is None:
+        return SkipReason.NOT_ON_PR
+    if thread.is_resolved:
+        return None
+    if item.outcome is FixOutcome.FIXED:
+        if landing is pr.attribution.FixLanding.UNPUSHED:
+            return SkipReason.PUSH_PENDING
+        if landing is pr.attribution.FixLanding.NEVER_COMMITTED:
+            return SkipReason.NEVER_COMMITTED
+        if landing is pr.attribution.FixLanding.ORPHANED:
+            return SkipReason.ORPHANED
+    return SkipReason.RESOLVE_FAILED
+
+
+def _skipped_after_drain(
+    items: list[ItemOutcome],
+    threads_by_id: dict[str, ReportThread],
+    landing: pr.attribution.FixLanding,
+) -> list[SkippedThread]:
+    skipped: list[SkippedThread] = []
+    for item in items:
+        reason = _skip_reason_for(item, threads_by_id.get(item.id), landing)
+        if reason is not None:
+            skipped.append(SkippedThread(id=item.id, reason=reason))
+    return skipped
+
+
+def _warn_open_threads_without_snapshot(
+    state: pr.state.PRState, threads_by_id: dict[str, ReportThread],
+) -> None:
+    recorded = {o.id for o in state.fix.fix.items if o.id}
+    missing = [
+        thread.id for thread in threads_by_id.values()
+        if thread.id
+        and thread.id not in recorded
+        and not thread.is_resolved
+        and thread.state is not ThreadState.RESOLVED
+        and pr.settlement.settlement_for(thread) is None
+    ]
+    if not missing:
+        return
+    ids = ", ".join(missing)
+    core.log.warn(
+        f"{len(missing)} open thread(s) no round recorded: {ids} — "
+        f"run `pr comments --fix` or `pr comments --settle <id> --as …`"
+    )
+
+
+def _keep_skipped_debt(
+    items: list[ItemOutcome],
+    threads_by_id: dict[str, ReportThread],
+    landing: pr.attribution.FixLanding,
+) -> bool:
+    """Warn for each skipped thread; True when any of them still owe closeout."""
+    keep_debt = False
+    for skipped in _skipped_after_drain(items, threads_by_id, landing):
+        core.log.warn(f"{skipped.id}: left open — {skipped.reason}")
+        keep_debt = keep_debt or skipped.reason is not SkipReason.NOT_ON_PR
+    return keep_debt
 
 
 def post_pending_fix_replies(
@@ -226,7 +398,14 @@ def post_pending_fix_replies(
     """
     fix = state.fix
     record = fix.fix
-    if not pr.attribution.commit_unpushed(record.commit_status) and not fix.replies_pending:
+    owed = any(
+        _unanswered_closeout_item(item, threads_by_id) for item in record.items
+    )
+    if (
+        not pr.attribution.commit_unpushed(record.commit_status)
+        and not fix.replies_pending
+        and not owed
+    ):
         return
 
     wt_path = Path(state.identity.worktree_root) if state.identity.worktree_root else None
@@ -275,6 +454,10 @@ def post_pending_fix_replies(
             core.log.info("Push still pending — skipping deferred replies")
         elif landing is pr.attribution.FixLanding.NEVER_COMMITTED:
             core.log.info("Fixes were never committed — skipping deferred replies")
+        elif landing is pr.attribution.FixLanding.ORPHANED:
+            core.log.info(
+                "Fix commit was rewritten away — skipping deferred replies"
+            )
 
     addressed = bucket(FixOutcome.ALREADY_ADDRESSED)
     if addressed:
@@ -297,10 +480,15 @@ def post_pending_fix_replies(
 
     # A draft delivered nothing, so the queue has to survive for the next run.
     # Withheld FIXED replies keep the queue; an unlanded commit is never marked
-    # pushed just because the other buckets drained.
+    # pushed just because the other buckets drained. A skipped resolve keeps
+    # the same debt, except for ids that are not on the PR.
+    keep_debt = False
     if core.publishing.enabled():
+        keep_debt = _keep_skipped_debt(record.items, threads_by_id, landing)
+        if keep_debt:
+            fix.replies_pending = True
         if (landing is pr.attribution.FixLanding.LANDED
                 and pr.attribution.commit_unpushed(record.commit_status)):
             record.commit_status = CommitStatus.PUSHED
-        if not withheld:
+        if not withheld and not keep_debt:
             fix.replies_sent()

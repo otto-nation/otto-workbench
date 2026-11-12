@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 847 -->
+<!-- doc-budget: 894 -->
 
 # AI Automation
 
@@ -368,11 +368,20 @@ keeps the next round from starting over:
   that was already red becomes `Fix-Checks: preexisting` only when every
   failure is inherited; one new failure keeps it red. The fixes stay and
   publishing is still held.
+- **A gate that could not record does not demote.** A failed or malformed
+  checklist write leaves items as claimed, unverified (`could not record
+  answers … not demoted`). Only a recorded broken verdict demotes.
+- **Checks heartbeat.** `fix.verify_timeout` (default 900s) bounds the repo's
+  checks; a timeout is "did not answer", not red. `fix.verify_progress_interval`
+  (default 60s, `<= 0` disables) prints `checks still running — Ns of …s
+  (fix.verify_timeout)`. The base-commit re-run gets its own timeout, so the
+  worst case is twice the bound.
 - **`pr fix` skips the review** when only declined, skipped or held findings
   remain.
 - **An interrupted pass resumes.** The next run on the same HEAD stashes the
   leftovers and, with `--fix`, resumes the fix step; `--force` or a failed
-  set-aside does not resume.
+  set-aside does not resume. A comments `--fix` records leftovers instead and
+  resumes matching blobs; see [Closing out comments](#closing-out-comments).
 - **A raced commit is recorded** as `head_moved_to`; the review covers the
   pinned head only.
 
@@ -433,6 +442,7 @@ verdict.
 
 Review, comments and CI fixes, and `already_addressed` verdicts, are checked by
 one verify gate before they land or post: [`fix/gate.py`](ai-libraries.md#fixgatepy).
+A verdict the gate could not write down stays unverified and is never demoted.
 
 ### What pr rebase replays
 
@@ -515,6 +525,27 @@ two of them apart — and cites the branch's own history from there. Nothing
 clears on a guess: a commit still on the branch is unpushed for the ordinary
 reason, and an orphan with no replay, or with two, holds too and says how to
 recover. Re-running `--fix` is not the way; it discards reviewed replies.
+
+### Closing out comments
+
+`--finish --post` refuses before resolving threads when the fix commit is still
+unpublished. The last stderr line is `nothing was published: push <sha> first —
+pr push --expect <origin tip> — then re-run pr comments --finish --post` (exit
+1, no JSON). A successful bare `--finish` also prints no JSON; `--fix --finish`
+still does.
+
+`--settle <id>` records a thread that is on the PR even when it is missing from
+the fix snapshot (`recorded as … (not in the fix snapshot — taken from the
+PR)`). An id found neither place is still refused.
+
+Closeout warns `<id>: left open — <reason>` for FIXED/ALREADY_ADDRESSED threads
+it did not resolve. Every reason except `not on the PR` keeps reply debt, so
+`pr status` still shows closeout owed. Open unanswered threads with no snapshot
+row are listed with `pr comments --fix` or `pr comments --settle`.
+
+A comments `--fix` stopped mid-agent records leftovers and, on the next comments
+pass at the same HEAD, resumes matching blobs so they can be committed. An empty
+round will not commit those leftovers.
 
 ### The summary comments are the record, not the state file
 
@@ -650,6 +681,22 @@ A related hazard exists one level down, for the AI subprocess: a backend CLI
 inherits the launching process's working directory unless it is told otherwise.
 Every `ai_backend` entry point therefore takes a required `cwd` — see
 [`agent/backend.py`](ai-libraries.md#agentbackendpy).
+
+### When two pr runs race
+
+A second `pr` against the same target or checkout while one still holds the lock
+exits 75 (`EX_TEMPFAIL`, the same value as `pr gc` when the GitHub hourly quota
+is spent). The error names the owning command; retry once that run finishes.
+
+### pr push and its lease
+
+`pr push --expect <sha>` pins the remote tip you planned from, not local HEAD.
+The lease is built from the tip origin actually holds. A fast-forward from any
+ancestor of `--expect` still pushes, under a lease on that current origin tip.
+A moved origin is refused (`stale --expect`) with no force advice. If origin
+moves after planning, git's "stale info" is a stale lease (`ls-remote` on the
+full ref), not a divergence. An un-forced divergence resumes with
+`git pull --rebase`, never `--force-with-lease`.
 
 ### Running a branch's own libraries
 

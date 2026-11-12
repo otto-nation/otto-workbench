@@ -65,9 +65,10 @@ class Classification(Vocabulary):
     `StrEnum` because the stdout report is `json.dump(asdict(...))`, which
     passes a plain `Enum` through unconverted and raises.
 
-    `UNSET` is what an unrecognised or absent answer becomes. It routes
-    nowhere, which is the same treatment `approval` gets: neither reaches a
-    bucket.
+    `UNSET` is what an unrecognised or absent answer becomes. On its own it
+    routes nowhere, the same treatment `approval` gets. A verification with
+    it is different: verification is only asked for an actionable suggestion,
+    so `pr.triage_round` treats that pair as one.
     """
 
     ACTIONABLE_SUGGESTION = "actionable_suggestion"

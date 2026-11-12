@@ -18,6 +18,8 @@ used once belongs at its call site, spelled out with `run`.
 | `out(*args, default="")` | Stripped stdout, or `default` when git exited non-zero. |
 | `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
 | `lines(*args)` | Stdout split into non-empty lines. |
+| `same_commit(a, b, cwd=)` | Whether two strings name one commit (full vs abbrev included). |
+| `worktree_blob(path, cwd=)` | The object id a working-tree path hashes to, or "" if absent. |
 
 `abbrev` is the one call here that runs no git at all: it shortens a sha already
 in hand for display, the way `head_sha(short=True)` shortens one it just asked
@@ -457,6 +459,13 @@ def blob(rev: str, path: str, cwd: str | Path | None = None) -> str | None:
     return r.stdout if r.ok else None
 
 
+def worktree_blob(path: str, *, cwd: str | Path | None) -> str:
+    """The object id *path* has in the working tree at *cwd*, or "" when absent."""
+    if not path or cwd is None or not (Path(cwd) / path).is_file():
+        return ""
+    return out("hash-object", "--", path, cwd=cwd)
+
+
 def lines(
     *args: str, cwd: str | Path | None = None, config: dict[str, str] | None = None,
 ) -> list[str]:
@@ -469,6 +478,15 @@ def lines(
 # a display choice, not a property of the sha, so it belongs to one function
 # rather than to the thirty-one places that were spelling it `sha[:7]`.
 _ABBREV = 7
+
+# Shortest prefix that still identifies a commit rather than a coincidence.
+# Seven is git's own floor in a small repository. Display (`_ABBREV`) and
+# identity share that floor; they are named apart because one is a rendering
+# choice and the other is a comparison rule.
+MIN_SHA_PREFIX = 7
+# Invariant: display may lengthen, but never below the comparison floor, or
+# the prefix fallback in same_commit stops matching abbreviations made here.
+assert _ABBREV >= MIN_SHA_PREFIX
 
 
 # ── Formatting ──────────────────────────────────────────────────────────────
@@ -489,6 +507,28 @@ def head_sha(cwd: str | Path | None = None, *, short: bool = False) -> str:
     """The commit HEAD points at, or "" in a repo with no commits."""
     args = ("rev-parse", "--short", "HEAD") if short else ("rev-parse", "HEAD")
     return out(*args, cwd=cwd)
+
+
+def same_commit(a: str, b: str, *, cwd: str | Path | None) -> bool:
+    """Whether *a* and *b* name the same commit.
+
+    Empty on either side is not a commit, so False even when both are empty.
+    Identical non-empty strings match without asking git. Otherwise both are
+    resolved to a full SHA via `rev-parse --verify --quiet <rev>^{commit}`;
+    if either does not resolve, a prefix match of at least `MIN_SHA_PREFIX`
+    characters still counts — the shape of an abbreviated SHA compared
+    against a full one when git cannot answer.
+    """
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    full_a = out("rev-parse", "--verify", "--quiet", f"{a}^{{commit}}", cwd=cwd)
+    full_b = out("rev-parse", "--verify", "--quiet", f"{b}^{{commit}}", cwd=cwd)
+    if full_a and full_b:
+        return full_a == full_b
+    shorter, longer = (a, b) if len(a) <= len(b) else (b, a)
+    return len(shorter) >= MIN_SHA_PREFIX and longer.startswith(shorter)
 
 
 def current_branch(cwd: str | Path | None = None) -> str:

@@ -858,6 +858,20 @@ It does not judge whether a test is any good (the verify gate does) and it does
 not demote the outcome: the fix still lands, and every surface that already
 hedges an unverified fix carries the reason.
 
+### fix/resume.py
+
+Edits an interrupted comments pass left uncommitted, so the next round resumes them.
+
+A comments fix pass that is stopped mid-agent leaves its edits in the worktree.
+The next round treats those files as somebody else's dirt and will not commit
+them — which is right for an operator's own edits, and wrong for the pass that
+just wrote them. This module records the HEAD and the blob of each leftover at
+the stop, and on the next run drops matching paths from the dirty baseline so
+they are attributed to the pass again.
+
+The review domain keeps its own stash (`review.convergence.set_aside_leftovers`);
+only the comments adapter opts in.
+
 ### fix/scope.py
 
 What a fix pass changed, so its commit can be scoped to exactly that.
@@ -2705,20 +2719,22 @@ decides what happened and records it; the surfaces read the record.
 
 `--settle <id>` is how the operator tells the CLI what they did by hand. It is
 repeatable, and `--as` picks which of the three terminal outcomes to record —
-`fixed` (the default), `dismissed`, or `already_addressed`. From there the
-thread is indistinguishable from one the pass settled: `--finish` replies on
-it, resolves it, and gives it a summary row attributed to the commit that
-carries the change. `--as dismissed` requires `--reason <text>`, which becomes
-the body of the reply; the other two outcomes render no reason and refuse the
-flag rather than swallowing it. `--as fixed` cites a commit only when `--commit
-<sha>` names one the remote holds — a link to a commit still sitting on the
-machine 404s for the reviewer it was written for, and line history is not
-inferred. A `--commit` the remote does not hold is an error rather than a
-dropped citation. Without `--commit`, the row reads `Addressed outside the fix
-pass` and the run says so. Naming an id no fix pass recorded is an error
-listing the threads that are waiting on a person. Recording the outcome a
-thread already carries is a no-op that says so; recording a different terminal
-outcome replaces it.
+`fixed` (the default), `dismissed`, or `already_addressed`. From there the thread
+is indistinguishable from one the pass settled: `--finish` replies on it,
+resolves it, and gives it a summary row attributed to the commit that carries
+the change. `--as dismissed` requires `--reason <text>`, which becomes the body
+of the reply; the other two outcomes render no reason and refuse the flag rather
+than swallowing it. `--as fixed` finds the commit from the branch history of the
+line the thread is anchored to, and cites it only once the remote has it — a
+link to a commit still sitting on the machine 404s for the reviewer it was
+written for. Pass `--commit <sha>` when the fix landed somewhere else; a
+`--commit` the remote does not hold is an error rather than a dropped citation.
+When neither resolves, the row reads `Addressed outside the fix pass` and the
+run says so. Naming an id no fix pass recorded is an error listing the threads
+that are waiting on a person, unless that id is still open on the PR — then
+it is recorded from the PR rather than refused. Recording the outcome a
+thread already carries is a no-op that says so; recording a different
+terminal outcome replaces it.
 Recording is its own step: `--settle` publishes nothing and refuses `--post` and
 every other phase flag alongside it (the argparse layer in `cli.review_threads`).
 
@@ -7155,6 +7171,8 @@ used once belongs at its call site, spelled out with `run`.
 | `out(*args, default="")` | Stripped stdout, or `default` when git exited non-zero. |
 | `ok(*args)` | Whether git exited cleanly, for the subcommands that answer a question that way. |
 | `lines(*args)` | Stdout split into non-empty lines. |
+| `same_commit(a, b, cwd=)` | Whether two strings name one commit (full vs abbrev included). |
+| `worktree_blob(path, cwd=)` | The object id a working-tree path hashes to, or "" if absent. |
 
 `abbrev` is the one call here that runs no git at all: it shortens a sha already
 in hand for display, the way `head_sha(short=True)` shortens one it just asked
@@ -7789,6 +7807,11 @@ Passing a SHA for a ref the remote does not have fails with ``stale info``, and
 passing the empty string for a ref it does have fails the same way. Neither is
 recoverable mid-push, so ``resolve`` is the only place that chooses between
 them, and it chooses by asking whether the ref is there.
+
+``pr push --expect`` is a different contract: *expect* is the remote tip the
+caller planned from, but the lease is built from the tip this tool reads itself
+(:func:`for_push`). A fast-forward from any ancestor of that tip pushes under a
+lease on what origin holds. A moved origin is refused with no force advice.
 
 ### rebase/lifecycle.py
 
@@ -8592,19 +8615,21 @@ Usage:
 
 ### cli/pr_push.py
 
-Push HEAD to origin with a lease on the remote head the caller expects.
+Push HEAD to origin with a lease on the remote tip the caller planned from.
 
-Both `pr push` and `pr rebase --push-only` are lease-guarded pushes of HEAD
-through `rebase.commands.push_head` — a rewrite satisfies the lease the same
-way a fast-forward does, so `pr push` is not "not a force push". Use
-`pr rebase --push-only` after a rebase; use `pr push` for anything else. It
-records where the branch stands (`PushDomain`) and records no rebase, so
-`pr status` does not describe a push as a rewrite.
+`--expect` is that tip. A fast-forward from any ancestor of it pushes under a
+lease on what origin holds now. A moved origin is refused with no force advice.
+Both `pr push` and `pr rebase --push-only` are lease-guarded pushes of HEAD — a
+rewrite satisfies the lease the same way a fast-forward does, so `pr push` is
+not "not a force push". Use `pr rebase --push-only` after a rebase; use
+`pr push` for anything else. It records where the branch stands (`PushDomain`)
+and records no rebase, so `pr status` does not describe a push as a rewrite.
 
 Exit codes:
   0  Pushed, and the remote holds HEAD
   1  Refused, lost, unverified, or a rebase is still in progress
   2  Usage error
+  75 Another pr run holds the lock (EX_TEMPFAIL — retry once it finishes)
 
 Usage:
   pr push --expect <sha>               # push HEAD if origin still holds <sha>
@@ -8887,7 +8912,8 @@ A comment `pr comments` has already read is dropped from triage decomposition
 `main` returns rather than exits, as every module under `cli/` does; the shim at
 `ai/bin/review-threads` owns the process exit. That now holds through the
 phases too: `closeout.finish_deferred_work` reports a refused `--track` rather
-than exiting from under this module.
+than exiting from under this module. A contended run lock exits 75
+(EX_TEMPFAIL) rather than 1 — retry once the holder finishes.
 
 Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]

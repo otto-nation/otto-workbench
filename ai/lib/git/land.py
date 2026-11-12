@@ -435,7 +435,7 @@ def _moved_head(wt_path: str | Path, before: str) -> str:
     full HEAD it names.
     """
     head = git.client.head_sha(cwd=wt_path)
-    if not head or head == git.client.out("rev-parse", before, cwd=wt_path):
+    if not head or git.client.same_commit(head, before, cwd=wt_path):
         return ""
     return head
 
@@ -453,6 +453,15 @@ def _unrecovered(wt_path: str | Path, prior: LandResult) -> LandResult:
     if prior.status is not CommitStatus.NO_CHANGES:
         return prior
     if git.client.is_dirty(wt_path):
+        status = git.client.run("status", "--porcelain", cwd=wt_path)
+        all_names = [line[3:] for line in status.stdout.splitlines() if len(line) > 3]
+        names = all_names[:10]
+        listed = f": {', '.join(names)}" if names else ""
+        if len(all_names) > len(names):
+            listed += f" … and {len(all_names) - len(names)} more"
+        core.log.error(
+            f"commit failed: changes remain uncommitted in the worktree{listed}"
+        )
         return LandResult(
             CommitStatus.COMMIT_FAILED,
             error="changes remain uncommitted in the worktree",
@@ -558,7 +567,10 @@ def _commit(
     if not committed.ok:
         if committed_nothing(committed):
             return _Commit(outcome=LandResult(CommitStatus.NO_CHANGES))
-        error = committed.stderr.strip() or committed.stdout.strip()
+        error = (
+            committed.stderr.strip() or committed.stdout.strip()
+            or f"git commit exited {committed.returncode} with no output"
+        )
         core.log.error(f"commit failed: {error}")
         # combined, not `error`: a pre-commit chain prints its banner on
         # stdout and its verdict there too, so the stderr-first reading the

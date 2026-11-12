@@ -401,6 +401,48 @@ class BatchScope:
 UNKNOWN_SCOPE = BatchScope(known=False)
 
 
+def merge_by_id(
+    first: dict[str, BatchScope],
+    retry: dict[str, BatchScope],
+) -> dict[str, BatchScope]:
+    """One observation per id, accumulated across the runs that answered it.
+
+    The union, not the later reading. A retried item's outcomes supersede — the
+    retry re-decided them — but its *observations* must not, because the
+    question reconciliation asks spans the whole pass: was this item's file
+    changed at any point while the pass was recording that no work was done?
+
+    Superseding loses exactly the case this exists for. An item edited in the
+    first batch and deferred there, then deferred again by a retry that touched
+    nothing, has an empty retry scope — attribution is by path and the file was
+    already dirty when the retry began, so the retry cannot see the edit that
+    the first batch made. Keeping only the retry's reading would report that
+    item as an honest deferral and commit its edit anyway, which is the original
+    defect surviving in the one path most likely to produce it.
+
+    The union cannot manufacture a contradiction against a retry that worked: an
+    item the retry actually fixed comes back FIXED, and a fixed item is not a
+    claim that no work was done, so no amount of accumulated observation
+    contradicts it.
+
+    An unknown reading on either side makes the union unknown. Half an
+    observation is not a smaller observation — the missing half is where the
+    file would have been.
+    """
+    merged = dict(first)
+    for item_id, scope in retry.items():
+        prior = merged.get(item_id)
+        if prior is None:
+            merged[item_id] = scope
+            continue
+        merged[item_id] = (
+            UNKNOWN_SCOPE
+            if not (prior.known and scope.known)
+            else BatchScope(files=prior.files | scope.files)
+        )
+    return merged
+
+
 def changed_files(wt_path: str | Path) -> set[str] | None:
     """The changed files (staged, unstaged, and untracked), or None on failure.
 

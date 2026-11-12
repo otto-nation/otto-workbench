@@ -8,12 +8,14 @@ was a lease that looked correct and was satisfied by the tool's own fetch.
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import git.push
 import rebase.lease
 
 GIT_TIMEOUT = 30  # seconds; a hang here should fail the test, not stall the suite
@@ -261,3 +263,55 @@ class TestAgainstRealGit:
 
         assert not ok
         assert "stale info" in output
+
+
+class TestForPush:
+    """`pr push --expect` plans a lease on the tip origin actually holds."""
+
+    def test_matching_expect_is_a_lease_on_the_remote_tip(self, tmp_path):
+        _origin, hub = _remote_with_branch(tmp_path)
+        tip = _git(hub, "rev-parse", "refs/remotes/origin/feat").stdout.strip()
+        plan = rebase.lease.for_push(str(hub), "feat", tip)
+        assert plan.kind is rebase.lease.PushPlanKind.LEASE
+        assert plan.ok
+        assert plan.remote_sha == tip
+        assert plan.args == (f"--force-with-lease=refs/heads/feat:{tip}",)
+
+    def test_local_head_ahead_of_origin_is_a_fast_forward(self, tmp_path):
+        _origin, hub = _remote_with_branch(tmp_path)
+        remote = _git(hub, "rev-parse", "refs/remotes/origin/feat").stdout.strip()
+        (hub / "local.txt").write_text("x\n")
+        _git(hub, "add", "local.txt")
+        _git(hub, "commit", "-q", "-m", "unpushed")
+        head = _git(hub, "rev-parse", "HEAD").stdout.strip()
+        plan = rebase.lease.for_push(str(hub), "feat", head)
+        assert plan.kind is rebase.lease.PushPlanKind.FAST_FORWARD
+        assert plan.ok
+        assert plan.remote_sha == remote
+        assert plan.args == (f"--force-with-lease=refs/heads/feat:{remote}",)
+
+    def test_a_moved_origin_is_stale(self, tmp_path):
+        origin, hub = _remote_with_branch(tmp_path)
+        planned = _git(hub, "rev-parse", "refs/remotes/origin/feat").stdout.strip()
+        _colleague_pushes(tmp_path, origin)
+        plan = rebase.lease.for_push(str(hub), "feat", planned)
+        assert plan.kind is rebase.lease.PushPlanKind.STALE
+        assert not plan.ok
+
+    def test_a_missing_remote_ref_is_stale(self, tmp_path):
+        _origin, hub = _remote_with_branch(tmp_path)
+        _git(hub, "checkout", "-q", "-b", "unpub")
+        head = _git(hub, "rev-parse", "HEAD").stdout.strip()
+        plan = rebase.lease.for_push(str(hub), "unpub", head)
+        assert plan.kind is rebase.lease.PushPlanKind.STALE
+        assert plan.remote_sha == ""
+        assert not plan.ok
+
+    def test_an_unreachable_remote_leases_on_expect(self, tmp_path):
+        _origin, hub = _remote_with_branch(tmp_path)
+        expect = _git(hub, "rev-parse", "HEAD").stdout.strip()
+        with patch.object(git.push, "remote_head", return_value=None):
+            plan = rebase.lease.for_push(str(hub), "feat", expect)
+        assert plan.kind is rebase.lease.PushPlanKind.UNASKED
+        assert plan.ok
+        assert plan.args == (f"--force-with-lease=refs/heads/feat:{expect}",)

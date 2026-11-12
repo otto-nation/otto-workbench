@@ -6,6 +6,7 @@ covers used to spend ~1 turn an item, which is how 39 claimed fixes against a
 40-turn budget never reached most of them.
 """
 
+import json
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -131,3 +132,93 @@ def test_a_single_chunk_still_uses_the_suffixed_name(tmp_path):
 
     assert (adapter.artifacts / "verify-tracking-1.md").exists()
     assert not (adapter.artifacts / "verify-tracking.md").exists()
+
+
+def _tool_end(text: str) -> str:
+    return json.dumps({
+        "type": "tool_execution_end", "toolCallId": "c1", "toolName": "edit",
+        "result": {"content": [{"type": "text", "text": text}], "details": {}},
+        "isError": True,
+    })
+
+
+def test_a_malformed_checklist_write_retries_unanswered_items(tmp_path):
+    adapter = _Adapter(tmp_path)
+    calls = []
+
+    def run_fix(_phase, prompt, **kwargs):
+        tracking = adapter.verify_tracking_path(1)
+        calls.append({
+            "log": kwargs["session_log"],
+            "prompt": prompt,
+            "text": tracking.read_text(),
+        })
+        if "retry" not in kwargs["session_log"]:
+            tracking.write_text(tracking.read_text().replace(
+                "- [ ] verified", "- [x] verified", 1))
+            Path(kwargs["session_log"]).write_text(
+                _tool_end(
+                    f'Invalid arguments for tool "edit": Expected \',\' {tracking}'
+                ) + "\n")
+        else:
+            tracking.write_text(tracking.read_text().replace(
+                "- [ ] verified", "- [x] verified", 1))
+        return agent.invoke.FixResult(0, None)
+
+    with patch.object(agent.invoke, "run_fix", side_effect=run_fix):
+        verdicts = fix.verify.run(
+            Phase.FIX_VERIFY, "", items=_items(2), adapter=adapter,
+        )
+
+    assert len(calls) == 2
+    assert calls[1]["log"].endswith("verify-session-1-retry.jsonl")
+    assert "Rewrite the whole file" in calls[1]["prompt"]
+    assert "file-write tool" in calls[1]["prompt"]
+    assert "<!-- fix:i0 -->" not in calls[1]["text"]
+    assert "<!-- fix:i1 -->" in calls[1]["text"]
+    assert verdicts["i0"].ok is True
+    assert verdicts["i1"].ok is True
+
+
+def test_a_broken_tick_with_failed_writes_is_unrecorded(tmp_path):
+    adapter = _Adapter(tmp_path)
+
+    def run_fix(_phase, _prompt, **kwargs):
+        tracking = adapter.verify_tracking_path(1)
+        Path(kwargs["session_log"]).write_text(
+            _tool_end(
+                f'Invalid arguments for tool "edit": Expected \',\' {tracking}'
+            ) + "\n")
+        if "retry" in kwargs["session_log"]:
+            tracking.write_text(tracking.read_text().replace(
+                "- [ ] broken", "- [x] broken", 1))
+        return agent.invoke.FixResult(0, None)
+
+    with patch.object(agent.invoke, "run_fix", side_effect=run_fix):
+        verdicts = fix.verify.run(
+            Phase.FIX_VERIFY, "", items=_items(1), adapter=adapter,
+        )
+
+    assert verdicts["i0"].ok is None
+    assert verdicts["i0"].recorded is False
+
+
+def test_a_broken_tick_survives_when_a_later_write_filled_the_checklist(tmp_path):
+    adapter = _Adapter(tmp_path)
+
+    def run_fix(_phase, _prompt, **kwargs):
+        tracking = adapter.verify_tracking_path(1)
+        Path(kwargs["session_log"]).write_text(
+            _tool_end(
+                f'Invalid arguments for tool "edit": Expected \',\' {tracking}'
+            ) + "\n")
+        tracking.write_text(tracking.read_text().replace(
+            "- [ ] broken", "- [x] broken"))
+        return agent.invoke.FixResult(0, None)
+
+    with patch.object(agent.invoke, "run_fix", side_effect=run_fix):
+        verdicts = fix.verify.run(
+            Phase.FIX_VERIFY, "", items=_items(1), adapter=adapter,
+        )
+
+    assert verdicts["i0"].ok is False

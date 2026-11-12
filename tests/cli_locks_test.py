@@ -59,7 +59,7 @@ def test_a_command_declaring_nothing_takes_nothing(worktree):
     assert not (ctx.target_dir / core.run_lock.LOCK_FILE).exists()
 
 
-def test_contention_exits_1_naming_the_holder_and_the_target(worktree, capsys):
+def test_contention_exits_75_naming_the_holder_and_the_target(worktree, capsys):
     ctx = _ctx(worktree)
     with live_pid() as pid, \
          held_elsewhere(ctx.target_dir / core.run_lock.LOCK_FILE, {
@@ -68,7 +68,7 @@ def test_contention_exits_1_naming_the_holder_and_the_target(worktree, capsys):
         seen = pid
         with pytest.raises(SystemExit) as exc:
             cli.locks.claim_declared("rebase", [], ctx, command="pr-rebase")
-    assert exc.value.code == 1
+    assert exc.value.code == core.run_lock.EXIT_BUSY
     err = capsys.readouterr().err
     assert f"owns this target owner/repo@feat/test: pr batch run R (pid {seen}" in err
 

@@ -4,7 +4,9 @@ import json
 
 from conftest import make_ctx
 
+import board.flight
 import cli.pr_board
+from board.model import Phase
 from core.tool_parser import EXIT_USAGE
 
 
@@ -76,3 +78,40 @@ def test_document_printed(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert json.loads(out) == doc
     assert "\n  " not in out
+
+
+def test_cmd_board_goes_through_flight(monkeypatch, capsys):
+    seen = {}
+    doc = {
+        "schema_version": 1,
+        "phase": "listing",
+        "stamp": "deadbeefdeadbeef",
+        "rows": [],
+    }
+
+    def fake_serve(req, build):
+        seen["req"] = req
+        seen["build"] = build
+        return doc
+
+    monkeypatch.setattr("board.flight.serve", fake_serve)
+    code = cli.pr_board.cmd_board(
+        [
+            "--checkout", "/x",
+            "--phase", "listing",
+            "--offline",
+            "--if-changed", "stamp1",
+        ],
+        make_ctx(),
+        schema_version=1,
+    )
+    assert code == 0
+    req = seen["req"]
+    assert req == board.flight.Request(
+        phase=Phase.LISTING,
+        checkouts=("/x",),
+        prs=None,
+        offline=True,
+        if_changed="stamp1",
+    )
+    assert json.loads(capsys.readouterr().out) == doc

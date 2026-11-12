@@ -1,7 +1,9 @@
 """Per-repo board cache: listing, status and owed JSON under cache_dir("board")."""
 
-# ceiling: last writer wins between concurrent processes. Upgrade to
-# per-repo locking if boards clobber each other's cache.
+# ceiling: concurrent pr board processes are now serialised per
+# (checkouts, phase, offline) by board.flight; writes across phases
+# (status rewriting listing.json) remain last-writer-wins; upgrade to
+# per-repo locking if cross-phase writes are seen clobbering.
 
 # doc-group: board
 

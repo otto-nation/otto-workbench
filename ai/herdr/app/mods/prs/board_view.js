@@ -13,7 +13,7 @@ import { boardState, cardId, friendlyError, repoId, representatives, spaceTarget
 import { LOAD_DELAY_MS, loadState, errorsStatus } from "./_lib/load_state.js";
 import { runStatus } from "./_lib/batch.js";
 import { checkTools, loadTerminals } from "./_lib/board_data.js";
-import { pullTarget } from "./_lib/board_pull.js";
+import { pullTarget, eachByMachine, FULL_PULL_MS } from "./_lib/board_pull.js";
 import {
   TEAM_COLUMNS, MINE_COLUMNS, columnsFor, teamColumn, mineColumn, filterPrs, filterOn,
   isMine, groupColumns,
@@ -112,11 +112,13 @@ export default class PrsBoard extends View {
     this.cache = new Map();
     this.toolsByOn = new Map();
     this.repoByKey = new Map();
+    // Last offline→online fall-through per target, so a queued cache is not pulled every 15s.
+    this.fellAt = new Map();
     this.inflight = this.again = this.againListing = false;
     this.watchRoot = this.key = null;
     this.pollListing = false;
     this.manual = false;
-    cx.timer.every(180000, (cx) => this.refresh(cx));
+    cx.timer.every(FULL_PULL_MS, (cx) => this.refresh(cx));
     cx.timer.every(15000, (cx) => {
       if (this.activeTargets().some((c) => c.on != null) || this.pollListing) this.refresh(cx, { listingOnly: true });
     });
@@ -225,7 +227,7 @@ export default class PrsBoard extends View {
     this.pullStartedAt = Date.now();
     cx.timer.after(LOAD_DELAY_MS, (cx) => cx.notify());
     cx.notify();
-    await Promise.all(targets.map(async (ctx) => {
+    await eachByMachine(targets, (c) => c.on, async (ctx) => {
       const key = ctxKey(ctx);
       try {
         if (!ctx.cwd) {
@@ -237,11 +239,12 @@ export default class PrsBoard extends View {
       } finally {
         this.end(key);
       }
-    }));
+    });
     const keep = [ctxKey(ctxOf()), ...spaceTargets(spaces(), panes()).map(ctxKey)];
     for (const k of staleKeys(this.cache.keys(), keep)) {
       this.cache.delete(k);
       this.repoByKey.delete(k);
+      this.fellAt.delete(k);
     }
   }
 
@@ -264,6 +267,7 @@ export default class PrsBoard extends View {
     const done = await pullTarget(exec, ctx, prev, {
       listingOnly, fresh, owed: tabOf() === "mine", entries: terms.entries, now: Date.now(),
       isCurrent: () => this.same(key),
+      fellAt: this.fellAt.get(key), onFall: (t) => this.fellAt.set(key, t),
     }, (state) => {
       if (state.repo?.slug) this.repoByKey.set(key, repoId(state.repo));
       this.commit(key, state, ctx, cx);

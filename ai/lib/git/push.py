@@ -52,11 +52,12 @@ pass to act on.
 
 The `git push` subprocess is relayed to stderr as it runs — a pre-push hook that
 prints for minutes is visible, not captured into silence until git exits — and
-the same bytes are kept for classification and the failure artifact. A trail
-records it as a `push` span (the wait) plus whether `--no-verify` skipped the
-hooks. There is no timeout that would kill a legitimate long hook. Because the
-output has already been on screen once, `report` labels its excerpt of it as a
-replay rather than printing the hook's failure a second time unannounced.
+the same bytes are kept for classification and the failure artifact. Before git
+runs, `plan_line` says what the push will do. A trail records it as a `push`
+span (the wait) plus whether `--no-verify` skipped the hooks. There is no timeout
+that would kill a legitimate long hook. Because the output has already been on
+screen once, `report` labels its excerpt of it as a replay rather than printing
+the hook's failure a second time unannounced.
 
 This module pushes, verifies, retries, and reports. It does not commit, and it
 does not perform the hook-regenerated-files recovery `land` owns — that sits
@@ -615,6 +616,11 @@ def push(
     if owner_check is not None:
         owner_check(wt_path, _outgoing(wt_path, remote, sha, branch))
 
+    # Said before git runs, so a reader sees what is about to move — which tip,
+    # under which lease, with or without the hook — while it can still be stopped.
+    # core.log.info always prints to stderr; it is not gated on a quiet flag.
+    core.log.info(plan_line(wt_path, sha=sha, branch=branch, remote=remote, args=argv))
+
     r = _run_push(wt_path, argv, trail)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
@@ -643,11 +649,55 @@ def push(
 def _outgoing(wt_path: str | Path, remote: str, sha: str, branch: str) -> Outgoing:
     """What a push of *sha* to *remote*'s *branch* sends, as the pre-push hook sees it."""
     url = git.client.out("remote", "get-url", "--push", remote, cwd=wt_path)
-    tracked = git.client.out(
-        "rev-parse", "-q", "--verify", f"refs/remotes/{remote}/{branch}",
-        cwd=wt_path) or ZERO_SHA
+    tracked = _tracked(wt_path, remote, branch) or ZERO_SHA
     ref = f"refs/heads/{branch}"
     return Outgoing(remote, url, (f"{ref} {sha} {ref} {tracked}",))
+
+
+_LEASE_PREFIX = "--force-with-lease="
+
+
+def _tracked(wt_path: str | Path, remote: str, branch: str) -> str:
+    """What this checkout last saw *remote*'s *branch* at, or "" when it never did."""
+    return git.client.out("rev-parse", "-q", "--verify",
+                          f"refs/remotes/{remote}/{branch}", cwd=wt_path)
+
+
+def _lease_on(args: Sequence[str]) -> str | None:
+    """The SHA an explicit `--force-with-lease=<ref>:<sha>` names; None without one.
+
+    "" is a real answer — a lease that the ref must not exist yet.
+    """
+    for arg in args:
+        if arg.startswith(_LEASE_PREFIX) and ":" in arg:
+            return arg.rsplit(":", 1)[1]
+    return None
+
+
+def plan_line(wt_path: str | Path, *, sha: str, branch: str, remote: str,
+              args: Sequence[str]) -> str:
+    """One line saying what the push about to run will do, for a reader to stop on."""
+    tracked = _tracked(wt_path, remote, branch)
+    lease = _lease_on(args)
+    base = lease if lease else tracked
+    if base:
+        count = git.client.out("rev-list", "--count", f"{base}..{sha}", cwd=wt_path)
+    else:
+        count = git.client.out("rev-list", "--count", sha, "--not",
+                               f"--remotes={remote}", cwd=wt_path)
+    n = f"{count} commit{'' if count == '1' else 's'}" if count.isdigit() else "commit count unknown"
+    verb = "force-push" if _forced(args) else "push"
+    remote_at = git.client.abbrev(tracked) or "(none)"
+    parts = [f"Will {verb} {branch} to {remote}: remote {remote_at} -> local "
+             f"{git.client.abbrev(sha)}"]
+    if lease is not None:
+        parts.append(f"lease on {git.client.abbrev(lease) or '(absent ref)'}")
+    elif _forced(args):
+        parts.append("no lease")
+    parts.append(n)
+    parts.append("pre-push hook skipped (--no-verify)" if _hooks_skipped(args)
+                 else "pre-push hook runs")
+    return ", ".join(parts)
 
 
 def _push_command(wt_path: str | Path, args: Sequence[str]) -> str:

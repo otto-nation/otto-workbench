@@ -496,14 +496,15 @@ _gql() {
       dollar0: c.args[2],
       seconds: c.args[3],
       memory: c.args[4],
-      inner: c.args.slice(5, 12),
-      phase: c.args[12],
+      mode: c.args[5],
+      inner: c.args.slice(6, 13),
+      phase: c.args[13],
       timeout: c.timeout,
       isolateInExec: c.isolate,
     }))));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"cmd":"sh","dashc":"-c","preamble":true,"dollar0":"sh","seconds":"55","memory":"768M","inner":["pr","board","--schema-version","1","--checkout","/w","--phase"],"phase":"listing","timeout":60000,"isolateInExec":false},{"cmd":"sh","dashc":"-c","preamble":true,"dollar0":"sh","seconds":"175","memory":"768M","inner":["pr","board","--schema-version","1","--checkout","/w","--phase"],"phase":"status","timeout":180000,"isolateInExec":false},{"cmd":"sh","dashc":"-c","preamble":true,"dollar0":"sh","seconds":"115","memory":"768M","inner":["pr","board","--schema-version","1","--checkout","/w","--phase"],"phase":"owed","timeout":120000,"isolateInExec":false}]' ]
+  [ "$output" = '[{"cmd":"sh","dashc":"-c","preamble":true,"dollar0":"sh","seconds":"55","memory":"768M","mode":"scope","inner":["pr","board","--schema-version","1","--checkout","/w","--phase"],"phase":"listing","timeout":60000,"isolateInExec":false},{"cmd":"sh","dashc":"-c","preamble":true,"dollar0":"sh","seconds":"175","memory":"768M","mode":"scope","inner":["pr","board","--schema-version","1","--checkout","/w","--phase"],"phase":"status","timeout":180000,"isolateInExec":false},{"cmd":"sh","dashc":"-c","preamble":true,"dollar0":"sh","seconds":"115","memory":"768M","mode":"scope","inner":["pr","board","--schema-version","1","--checkout","/w","--phase"],"phase":"owed","timeout":120000,"isolateInExec":false}]' ]
 }
 
 @test "local loadBoard argv is unchanged and has no isolation wrapper" {
@@ -545,6 +546,47 @@ _gql() {
   [ "$output" = '[{"kind":"timeout","message":"timeout: sending signal TERM"},{"kind":"timeout","message":"exit 124"}]' ]
 }
 
+@test "isolated remote call retries under plain timeout when systemd-run itself fails" {
+  _rr '
+    const modes = [];
+    const exec = async (cmd, args) => {
+      modes.push(args[5]);
+      if (args[5] === "scope") {
+        return { code: 1, stdout: "", stderr: "Failed to start transient scope unit: Access denied\n" };
+      }
+      return { code: 0, stdout: "{}", stderr: "" };
+    };
+    const r = await m.invoke(exec, { cwd: "/w", on: "box" }, "pr", ["board"],
+      { timeout: 60000, isolate: { seconds: 55, memoryMax: "768M" } });
+    process.stdout.write(JSON.stringify({ modes, ok: r.ok }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"modes":["scope","plain"],"ok":true}' ]
+}
+
+@test "isolated remote call does not retry when the command itself fails" {
+  _rr '
+    let calls = 0;
+    const exec = async () => { calls += 1; return { code: 1, stdout: "", stderr: "pr board: boom" }; };
+    const r = await m.invoke(exec, { cwd: "/w", on: "box" }, "pr", ["board"],
+      { isolate: { seconds: 55, memoryMax: "768M" } });
+    process.stdout.write(JSON.stringify({ calls, kind: r.error.kind }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"calls":1,"kind":"failed"}' ]
+}
+
+@test "isolated remote exit 137 names the memory cap and deadline" {
+  _rr '
+    const exec = async () => ({ code: 137, stdout: "", stderr: "" });
+    const r = await m.invoke(exec, { cwd: "/w", on: "box" }, "pr", ["board"],
+      { isolate: { seconds: 55, memoryMax: "768M" } });
+    process.stdout.write(JSON.stringify(r.error));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"kind":"failed","message":"killed at its 768M memory cap or 55s deadline"}' ]
+}
+
 _write_echo_stub() {
   local path="$1" name="$2"
   printf '%s\n' '#!/bin/sh' "printf '%s' '${name}'" 'printf '\'' %s'\'' "$@"' 'printf '\''\n'\''' > "$path"
@@ -569,7 +611,7 @@ _write_echo_stub() {
   mkdir -p "$BATS_TEST_TMPDIR/run"
   run env -u XDG_RUNTIME_DIR PATH="$bin" HOME="$BATS_TEST_TMPDIR" \
     XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run" \
-    /bin/sh -c "$preamble" sh 55 768M payload a
+    /bin/sh -c "$preamble" sh 55 768M scope payload a
   [ "$status" -eq 0 ]
   [ "$output" = 'timeout -k 5 55 payload a' ]
 
@@ -577,19 +619,26 @@ _write_echo_stub() {
     "$BATS_TEST_TMPDIR/run/bus"
   run env -u XDG_RUNTIME_DIR PATH="$bin" HOME="$BATS_TEST_TMPDIR" \
     XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run" \
-    /bin/sh -c "$preamble" sh 55 768M payload a
+    /bin/sh -c "$preamble" sh 55 768M scope payload a
   [ "$status" -eq 0 ]
   [ "$output" = 'systemd-run --user --scope --quiet --collect -p MemoryMax=768M -p MemorySwapMax=0 -- timeout -k 5 55 payload a' ]
 
+  # plain mode skips systemd-run even when it and the bus are usable.
+  run env -u XDG_RUNTIME_DIR PATH="$bin" HOME="$BATS_TEST_TMPDIR" \
+    XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run" \
+    /bin/sh -c "$preamble" sh 55 768M plain payload a
+  [ "$status" -eq 0 ]
+  [ "$output" = 'timeout -k 5 55 payload a' ]
+
   rm -f "$bin/systemd-run"
   run env -u XDG_RUNTIME_DIR PATH="$bin" HOME="$BATS_TEST_TMPDIR" \
-    /bin/sh -c "$preamble" sh 55 768M payload a
+    /bin/sh -c "$preamble" sh 55 768M scope payload a
   [ "$status" -eq 0 ]
   [ "$output" = 'timeout -k 5 55 payload a' ]
 
   rm -f "$bin/timeout"
   run env -u XDG_RUNTIME_DIR PATH="$bin" HOME="$BATS_TEST_TMPDIR" \
-    /bin/sh -c "$preamble" sh 55 768M payload a
+    /bin/sh -c "$preamble" sh 55 768M scope payload a
   [ "$status" -eq 3 ]
   [ "$output" = 'payload a' ]
 }

@@ -310,11 +310,10 @@ _READ_MARKERS = (
 )
 
 
-# Must track the keys usage_from_records reads (guarded against drift by the
-# parity test in tests/ai_usage_test.py, which compares slimmed and fully
-# decoded parses) (and served_turns, which it
-# calls). Assistant records carry full message content that accounting never
-# looks at; keeping those strings is what made a 100 MB session log a 1 GB RSS.
+# Must track the keys usage_from_records and served_turns read; the parity
+# test in tests/ai_usage_test.py compares slimmed and fully decoded parses to
+# catch drift. Assistant records carry full message content that accounting
+# never looks at; keeping those strings made a 100 MB session log a 1 GB RSS.
 _SLIM_TOP = (
     "type", "subtype", "model", "parent_tool_use_id", "usage", "modelUsage",
     "total_cost_usd", "duration_ms", "num_turns",

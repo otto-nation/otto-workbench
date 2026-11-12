@@ -104,35 +104,58 @@ export const REMOTE_PREAMBLE = REMOTE_ENV + 'exec "$@"';
 // Isolated remote children leave herdr-core serve's 512M cgroup (MemoryMax=512M,
 // MemorySwapMax=0 on the transient unit `serve` starts for exec) so a heavy
 // command cannot throttle the connection, and self-terminate at the deadline.
-// `$1` is seconds, `$2` is MemoryMax; both are positional so they are not
-// interpolated into this script. Usability is `command -v` plus the user bus
-// socket systemd-run talks to — no extra probe process per call; without the
-// bus it falls back to a bare `timeout` rather than failing the read.
+// `$1` is seconds, `$2` is MemoryMax, `$3` is `scope` or `plain`; all are
+// positional so they are not interpolated into this script. `scope` uses
+// systemd-run when it and the user bus socket exist — no probe process per
+// call; `plain` (and any machine without them) runs under a bare `timeout`.
 export const REMOTE_ISOLATE_PREAMBLE = REMOTE_ENV
-  + 'seconds=$1; memoryMax=$2; shift 2; '
-  + 'if command -v systemd-run >/dev/null 2>&1 && [ -S "${XDG_RUNTIME_DIR:-/nonexistent}/bus" ]; then '
+  + 'seconds=$1; memoryMax=$2; mode=$3; shift 3; '
+  + 'if [ "$mode" = scope ] && command -v systemd-run >/dev/null 2>&1 '
+  + '&& [ -S "${XDG_RUNTIME_DIR:-/nonexistent}/bus" ]; then '
   + 'exec systemd-run --user --scope --quiet --collect -p MemoryMax="$memoryMax" -p MemorySwapMax=0 -- timeout -k 5 "$seconds" "$@"; '
   + 'elif command -v timeout >/dev/null 2>&1; then '
   + 'exec timeout -k 5 "$seconds" "$@"; '
   + 'else exec "$@"; fi';
 
+// systemd-run's own refusals: the scope never started, so the command never ran. pr prints none of
+// these, which is what makes a retry under a bare `timeout` safe rather than a second attempt.
+const SCOPE_FAILED_RE = /^Failed to (connect to (user )?bus|create bus connection|start transient scope unit)/m;
+
 export function toolCall(ctx, cmd, args, opts = {}) {
   if (ctx.on == null || ctx.on === '') return { cmd, args };
   if (opts.isolate != null) {
-    const { seconds, memoryMax } = opts.isolate;
+    const { seconds, memoryMax, scope = true } = opts.isolate;
     return {
       cmd: 'sh',
-      args: ['-c', REMOTE_ISOLATE_PREAMBLE, 'sh', String(seconds), String(memoryMax), cmd, ...args],
+      args: ['-c', REMOTE_ISOLATE_PREAMBLE, 'sh', String(seconds), String(memoryMax),
+        scope ? 'scope' : 'plain', cmd, ...args],
     };
   }
   return { cmd: 'sh', args: ['-c', REMOTE_PREAMBLE, 'sh', cmd, ...args] };
 }
 
+// An isolated child killed with SIGKILL: past the deadline's grace (`timeout -k`) or at MemoryMax.
+function killedError(isolate, result) {
+  return {
+    kind: 'failed',
+    message: `killed at its ${isolate.memoryMax} memory cap or ${isolate.seconds}s deadline`
+      + (result.stderr ? `: ${result.stderr.trim()}` : ''),
+  };
+}
+
 export async function invoke(exec, ctx, cmd, args, opts = {}) {
   try {
     const { isolate, ...execOpts } = opts;
-    const call = toolCall(ctx, cmd, args, isolate != null ? { isolate } : {});
-    const result = await exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on, ...execOpts });
+    const run = (iso) => {
+      const call = toolCall(ctx, cmd, args, iso != null ? { isolate: iso } : {});
+      return exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on, ...execOpts });
+    };
+    let result = await run(isolate);
+    const remote = isolate != null && ctx.on != null && ctx.on !== '';
+    if (remote && result.code !== 0 && SCOPE_FAILED_RE.test(result.stderr ?? '')) {
+      result = await run({ ...isolate, scope: false });
+    }
+    if (remote && result.code === 137) return { ok: false, error: killedError(isolate, result) };
     const error = classifyCode(result);
     if (error) return { ok: false, error };
     return { ok: true, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };

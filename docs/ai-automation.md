@@ -1013,11 +1013,13 @@ Rebase the branch onto its base, handle conflicts, and force-push the result und
 |---|---|
 | `pr_merged` | status already_landed: GitHub reports the PR merged |
 | `empty_diff` | status already_landed: the branch has commits but no diff against its base — what a squash merge leaves behind |
-| `commits_upstream` | status already_landed: every commit already has an upstream equivalent by patch id |
+| `commits_upstream` | status already_landed: every commit already has an upstream equivalent by patch id (same diff, per `git patch-id`) |
 | `no_merge_base` | status unrelated_history: the branch and its base share no commit |
 | `conflicts_over_budget` | status conflicts_over_budget: conflicts span more files than automatic resolution should attempt; the rebase was aborted |
 | `resolutions_over_budget` | status conflicts_over_budget: the same files conflict commit after commit, past the AI call budget; the rebase was aborted |
 | `tracker_refused` | status tracker_unread: GitHub was not asked whether the PR merged (budget latch), so landing could not be ruled out |
+
+> `--force` is a deprecated alias of `--force-landed`.
 
 #### pr push contract
 

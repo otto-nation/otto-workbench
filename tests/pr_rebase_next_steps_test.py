@@ -52,3 +52,13 @@ def test_a_clean_abort_prints_how_to_retry(ran, capsys):
 def test_success_prints_no_next_block(ran, capsys):
     assert ran(0, False) == 0
     assert "Next:" not in capsys.readouterr().err
+
+
+def test_an_unreadable_worktree_keeps_exit_3(monkeypatch, tmp_path):
+    """The Next: block is advice; failing to read the tree must not replace exit 3."""
+    ctx = make_ctx(branch="isaac/feat/x", worktree_root=tmp_path / "gone")
+    monkeypatch.setattr(pr.context, "resolve", lambda **kw: ctx)
+    monkeypatch.setattr(cli.locks, "claim_declared", lambda *a, **kw: None)
+    monkeypatch.setattr(rebase.commands, "_run", lambda *a: 3)
+
+    assert cli.pr_rebase.main([]) == 3

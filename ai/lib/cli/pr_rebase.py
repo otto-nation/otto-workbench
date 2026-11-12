@@ -175,8 +175,17 @@ CONTRACT = core.command_contract.CommandContract(
 
 
 def next_state(cwd: str) -> str:
-    """The `when` key for this run's next steps: is a rebase still paused in *cwd*?"""
-    return "paused" if rebase.inspect.rebase_in_progress(cwd) else "clean"
+    """The `when` key for this run's next steps: is a rebase still paused in *cwd*?
+
+    Returns "" when *cwd* cannot be read, which selects no tree-specific steps.
+    """
+    # The Next: block is advice printed after the exit code is decided; a
+    # worktree that vanished must not turn exit 3 into a traceback. The
+    # ConflictReport on stdout still names the tree.
+    try:
+        return "paused" if rebase.inspect.rebase_in_progress(cwd) else "clean"
+    except OSError:
+        return ""
 
 
 def build_parser() -> ToolParser:

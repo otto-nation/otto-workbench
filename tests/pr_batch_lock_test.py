@@ -351,7 +351,7 @@ def test_a_manual_pr_fix_on_a_live_batchs_pr_is_refused_naming_the_batch(tmp_pat
     finally:
         (tmp_path / "release").touch()
         _, live_err = live.communicate(timeout=_PROC_TIMEOUT)
-    assert fix.code == 1
+    assert fix.code == core.run_lock.EXIT_BUSY
     assert not fix.fetched and not fix.dispatched
     assert f"pr batch run {run_id}" in capsys.readouterr().err
     assert live.returncode == 0, live_err

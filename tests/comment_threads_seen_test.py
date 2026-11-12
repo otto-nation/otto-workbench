@@ -46,12 +46,16 @@ DECOMPOSED = json.dumps({"threads": [], "comment_items": [{
 }]})
 
 
+def _build_ctx(tmp_path, work, head_sha):
+    return make_ctx(repo="owner/repo", pr_number=34, branch="isaac/deps/pi_1_1_0",
+                    worktree_root=work, head_sha=head_sha,
+                    target_dir=tmp_path / "target")
+
+
 def _ctx(tmp_path):
     work = tmp_path / "wt"
     (work / ".git").mkdir(parents=True, exist_ok=True)
-    return make_ctx(repo="owner/repo", pr_number=34, branch="isaac/deps/pi_1_1_0",
-                    worktree_root=work, head_sha="abc1234",
-                    target_dir=tmp_path / "target")
+    return _build_ctx(tmp_path, work, "abc1234")
 
 
 def _run(tmp_path, argv, answer, *, fix_pass=None, reviews=()):
@@ -190,10 +194,7 @@ def _git_ctx(tmp_path):
     (work / "f.txt").write_text("x\n")
     commit_all(work, "base")
     sha = git_out(work, "rev-parse", "HEAD").strip()
-    return make_ctx(
-        repo="owner/repo", pr_number=34, branch="isaac/deps/pi_1_1_0",
-        worktree_root=work, head_sha=sha, target_dir=tmp_path / "target",
-    )
+    return _build_ctx(tmp_path, work, sha)
 
 
 def _resume_fix(tmp_path, ctx, ckpt, *, answer=None):
@@ -254,3 +255,18 @@ class TestResumedFixKeepsTheCheckpointSeenRecord:
         code, _prompt, seen, _captured = _resume_fix(tmp_path, ctx, ckpt)
         assert code == 0
         assert REVIEW_ID not in seen
+
+
+class TestResumedFixKeepsSeenCommentsSeen:
+    def test_a_comment_the_checkpoint_saw_stays_seen(self, tmp_path):
+        ctx = _git_ctx(tmp_path)
+        ckpt = pr.fix_checkpoint.CommentsFixCheckpoint(
+            repo=ctx.repo, pr=ctx.pr_number or 0, branch=ctx.branch,
+            head_sha=ctx.head_sha, phase=CheckpointPhase.AGENT_DONE,
+            engine=EngineProgress(head_before=ctx.head_sha),
+            triage=TriageResult(),
+            seen_review_body_comments={REVIEW_ID: ""},
+        )
+        code, _prompt, seen, _captured = _resume_fix(tmp_path, ctx, ckpt)
+        assert code == 0
+        assert REVIEW_ID in seen

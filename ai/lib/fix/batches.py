@@ -32,6 +32,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
+# fix.engine is deliberately not imported: engine imports this module, and
+# `fix.engine.FixAdapter` annotations resolve lazily (`from __future__ import annotations`).
 import agent.invoke
 import agent.phases
 import agent.templates

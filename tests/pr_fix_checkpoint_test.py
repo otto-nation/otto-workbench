@@ -26,7 +26,7 @@ import pr.fix_checkpoint
 import pr.settlement
 import pr.state
 from pr.comments_state import ThreadState
-from pr.fix import FixOutcome, FixRecord, ItemOutcome
+from pr.fix import FixOutcome, ItemOutcome
 from pr.thread_models import (
     Classification, CommentItem, Complexity, ReplyOutcome, TriageResult,
     Verification,

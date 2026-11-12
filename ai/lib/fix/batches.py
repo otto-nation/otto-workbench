@@ -31,7 +31,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 import agent.invoke
 import agent.phases
@@ -44,9 +43,6 @@ from agent.registry import PHASES
 from core.trail import Trail
 from fix.types import FixItem
 from pr.fix import FixOutcome, ItemOutcome
-
-if TYPE_CHECKING:
-    from fix.engine import FixAdapter
 
 # The checklist's name inside a pass's artifact directory. Published because a
 # directory that sweeps a pass's leavings has to name the file, and one spelling
@@ -138,7 +134,7 @@ def chunks(items: list[FixItem], size: int) -> list[list[FixItem]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def render_prompt(adapter: FixAdapter, turns: int, *, resume: bool = False) -> str:
+def render_prompt(adapter: fix.engine.FixAdapter, turns: int, *, resume: bool = False) -> str:
     """Render this domain's template around the tracking file as it now stands."""
     text = agent.templates.render(
         PHASES[adapter.phase].template_for(),
@@ -160,7 +156,7 @@ def render_prompt(adapter: FixAdapter, turns: int, *, resume: bool = False) -> s
 
 
 def _invoke(
-    adapter: FixAdapter, items: list[FixItem], *,
+    adapter: fix.engine.FixAdapter, items: list[FixItem], *,
     label: str, turns: int, budget: float | None, resume: bool = False,
     before: set[str] | None = None,
 ) -> Batch:
@@ -225,7 +221,7 @@ def _invoke(
 
 
 def batch_scope(
-    adapter: FixAdapter, before: set[str] | None,
+    adapter: fix.engine.FixAdapter, before: set[str] | None,
 ) -> fix.scope.BatchScope:
     """This batch's difference, with the pass's own artifacts taken back out.
 
@@ -270,7 +266,7 @@ def relative_to(workdir: Path, path: Path) -> str:
 
 
 def run_batch(
-    adapter: FixAdapter, items: list[FixItem], label: str,
+    adapter: fix.engine.FixAdapter, items: list[FixItem], label: str,
     before: set[str] | None = None,
 ) -> Batch:
     """Run one batch at the budget the phase gives work of that size."""
@@ -285,7 +281,7 @@ def run_batch(
 
 
 def _retry(
-    adapter: FixAdapter, items: list[FixItem], trail: Trail | None,
+    adapter: fix.engine.FixAdapter, items: list[FixItem], trail: Trail | None,
 ) -> list[Batch]:
     """Run the deferred remainder again, chunked, at the phase's retry budget.
 
@@ -324,7 +320,7 @@ def _retry(
 
 
 def _retry_chunk(
-    adapter: FixAdapter, items: list[FixItem], label: str, *,
+    adapter: fix.engine.FixAdapter, items: list[FixItem], label: str, *,
     announce: bool,
 ) -> Batch:
     """One retry invoke, budgeted for this chunk's size rather than the pass's."""
@@ -406,7 +402,7 @@ def record_unevidenced(outcomes: list[ItemOutcome], trail: Trail | None) -> None
 
 
 def settle(
-    adapter: FixAdapter, batches: list[Batch], by_id: dict[str, FixItem],
+    adapter: fix.engine.FixAdapter, batches: list[Batch], by_id: dict[str, FixItem],
     trail: Trail | None,
 ) -> Settled:
     """Every item's final answer, once the deferred remainder has had its retry.

@@ -51,7 +51,7 @@ def test_layer_5_global_config_beats_the_built_in(roots):
     config_root, project = roots
     _write(config_root / "config.yml", "models:\n  light: from-global\n")
     cfg = config.workbench_config.load_config(project)
-    assert agent.phases.phase_model(Phase.SCOUT, None, cfg) == "from-global"
+    assert agent.phases.phase_model(Phase.DESCRIBE, None, cfg) == "from-global"
 
 
 def test_layer_4_project_config_beats_the_global(phase_cfg):
@@ -110,7 +110,7 @@ def test_phase_model_loads_the_config_itself_when_not_given_one(roots):
 
     config_root, _ = roots
     _write(config_root / "config.yml", "models:\n  light: from-disk\n")
-    assert agent.phases.phase_model(Phase.SCOUT, None) == "from-disk"
+    assert agent.phases.phase_model(Phase.DESCRIBE, None) == "from-disk"
 
 
 def test_thinking_layers_the_same_way(roots):

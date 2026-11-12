@@ -6,7 +6,7 @@
       "scope": "global"
     },
     "standard": {
-      "value": "anthropic/claude-sonnet-5",
+      "value": "anthropic/claude-sonnet-5:medium",
       "scope": "global"
     },
     "light": {
@@ -73,7 +73,7 @@
     },
     "scout": {
       "domain": "review",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "xai",
         "id": "grok-4.6",
@@ -96,7 +96,7 @@
     },
     "group": {
       "domain": "review",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "anthropic",
         "id": "claude-opus-5",
@@ -208,7 +208,7 @@
     },
     "fix_verify": {
       "domain": "review",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "anthropic",
         "id": "claude-opus-5",
@@ -264,7 +264,7 @@
     },
     "comments_verify": {
       "domain": "comments",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "anthropic",
         "id": "claude-opus-5",
@@ -320,7 +320,7 @@
     },
     "ci_verify": {
       "domain": "ci",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "anthropic",
         "id": "claude-opus-5",
@@ -348,7 +348,7 @@
     },
     "comments_triage": {
       "domain": "comments",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "anthropic",
         "id": "claude-opus-5",
@@ -376,7 +376,7 @@
     },
     "rebase": {
       "domain": "rebase",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "anthropic",
         "id": "claude-opus-5",

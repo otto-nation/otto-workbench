@@ -81,8 +81,8 @@ class TestPhaseThinkingDefaults:
         expected = {
             Phase.SINGLE: Thinking.MEDIUM,
             Phase.HOLISTIC: Thinking.MEDIUM,
-            Phase.SCOUT: Thinking.LOW,
-            Phase.GROUP: Thinking.LOW,
+            Phase.SCOUT: Thinking.MEDIUM,
+            Phase.GROUP: Thinking.MEDIUM,
             Phase.SYNTHESIS: Thinking.MEDIUM,
             Phase.DISPROVE: Thinking.MEDIUM,
             Phase.FIX: Thinking.LOW,

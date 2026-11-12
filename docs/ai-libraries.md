@@ -267,6 +267,16 @@ but multiplicatively rather than as a layer in that chain: a deeper review buys
 turns on top of whatever the winning layer said, where a level it flattened
 would discard a per-phase override.
 
+**Reviews never run on the light tier.** Every review-domain phase reads the
+standard or deep tier, and a review phase that resolves to the light tier or a
+Haiku model — from any layer, a tier set to Haiku included — raises
+`ReviewModelTooLight`. A review pass that finds nothing on a light model cannot
+be told from a clean PR; ``models.light`` serves only the phases that are not
+reviews. A review phase can be pinned to another provider by config alone on
+the ``pi`` backend (``agent.phases.scout.model:
+google-vertex/gemini-3.1-pro-preview:medium``); the Claude backend serves only
+Anthropic, Vertex-Claude and Bedrock models.
+
 **No built-in model.** A phase names a tier, not a model, so when no layer
 sets one — the tier unset in ``models`` too — the model is ``None`` and the
 backend gets no ``--model``: the Claude CLI and Pi then use their own defaults.
@@ -1429,6 +1439,13 @@ merge still runs and reports every group as skipped; the status header says
 merge is written, synthesis is marked done-and-skipped, and the header must not
 read as a clean review of nothing. ``review.outcome`` and ``review.verdict``
 word that header; this module is the path that takes it.
+
+A first-round PR that groups into one group runs the single-agent review
+instead (`_single_group_goes_single`): a lone group has no scan before it and,
+when clean, no synthesis or disprove after it, so it would be one pass with none
+of the checks the single path always runs. With two or more groups the
+whole-PR scan always runs, and a clean group result still reaches synthesis when
+that scan reported a concern (`steps.scan_raised_concerns`).
 
 Self-review vs PR mode is decided here too, at ``fetch_metadata`` /
 ``_with_local_diff``. A self-review reads the worktree: the head SHA and the

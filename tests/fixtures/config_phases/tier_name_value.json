@@ -6,7 +6,7 @@
       "scope": "global"
     },
     "standard": {
-      "value": "anthropic/claude-sonnet-5",
+      "value": "anthropic/claude-sonnet-5:medium",
       "scope": "global"
     },
     "light": {
@@ -21,7 +21,7 @@
       "model": {
         "provider": "anthropic",
         "id": "claude-sonnet-5",
-        "level": null
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
@@ -31,9 +31,9 @@
       },
       "thinking": "medium",
       "thinking_source": {
-        "layer": "spec",
-        "key": null,
-        "scope": "default",
+        "layer": "tier_model",
+        "key": "models.standard",
+        "scope": "global",
         "via": null
       },
       "error": null
@@ -44,7 +44,7 @@
       "model": {
         "provider": "anthropic",
         "id": "claude-sonnet-5",
-        "level": null
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
@@ -54,31 +54,31 @@
       },
       "thinking": "medium",
       "thinking_source": {
-        "layer": "spec",
-        "key": null,
-        "scope": "default",
+        "layer": "tier_model",
+        "key": "models.standard",
+        "scope": "global",
         "via": null
       },
       "error": null
     },
     "scout": {
       "domain": "review",
-      "tier": "light",
+      "tier": "standard",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "provider": "anthropic",
+        "id": "claude-sonnet-5",
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "tier_model",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
@@ -86,22 +86,22 @@
     },
     "group": {
       "domain": "review",
-      "tier": "light",
+      "tier": "standard",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "provider": "anthropic",
+        "id": "claude-sonnet-5",
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "tier_model",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
@@ -111,9 +111,9 @@
       "domain": "review",
       "tier": "deep",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "provider": "anthropic",
+        "id": "claude-sonnet-5",
+        "level": "medium"
       },
       "model_source": {
         "layer": "phase_config",
@@ -121,19 +121,19 @@
         "scope": "project",
         "via": {
           "layer": "tier",
-          "key": "models.light",
+          "key": "models.standard",
           "scope": "global",
           "via": null
         }
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "phase_config_model",
         "key": "agent.phases.synthesis.model",
         "scope": "project",
         "via": {
           "layer": "tier",
-          "key": "models.light",
+          "key": "models.standard",
           "scope": "global",
           "via": null
         }
@@ -169,7 +169,7 @@
       "model": {
         "provider": "anthropic",
         "id": "claude-sonnet-5",
-        "level": null
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
@@ -177,33 +177,33 @@
         "scope": "global",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
-        "layer": "spec",
-        "key": null,
-        "scope": "default",
+        "layer": "tier_model",
+        "key": "models.standard",
+        "scope": "global",
         "via": null
       },
       "error": null
     },
     "fix_verify": {
       "domain": "review",
-      "tier": "light",
+      "tier": "standard",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "provider": "anthropic",
+        "id": "claude-sonnet-5",
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "tier_model",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
@@ -215,7 +215,7 @@
       "model": {
         "provider": "anthropic",
         "id": "claude-sonnet-5",
-        "level": null
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
@@ -223,33 +223,33 @@
         "scope": "global",
         "via": null
       },
-      "thinking": null,
+      "thinking": "medium",
       "thinking_source": {
-        "layer": "unset",
-        "key": null,
-        "scope": null,
+        "layer": "tier_model",
+        "key": "models.standard",
+        "scope": "global",
         "via": null
       },
       "error": null
     },
     "comments_verify": {
       "domain": "comments",
-      "tier": "light",
+      "tier": "standard",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "provider": "anthropic",
+        "id": "claude-sonnet-5",
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "tier_model",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
@@ -261,7 +261,7 @@
       "model": {
         "provider": "anthropic",
         "id": "claude-sonnet-5",
-        "level": null
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
@@ -269,33 +269,33 @@
         "scope": "global",
         "via": null
       },
-      "thinking": null,
+      "thinking": "medium",
       "thinking_source": {
-        "layer": "unset",
-        "key": null,
-        "scope": null,
+        "layer": "tier_model",
+        "key": "models.standard",
+        "scope": "global",
         "via": null
       },
       "error": null
     },
     "ci_verify": {
       "domain": "ci",
-      "tier": "light",
+      "tier": "standard",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "provider": "anthropic",
+        "id": "claude-sonnet-5",
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "tier_model",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
@@ -303,22 +303,22 @@
     },
     "comments_triage": {
       "domain": "comments",
-      "tier": "light",
+      "tier": "standard",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "provider": "anthropic",
+        "id": "claude-sonnet-5",
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "tier_model",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
@@ -326,22 +326,22 @@
     },
     "rebase": {
       "domain": "rebase",
-      "tier": "light",
+      "tier": "standard",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "provider": "anthropic",
+        "id": "claude-sonnet-5",
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "tier_model",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
@@ -353,7 +353,7 @@
       "model": {
         "provider": "anthropic",
         "id": "claude-sonnet-5",
-        "level": null
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
@@ -361,11 +361,11 @@
         "scope": "global",
         "via": null
       },
-      "thinking": null,
+      "thinking": "medium",
       "thinking_source": {
-        "layer": "unset",
-        "key": null,
-        "scope": null,
+        "layer": "tier_model",
+        "key": "models.standard",
+        "scope": "global",
         "via": null
       },
       "error": null

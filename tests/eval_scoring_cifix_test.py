@@ -244,7 +244,7 @@ class TestCiFixTaskRun:
         monkeypatch.delenv(Phase.CI_FIX.thinking_env_key, raising=False)
         monkeypatch.setattr(
             agent.phases, "resolve_phase_model",
-            lambda phase, explicit, cfg=None: ResolvedModel(
+            lambda phase, explicit, cfg=None, **_: ResolvedModel(
                 ModelRef("resolved-ci-fix", provider="anthropic", level="low"), ModelLayer.TIER),
         )
         # The ceiling production fix passes run under, so eval numbers describe them.

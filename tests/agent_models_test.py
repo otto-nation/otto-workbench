@@ -127,12 +127,77 @@ models:
 
 
 def test_the_scan_phases_and_the_synthesis_are_split_across_tiers():
-    """The assignments the cost argument rests on: cheap scans, a deep synthesis."""
-    assert PHASES[Phase.SCOUT].tier is Tier.LIGHT
-    assert PHASES[Phase.GROUP].tier is Tier.LIGHT
+    """The assignments the review rests on: standard readers, a deep synthesis."""
+    assert PHASES[Phase.SCOUT].tier is Tier.STANDARD
+    assert PHASES[Phase.GROUP].tier is Tier.STANDARD
     assert PHASES[Phase.FIX].tier is Tier.STANDARD
     assert PHASES[Phase.SYNTHESIS].tier is Tier.DEEP
     assert PHASES[Phase.DISPROVE].tier is Tier.DEEP
+
+
+# ── Reviews never run on the light tier ──────────────────────────────────────
+
+
+def test_no_review_phase_reads_the_light_tier():
+    from agent.registry import REVIEW_PHASES
+    assert [p for p in REVIEW_PHASES if PHASES[p].tier is Tier.LIGHT] == []
+
+
+def test_models_light_never_reaches_a_review_phase(roots):
+    """Pointing the light tier at a sentinel leaves every review phase off it."""
+    cfg = _cfg(roots, (
+        "models:\n  light: openai/sentinel-light\n  standard: claude-sonnet-5-5\n"
+        "  deep: claude-opus-5-5\n"))
+    from agent.registry import REVIEW_PHASES
+    for phase in REVIEW_PHASES:
+        assert agent.phases.phase_model(phase, None, cfg) != "sentinel-light"
+
+
+@pytest.mark.parametrize("value", ["claude-haiku-4-5@20251001", "google-vertex-claude/claude-haiku-5-5", "light"])
+@pytest.mark.parametrize("phase", sorted(__import__("agent.registry", fromlist=["x"]).REVIEW_PHASES, key=lambda p: p.value))
+def test_a_review_phase_refuses_light_from_every_layer(roots, monkeypatch, phase, value):
+    cfg = _cfg(roots, "models:\n  light: claude-haiku-4-5\n")
+    with pytest.raises(agent.phases.ReviewModelTooLight):
+        agent.phases.phase_model(phase, value, cfg)
+    monkeypatch.setenv(phase.model_env_key, value)
+    with pytest.raises(agent.phases.ReviewModelTooLight):
+        agent.phases.phase_model(phase, None, cfg)
+    monkeypatch.delenv(phase.model_env_key)
+    monkeypatch.setenv("WORKBENCH_AI_MODEL", value)
+    with pytest.raises(agent.phases.ReviewModelTooLight):
+        agent.phases.phase_model(phase, None, cfg)
+    monkeypatch.delenv("WORKBENCH_AI_MODEL")
+    over = _cfg(roots, f"agent:\n  phases:\n    {phase.value}:\n      model: {value}\nmodels:\n  light: claude-haiku-4-5\n")
+    with pytest.raises(agent.phases.ReviewModelTooLight):
+        agent.phases.phase_model(phase, None, over)
+
+
+@pytest.mark.parametrize("phase", [p for p in __import__("agent.registry", fromlist=["x"]).REVIEW_PHASES if PHASES[p].tier is Tier.STANDARD])
+def test_a_standard_tier_set_to_haiku_is_refused_for_reviews(roots, phase):
+    cfg = _cfg(roots, "models:\n  standard: claude-haiku-4-5\n")
+    with pytest.raises(agent.phases.ReviewModelTooLight):
+        agent.phases.phase_model(phase, None, cfg)
+
+
+def test_eval_resolution_may_use_a_light_model_for_a_review_phase(roots):
+    cfg = _cfg(roots, "models:\n  standard: claude-sonnet-5-5\n")
+    got = agent.phases.resolve_phase_model(Phase.SYNTHESIS, "claude-haiku-4-5", cfg, allow_light=True)
+    assert got.ref.id == "claude-haiku-4-5"
+    assert agent.phases.phase_settings(Phase.SYNTHESIS, "claude-haiku-4-5", cfg, allow_light=True).model == "claude-haiku-4-5"
+    with pytest.raises(agent.phases.ReviewModelTooLight):
+        agent.phases.resolve_phase_model(Phase.SYNTHESIS, "claude-haiku-4-5", cfg)
+
+
+def test_light_models_still_serve_the_phases_that_are_not_reviews(roots):
+    cfg = _cfg(roots, "models:\n  light: claude-haiku-4-5\n")
+    assert agent.phases.phase_model(Phase.DESCRIBE, None, cfg) == "claude-haiku-4-5"
+    assert agent.phases.phase_model(Phase.CREATE, "claude-haiku-4-5", cfg) == "claude-haiku-4-5"
+
+
+def test_a_review_phase_can_be_pinned_to_another_provider(roots):
+    cfg = _cfg(roots, "agent:\n  phases:\n    scout:\n      model: google-vertex/gemini-3.1-pro-preview:medium\n")
+    got = agent.phases.phase_settings(Phase.SCOUT, None, cfg)
+    assert (got.provider, got.model) == ("google-vertex", "gemini-3.1-pro-preview")
 
 
 def test_an_unset_tier_leaves_its_phases_to_the_backend_default(roots):
@@ -178,7 +243,7 @@ def test_an_explicit_tier_name_that_is_unset_is_refused(roots):
 
 def test_the_provider_is_the_phases_models(roots, monkeypatch):
     cfg = _cfg(roots, "models:\n  light: openai/gpt-6-luna\n  deep: anthropic/claude-opus-5-5\n")
-    assert agent.phases.phase_settings(Phase.SCOUT, None, cfg).provider == "openai"
+    assert agent.phases.phase_settings(Phase.DESCRIBE, None, cfg).provider == "openai"
     assert agent.phases.phase_settings(Phase.SYNTHESIS, None, cfg).provider == "anthropic"
 
 
@@ -297,3 +362,13 @@ def test_eval_refuses_a_phase_no_layer_names_a_model_for(roots):
     _cfg(roots, "models:\n  deep: x\n")
     with pytest.raises(eval.task.EvalModelUnset):
         eval.task.resolved_settings(_Task(), "")
+
+
+def test_a_repos_model_settings_reach_a_phase_run_from_its_directory(roots):
+    """The five non-review domains pass no config; the agent's cwd supplies the repo's."""
+    import agent.invoke
+    config_root, project = roots
+    _write(config_root / "config.yml", "models:\n  light: global-light\n")
+    _write(project / ".workbench.yml", "models:\n  light: repo-light\n")
+    got = agent.invoke._resolved(Phase.DESCRIBE, None, project)
+    assert got.model == "repo-light"

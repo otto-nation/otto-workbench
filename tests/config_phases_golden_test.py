@@ -44,7 +44,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "config_phases"
 TIERS = """
 models:
   deep: anthropic/claude-opus-5:high
-  standard: anthropic/claude-sonnet-5
+  standard: anthropic/claude-sonnet-5:medium
   light: openai/gpt-6-mini:low
 """
 
@@ -74,7 +74,7 @@ agent:
         "WORKBENCH_AI_THINKING": "minimal",
     }),
     "project_outranks_global": Case(TIERS, project_yaml="models:\n  standard: openai/gpt-6\n"),
-    "tier_name_value": Case(TIERS, project_yaml="agent:\n  phases:\n    synthesis:\n      model: light\n"),
+    "tier_name_value": Case(TIERS, project_yaml="agent:\n  phases:\n    synthesis:\n      model: standard\n"),
     "unset_tier_name": Case("""
 models:
   light: openai/gpt-6-mini:low
@@ -152,7 +152,7 @@ def test_tiers_set_carry_their_level_into_thinking(roots, monkeypatch, capsys):
     synthesis = got["phases"]["synthesis"]
     assert synthesis["thinking"] == "high"
     assert synthesis["thinking_source"] == _src("tier_model", "models.deep", "global")
-    assert got["phases"]["comments_triage"]["thinking_source"] == _src("tier_model", "models.light", "global")
+    assert got["phases"]["describe"]["thinking_source"] == _src("tier_model", "models.light", "global")
 
 
 def test_a_phase_thinking_key_beats_the_level_on_its_model(roots, monkeypatch, capsys):
@@ -186,8 +186,8 @@ def test_the_project_file_outranks_the_global_one(roots, monkeypatch, capsys):
 
 def test_a_tier_name_as_a_phase_value_borrows_that_tier(roots, monkeypatch, capsys):
     synthesis = _render(CASES["tier_name_value"], roots, monkeypatch, capsys)["phases"]["synthesis"]
-    via = _src("tier", "models.light", "global")
-    assert synthesis["model"] == {"provider": "openai", "id": "gpt-6-mini", "level": "low"}
+    via = _src("tier", "models.standard", "global")
+    assert synthesis["model"] == {"provider": "anthropic", "id": "claude-sonnet-5", "level": "medium"}
     assert synthesis["model_source"] == _src("phase_config", "agent.phases.synthesis.model", "project", via)
     assert synthesis["thinking_source"] == _src(
         "phase_config_model", "agent.phases.synthesis.model", "project", via)

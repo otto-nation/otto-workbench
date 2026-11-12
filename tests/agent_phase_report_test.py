@@ -51,7 +51,7 @@ def test_a_tier_set_by_the_project_names_the_project_scope(roots):
     report = agent.phase_report.phase_report(project)
     assert _tier(report, Tier.LIGHT) == agent.phase_report.TierRow(
         Tier.LIGHT, "xai/grok-4.6-mini", config.workbench_config.PROJECT_SCOPE)
-    assert _row(report, Phase.SCOUT).model_source.scope == config.workbench_config.PROJECT_SCOPE
+    assert _row(report, Phase.DESCRIBE).model_source.scope == config.workbench_config.PROJECT_SCOPE
 
 
 def test_an_env_source_has_the_env_scope(roots, monkeypatch):
@@ -67,12 +67,12 @@ def test_the_spec_source_has_the_default_scope_and_no_key(roots):
 
 def test_a_borrowed_tier_is_reported_as_via(roots):
     config_root, project = roots
-    _write(config_root / "config.yml", "models:\n  light: openai/gpt-6-mini:low\n")
-    _write(project / ".workbench.yml", "agent:\n  phases:\n    synthesis:\n      model: light\n")
+    _write(config_root / "config.yml", "models:\n  standard: openai/gpt-6-mini:low\n")
+    _write(project / ".workbench.yml", "agent:\n  phases:\n    synthesis:\n      model: standard\n")
     source = _row(agent.phase_report.phase_report(project), Phase.SYNTHESIS).model_source
     assert source == agent.phase_report.Source(
         "phase_config", "agent.phases.synthesis.model", "project",
-        agent.phase_report.Source("tier", "models.light", "global"))
+        agent.phase_report.Source("tier", "models.standard", "global"))
 
 
 def test_an_unset_tier_name_is_an_error_on_that_phase_only(roots):

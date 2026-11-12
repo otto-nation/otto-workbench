@@ -459,6 +459,6 @@ _make_repo() {
   run --separate-stderr "$REPO_ROOT/bin/otto-workbench" config phases --json
   [[ "$status" -eq 0 ]]
   [[ "$(jq -r '.tiers.light.scope' <<<"$output")" == "global" ]]
-  [[ "$(jq -r '.phases.scout.model.id' <<<"$output")" == "gpt-6-mini" ]]
+  [[ "$(jq -r '.phases.describe.model.id' <<<"$output")" == "gpt-6-mini" ]]
   [[ "$(jq -r '.phases.synthesis.model_source.layer' <<<"$output")" == "unset" ]]
 }

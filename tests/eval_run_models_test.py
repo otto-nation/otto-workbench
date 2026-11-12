@@ -24,7 +24,7 @@ def test_omitted_models_resolves_through_the_phase(tmp_path, monkeypatch, capsys
     _make_case(tmp_path / "corpus", "a", task="ci-fix")
     seen = []
 
-    def fake_resolve(phase, explicit, cfg=None):
+    def fake_resolve(phase, explicit, cfg=None, **_):
         seen.append((phase, explicit))
         return ResolvedModel(ModelRef("resolved-from-phase"), ModelLayer.TIER)
 
@@ -54,7 +54,7 @@ def test_explicit_models_drops_empty_tokens(tmp_path):
 def test_all_empty_models_resolves_through_phase(tmp_path, monkeypatch, capsys):
     _make_case(tmp_path / "corpus", "a", task="ci-fix")
     monkeypatch.setattr(
-        agent.phases, "resolve_phase_model", lambda phase, explicit, cfg=None: ResolvedModel(ModelRef("resolved-empty"), ModelLayer.TIER))
+        agent.phases, "resolve_phase_model", lambda phase, explicit, cfg=None, **_: ResolvedModel(ModelRef("resolved-empty"), ModelLayer.TIER))
     eval.run.run_eval(_args(tmp_path, models=",", dry_run=True), tmp_path)
     err = capsys.readouterr().err
     assert "Models: resolved-empty" in err
@@ -73,7 +73,7 @@ def test_review_omitted_models_resolves_single(tmp_path, monkeypatch, capsys):
     _make_case(tmp_path / "corpus", "a", task="review")
     seen = []
 
-    def fake_resolve(phase, explicit, cfg=None):
+    def fake_resolve(phase, explicit, cfg=None, **_):
         seen.append(phase)
         return ResolvedModel(ModelRef("resolved-review"), ModelLayer.TIER)
 
@@ -87,7 +87,7 @@ def test_skill_omitted_models_resolves_comments_fix(tmp_path, monkeypatch, capsy
     _make_case(tmp_path / "corpus", "a", task="skill")
     seen = []
 
-    def fake_resolve(phase, explicit, cfg=None):
+    def fake_resolve(phase, explicit, cfg=None, **_):
         seen.append(phase)
         return ResolvedModel(ModelRef("resolved-skill"), ModelLayer.TIER)
 
@@ -113,7 +113,7 @@ def test_omitted_models_with_nothing_configured_refuses(tmp_path, monkeypatch):
     names what to set.
     """
     _make_case(tmp_path / "corpus", "a", task="ci-fix")
-    monkeypatch.setattr(agent.phases, "resolve_phase_model", lambda phase, explicit, cfg=None: None)
+    monkeypatch.setattr(agent.phases, "resolve_phase_model", lambda phase, explicit, cfg=None, **_: None)
     with pytest.raises(SystemExit) as caught:
         eval.run.run_eval(_args(tmp_path, dry_run=True), tmp_path)
     msg = str(caught.value)

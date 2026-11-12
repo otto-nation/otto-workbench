@@ -71,29 +71,29 @@ print(sorted(mod.PHASES) == sorted(mod.Phase))
 import os
 os.environ.pop('WORKBENCH_AI_MODEL', None)
 os.environ['WORKBENCH_AI_GROUP_MODEL'] = 'claude-sonnet-5'
-print(mod.phase_model('group', 'claude-haiku-4-5'))
+print(mod.phase_model('group', 'claude-sonnet-5-5'))
 ")
-  [ "$result" = "claude-haiku-4-5" ]
+  [ "$result" = "claude-sonnet-5-5" ]
 }
 
 @test "phase_model: the phase env var answers" {
   result=$(_py "
 import os
-os.environ['WORKBENCH_AI_GROUP_MODEL'] = 'claude-haiku-4-5'
+os.environ['WORKBENCH_AI_GROUP_MODEL'] = 'claude-sonnet-5-5'
 os.environ.pop('WORKBENCH_AI_MODEL', None)
 print(mod.phase_model('group', None))
 ")
-  [ "$result" = "claude-haiku-4-5" ]
+  [ "$result" = "claude-sonnet-5-5" ]
 }
 
 @test "phase_model: the global env var answers" {
   result=$(_py "
 import os
-os.environ['WORKBENCH_AI_MODEL'] = 'claude-haiku-4-5'
+os.environ['WORKBENCH_AI_MODEL'] = 'claude-sonnet-5-5'
 os.environ.pop('WORKBENCH_AI_GROUP_MODEL', None)
 print(mod.phase_model('group', None))
 ")
-  [ "$result" = "claude-haiku-4-5" ]
+  [ "$result" = "claude-sonnet-5-5" ]
 }
 
 @test "phase_model: None when no layer names a model" {

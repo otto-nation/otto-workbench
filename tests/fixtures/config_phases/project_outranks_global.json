@@ -63,46 +63,46 @@
     },
     "scout": {
       "domain": "review",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "id": "gpt-6",
+        "level": null
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
-        "scope": "global",
+        "key": "models.standard",
+        "scope": "project",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
-        "layer": "tier_model",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
         "via": null
       },
       "error": null
     },
     "group": {
       "domain": "review",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "id": "gpt-6",
+        "level": null
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
-        "scope": "global",
+        "key": "models.standard",
+        "scope": "project",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
-        "layer": "tier_model",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
         "via": null
       },
       "error": null
@@ -178,23 +178,23 @@
     },
     "fix_verify": {
       "domain": "review",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "id": "gpt-6",
+        "level": null
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
-        "scope": "global",
+        "key": "models.standard",
+        "scope": "project",
         "via": null
       },
       "thinking": "low",
       "thinking_source": {
-        "layer": "tier_model",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
         "via": null
       },
       "error": null
@@ -224,23 +224,23 @@
     },
     "comments_verify": {
       "domain": "comments",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "id": "gpt-6",
+        "level": null
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
-        "scope": "global",
+        "key": "models.standard",
+        "scope": "project",
         "via": null
       },
       "thinking": "low",
       "thinking_source": {
-        "layer": "tier_model",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
         "via": null
       },
       "error": null
@@ -270,69 +270,69 @@
     },
     "ci_verify": {
       "domain": "ci",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "id": "gpt-6",
+        "level": null
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
-        "scope": "global",
+        "key": "models.standard",
+        "scope": "project",
         "via": null
       },
       "thinking": "low",
       "thinking_source": {
-        "layer": "tier_model",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
         "via": null
       },
       "error": null
     },
     "comments_triage": {
       "domain": "comments",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "id": "gpt-6",
+        "level": null
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
-        "scope": "global",
+        "key": "models.standard",
+        "scope": "project",
         "via": null
       },
-      "thinking": "low",
+      "thinking": null,
       "thinking_source": {
-        "layer": "tier_model",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "unset",
+        "key": null,
+        "scope": null,
         "via": null
       },
       "error": null
     },
     "rebase": {
       "domain": "rebase",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "id": "gpt-6",
+        "level": null
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
-        "scope": "global",
+        "key": "models.standard",
+        "scope": "project",
         "via": null
       },
-      "thinking": "low",
+      "thinking": null,
       "thinking_source": {
-        "layer": "tier_model",
-        "key": "models.light",
-        "scope": "global",
+        "layer": "unset",
+        "key": null,
+        "scope": null,
         "via": null
       },
       "error": null

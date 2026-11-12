@@ -124,7 +124,7 @@ class TestPhaseRunnerResolution:
         monkeypatch.delenv("WORKBENCH_AI_GROUP_THINKING", raising=False)
         monkeypatch.delenv("WORKBENCH_AI_THINKING", raising=False)
         runner = review.pipeline.PhaseRunner(_job(tmp_path, Effort.MEDIUM), Phase.GROUP, 1)
-        assert runner.thinking is Thinking.LOW
+        assert runner.thinking is Thinking.MEDIUM
 
     def test_max_turns_comes_from_phase(self, tmp_path):
         runner = review.pipeline.PhaseRunner(_job(tmp_path, Effort.MEDIUM), Phase.SCOUT)
@@ -150,9 +150,9 @@ class TestPhaseRunnerResolution:
         assert (runner.provider, runner.model) == ("vertex", "gemini-3.7-flash")
 
     def test_model_reads_phase_env_key(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-haiku-4-5")
+        monkeypatch.setenv("WORKBENCH_AI_SCOUT_MODEL", "claude-sonnet-5-5")
         runner = review.pipeline.PhaseRunner(_job(tmp_path), Phase.SCOUT)
-        assert runner.model == "claude-haiku-4-5"
+        assert runner.model == "claude-sonnet-5-5"
 
     def test_thinking_reads_phase_env_key(self, tmp_path, monkeypatch):
         # Every existing call site resolved thinking through

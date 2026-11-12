@@ -467,7 +467,7 @@ export default class PrsBoard extends View {
         tab, prs: this.listed(state), filters, me: state.me ?? "",
         onOpen: (pr) => this.openDetail(pr, cx),
         onBatch: (items, preset) => this.batchFor(items, preset),
-        loading: Boolean(state.loading && !state.repos),
+        loading: Boolean(state.loading && !state.repos), columns: state.columns,
         workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
       }));
   }

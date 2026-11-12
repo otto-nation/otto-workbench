@@ -15,7 +15,7 @@ import { runStatus } from "./_lib/batch.js";
 import { checkTools, loadTerminals } from "./_lib/board_data.js";
 import { pullTarget } from "./_lib/board_pull.js";
 import {
-  TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, filterOn,
+  TEAM_COLUMNS, MINE_COLUMNS, columnsFor, teamColumn, mineColumn, filterPrs, filterOn,
   isMine, groupColumns,
 } from "./_lib/columns.js";
 import { normalizeFilters, filterAction, facetView, barModel } from "./_lib/filters.js";
@@ -427,7 +427,8 @@ export default class PrsBoard extends View {
 
   compactView(state, t, cx, load) {
     const tab = tabOf(), mine = tab === "mine";
-    const spec = mine ? MINE_COLUMNS : TEAM_COLUMNS;
+    const docSpec = columnsFor(state.columns, mine ? "mine" : "team");
+    const spec = docSpec.length ? docSpec : mine ? MINE_COLUMNS : TEAM_COLUMNS;
     const sections = compactSections(groupColumns(this.listed(state), mine ? mineColumn : teamColumn, spec));
     const empty = state.loading && !state.repos ? loadPlaceholder(load) : placeholder("No pull requests");
     return pane("prs")

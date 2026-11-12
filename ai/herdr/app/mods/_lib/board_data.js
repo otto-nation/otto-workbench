@@ -302,7 +302,8 @@ export async function loadBoard(exec, ctx, phase, opts = {}) {
     return { ok: true, unchanged: true, stamp: doc.stamp };
   }
   const valid = doc?.schema_version === 1 && doc.phase === phase && 'reviews_root' in doc
-    && Array.isArray(doc.rows) && doc.rows.every((r) => r.presentation != null);
+    && Array.isArray(doc.rows) && doc.rows.every((r) => Number.isInteger(r.number) && r.presentation != null
+      && ['issues', 'badges', 'row_badges'].every((k) => Array.isArray(r.presentation[k])));
   if (!valid) {
     return { ok: false, error: { kind: 'outdated', message: `pr board answered an unexpected document for ${phase}` } };
   }

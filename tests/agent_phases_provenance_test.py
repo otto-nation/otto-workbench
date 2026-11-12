@@ -57,7 +57,7 @@ def test_named_tier_reads_a_tier_name_with_or_without_a_level(value, tier):
 
 
 def test_the_tier_layer_names_the_tier_key(roots):
-    resolved = agent.phases.resolve_phase_model(Phase.REBASE, None, _cfg(roots, TIERS))
+    resolved = agent.phases.resolve_phase_model(Phase.DESCRIBE, None, _cfg(roots, TIERS))
     assert (resolved.layer, resolved.key, resolved.tier) == (ModelLayer.TIER, "models.light", None)
 
 
@@ -144,7 +144,7 @@ def test_a_level_on_the_phase_config_model(roots):
 
 
 def test_a_level_on_the_tier_model(roots):
-    got = _thinking(roots, TIERS, Phase.REBASE)
+    got = _thinking(roots, TIERS, Phase.DESCRIBE)
     assert (got.level, got.layer, got.key) == ("low", ThinkingLayer.TIER_MODEL, "models.light")
 
 
@@ -159,7 +159,7 @@ def test_the_spec_answers_last_and_names_no_key(roots):
 
 
 def test_nothing_set_and_no_spec_level_is_none(roots):
-    assert _thinking(roots, "", Phase.COMMENTS_TRIAGE) is None
+    assert _thinking(roots, "", Phase.DESCRIBE) is None
 
 
 # ── One table, two readers ────────────────────────────────────────────────────

@@ -190,8 +190,8 @@ def test_eval_resolution_may_use_a_light_model_for_a_review_phase(roots):
 
 def test_light_models_still_serve_the_phases_that_are_not_reviews(roots):
     cfg = _cfg(roots, "models:\n  light: claude-haiku-4-5\n")
-    assert agent.phases.phase_model(Phase.REBASE, None, cfg) == "claude-haiku-4-5"
-    assert agent.phases.phase_model(Phase.COMMENTS_VERIFY, "claude-haiku-4-5", cfg) == "claude-haiku-4-5"
+    assert agent.phases.phase_model(Phase.DESCRIBE, None, cfg) == "claude-haiku-4-5"
+    assert agent.phases.phase_model(Phase.CREATE, "claude-haiku-4-5", cfg) == "claude-haiku-4-5"
 
 
 def test_a_review_phase_can_be_pinned_to_another_provider(roots):
@@ -243,7 +243,7 @@ def test_an_explicit_tier_name_that_is_unset_is_refused(roots):
 
 def test_the_provider_is_the_phases_models(roots, monkeypatch):
     cfg = _cfg(roots, "models:\n  light: openai/gpt-6-luna\n  deep: anthropic/claude-opus-5-5\n")
-    assert agent.phases.phase_settings(Phase.REBASE, None, cfg).provider == "openai"
+    assert agent.phases.phase_settings(Phase.DESCRIBE, None, cfg).provider == "openai"
     assert agent.phases.phase_settings(Phase.SYNTHESIS, None, cfg).provider == "anthropic"
 
 
@@ -362,3 +362,13 @@ def test_eval_refuses_a_phase_no_layer_names_a_model_for(roots):
     _cfg(roots, "models:\n  deep: x\n")
     with pytest.raises(eval.task.EvalModelUnset):
         eval.task.resolved_settings(_Task(), "")
+
+
+def test_a_repos_model_settings_reach_a_phase_run_from_its_directory(roots):
+    """The five non-review domains pass no config; the agent's cwd supplies the repo's."""
+    import agent.invoke
+    config_root, project = roots
+    _write(config_root / "config.yml", "models:\n  light: global-light\n")
+    _write(project / ".workbench.yml", "models:\n  light: repo-light\n")
+    got = agent.invoke._resolved(Phase.DESCRIBE, None, project)
+    assert got.model == "repo-light"

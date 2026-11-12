@@ -152,7 +152,7 @@ def test_tiers_set_carry_their_level_into_thinking(roots, monkeypatch, capsys):
     synthesis = got["phases"]["synthesis"]
     assert synthesis["thinking"] == "high"
     assert synthesis["thinking_source"] == _src("tier_model", "models.deep", "global")
-    assert got["phases"]["comments_triage"]["thinking_source"] == _src("tier_model", "models.light", "global")
+    assert got["phases"]["describe"]["thinking_source"] == _src("tier_model", "models.light", "global")
 
 
 def test_a_phase_thinking_key_beats_the_level_on_its_model(roots, monkeypatch, capsys):

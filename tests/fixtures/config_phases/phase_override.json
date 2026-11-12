@@ -224,22 +224,22 @@
     },
     "comments_verify": {
       "domain": "comments",
-      "tier": "light",
+      "tier": "standard",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "provider": "anthropic",
+        "id": "claude-sonnet-5",
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "tier_model",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
@@ -270,22 +270,22 @@
     },
     "ci_verify": {
       "domain": "ci",
-      "tier": "light",
+      "tier": "standard",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "provider": "anthropic",
+        "id": "claude-sonnet-5",
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "tier_model",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
@@ -293,22 +293,22 @@
     },
     "comments_triage": {
       "domain": "comments",
-      "tier": "light",
+      "tier": "standard",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "provider": "anthropic",
+        "id": "claude-sonnet-5",
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "tier_model",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
@@ -316,22 +316,22 @@
     },
     "rebase": {
       "domain": "rebase",
-      "tier": "light",
+      "tier": "standard",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6-mini",
-        "level": "low"
+        "provider": "anthropic",
+        "id": "claude-sonnet-5",
+        "level": "medium"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },
-      "thinking": "low",
+      "thinking": "medium",
       "thinking_source": {
         "layer": "tier_model",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": "global",
         "via": null
       },

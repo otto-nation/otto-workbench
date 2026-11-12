@@ -188,11 +188,11 @@
     },
     "comments_verify": {
       "domain": "comments",
-      "tier": "light",
+      "tier": "standard",
       "model": null,
       "model_source": {
         "layer": "unset",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": null,
         "via": null
       },
@@ -226,11 +226,11 @@
     },
     "ci_verify": {
       "domain": "ci",
-      "tier": "light",
+      "tier": "standard",
       "model": null,
       "model_source": {
         "layer": "unset",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": null,
         "via": null
       },
@@ -245,11 +245,11 @@
     },
     "comments_triage": {
       "domain": "comments",
-      "tier": "light",
+      "tier": "standard",
       "model": null,
       "model_source": {
         "layer": "unset",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": null,
         "via": null
       },
@@ -264,11 +264,11 @@
     },
     "rebase": {
       "domain": "rebase",
-      "tier": "light",
+      "tier": "standard",
       "model": null,
       "model_source": {
         "layer": "unset",
-        "key": "models.light",
+        "key": "models.standard",
         "scope": null,
         "via": null
       },

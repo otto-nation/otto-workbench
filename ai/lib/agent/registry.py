@@ -187,7 +187,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # the phase at all.
     PhaseSpec(
         Phase.COMMENTS_VERIFY, PhaseDomain.COMMENTS, "Verify gate",
-        tier=Tier.LIGHT,
+        tier=Tier.STANDARD,
         template="verify-fixes.md",
         thinking=Thinking.LOW, max_turns=15, max_budget=1.5,
         shape=PhaseShape.FIX,
@@ -227,7 +227,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # `verify=`, which is why this is not `optional`.
     PhaseSpec(
         Phase.CI_VERIFY, PhaseDomain.CI, "Verify gate",
-        tier=Tier.LIGHT,
+        tier=Tier.STANDARD,
         template="verify-fixes.md",
         thinking=Thinking.LOW, max_turns=15, max_budget=1.5,
         shape=PhaseShape.FIX,
@@ -241,7 +241,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # level an operator can move, which is the whole reason they are phases.
     PhaseSpec(
         Phase.COMMENTS_TRIAGE, PhaseDomain.COMMENTS, "Triage",
-        tier=Tier.LIGHT,
+        tier=Tier.STANDARD,
         shape=PhaseShape.PROMPT,
         scales_with_omitted=False,
     ),
@@ -253,7 +253,7 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # stateless call, and sizing it as one is what left it unbatched.
     PhaseSpec(
         Phase.REBASE, PhaseDomain.REBASE, "Rebase assist",
-        tier=Tier.LIGHT,
+        tier=Tier.STANDARD,
         shape=PhaseShape.PROMPT,
         scales_with_omitted=False,
     ),

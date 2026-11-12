@@ -37,7 +37,7 @@ from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES
 from core.phases import Effort, Phase, PhaseShape
 from agent.backend import AgentInvocation
-from config.workbench_config import WorkbenchConfig
+from config.workbench_config import WorkbenchConfig, load_config_or_default
 
 
 def _require_shape(phase: Phase, shape: PhaseShape, runner: str):
@@ -55,7 +55,7 @@ def _require_shape(phase: Phase, shape: PhaseShape, runner: str):
 
 
 def _resolved(
-    phase: Phase, config: WorkbenchConfig | None, *,
+    phase: Phase, config: WorkbenchConfig | None, cwd: str | Path, *,
     effort: Effort | None = None, model: str | None = None,
 ) -> agent.phases.PhaseSettings:
     """The three settings, with whatever the caller resolved above them.
@@ -64,7 +64,14 @@ def _resolved(
     the preset a review was launched at and the ``--model`` its operator typed.
     A caller outside a review has neither and passes neither, which is the same
     resolution this made before they existed.
+
+    A caller that hands no ``config`` gets the one the agent's own ``cwd``
+    belongs to, so a repo's ``.workbench.yml`` model settings reach a phase the
+    way they reach a review. Reading the global file alone would leave
+    ``config phases DIR`` reporting values the phase never runs on.
     """
+    if config is None:
+        config = load_config_or_default(cwd)
     return agent.phases.phase_settings(phase, model, config, effort)
 
 
@@ -130,7 +137,7 @@ def run_prompt(
     """
     spec = _require_shape(phase, PhaseShape.PROMPT, "run_prompt")
     work_dir = str(cwd)
-    knobs = _resolved(phase, config)
+    knobs = _resolved(phase, config, cwd)
     ledger_task = task or str(phase)
 
     text, exit_code = agent.retry.retry_blank_response(
@@ -264,7 +271,7 @@ def run_fix(
     budget = agent.phases.phase_budget(phase) if max_budget is None else max_budget
     dirs = [str(d) for d in add_dirs] if add_dirs else [work_dir]
     name = label or spec.label
-    knobs = _resolved(phase, config, effort=effort, model=model)
+    knobs = _resolved(phase, config, cwd, effort=effort, model=model)
 
     exit_code = 0
 

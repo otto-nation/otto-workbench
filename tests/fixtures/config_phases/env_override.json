@@ -264,7 +264,7 @@
     },
     "comments_verify": {
       "domain": "comments",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "anthropic",
         "id": "claude-opus-5",
@@ -320,7 +320,7 @@
     },
     "ci_verify": {
       "domain": "ci",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "anthropic",
         "id": "claude-opus-5",
@@ -348,7 +348,7 @@
     },
     "comments_triage": {
       "domain": "comments",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "anthropic",
         "id": "claude-opus-5",
@@ -376,7 +376,7 @@
     },
     "rebase": {
       "domain": "rebase",
-      "tier": "light",
+      "tier": "standard",
       "model": {
         "provider": "anthropic",
         "id": "claude-opus-5",

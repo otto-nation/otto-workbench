@@ -51,7 +51,7 @@ def test_a_tier_set_by_the_project_names_the_project_scope(roots):
     report = agent.phase_report.phase_report(project)
     assert _tier(report, Tier.LIGHT) == agent.phase_report.TierRow(
         Tier.LIGHT, "xai/grok-4.6-mini", config.workbench_config.PROJECT_SCOPE)
-    assert _row(report, Phase.REBASE).model_source.scope == config.workbench_config.PROJECT_SCOPE
+    assert _row(report, Phase.DESCRIBE).model_source.scope == config.workbench_config.PROJECT_SCOPE
 
 
 def test_an_env_source_has_the_env_scope(roots, monkeypatch):

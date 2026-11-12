@@ -403,7 +403,8 @@ class TestAddressedInResponseFraming:
         )
         assert body.startswith("Applied: rename it")
         assert "Already addressed" not in body
-        assert f"Fixed in [`{branch.after[:7]}`]" in body
+        assert "Fixed in" not in body
+        assert "Current behaviour is at" in body
 
     def test_code_predating_the_comment_stays_already_addressed(self, branch):
         """The genuine case: the reviewer's point was true before they made it."""
@@ -413,7 +414,7 @@ class TestAddressedInResponseFraming:
         )
         assert body.startswith("Already addressed: use the helper")
         assert "Applied:" not in body
-        assert f"Addressed in [`{branch.before[:7]}`]" in body
+        assert "Addressed in" not in body
 
     def test_an_undated_thread_keeps_the_pre_existing_reading(self, branch):
         """Claiming credit is the assertion that needs evidence, not the absence."""
@@ -457,7 +458,7 @@ class TestAddressedInResponseFraming:
             content, CommentItem(id="t2", summary="rename it", file="a.py", line=2),
             self._thread("t2", 222), branch.path,
         )
-        assert f"Fixed in [`{branch.after}`]" in body
+        assert "Fix applied (commit not recorded)" in body
         assert "Already addressed" not in body
         assert "**1 fixed**" in body
 

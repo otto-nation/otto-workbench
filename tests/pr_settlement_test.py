@@ -599,18 +599,20 @@ class TestASettlementWillNotCiteAStaleCoordinate:
         assert resolved.ok
         assert resolved.sha == ""
 
-    # passes-at-base: the citation this change was careful not to drop
-    def test_a_line_still_meaning_what_it_meant_keeps_its_citation(self, shifted):
-        """The control: a file untouched since the read still cites honestly."""
+    def test_a_line_still_meaning_what_it_meant_is_not_inferred(self, shifted):
+        """Line history is not the commit that carried the change."""
         outcome = ItemOutcome(id="c2", file="still.py", line=2,
                               read_sha=shifted.read)
-        assert self._resolved(shifted, outcome).sha
+        resolved = self._resolved(shifted, outcome)
+        assert resolved.ok
+        assert resolved.sha == ""
 
-    # passes-at-base: pins the asymmetry a broader guard would have erased
-    def test_a_row_with_no_recorded_tree_is_unaffected(self, shifted):
-        """No `read_sha` is "cannot check", not "stale" — the walk still runs."""
+    def test_a_row_with_no_recorded_tree_is_not_inferred_either(self, shifted):
+        """Without `--commit`, settle cites nothing even when the walk could."""
         outcome = ItemOutcome(id="c3", file="still.py", line=2)
-        assert self._resolved(shifted, outcome).sha
+        resolved = self._resolved(shifted, outcome)
+        assert resolved.ok
+        assert resolved.sha == ""
 
     # passes-at-base: the override must survive the guard it routes around
     def test_an_operators_explicit_commit_is_still_honoured(self, shifted):

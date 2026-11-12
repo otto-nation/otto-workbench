@@ -19,20 +19,20 @@ decides what happened and records it; the surfaces read the record.
 
 `--settle <id>` is how the operator tells the CLI what they did by hand. It is
 repeatable, and `--as` picks which of the three terminal outcomes to record —
-`fixed` (the default), `dismissed`, or `already_addressed`. From there the thread
-is indistinguishable from one the pass settled: `--finish` replies on it,
-resolves it, and gives it a summary row attributed to the commit that carries
-the change. `--as dismissed` requires `--reason <text>`, which becomes the body
-of the reply; the other two outcomes render no reason and refuse the flag rather
-than swallowing it. `--as fixed` finds the commit from the branch history of the
-line the thread is anchored to, and cites it only once the remote has it — a
-link to a commit still sitting on the machine 404s for the reviewer it was
-written for. Pass `--commit <sha>` when the fix landed somewhere else; a
-`--commit` the remote does not hold is an error rather than a dropped citation.
-When neither resolves, the row reads `Addressed outside the fix pass` and the
-run says so. Naming an id no fix pass recorded is an error listing the threads
-that are waiting on a person. Recording the outcome a thread already carries is
-a no-op that says so; recording a different terminal outcome replaces it.
+`fixed` (the default), `dismissed`, or `already_addressed`. From there the
+thread is indistinguishable from one the pass settled: `--finish` replies on
+it, resolves it, and gives it a summary row attributed to the commit that
+carries the change. `--as dismissed` requires `--reason <text>`, which becomes
+the body of the reply; the other two outcomes render no reason and refuse the
+flag rather than swallowing it. `--as fixed` cites a commit only when `--commit
+<sha>` names one the remote holds — a link to a commit still sitting on the
+machine 404s for the reviewer it was written for, and line history is not
+inferred. A `--commit` the remote does not hold is an error rather than a
+dropped citation. Without `--commit`, the row reads `Addressed outside the fix
+pass` and the run says so. Naming an id no fix pass recorded is an error
+listing the threads that are waiting on a person. Recording the outcome a
+thread already carries is a no-op that says so; recording a different terminal
+outcome replaces it.
 Recording is its own step: `--settle` publishes nothing and refuses `--post` and
 every other phase flag alongside it (the argparse layer in `cli.review_threads`).
 """
@@ -61,7 +61,6 @@ import core.log
 import core.text
 import git.client
 import git.push
-import pr.attribution
 import pr.comments
 import pr.comments_fix
 import pr.context
@@ -525,11 +524,11 @@ def resolve_settled_commit(
     commit that never left the machine, and the reply citing it would 404 for
     the reviewer it was written for.
 
-    `explicit` is the operator overriding the inference, for a fix that landed
-    somewhere other than the line the thread is anchored to. It is held to a
-    stricter standard than the inferred answer for the same reason: they named
-    that commit, so silently declining to cite it would leave them reading a row
-    that says less than they asked it to.
+    Without an explicit `--commit`, nothing is inferred: line history is not
+    the commit that carried the change. `explicit` is the operator naming one.
+    It is held to a strict standard: they named that commit, so silently
+    declining to cite it would leave them reading a row that says less than they
+    asked it to.
 
     The answer comes back abbreviated, because that is the width every other SHA
     this command persists carries — see `attribution.pass_commit`. Git is asked in full
@@ -549,19 +548,6 @@ def resolve_settled_commit(
                 f"--commit {git.client.abbrev(sha)} is not on the remote — push it "
                 f"first, or the reply citing it sends the reviewer to a 404"
             ))
-        return SettledCommit(sha=git.client.abbrev(sha))
-    if pr.attribution.coordinate_went_stale(
-            wt_path, outcome, outcome.file, outcome.line):
-        # The recorded line has stopped meaning what it meant when it was read,
-        # so the walk below would answer about whatever code inherited the
-        # number. Worse here than at render time: this answer is written into
-        # the state file, so a wrong citation is replayed by every later round.
-        # Settling still succeeds — the row is settled either way, and
-        # `report_settlement` already tells the operator that an uncited row
-        # takes `--commit` to name one.
-        return SettledCommit()
-    sha = pr.attribution.find_addressing_commit(wt_path, outcome.file, outcome.line) or ""
-    if sha and git.push.holds(wt_path, sha):
         return SettledCommit(sha=git.client.abbrev(sha))
     return SettledCommit()
 
@@ -759,8 +745,8 @@ def report_settlement(
     """Say what was recorded, what it replaced, and how the closeout will render it.
 
     The uncited case earns its own line because the operator's next move depends
-    on it: the row is settled either way, but it names no commit until the fix is
-    pushed or `--commit` points at the one that carries it.
+    on it: the row is settled either way, but it names no commit until they pass
+    `--commit <sha>` for the one that carries it.
     """
     replaced = f" (was {was.value})" if was != kind else ""
     cited = f", fixed in {sha}" if sha else ""
@@ -769,10 +755,9 @@ def report_settlement(
     core.log.info(f"{outcome.id}: recorded as {kind.value}{replaced}{cited}{quoted}")
     if kind.may_cite_a_commit and not sha:
         core.log.info(
-            f"{outcome.id}: no pushed commit found for {outcome.file}:"
-            f"{outcome.line} — the summary row will read "
-            f"\"{pr.summary_model.ActionCell.RECONCILED}\". Push the fix and re-run "
-            f"--settle, or name it with --commit, to cite it"
+            f"{outcome.id}: no commit cited — the summary row will read "
+            f"\"{pr.summary_model.ActionCell.RECONCILED}\". Pass --commit <sha> "
+            f"to cite one"
         )
 
 

@@ -2377,8 +2377,11 @@ picked for having no relationship to the row.
 
 :class:`AddressingHistory` is the per-row evidence that makes an honest answer
 possible: the newest commit to touch the one line a thread is anchored to, dated
-against when the reviewer opened it. It is a memo because `git log -L` costs a
-process per location and every surface asks about the same threads.
+against when the reviewer opened it. That date decides whether a satisfied
+thread reads as in-response; already-addressed rows never cite the SHA itself.
+Fixed rows still may, via :meth:`AddressingHistory.cited_commit`. It is a memo
+because `git log -L` costs a process per location and every surface asks about
+the same threads.
 
 ### pr/branch_sync.py
 
@@ -2702,20 +2705,20 @@ decides what happened and records it; the surfaces read the record.
 
 `--settle <id>` is how the operator tells the CLI what they did by hand. It is
 repeatable, and `--as` picks which of the three terminal outcomes to record —
-`fixed` (the default), `dismissed`, or `already_addressed`. From there the thread
-is indistinguishable from one the pass settled: `--finish` replies on it,
-resolves it, and gives it a summary row attributed to the commit that carries
-the change. `--as dismissed` requires `--reason <text>`, which becomes the body
-of the reply; the other two outcomes render no reason and refuse the flag rather
-than swallowing it. `--as fixed` finds the commit from the branch history of the
-line the thread is anchored to, and cites it only once the remote has it — a
-link to a commit still sitting on the machine 404s for the reviewer it was
-written for. Pass `--commit <sha>` when the fix landed somewhere else; a
-`--commit` the remote does not hold is an error rather than a dropped citation.
-When neither resolves, the row reads `Addressed outside the fix pass` and the
-run says so. Naming an id no fix pass recorded is an error listing the threads
-that are waiting on a person. Recording the outcome a thread already carries is
-a no-op that says so; recording a different terminal outcome replaces it.
+`fixed` (the default), `dismissed`, or `already_addressed`. From there the
+thread is indistinguishable from one the pass settled: `--finish` replies on
+it, resolves it, and gives it a summary row attributed to the commit that
+carries the change. `--as dismissed` requires `--reason <text>`, which becomes
+the body of the reply; the other two outcomes render no reason and refuse the
+flag rather than swallowing it. `--as fixed` cites a commit only when `--commit
+<sha>` names one the remote holds — a link to a commit still sitting on the
+machine 404s for the reviewer it was written for, and line history is not
+inferred. A `--commit` the remote does not hold is an error rather than a
+dropped citation. Without `--commit`, the row reads `Addressed outside the fix
+pass` and the run says so. Naming an id no fix pass recorded is an error
+listing the threads that are waiting on a person. Recording the outcome a
+thread already carries is a no-op that says so; recording a different terminal
+outcome replaces it.
 Recording is its own step: `--settle` publishes nothing and refuses `--post` and
 every other phase flag alongside it (the argparse layer in `cli.review_threads`).
 

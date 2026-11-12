@@ -251,18 +251,19 @@ class TestActionCellOutcome:
         entry = CommentItem(id="t1", summary="s", file="a.py", line=1)
         settled = CommentItem(id="t2", summary="s", file="a.py", line=1,
                               settled_by=SettledBy.RECONCILIATION)
+        stamped = CommentItem(id="t3", summary="s", file="a.py", line=1,
+                              commit_sha="9f2e1a0")
         cells = [
             pr.summary_row.fixed_status_for(e, pr.attribution.CommitPushResult(sha, status, ""), "owner/repo")
             for status in CommitStatus
             for sha in ("9f2e1a0", None)
-            for e in (entry, settled)
+            for e in (entry, settled, stamped)
         ]
         cells += [
             pr.summary_row.addressed_status_for(
-                pr.attribution.AddressedFraming(in_response=r, sha=sha), "owner/repo",
+                pr.attribution.AddressedFraming(in_response=r),
             )
             for r in (True, False)
-            for sha in ("9f2e1a0", "")
         ]
         cells += [ActionCell.deferred(i, u) for i, u in _DEFERRED_ARGS]
         cells += [pr.summary_model.HumanReason.prose_for(r) for r in (
@@ -272,19 +273,18 @@ class TestActionCellOutcome:
                  if not isinstance(pr.summary_model._ActionVocabulary.matching(c), ActionCell)]
         assert stale == []
 
-    def test_a_satisfied_row_reported_as_a_fix_carries_the_hedge(self):
+    def test_a_satisfied_row_reported_as_a_fix_names_no_commit(self):
         """The table and the reply beside it must not disagree.
 
-        A satisfied row whose commit postdates the comment reports as a fix and
-        counts as one, so an unverified one owes the same `(unverified)` suffix
-        the fixed rows carry. Without the kwarg the cell claims the fix plainly
-        while the reply hedges it.
+        A satisfied row whose code postdates the comment reports as a fix and
+        counts as one, but already-addressed rows never cite a line-history
+        commit.
         """
         cell = pr.summary_row.addressed_status_for(
-            pr.attribution.AddressedFraming(in_response=True, sha="9f2e1a0"),
-            "owner/repo", verified=False,
+            pr.attribution.AddressedFraming(in_response=True),
         )
-        assert "(unverified)" in cell
+        assert cell == ActionCell.UNATTRIBUTED
+        assert "(unverified)" not in cell
 
     def test_a_row_whose_code_predates_the_comment_never_hedges(self):
         """Not a fix and not a claim the gate could check.
@@ -294,8 +294,7 @@ class TestActionCellOutcome:
         never ran a gate.
         """
         cell = pr.summary_row.addressed_status_for(
-            pr.attribution.AddressedFraming(in_response=False, sha="9f2e1a0"),
-            "owner/repo", verified=False,
+            pr.attribution.AddressedFraming(in_response=False),
         )
         assert "(unverified)" not in cell
 
@@ -310,20 +309,21 @@ class TestActionCellOutcome:
         entry = CommentItem(id="t1", summary="s", file="a.py", line=1)
         settled = CommentItem(id="t2", summary="s", file="a.py", line=1,
                               settled_by=SettledBy.RECONCILIATION)
+        stamped = CommentItem(id="t3", summary="s", file="a.py", line=1,
+                              commit_sha="9f2e1a0")
         emitted = {
             pr.summary_model._ActionVocabulary.matching(
                 pr.summary_row.fixed_status_for(
                     e, pr.attribution.CommitPushResult(sha, status, ""), "owner/repo"))
             for status in CommitStatus
             for sha in ("9f2e1a0", None)
-            for e in (entry, settled)
+            for e in (entry, settled, stamped)
         }
         emitted |= {
             pr.summary_model._ActionVocabulary.matching(
                 pr.summary_row.addressed_status_for(
-                    pr.attribution.AddressedFraming(in_response=r, sha=sha), "owner/repo"))
+                    pr.attribution.AddressedFraming(in_response=r)))
             for r in (True, False)
-            for sha in ("9f2e1a0", "")
         }
         # The three the renderer writes directly, and the five HumanReason names.
         emitted |= {ActionCell.DISMISSED, ActionCell.DEFERRED, ActionCell.RECONCILED}

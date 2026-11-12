@@ -17,6 +17,7 @@ import os
 import sys
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from conftest import REPO_ROOT, git_out, run_checked
 
@@ -30,12 +31,14 @@ import git.topology  # noqa: E402
 import pr.attribution  # noqa: E402
 import pr.summary_model  # noqa: E402
 import pr.summary_render  # noqa: E402
+import pr.thread_replies  # noqa: E402
 from pr.fix import FixOutcome, SettledBy  # noqa: E402
 from pr.thread_models import CommentItem, ReportThread  # noqa: E402
 
 THE_REVIEW_COMMENT = "2025-01-01T00:00:00Z"
 BEFORE_THE_REVIEW = "2020-01-01T00:00:00+0000"
 AFTER_THE_REVIEW = "2030-01-01T00:00:00+0000"
+AFTER_THE_REVIEW_LATER = "2030-02-01T00:00:00+0000"
 
 # The source comment behind every decomposed item below, and the id its
 # synthetic id parses back to.
@@ -123,7 +126,6 @@ class TestDatingAnItemAgainstItsSourceComment:
             branch.path, {SOURCE_ID: THE_REVIEW_COMMENT})
         framing = history.framing(_item(2), None)
         assert framing.in_response
-        assert framing.sha == branch.after
 
     def test_a_commit_before_it_keeps_the_flat_wording(self, branch, on_main):
         """An item that genuinely predates the comment is the "already" case."""
@@ -131,7 +133,6 @@ class TestDatingAnItemAgainstItsSourceComment:
             branch.path, {SOURCE_ID: THE_REVIEW_COMMENT})
         framing = history.framing(_item(1), None)
         assert not framing.in_response
-        assert framing.sha == branch.before
 
     def test_an_undatable_source_still_declines(self, branch, on_main):
         """No timestamp for the comment is no evidence, which is the old reading.
@@ -200,7 +201,7 @@ class TestTheSummaryRowReadsTheSameAnswer:
             branch, [_item(2)],
             [{"id": SOURCE_ID, "created_at": THE_REVIEW_COMMENT, "seen": True}],
         )
-        assert f"Fixed in [`{branch.after}`]" in body
+        assert "Fix applied (commit not recorded)" in body
         assert "Already addressed" not in body
         assert "1 fixed" in body
 
@@ -256,8 +257,8 @@ class TestAPublishedFixVerdictSurvivesAReplay:
         replayed = CommentItem.from_outcome(
             entry.to_outcome(FixOutcome.ALREADY_ADDRESSED), "kgn")
         second = self._framing(branch, replayed)
-        assert first.in_response and first.sha == branch.after
-        assert (second.in_response, second.sha) == (first.in_response, first.sha)
+        assert first.in_response
+        assert second.in_response == first.in_response
 
     def test_the_evidence_location_survives_the_record(self, branch, on_main):
         replayed = CommentItem.from_outcome(self._entry().to_outcome())
@@ -279,8 +280,8 @@ class TestAPublishedFixVerdictSurvivesAReplay:
         second = self._framing(
             branch, CommentItem.from_outcome(
                 entry.to_outcome(FixOutcome.ALREADY_ADDRESSED)))
-        assert not first.cited
-        assert (second.in_response, second.sha) == (first.in_response, first.sha)
+        assert not first.in_response
+        assert second.in_response == first.in_response
 
     def test_an_item_that_cited_nothing_still_falls_back_to_its_anchor(
         self, branch, on_main,
@@ -288,7 +289,7 @@ class TestAPublishedFixVerdictSurvivesAReplay:
         """Empty evidence is "triage cited nothing", not "look nowhere"."""
         entry = self._entry(line=2, evidence_file="", evidence_line=0)
         replayed = CommentItem.from_outcome(entry.to_outcome())
-        assert self._framing(branch, replayed).sha == branch.after
+        assert self._framing(branch, replayed).in_response
 
     def test_the_provenance_a_floor_reads_travels_too(self, branch, on_main):
         """The floor's exemption is keyed on it, so a lost field would bury it."""
@@ -308,3 +309,95 @@ class TestReadingATimestamp:
 
     def test_an_empty_stamp_is_zero(self):
         assert pr.attribution.posix_seconds("") == 0.0
+
+
+class TestAnAlreadyAddressedRowCitesNoCommit:
+    """Line history dates the reading; it is never the commit a row cites."""
+
+    @pytest.fixture
+    def fix_elsewhere(self, worktree, on_main):
+        """c1 touches a.py:2 before the review; c2 fixes only b.py after; c3 later."""
+        hooks = worktree / ".git" / "empty-hooks"
+        hooks.mkdir()
+        _git(worktree, "config", "user.email", "test@example.com")
+        _git(worktree, "config", "user.name", "Test")
+        _git(worktree, "config", "commit.gpgsign", "false")
+        _git(worktree, "config", "core.hooksPath", str(hooks))
+        (worktree / "a.py").write_text("one\ntwo\n")
+        (worktree / "b.py").write_text("b1\nb2\n")
+        _git(worktree, "add", "-A")
+        _git(worktree, "commit", "-qm", "base")
+        _git(worktree, "update-ref", "refs/remotes/origin/main", "HEAD")
+        (worktree / "a.py").write_text("one\nTWO\n")
+        _git(worktree, "commit", "-qam", "c1 reviewed line", when=BEFORE_THE_REVIEW)
+        c1 = _sha(worktree)
+        (worktree / "b.py").write_text("b1\nB2\n")
+        _git(worktree, "commit", "-qam", "c2 the fix, only b.py", when=AFTER_THE_REVIEW)
+        c2 = _sha(worktree)
+
+        def add_c3():
+            (worktree / "a.py").write_text("one\nTWO  # reformatted\n")
+            _git(worktree, "commit", "-qam", "c3 reformats a.py:2",
+                 when=AFTER_THE_REVIEW_LATER)
+            return _sha(worktree)
+
+        return SimpleNamespace(path=worktree, c1=c1, c2=c2, add_c3=add_c3)
+
+    @staticmethod
+    def _entry(wt):
+        return CommentItem(
+            id="t1", file="a.py", line=2, reviewer="kgn",
+            summary="the retry is unbounded", read_sha=_sha(wt)[:7],
+        )
+
+    def _reply(self, wt, entry):
+        with patch("pr.comments.post_thread_reply", return_value=True) as post:
+            pr.thread_replies.post_already_addressed_replies(
+                [entry], {entry.id: _thread()}, "owner/repo", 42, wt,
+            )
+        return post.call_args[0][3]
+
+    def _summary(self, wt, entry):
+        content = pr.summary_model.RoundContent(
+            by_outcome={FixOutcome.ALREADY_ADDRESSED: [entry]},
+            issue_comments=[], review_body_comments=[], source_replies={},
+            record_items=[],
+        )
+        cp = pr.attribution.CommitPushResult(None, "no_changes", "")
+        return pr.summary_render.build_summary_body(
+            content, cp, "owner/repo", 42, {entry.id: _thread()}, wt_path=wt,
+        )
+
+    def test_the_reply_names_no_commit_when_the_fix_landed_in_another_file(
+        self, fix_elsewhere,
+    ):
+        fix_elsewhere.add_c3()
+        body = self._reply(fix_elsewhere.path, self._entry(fix_elsewhere.path))
+        assert "/commit/" not in body
+        assert "Fixed in" not in body and "Addressed in" not in body
+        assert fix_elsewhere.c1[:7] not in body
+        assert fix_elsewhere.c2[:7] not in body
+        assert "Current behaviour is at" in body
+
+    def test_the_summary_row_names_no_commit_for_the_same_thread(
+        self, fix_elsewhere,
+    ):
+        fix_elsewhere.add_c3()
+        body = self._summary(fix_elsewhere.path, self._entry(fix_elsewhere.path))
+        assert "Fix applied (commit not recorded)" in body
+        assert "1 fixed" in body
+        assert "/commit/" not in body
+
+    def test_reply_and_row_agree_after_the_pass_touches_the_evidence_line(
+        self, fix_elsewhere,
+    ):
+        reply = self._reply(fix_elsewhere.path, self._entry(fix_elsewhere.path))
+        fix_elsewhere.add_c3()
+        row = self._summary(fix_elsewhere.path, self._entry(fix_elsewhere.path))
+        assert "/commit/" not in reply
+        assert "/commit/" not in row
+
+    def test_code_predating_the_review_cites_no_commit(self, fix_elsewhere):
+        body = self._reply(fix_elsewhere.path, self._entry(fix_elsewhere.path))
+        assert body.startswith("Already addressed:")
+        assert "Addressed in" not in body

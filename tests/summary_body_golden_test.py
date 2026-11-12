@@ -294,7 +294,7 @@ def _full_body():
         ],
         wt_path=None,
         history=_FrozenHistory({
-            "t12": pr.attribution.AddressedFraming(True, sha="def5678"),
+            "t12": pr.attribution.AddressedFraming(True),
         }),
         scope=scope,
         chain=[
@@ -477,7 +477,7 @@ def _enterprise_body():
         head_sha=_LINK_SHA,
         wt_path=None,
         history=_FrozenHistory({
-            "t12": pr.attribution.AddressedFraming(True, sha="def5678"),
+            "t12": pr.attribution.AddressedFraming(True),
         }),
         host=_HOST,
     )
@@ -507,7 +507,7 @@ class TestTheSummaryTableRendersOnTheForgeThePRIsOn:
         rows would otherwise turn this green.
         """
         body = _enterprise_body()
-        assert body.count(f"https://{_HOST}/") == 6
+        assert body.count(f"https://{_HOST}/") == 5
         assert "github.com" not in body
 
     def test_the_commit_cell_names_the_enterprise_host(self):
@@ -519,9 +519,11 @@ class TestTheSummaryTableRendersOnTheForgeThePRIsOn:
     def test_the_thread_cell_names_the_enterprise_host(self):
         assert f"https://{_HOST}/{_REPO}/pull/{_PR}#discussion_r" in _enterprise_body()
 
-    def test_the_addressed_cell_names_the_enterprise_host(self):
-        """A satisfied row reports as a fix and cites its own commit."""
-        assert f"https://{_HOST}/{_REPO}/commit/def5678" in _enterprise_body()
+    def test_the_addressed_cell_names_no_commit(self):
+        """A satisfied row reports as a fix and cites no line-history commit."""
+        body = _enterprise_body()
+        assert "Fix applied (commit not recorded)" in body
+        assert f"https://{_HOST}/{_REPO}/commit/def5678" not in body
 
     # passes-at-base: asserts the rendering the change was careful not to move
     def test_no_host_still_renders_public_github(self):

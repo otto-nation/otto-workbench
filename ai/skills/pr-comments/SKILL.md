@@ -316,10 +316,10 @@ fix-pass or triage dismissal with a justification (the reason, or the
 reasoning) writes the same `Dismissed:` line. Only these three; a thread still
 awaiting an answer is not settled and stays as it is.
 
-`--as fixed` finds the commit from the branch history of the thread's line and
-cites it only once the remote holds it. Add `--commit <sha>` when the fix landed
-away from that line. If the run says it found no pushed commit, have the user
-push and re-run `--settle` rather than letting the row publish uncited.
+A citation needs `--commit <sha>` — without it the row is recorded uncited.
+`--commit` is taken only once the remote holds that SHA; if the run says the
+named commit is not on the remote, have the user push it first rather than
+letting the row publish uncited.
 
 Recording is not publishing: `--settle` writes local state only and refuses
 `--post` and every other phase flag. Read back what it reports — it names the

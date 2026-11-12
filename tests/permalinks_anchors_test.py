@@ -138,7 +138,7 @@ class TestEvidencePermalinks:
                 addressed, threads, "owner/repo", 42, tmp_path)
         body = reply.call_args[0][3]
         assert "blob/cafe123/app.py#L4" in body
-        assert "/commit/deaddeaddead" in body
+        assert "/commit/deaddeaddead" not in body
 
     def test_summary_file_cell_links_at_the_fix_commit(self, content):
         cp = pr.attribution.CommitPushResult("abc1234", "pushed", "")

@@ -49,8 +49,8 @@ class TestPostAlreadyAddressedReplies:
         body = mock_reply.call_args[0][3]
         assert "Already addressed" in body
         assert "use helper" in body
-        assert "abc1234" in body
-        assert "owner/repo/commit/abc1234def5678" in body
+        assert "abc1234" not in body
+        assert "owner/repo/commit/abc1234def5678" not in body
 
     def test_fallback_when_no_commit_found(self, tmp_path):
         fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py")]
@@ -173,7 +173,7 @@ class TestReplyBodiesRenderTheEnterpriseHost:
                 fixed, threads_by_id, "owner/repo", 42, tmp_path, host=self.HOST,
             )
         body = mock_reply.call_args[0][3]
-        assert f"https://{self.HOST}/owner/repo/commit/abc1234def5678" in body
+        assert f"https://{self.HOST}/owner/repo/commit/abc1234def5678" not in body
         assert "github.com" not in body
 
     def test_a_dismissed_reply_cites_the_enterprise_evidence(self, tmp_path):

@@ -145,7 +145,8 @@ neither staged nor marked. A rename's old path is never on the review surface â€
 the file is gone, so nothing is unreviewed. `covered_sha` is GREEN over the tree
 as the pass left it, including operator files that were dirty going in, and
 before any pre-commit hook rewrite; tests qualify by filename stem
-(`fix.scope.anchor_or_test`). `pr batch` passes `--force` on every review, so a
+(`fix.scope.anchor_or_test`: `test_`/`_test`/`.test`/`.spec`/`_spec`/`Test` markers, `tests/`
+or `__tests__/` roots, case and `-`/`_` folded, JS/TS suffixes interchangeable). `pr batch` passes `--force` on every review, so a
 batch-driven same-HEAD dirty self-review stays full.
 
 Because the ledger is cleared, `Declined` also has to survive on the finding

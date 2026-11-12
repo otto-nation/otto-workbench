@@ -8,7 +8,7 @@
 - A test failing because it reached for a tool the CI platform lacks is a portability bug in the test, not a case that needs a platform guard. Read the subject portably instead: every CI job here runs `ubuntu-24.04`, so `if [[ "$OSTYPE" != "darwin"* ]]; then skip; fi` over an assertion about a *tracked file* is an assertion that exists and never executes, on any runner. A case whose subject genuinely needs one OS — BSD `ln -sfh` semantics, launchd actually loading a plist — is the legitimate form, and says so with `# platform-only: <why the subject needs this OS>` above the `@test`. Enforced by `bin/local/validate-skip-coverage`, which reads the test body rather than the guard: the two spellings of the skip line are identical, so only the subject tells them apart
 - When a foundational method's contract changes, audit every test that asserts the old behavior and update it
 - Prefer real dependencies over mocks when feasible — mocks hide integration bugs
-- Every bug fix and behavioral change must include a regression test
+- Every bug fix and behavioral change must include a regression test. The self-review fix pass enforces this: a claimed fix without one is reported unverified (`self-review.md` § The fix pass owes a test for every behaviour change)
 
 ## Reading a Suite Result
 

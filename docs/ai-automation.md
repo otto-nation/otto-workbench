@@ -621,7 +621,7 @@ keeps the next round from starting over:
 
 - **A qualifying fix commit counts as reviewed.** The header carries
   `covered_sha` when that commit landed on the reviewed commit, checks were
-  green, every fix was verified, it touches only the fixed findings' files
+  green, every fix was verified (incl. a test for behaviour changes), it touches only the fixed findings' files
   and their tests, and no file of a finding the pass left unfixed. That SHA
   counts as reviewed; a later review still measures its delta from `head_sha`.
 - **Re-reviews do only new work.** Same-HEAD dirty files (including ones the

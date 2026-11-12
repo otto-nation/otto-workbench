@@ -844,6 +844,20 @@ check would exist to catch. A rule that fires only when the pass did nothing at
 all adds a second place for the vocabulary to drift and catches a case the
 existing unproductive-pass guard already reports.
 
+### fix/regression.py
+
+Hedge a claimed fix that changed behaviour and shipped no test.
+
+The fix pass asks its agent for a test beside every behavioural fix, and the
+agent's `fixed` box is the only record of whether it wrote one. A box that names
+a test, or says `No test: <why>`, is a claim; this module checks the one thing
+that can be checked mechanically — whether the commit holds any file that is
+the anchor's test — and reports the fix unverified when it holds none.
+
+It does not judge whether a test is any good (the verify gate does) and it does
+not demote the outcome: the fix still lands, and every surface that already
+hedges an unverified fix carries the reason.
+
 ### fix/scope.py
 
 What a fix pass changed, so its commit can be scoped to exactly that.

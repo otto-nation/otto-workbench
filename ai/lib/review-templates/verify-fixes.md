@@ -87,6 +87,12 @@ does not exist", "test_foo asserts on a path the change does not touch" —
 because the operator is deciding whether to believe the pass, not only whether
 to keep the edit.
 
+An exemption — a reason opening `No test:` — claimed for a change that alters
+behaviour is **not verified**; it is not an answer. Likewise a fix whose diff
+moves behaviour with no test change anywhere in it is **not verified**, unless
+the exemption holds on its merits (prose, a rename, a change no input can
+observe).
+
 A passing named test is not by itself a **verified**. It is one input to the
 ladder above, and the reviewer's own repro still outranks it.
 

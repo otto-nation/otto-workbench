@@ -129,6 +129,8 @@ def _pass(tmp_path, verdict, *, hand_commit=False):
             (wt / "b.py").write_text("by hand\n")
             commit_all(wt, "hand commit while the agent worked")
         (wt / "a.py").write_text("y = 1\n")
+        (wt / "tests").mkdir(exist_ok=True)
+        (wt / "tests" / "a_test.py").write_text("def test_a():\n    assert True\n")
     _run(job, {"N1": "fixed — renamed, covered by tests/a_test.py"},
          work=work, verdicts={"N1": verdict})
     return wt, job

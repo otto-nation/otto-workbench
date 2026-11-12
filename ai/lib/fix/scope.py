@@ -83,14 +83,50 @@ def _drop_scratch(paths: set[str], wt_path: str | Path) -> set[str]:
 # Directories a repo keeps its tests in, when they do not sit beside the
 # source. Checked as a leading path component so `tests/` and `ai/tests/`
 # both count and a source file named `tests.py` does not.
-_TEST_DIRS = ("tests", "test", "spec")
+_TEST_DIRS = ("tests", "test", "spec", "__tests__")
+
+# What a test is named for. A test module's subject is its name without the
+# test marker (`eval_task_test.py` is about `eval_task`); a source module's is
+# its stem, and also its stem behind its package (`ai/lib/eval/task.py` is
+# `task` and `eval_task`), because this repo names suites
+# `tests/<package>_<module>_test.py`. `Test` is the JVM/.NET suffix
+# (`FooTest.java`) and is case-sensitive so `latest.py` is not a test of `la`.
+_TEST_MARKERS = (
+    ("test_", ""), ("", "_test"), ("", ".test"),
+    ("", "_spec"), ("", ".spec"), ("", "Test"),
+)
+
+# Suffixes a JS/TS project uses interchangeably between a module and its
+# test: `foo.test.ts` is the test for `foo.tsx`. Every other suffix must
+# match exactly, so `foo_test.py` never answers for `foo.go`.
+_SUFFIX_FAMILIES = ((".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"),)
+
+
+def _suffix_variants(suffix: str) -> tuple[str, ...]:
+    """*suffix* and every suffix a test of it may carry."""
+    for family in _SUFFIX_FAMILIES:
+        if suffix in family:
+            return family
+    return (suffix,)
+
+
+def _fold(name: str) -> str:
+    """*name* compared the way a repo's naming styles agree on it.
+
+    `ProductCatalog`, `product_catalog` and `product-catalog` are one subject.
+    Case is folded and `-`/`_` are dropped; a Pascal word boundary is not
+    inferred, so `ProductCatalog` and `product_catalog` agree only because
+    both flatten to the same letters.
+    """
+    return name.lower().replace("-", "").replace("_", "")
 
 
 def _stem_names(path: Path) -> tuple[str, ...]:
-    """The test filenames that would be named for `path`'s stem."""
-    stem, suffix = path.stem, path.suffix
-    return (
-        f"test_{stem}{suffix}", f"{stem}_test{suffix}", f"{stem}.test{suffix}",
+    """The test filenames that would be named for `path`'s stem, beside it."""
+    return tuple(
+        f"{pre}{path.stem}{post}{suffix}"
+        for suffix in _suffix_variants(path.suffix)
+        for pre, post in _TEST_MARKERS
     )
 
 
@@ -103,11 +139,16 @@ def _colocated_tests(sources: set[str]) -> set[str]:
 
     Two conventions, because a repo picks one and the fix template asks every
     pass for a regression test either way. A test beside its source
-    (`foo.py` admits `foo_test.py`, `test_foo.py`, `foo.test.py`) is matched by
-    exact path. A repo that keeps tests in a top-level `tests/` instead is
-    matched by name: this repo has 189 such files and none colocated, so
-    requiring the same directory would drop the very test the pass was told to
-    write.
+    (`foo.py` admits `foo_test.py`, `test_foo.py`, `foo.test.py`, and for a
+    JS/TS source `foo.spec.tsx` or `foo.test.js`) is enumerated by exact path.
+    A repo that keeps tests in a top-level `tests/` instead is matched by
+    name through `_is_test_for`: this repo has 189 such files and none
+    colocated, so requiring the same directory would drop the very test the
+    pass was told to write.
+
+    `_is_test_for` also matches a colocated test by folded name: exact
+    names cover the plain shapes, and folding covers `ProductCatalog.test.tsx`
+    beside `product-catalog.tsx`, which no exact path spells.
 
     Only the stem has to match, so an unrelated suite the agent edited in
     passing is still the intended leave-behind.
@@ -120,14 +161,6 @@ def _colocated_tests(sources: set[str]) -> set[str]:
     return tests
 
 
-# What a test is named for. A test module's subject is its name without the
-# test marker (`eval_task_test.py` is about `eval_task`); a source module's is
-# its stem, and also its stem behind its package (`ai/lib/eval/task.py` is
-# `task` and `eval_task`), because this repo names suites
-# `tests/<package>_<module>_test.py`.
-_TEST_MARKERS = (("test_", ""), ("", "_test"), ("", ".test"))
-
-
 def _test_subject(stem: str) -> str:
     """*stem* without its test marker, or "" when it carries none."""
     for prefix, suffix in _TEST_MARKERS:
@@ -138,16 +171,21 @@ def _test_subject(stem: str) -> str:
     return ""
 
 
+def _candidate_subject(path: Path) -> str:
+    """The subject a test or support module's name says it is about, or ""."""
+    stem = path.stem
+    if stem.endswith("_support"):
+        return stem.removesuffix("_support")
+    return _test_subject(stem)
+
+
 def _subjects(path: Path) -> set[str]:
     """The names a test or support module for *path* would be built from."""
     stem = path.stem
     if _in_test_dir(path):
         # A support module is written with its suite, so it names the same
         # subject the suite does: `tests/foo_support.py` admits `foo_test.py`.
-        if stem.endswith("_support"):
-            subject = stem.removesuffix("_support")
-        else:
-            subject = _test_subject(stem)
+        subject = _candidate_subject(path)
         return {subject} if subject else set()
     subjects = {stem}
     if path.parent.name:
@@ -155,36 +193,45 @@ def _subjects(path: Path) -> set[str]:
     return subjects
 
 
-def _test_root_names(path: Path) -> set[str]:
-    """Filenames under a test root that belong to *path*.
+def _names_a_subject_of(candidate: Path, source: Path) -> bool:
+    """Whether *candidate*'s filename is a test/support name for *source*.
 
-    Every test marker on each subject, plus `<subject>_support`, the module a
-    suite's shared helpers live in. A suite and its support module are written
-    together, so a pass that extracts helpers into a new support module is
-    leaving behind the same work as one that edits the suite.
+    Suffixes must agree within a family, and subjects agree after `_fold`.
+    A suite and its support module are written together, so a pass that
+    extracts helpers into a new `<subject>_support` module is leaving behind
+    the same work as one that edits the suite.
     """
-    suffix = path.suffix
-    names: set[str] = set()
-    for subject in _subjects(path):
-        names.add(f"{subject}_support{suffix}")
-        names.update(f"{pre}{subject}{post}{suffix}" for pre, post in _TEST_MARKERS)
-    return names
+    if candidate.suffix not in _suffix_variants(source.suffix):
+        return False
+    subject = _candidate_subject(candidate)
+    if not subject:
+        return False
+    return _fold(subject) in {_fold(s) for s in _subjects(source)}
 
 
 def _is_test_for(path: str, sources: set[str]) -> bool:
     """Whether `path` is a test or support module under a test root for one of `sources`.
 
     The directory-independent half of `_colocated_tests`: a path anywhere
-    under a `tests/`-style root whose filename belongs to an in-branch source.
-    `tests/foo_test.py`, `tests/unit/foo_test.py` and `tests/lib_foo_test.py`
-    all answer for `ai/lib/foo.py`; `tests/foo_support.py` answers for it and
-    for `tests/foo_test.py`.
+    under a `tests/`, `spec/` or `__tests__/` root whose filename belongs to
+    an in-branch source. `tests/foo_test.py`, `tests/unit/foo_test.py` and
+    `tests/lib_foo_test.py` all answer for `ai/lib/foo.py`;
+    `tests/foo_support.py` answers for it and for `tests/foo_test.py`; and
+    `ProductCatalog.test.tsx` answers for `product-catalog.jsx`.
+
+    Beside its source, a test is also matched by folded name (a `.test.tsx`
+    in the source's own directory), which the exact-path enumeration cannot
+    spell. Nothing else is admitted: a suite in the same subtree named for a
+    different subject is not this source's test.
     """
     candidate = Path(path)
-    if not _in_test_dir(candidate):
-        return False
+    if _in_test_dir(candidate):
+        return any(_names_a_subject_of(candidate, Path(s)) for s in sources)
     return any(
-        candidate.name in _test_root_names(Path(source)) for source in sources
+        candidate.parent == Path(s).parent
+        and _test_subject(candidate.stem)
+        and _names_a_subject_of(candidate, Path(s))
+        for s in sources
     )
 
 

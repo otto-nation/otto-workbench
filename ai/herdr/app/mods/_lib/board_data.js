@@ -60,6 +60,10 @@ export function classifyCode(result) {
   if (result.code === 127) {
     return { kind: 'missing-tool', message: stderr || 'command not found' };
   }
+  // coreutils `timeout` exits 124 when the deadline fires.
+  if (result.code === 124) {
+    return { kind: 'timeout', message: stderr || 'exit 124' };
+  }
   if (
     stderr.includes('gh auth login') ||
     /authentication/i.test(stderr) ||
@@ -91,19 +95,44 @@ export function classifyCode(result) {
 // the like, without which pi never registers its Vertex provider). ~/.env.local is sourced only
 // after a subshell proves it parses under sh — a syntax error in a sourced file would otherwise
 // end this shell before `exec`.
-export const REMOTE_PREAMBLE = 'PATH="$HOME/.local/bin:$PATH"; '
+const REMOTE_ENV = 'PATH="$HOME/.local/bin:$PATH"; '
   + 'if [ -r "$HOME/.env.local" ] && ( . "$HOME/.env.local" ) >/dev/null 2>&1; '
-  + 'then set -a; . "$HOME/.env.local" >/dev/null 2>&1; set +a; fi; exec "$@"';
+  + 'then set -a; . "$HOME/.env.local" >/dev/null 2>&1; set +a; fi; ';
 
-export function toolCall(ctx, cmd, args) {
+export const REMOTE_PREAMBLE = REMOTE_ENV + 'exec "$@"';
+
+// Isolated remote children leave herdr-core serve's 512M cgroup (MemoryMax=512M,
+// MemorySwapMax=0 on the transient unit `serve` starts for exec) so a heavy
+// command cannot throttle the connection, and self-terminate at the deadline.
+// `$1` is seconds, `$2` is MemoryMax; both are positional so they are not
+// interpolated into this script. Usability is `command -v` plus the user bus
+// socket systemd-run talks to — no extra probe process per call; without the
+// bus it falls back to a bare `timeout` rather than failing the read.
+export const REMOTE_ISOLATE_PREAMBLE = REMOTE_ENV
+  + 'seconds=$1; memoryMax=$2; shift 2; '
+  + 'if command -v systemd-run >/dev/null 2>&1 && [ -S "${XDG_RUNTIME_DIR:-/nonexistent}/bus" ]; then '
+  + 'exec systemd-run --user --scope --quiet --collect -p MemoryMax="$memoryMax" -p MemorySwapMax=0 -- timeout -k 5 "$seconds" "$@"; '
+  + 'elif command -v timeout >/dev/null 2>&1; then '
+  + 'exec timeout -k 5 "$seconds" "$@"; '
+  + 'else exec "$@"; fi';
+
+export function toolCall(ctx, cmd, args, opts = {}) {
   if (ctx.on == null || ctx.on === '') return { cmd, args };
+  if (opts.isolate != null) {
+    const { seconds, memoryMax } = opts.isolate;
+    return {
+      cmd: 'sh',
+      args: ['-c', REMOTE_ISOLATE_PREAMBLE, 'sh', String(seconds), String(memoryMax), cmd, ...args],
+    };
+  }
   return { cmd: 'sh', args: ['-c', REMOTE_PREAMBLE, 'sh', cmd, ...args] };
 }
 
 export async function invoke(exec, ctx, cmd, args, opts = {}) {
   try {
-    const call = toolCall(ctx, cmd, args);
-    const result = await exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on, ...opts });
+    const { isolate, ...execOpts } = opts;
+    const call = toolCall(ctx, cmd, args, isolate != null ? { isolate } : {});
+    const result = await exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on, ...execOpts });
     const error = classifyCode(result);
     if (error) return { ok: false, error };
     return { ok: true, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
@@ -287,12 +316,21 @@ export async function loadListing(exec, ctx, prior = null) {
   return { ok: true, listing: parsed.value, reviewsRoot: parsed.value.reviews_root };
 }
 
+// ceiling: 768M for one isolated `pr board` child; raise if a single-repo
+// board legitimately exceeds it (the remote child is OOM-killed under 768M).
+export const BOARD_MEMORY_MAX = '768M';
+
 // One `pr board` phase for one checkout. Resolves to {ok:true, doc} or {ok:true, unchanged:true},
 // or {ok:false, error}; a document that is not the one asked for is an outdated `pr`, never a
 // partial read. `stamp` is the prior answer's stamp, which pr answers `unchanged` against.
 export async function loadBoard(exec, ctx, phase, opts = {}) {
+  const timeoutMs = PHASE_TIMEOUT_MS[phase];
   const ran = await invoke(exec, ctx, 'pr', boardArgv(ctx.cwd, phase, opts), {
-    timeout: PHASE_TIMEOUT_MS[phase],
+    timeout: timeoutMs,
+    isolate: {
+      seconds: Math.floor(timeoutMs / 1000) - 5,
+      memoryMax: BOARD_MEMORY_MAX,
+    },
   });
   if (!ran.ok) return ran;
   const parsed = readJson(ran.stdout);

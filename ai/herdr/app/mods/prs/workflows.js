@@ -301,6 +301,8 @@ export class Workflows {
       this.sessionError = null;
       return;
     }
+    // Findings length is a cheap staleness proxy: a re-run changes status or the
+    // count; in-place content edits within one run are not tracked.
     const stamp = `${k(hit.on)}\0${hit.run.id}\0${key}\0${hit.item.status}\0${(hit.item.findings ?? []).length}`;
     if (this.sessionStamp === stamp) return;
     this.sessionStamp = stamp;

@@ -123,7 +123,12 @@ def write_report(run: Run, *, offline: bool) -> tuple[Path | None, dict]:
     dest = directory / "report.md"
     fd, tmp = tempfile.mkstemp(dir=directory, prefix="report.md.", suffix=".tmp")
     try:
-        with os.fdopen(fd, "w") as handle:
+        try:
+            handle = os.fdopen(fd, "w")
+        except BaseException:
+            os.close(fd)
+            raise
+        with handle:
             handle.write(markdown)
         core.serde.replace_file(Path(tmp), dest)
     except BaseException:

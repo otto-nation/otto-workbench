@@ -51,7 +51,7 @@ from cli.pr_commands import (
     cmd_gc,
     cmd_status,
 )
-from cli.registry import COMMANDS, CommandSpec, need_for
+from cli.registry import COMMANDS, CommandSpec, contract_for, need_for
 from cli.schema import (
     EXIT_USAGE,
     checked_schema_version,
@@ -63,6 +63,7 @@ import pr.context
 import pr.sync
 import pr.push_intent
 import core.cli_reference
+import core.command_contract
 import core.log
 import core.tool_parser
 import core.proc
@@ -333,6 +334,28 @@ def _factory_reference_parser(name: str) -> argparse.ArgumentParser:
     return parser
 
 
+def help_parser(name: str) -> argparse.ArgumentParser:
+    """The parser `pr <name> --help` prints: its reference parser, its contract attached.
+
+    One path for every command, so `pr status --help` and `pr fix --help` say
+    as much as `pr rebase --help`, and the epilog is the same text the docs
+    and the schema render from.
+    """
+    parser = _reference_parser(name, core.tool_parser.subparsers(_build_parser()))
+    contract = contract_for(COMMANDS[name])
+    if contract is not None:
+        core.command_contract.attach_help(parser, contract)
+    return parser
+
+
+def documented_flag_keys(name: str) -> list[str]:
+    """The flag keys `pr <name>`'s contract must group: documented, globals excluded."""
+    hidden = frozenset(s for a in core.cli_reference.documented(build_global_parser())
+                       for s in a.option_strings)
+    return [core.command_contract.flag_key(a)
+            for a in core.cli_reference.documented(help_parser(name), hidden)]
+
+
 def _accepted_value_flags(spec: CommandSpec) -> frozenset[str]:
     """Which options `pr <command>` reads a following value for.
 
@@ -348,14 +371,10 @@ def _accepted_value_flags(spec: CommandSpec) -> frozenset[str]:
 def _build_parser() -> argparse.ArgumentParser:
     """Build the command parser.
 
-    A command with a parser factory has a subparser that declares no flags of
-    its own — its argv is forwarded whole and `pr <command> --help` is answered
-    by the factory's reference parser (`_factory_reference_parser`, which for
-    `review` adds the mode flags `pr` routes) — so add_help is left off for
-    those. That is every delegate and `create`, whose handler runs here but
-    whose parser is its own.
-    A command that parses its own argv (`CommandSpec.parses_own_argv`) is left
-    without one too, so its subcommands answer their own help.
+    No subparser answers `-h` itself. `pr <command> --help` is answered by
+    `help_parser`, which is the reference parser with the command's contract
+    attached. A command that parses its own argv (`CommandSpec.parses_own_argv`)
+    still skips the early help branch so its subcommands answer their own help.
 
     The subparsers are not returned alongside: what a command declares is read
     back off the built parser with tool_parser.subparsers, which is what keeps
@@ -370,9 +389,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     sub = parser.add_subparsers(dest="command")
     for name, spec in COMMANDS.items():
-        sub.add_parser(name, help=spec.help,
-                       add_help=not (cli.dispatch.has_parser_factory(name)
-                                     or spec.parses_own_argv))
+        sub.add_parser(name, help=spec.help, description=spec.help, add_help=False)
     return parser
 
 
@@ -513,7 +530,7 @@ def _own_parser_printed_help(spec, extra: list[str]) -> bool:
     buf = io.StringIO()
     try:
         with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
-            cli.dispatch.resolve(spec.parser)().parse_args(extra)
+            help_parser(spec.name).parse_args(extra)
     except SystemExit as exc:
         if exc.code != 0:
             return False
@@ -652,18 +669,16 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
         core.log.warn(f"could not reconcile recorded pushes: {exc}")
 
     spec = COMMANDS[args.command]
-    # The command's own parser prints its own help, in this process. It is
-    # asked for the parser rather than run with `--help`, because a delegate
-    # `main` does more than parse before argparse ever sees the flag. Keyed on
-    # the factory, not on `script`: `create` has a parser and no script. A
-    # command that parses its own argv is skipped: its subcommands answer their
-    # own help, which the top-level parser printed here would not name.
-    # It is the same parser the CLI reference documents, so `pr review --help`
-    # shows the mode flags `cmd_review` routes (`--post` publishes an existing
-    # review there) rather than the bare `review` binary's reading of them.
-    if ({"-h", "--help"} & set(extra) and cli.dispatch.has_parser_factory(spec.name)
-            and not spec.parses_own_argv):
-        _factory_reference_parser(spec.name).print_help()
+    # Every command is answered here, the commands without a factory included.
+    # Asked for the parser rather than run with `--help`, because a delegate
+    # `main` does more than parse before argparse ever sees the flag. A command
+    # that parses its own argv is skipped: its subcommands answer their own
+    # help, which the top-level parser printed here would not name. It is the
+    # same parser the CLI reference documents, so `pr review --help` shows the
+    # mode flags `cmd_review` routes (`--post` publishes an existing review
+    # there) rather than the bare `review` binary's reading of them.
+    if {"-h", "--help"} & set(extra) and not spec.parses_own_argv:
+        help_parser(spec.name).print_help()
         return 0
 
     original_pr = getattr(args, "pr", None)

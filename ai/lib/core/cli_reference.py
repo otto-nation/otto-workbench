@@ -163,6 +163,12 @@ def _documented(parser: argparse.ArgumentParser,
     return shown
 
 
+def documented(parser: argparse.ArgumentParser,
+               hidden: frozenset[str] = frozenset()) -> list[argparse.Action]:
+    """The actions of *parser* a reader sees: what the tables and contracts cover."""
+    return _documented(parser, hidden)
+
+
 def _global_strings(shape: CLIShape) -> frozenset[str]:
     """Every option string the shape's global parser documents."""
     if shape.globals is None or not shape.commands:

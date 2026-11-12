@@ -83,14 +83,31 @@ class EngineProgress:
     `suite` is an opaque dict so this layer does not import `fix.suite`; a
     later resume reconstructs the typed result from it. `answers` are the
     outcomes the agent had ticked so far, which a partial summary folds in.
+
+    Identity and backup fields (`head_before`, `branch`, `dirty_before`,
+    `baseline_ref`, `backup_dir`, `backed_up`) are what a resumed engine pass
+    reuses instead of taking a new baseline. `file_shas` is path → blob sha
+    for the agent's files; `agent_files` is those paths in sorted order.
     """
 
     answers: list[ItemOutcome] = field(default_factory=list)
     agent_files: list[str] = field(default_factory=list)
+    file_shas: dict[str, str] = field(default_factory=dict)
     suite: dict = field(default_factory=dict)
     diagnosis: Diagnosis | None = None
     commit_sha: str = ""
     commit_status: CommitStatus | None = None
+    land_error: str = ""
+    head_before: str = ""
+    branch: str = ""
+    dirty_before: list[str] = field(default_factory=list)
+    baseline_ref: str = ""
+    backup_dir: str = ""
+    backed_up: list[str] = field(default_factory=list)
+    batches: int = 0
+    max_turns: int = 0
+    max_budget: float = 0.0
+    exit_code: int = 0
 
 
 @dataclass

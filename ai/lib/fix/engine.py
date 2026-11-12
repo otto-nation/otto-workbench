@@ -58,6 +58,7 @@ import fix.dirty_backup
 import fix.head_guard
 import fix.leftovers
 import fix.regression
+import fix.pass_resume
 import fix.resume
 import fix.scope
 import fix.suite
@@ -69,9 +70,12 @@ import core.session_lock
 from agent.diagnosis import Diagnosis
 from agent.registry import PHASES
 from core.phases import Effort, Phase
-from fix.batches import TRACKING_FILENAME, chunks, record_unevidenced, run_batch, settle
+from fix.batches import (
+    TRACKING_FILENAME, Batch, chunks, record_unevidenced, run_batch, settle,
+)
 from fix.types import FixItem
 from pr.fix import ItemOutcome
+from pr.fix_checkpoint import CheckpointPhase, EngineProgress
 from core.trail import Trail, tinfo, twarn
 from config.workbench_config import WorkbenchConfig, load_config_or_default
 import fix.gate
@@ -233,6 +237,15 @@ class FixAdapter(ABC):
     # is every domain but one. `rebase.prepush` turns it off and says why
     # there — the checks it would run are the ones about to run on its push.
     verifies_with_suite: bool = True
+    # Off by default so CI and review passes behave as they did before
+    # checkpoints existed. A domain that can resume an interrupted pass turns
+    # this on and implements `checkpoint`.
+    keeps_checkpoints: bool = False
+    # When set, `run` resumes this progress at `resume_phase` instead of
+    # starting a fresh pass. Both stay None on every domain that does not
+    # keep checkpoints.
+    resume: EngineProgress | None = None
+    resume_phase: CheckpointPhase | None = None
     # Whether a claimed fix to behaviour-bearing code must come with a test in
     # the same commit. Off by default: a domain whose oracle is something else
     # (a failing CI check, a rebase) has no test to ask for. A domain turning it
@@ -421,6 +434,14 @@ class FixAdapter(ABC):
         """
         return None
 
+    def checkpoint(self, phase: CheckpointPhase, progress: EngineProgress) -> None:
+        """Record that the pass reached *phase* with *progress*.
+
+        A no-op unless the domain keeps checkpoints. The engine calls this
+        after each batch and after the gate, the suite, and the landing.
+        """
+        return None
+
 
 def _verify_suite(
     adapter: FixAdapter, outcomes: list[ItemOutcome],
@@ -457,10 +478,6 @@ def _verify_suite(
     )
     result = fix.suite.scoped_to(result, set(left_out))
     fix.suite.apply_to(outcomes, result)
-    if result.status is fix.suite.SuiteStatus.PREEXISTING:
-        # Not demoting — the pass did not make the tree red — but held all the
-        # same: nothing should push or reply off a red tree, whoever made it so.
-        core.publishing.hold("the repo's checks were already red before this pass")
     if result.demotes:
         # Only on red, and only as a lead. `fix.blame` reads the pass's own
         # diff against the failure text; it changes no outcome, because one
@@ -470,6 +487,26 @@ def _verify_suite(
         result = dataclasses.replace(result, pointers=fix.blame.pointers(
             adapter.workdir, _anchors(outcomes, by_id or {}), result.output_tail,
         ))
+        for pointer in result.pointers:
+            tinfo(trail, "fix_verify_pointer", pointer.describe(),
+                  data={"item": pointer.item_id, "file": pointer.file,
+                        "symbols": list(pointer.symbols)})
+    _hold_for_suite(result)
+    return result
+
+
+def _hold_for_suite(result: fix.suite.SuiteResult) -> None:
+    """Re-place the publishing holds a suite result implies.
+
+    Holds are process-local, so a resumed pass that skips the suite still
+    owes the hold the original run would have placed. Extracted from
+    `_verify_suite` so both paths share one owner.
+    """
+    if result.status is fix.suite.SuiteStatus.PREEXISTING:
+        # Not demoting — the pass did not make the tree red — but held all the
+        # same: nothing should push or reply off a red tree, whoever made it so.
+        core.publishing.hold("the repo's checks were already red before this pass")
+    if result.demotes:
         # Held here rather than left to a domain's `after_verify`, because a
         # red suite is a fact about the pass and not about any item in it.
         # `hold_after_verify` cannot reach it by construction: it selects on
@@ -480,11 +517,6 @@ def _verify_suite(
         # one domain that overrides the hook: nothing should reply, resolve,
         # or push off a tree whose own checks are failing.
         core.publishing.hold("the repo's checks are red with this pass's changes")
-        for pointer in result.pointers:
-            tinfo(trail, "fix_verify_pointer", pointer.describe(),
-                  data={"item": pointer.item_id, "file": pointer.file,
-                        "symbols": list(pointer.symbols)})
-    return result
 
 
 def _run_checks(
@@ -550,6 +582,106 @@ def _stamp(outcomes: list[ItemOutcome], read_sha: str, commit_sha: str) -> None:
             outcome.commit_sha = commit_sha
 
 
+@dataclass(frozen=True)
+class _PassStart:
+    """The baselines a pass captured before the agent ran, reused on resume."""
+
+    items: tuple[FixItem, ...]
+    trail: Trail | None
+    verify: VerifyFn | None
+    head_before: str
+    dirty_before: frozenset[str]
+    baseline_ref: str
+    pre_pass: fix.containment.Snapshot
+    head_state: fix.head_guard.HeadState
+    backup_dir: Path | None
+    backed_up: tuple[str, ...] = ()
+    resume_phase: CheckpointPhase | None = None
+    prior: EngineProgress | None = None
+
+
+def _records(adapter: FixAdapter) -> bool:
+    """Whether this pass should write checkpoints."""
+    return adapter.keeps_checkpoints or adapter.resume is not None
+
+
+def _reached(phase: CheckpointPhase | None, target: CheckpointPhase) -> bool:
+    """Whether a resume has already finished *target*. Fresh passes never have."""
+    return phase is not None and phase.reached(target)
+
+
+def _progress(
+    adapter: FixAdapter, start: _PassStart, *,
+    answers: list[ItemOutcome] | None = None,
+    blobs: dict[str, str] | None = None,
+    suite: dict | None = None,
+    landed: git.land.LandResult | None = None,
+    batches: int | None = None,
+    max_turns: int | None = None,
+    max_budget: float | None = None,
+    exit_code: int | None = None,
+    stop: Diagnosis | None = None,
+) -> EngineProgress:
+    """EngineProgress for *start*, overlaying whatever this call just learned."""
+    prior = start.prior or EngineProgress()
+    if blobs is None:
+        files, shas = list(prior.agent_files), dict(prior.file_shas)
+    else:
+        files, shas = sorted(blobs), dict(blobs)
+    return EngineProgress(
+        answers=list(answers) if answers is not None else list(prior.answers),
+        agent_files=files,
+        file_shas=shas,
+        suite=dict(suite) if suite is not None else dict(prior.suite),
+        diagnosis=stop if stop is not None else prior.diagnosis,
+        commit_sha=landed.sha if landed is not None else prior.commit_sha,
+        commit_status=(
+            landed.status if landed is not None else prior.commit_status
+        ),
+        land_error=landed.error if landed is not None else prior.land_error,
+        head_before=start.head_before,
+        branch=start.head_state.branch,
+        dirty_before=sorted(start.dirty_before),
+        baseline_ref=start.baseline_ref,
+        backup_dir="" if start.backup_dir is None else str(start.backup_dir),
+        backed_up=list(start.backed_up),
+        batches=prior.batches if batches is None else batches,
+        max_turns=prior.max_turns if max_turns is None else max_turns,
+        max_budget=prior.max_budget if max_budget is None else max_budget,
+        exit_code=prior.exit_code if exit_code is None else exit_code,
+    )
+
+
+def _checkpoint(
+    adapter: FixAdapter, phase: CheckpointPhase, progress: EngineProgress,
+) -> None:
+    if _records(adapter):
+        adapter.checkpoint(phase, progress)
+
+
+def _refused_by_lock(
+    adapter: FixAdapter, trail: Trail | None,
+) -> FixRun | None:
+    """An empty FixRun when another session holds the worktree, else None."""
+    foreign = core.session_lock.held_by_others(adapter.workdir)
+    if not foreign or _lock_override():
+        return None
+    holder = foreign[0]
+    core.log.error(
+        f"refusing to commit into {adapter.workdir}: {holder.describe()} "
+        "is editing this worktree"
+    )
+    core.log.info(
+        "wait for that session to finish, run this from the branch's own "
+        f"worktree, or set {_LOCK_OVERRIDE_ENV}=1 to proceed anyway"
+    )
+    tinfo(trail, "session_lock_refused",
+          f"{len(foreign)} interactive session(s) editing the worktree",
+          data={"holders": [h.describe() for h in foreign],
+                "workdir": str(adapter.workdir)})
+    return FixRun()
+
+
 def run(
     adapter: FixAdapter, *, trail: Trail | None = None,
     verify: VerifyFn | None = None,
@@ -570,6 +702,8 @@ def run(
     items = adapter.items()
     if not items:
         return FixRun()
+    if adapter.resume is not None:
+        return _resume(adapter, items, trail, verify)
 
     head_state = fix.head_guard.read(adapter.workdir)
     head_before = head_state.sha
@@ -587,32 +721,15 @@ def run(
             f"could not read the state of {adapter.workdir} — skipping fix pass"
         )
         return FixRun()
+    # Fresh pass only. A checkpoint resume returned above and owns dirty_before;
+    # leftover-adoption would rewrite that baseline. See `_resume`.
     if adapter.resumes_interrupted:
         dirty_before = fix.resume.adopt(
             adapter.artifacts, adapter.workdir, dirty_before,
             head_now=head_before, trail=trail)
-    foreign = core.session_lock.held_by_others(adapter.workdir)
-    if foreign and not _lock_override():
-        # Refused before the agent runs. This is the observable the dirty-tree
-        # comment below says is missing: a held record is a session declaring
-        # it is editing here, where a dirty worktree is equally the normal
-        # state of a self-review or a pre-push repair. Named rather than
-        # inferred, so the operator is told who to wait for instead of being
-        # left to work it out from a moved HEAD.
-        holder = foreign[0]
-        core.log.error(
-            f"refusing to commit into {adapter.workdir}: {holder.describe()} "
-            "is editing this worktree"
-        )
-        core.log.info(
-            "wait for that session to finish, run this from the branch's own "
-            f"worktree, or set {_LOCK_OVERRIDE_ENV}=1 to proceed anyway"
-        )
-        tinfo(trail, "session_lock_refused",
-              f"{len(foreign)} interactive session(s) editing the worktree",
-              data={"holders": [h.describe() for h in foreign],
-                    "workdir": str(adapter.workdir)})
-        return FixRun()
+    refused = _refused_by_lock(adapter, trail)
+    if refused is not None:
+        return refused
 
     if dirty_before:
         # Recorded, not refused. A pass that commits into a tree somebody else
@@ -649,70 +766,177 @@ def run(
         if adapter.verifies_with_suite and (config.fix.verify_command or "").strip()
         else ""
     )
+    start = _PassStart(
+        items=tuple(items), trail=trail, verify=verify,
+        head_before=head_before, dirty_before=frozenset(dirty_before),
+        baseline_ref=baseline_ref, pre_pass=pre_pass, head_state=head_state,
+        backup_dir=backup.dest, backed_up=backup.paths,
+    )
+    if adapter.keeps_checkpoints:
+        adapter.tracking_path.unlink(missing_ok=True)
+        adapter.checkpoint(
+            CheckpointPhase.AGENT_RUNNING, _progress(adapter, start),
+        )
 
     try:
-        return _run_pass(adapter, items, trail=trail, verify=verify, head_before=head_before,
-                         dirty_before=dirty_before, baseline_ref=baseline_ref,
-                         pre_pass=pre_pass, head_state=head_state,
-                         backup_dir=backup.dest, backed_up=backup.paths)
+        return _run_pass(adapter, start)
     except (KeyboardInterrupt, SystemExit):
         _interrupted(adapter, dirty_before, head_before, trail)
         raise
 
 
-def _run_pass(
-    adapter: FixAdapter, items: list[FixItem], *, trail: Trail | None,
-    verify: VerifyFn | None, head_before: str, dirty_before: set[str], baseline_ref: str,
-    pre_pass: fix.containment.Snapshot, head_state: fix.head_guard.HeadState,
-    backup_dir: Path | None, backed_up: tuple[str, ...] = (),
+def _resume(
+    adapter: FixAdapter, items: list[FixItem], trail: Trail | None,
+    verify: VerifyFn | None,
 ) -> FixRun:
+    """Continue an interrupted pass from `adapter.resume`, reusing its baselines.
+
+    Does not re-run `dirty_backup.save`: the original copies are still under
+    `progress.backup_dir`. A session lock still refuses, because that is about
+    the live worktree, not the recorded baseline.
+
+    Checkpoint resume owns this pass: it reuses the recorded dirty_before /
+    head_before and must not call ``fix.resume.adopt``, which would rewrite
+    that baseline from interrupted-pass.json. That file is cleared so a later
+    fresh pass cannot leftover-adopt this interruption.
+    """
+    progress = adapter.resume
+    assert progress is not None
+    refused = _refused_by_lock(adapter, trail)
+    if refused is not None:
+        return refused
+    fix.resume.clear(adapter.artifacts)
+    dirty_before = set(progress.dirty_before)
+    head_before = progress.head_before
+    backup_dir = Path(progress.backup_dir) if progress.backup_dir else None
+    head_state = fix.head_guard.HeadState(
+        sha=head_before, branch=progress.branch,
+    )
+    start = _PassStart(
+        items=tuple(items), trail=trail, verify=verify,
+        head_before=head_before, dirty_before=frozenset(dirty_before),
+        baseline_ref=progress.baseline_ref,
+        pre_pass=fix.containment.take(adapter.workdir),
+        head_state=head_state, backup_dir=backup_dir,
+        backed_up=tuple(progress.backed_up),
+        resume_phase=adapter.resume_phase, prior=progress,
+    )
+    # ceiling: KeyboardInterrupt and SystemExit still take the _interrupted
+    # wrapper; SIGKILL cannot. Upgrade trigger: once a comments --fix pass is
+    # observed dying to SIGKILL with uncommitted edits and no checkpoint at
+    # AGENT_RUNNING, persist the checkpoint from a SIGTERM handler as well.
+    try:
+        return _run_pass(adapter, start)
+    except (KeyboardInterrupt, SystemExit):
+        _interrupted(adapter, dirty_before, head_before, trail)
+        raise
+
+
+def _run_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
     """`run`'s body once the pass is cleared to start: batch, settle, gate, check, land."""
     with fix.containment.around_each(
-        adapter.contain_worktrees(), adapter.artifacts, trail,
+        adapter.contain_worktrees(), adapter.artifacts, start.trail,
         exclude=adapter.workdir,
     ):
-        return _run_contained_pass(
-            adapter, items, trail=trail, verify=verify,
-            head_before=head_before, dirty_before=dirty_before,
-            baseline_ref=baseline_ref, pre_pass=pre_pass,
-            head_state=head_state, backup_dir=backup_dir,
-            backed_up=backed_up,
-        )
+        return _run_contained_pass(adapter, start)
 
 
-def _run_contained_pass(
-    adapter: FixAdapter, items: list[FixItem], *, trail: Trail | None,
-    verify: VerifyFn | None, head_before: str, dirty_before: set[str], baseline_ref: str,
-    pre_pass: fix.containment.Snapshot, head_state: fix.head_guard.HeadState,
-    backup_dir: Path | None, backed_up: tuple[str, ...] = (),
-) -> FixRun:
-    """The pass after extra-worktree snapshots are in place."""
+def _prior_batch(
+    outcomes: list[ItemOutcome], progress: EngineProgress | None,
+) -> Batch:
+    """A reconstructed batch for answers already given. Unknown scope."""
+    return Batch(
+        outcomes=outcomes,
+        unproductive=None,
+        exit_code=progress.exit_code if progress else 0,
+        max_turns=progress.max_turns if progress else 0,
+        max_budget=progress.max_budget if progress else 0.0,
+        scope=fix.scope.UNKNOWN_SCOPE,
+        stop=progress.diagnosis if progress else None,
+    )
+
+
+def _run_agent(
+    adapter: FixAdapter, start: _PassStart,
+) -> tuple[list[Batch], int, int, float]:
+    """Run the agent for items without a prior answer. Local totals."""
+    items = list(start.items)
     chunk_size = agent.phases.phase_chunk_size(adapter.phase)
-    batched = chunks(items, chunk_size)
+    # Prior answers only fold in while the agent is still running. Once the
+    # pass has reached AGENT_DONE, `_run_contained_pass` skips this function;
+    # if that skip is removed, remaining is the full list and the agent is
+    # invoked again — which is what the skip exists to prevent.
+    prior = {}
+    if start.resume_phase is CheckpointPhase.AGENT_RUNNING:
+        prior = fix.pass_resume.prior_answers(start.prior, adapter.tracking_path)
+    remaining = [item for item in items if item.id not in prior]
+    results: list[Batch] = []
+    if prior:
+        results.append(_prior_batch(list(prior.values()), start.prior))
+    batched = chunks(remaining, chunk_size)
+    if batched == [[]]:
+        batched = []
     name = PHASES[adapter.phase].label
     if len(batched) > 1:
         core.log.info(
-            f"{name} — {len(items)} items in {len(batched)} batches "
+            f"{name} — {len(remaining)} items in {len(batched)} batches "
             f"of up to {chunk_size}..."
         )
-
-    results = [
-        run_batch(
+    dirty_before = set(start.dirty_before)
+    collected = list(prior.values())
+    for n, chunk in enumerate(batched, start=1):
+        batch = run_batch(
             adapter, chunk,
             name if len(batched) == 1 else f"{name} (batch {n}/{len(batched)})",
-            # The pass baseline is the first batch's baseline: it was read just
-            # above and nothing has run since. Every later batch reads its own,
-            # because the batch before it has been editing.
-            before=dirty_before if n == 1 else None,
+            before=dirty_before if n == 1 and not prior else None,
         )
-        for n, chunk in enumerate(batched, start=1)
-    ]
-    max_turns = max((b.max_turns for b in results), default=0)
+        results.append(batch)
+        collected.extend(fix.pass_resume.answered(batch.outcomes))
+        _checkpoint(adapter, CheckpointPhase.AGENT_RUNNING, _progress(
+            adapter, start, answers=collected, blobs=fix.pass_resume.agent_files(
+                adapter.workdir, dirty_before,
+            ),
+            batches=len(batched),
+            max_turns=max((b.max_turns for b in results), default=0),
+            max_budget=max((b.max_budget for b in results), default=0.0),
+            exit_code=max((b.exit_code for b in results), default=0),
+            stop=next((b.stop for b in results if b.stop is not None), None),
+        ))
+    local_batches = len(batched)
+    return (
+        results,
+        local_batches,
+        max((b.max_turns for b in results), default=0),
+        max((b.max_budget for b in results), default=0.0),
+    )
 
-    # The items as the domain rendered them, which both the retry and the gate
-    # key back into: one asks for the item behind a deferred id, the other for
-    # the reviewer's own words behind a fixed one.
+
+def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
+    """The pass after extra-worktree snapshots are in place."""
+    items = list(start.items)
+    trail, verify = start.trail, start.verify
+    phase = start.resume_phase
+    dirty_before = set(start.dirty_before)
     by_id = {item.id: item for item in items}
+
+    if _reached(phase, CheckpointPhase.AGENT_DONE):
+        prior = fix.pass_resume.prior_answers(start.prior, adapter.tracking_path)
+        results = [_prior_batch(list(prior.values()), start.prior)]
+        local_batches = 0
+        max_turns = start.prior.max_turns if start.prior else 0
+        max_budget = start.prior.max_budget if start.prior else 0.0
+    else:
+        results, local_batches, max_turns, max_budget = _run_agent(
+            adapter, start,
+        )
+        _checkpoint(adapter, CheckpointPhase.AGENT_DONE, _progress(
+            adapter, start,
+            answers=fix.pass_resume.answered([o for b in results for o in b.outcomes]),
+            blobs=fix.pass_resume.agent_files(adapter.workdir, dirty_before),
+            batches=local_batches, max_turns=max_turns, max_budget=max_budget,
+            exit_code=max((b.exit_code for b in results), default=0),
+            stop=next((b.stop for b in results if b.stop is not None), None),
+        ))
 
     settled = settle(adapter, results, by_id, trail)
 
@@ -729,13 +953,17 @@ def _run_contained_pass(
     # file the fix agent (or the operator) already had dirty must still revert
     # to the pre-verify bytes. Tool denials on the verify agent are bypassed by
     # process writes, which is why the restore is the real control.
-    with fix.containment.around(
-        adapter.workdir, adapter.artifacts, "verify", trail,
-    ):
-        fix.gate.verify_claims(
-            settled.outcomes, verify, adapter, by_id, trail,
-            scope_for=settled.scope_for,
-        )
+    if not _reached(phase, CheckpointPhase.VERIFIED):
+        with fix.containment.around(
+            adapter.workdir, adapter.artifacts, "verify", trail,
+        ):
+            fix.gate.verify_claims(
+                settled.outcomes, verify, adapter, by_id, trail,
+                scope_for=settled.scope_for,
+            )
+        _checkpoint(adapter, CheckpointPhase.VERIFIED, _progress(
+            adapter, start, answers=fix.pass_resume.answered(settled.outcomes),
+        ))
 
     # After the agent and before the commit — the one moment the difference is
     # the agent's work and nothing else's. Verify writes have been restored, so
@@ -760,15 +988,26 @@ def _run_contained_pass(
     #
     # The suite runs in the real tree; containment restores anything it wrote
     # so `land` below stages pre-suite content for the names in `committed`.
-    with fix.containment.around(
-        adapter.workdir, adapter.artifacts, "suite", trail,
-    ) as writes:
-        adapter.suite = _verify_suite(
-            adapter, settled.outcomes, changed, trail, by_id,
-            base=head_before, left_out=left_out,
-            baseline_ref=baseline_ref, dirty_before=frozenset(dirty_before))
-    adapter.suite = fix.suite.with_rewrites(
-        adapter.suite, writes.paths, adapter.workdir, trail)
+    if not _reached(phase, CheckpointPhase.CHECKED):
+        with fix.containment.around(
+            adapter.workdir, adapter.artifacts, "suite", trail,
+        ) as writes:
+            adapter.suite = _verify_suite(
+                adapter, settled.outcomes, changed, trail, by_id,
+                base=start.head_before, left_out=left_out,
+                baseline_ref=start.baseline_ref,
+                dirty_before=frozenset(dirty_before))
+        adapter.suite = fix.suite.with_rewrites(
+            adapter.suite, writes.paths, adapter.workdir, trail)
+        _checkpoint(adapter, CheckpointPhase.CHECKED, _progress(
+            adapter, start, answers=fix.pass_resume.answered(settled.outcomes),
+            suite=fix.pass_resume.suite_dict(adapter.suite),
+        ))
+    else:
+        adapter.suite = fix.pass_resume.suite_of(
+            start.prior.suite if start.prior else {},
+        )
+        _hold_for_suite(adapter.suite)
 
     # After both gates so a regression reason leads and the gate's text follows
     # it, and before `after_verify` so a domain's last word sees the final verdict.
@@ -788,14 +1027,21 @@ def _run_contained_pass(
         # adapter to be the one that stays quiet.
         fix.scope.report_unattributable(adapter.workdir)
     adapter.stop = settled.stop
-    spec = adapter.landing(settled.outcomes, committed)
-    landed = _land(adapter, spec, head_state, trail)
-    _stamp(settled.outcomes, head_before, landed.sha)
+    if not _reached(phase, CheckpointPhase.LANDED):
+        spec = adapter.landing(settled.outcomes, committed)
+        landed = _land(adapter, spec, start.head_state, trail)
+        _checkpoint(adapter, CheckpointPhase.LANDED, _progress(
+            adapter, start, answers=fix.pass_resume.answered(settled.outcomes),
+            suite=fix.pass_resume.suite_dict(adapter.suite), landed=landed,
+        ))
+    else:
+        landed = fix.pass_resume.landed_of(start.prior)
+    _stamp(settled.outcomes, start.head_before, landed.sha)
     fix.leftovers.report(adapter.workdir, fix.leftovers.find(
-        adapter.workdir, pre_pass, dirty_before,
+        adapter.workdir, start.pre_pass, dirty_before,
         exclude=fix.leftovers.artifacts_prefix(adapter.workdir, adapter.artifacts),
-    ), landed, trail, backup_dir=backup_dir,
-                        backed_up=backed_up, dirty_before=dirty_before)
+    ), landed, trail, backup_dir=start.backup_dir,
+                        backed_up=start.backed_up, dirty_before=dirty_before)
 
     exit_code = settled.exit_code
     if landed.status is git.land.CommitStatus.COMMIT_FAILED:
@@ -805,11 +1051,11 @@ def _run_contained_pass(
         landed=landed,
         exit_code=exit_code,
         stop=settled.stop,
-        head_before=head_before,
-        batches=len(batched),
+        head_before=start.head_before,
+        batches=local_batches,
         suite=adapter.suite,
         max_turns=max_turns,
-        max_budget=max((b.max_budget for b in results), default=0.0),
+        max_budget=max_budget,
     )
     adapter.record(finished)
     return finished

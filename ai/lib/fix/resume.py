@@ -102,3 +102,13 @@ def adopt(
               f"resumed {len(resumed)} leftover edit(s)",
               data={"paths": sorted(resumed), "workdir": str(workdir)})
     return dirty
+
+
+def clear(artifacts: str | Path) -> None:
+    """Drop a leftover-adoption record without adopting it.
+
+    A checkpoint resume owns ``dirty_before`` / ``head_before`` and must not
+    leave ``interrupted-pass.json`` for a later fresh pass to adopt as if this
+    interruption were still pending.
+    """
+    _path(artifacts).unlink(missing_ok=True)

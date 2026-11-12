@@ -910,7 +910,18 @@ the stop, and on the next run drops matching paths from the dirty baseline so
 they are attributed to the pass again.
 
 The review domain keeps its own stash (`review.convergence.set_aside_leftovers`);
-only the comments adapter opts in.
+only the comments adapter opts in. A checkpoint resume (`fix.pass_resume`)
+skips this adoption and clears the leftover record.
+
+### fix/pass_resume.py
+
+Checkpoint helpers for a resumable fix-engine pass.
+
+The engine checkpoints after each batch and after the gate, the suite, and
+the landing. A later run reads those records back through these helpers —
+answers, the agent's files, the suite result, the landing — so it can skip
+work that already finished. Nothing here writes a checkpoint; the adapter's
+``checkpoint`` hook is what persists.
 
 ### fix/scope.py
 

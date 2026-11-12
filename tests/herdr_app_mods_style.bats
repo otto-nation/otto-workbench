@@ -94,8 +94,10 @@ teardown() {
   grep -q 'selectableCode(`step-log-' "$MODS/prs/workflows_view.js"
 }
 
-@test "board load line is one statusRow used by the wide header" {
+@test "board load line is one statusRow used by both the wide and compact headers" {
   [ "$(grep -c 'renderLoadLine(' "$MODS/prs/board_view.js")" -eq 1 ]
   grep -A 6 '^  statusRow(' "$MODS/prs/board_view.js" | grep -q 'renderLoadLine('
-  grep -A 30 '^  header(' "$MODS/prs/board_view.js" | grep -q 'this.statusRow'
+  for m in header compactHeader; do
+    awk -v m="$m" '$0 ~ "^  "m"\\(" {on=1; next} on && /^  [A-Za-z]+\(/ {exit} on' "$MODS/prs/board_view.js" | grep -q 'this.statusRow'
+  done
 }

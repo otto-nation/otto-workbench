@@ -310,26 +310,46 @@ _READ_MARKERS = (
 )
 
 
+# Must track the keys usage_from_records reads (and served_turns, which it
+# calls). Assistant records carry full message content that accounting never
+# looks at; keeping those strings is what made a 100 MB session log a 1 GB RSS.
+_SLIM_TOP = (
+    "type", "subtype", "model", "parent_tool_use_id", "usage", "modelUsage",
+    "total_cost_usd", "duration_ms", "num_turns",
+)
+_SLIM_MESSAGE = ("id", "role", "model", "usage", "provider", "thinkingLevel")
+
+
+def _slim(record: dict) -> dict:
+    out = {key: record[key] for key in _SLIM_TOP if key in record}
+    message = record.get("message")
+    if isinstance(message, dict):
+        out["message"] = {key: message[key] for key in _SLIM_MESSAGE if key in message}
+    return out
+
+
 def parse_session_log(path: str) -> SessionUsage:
     """Parse a session JSONL log file and return aggregated usage.
 
     Only the lines `usage_from_records` reads are decoded: the `result`
     records, Claude's assistant messages and Pi's `message_end` records. Not
     every line naming `usage` — Pi's `message_update` deltas each carry one,
-    and decoding them all is the cost this filter exists to avoid.
+    and decoding them all is the cost this filter exists to avoid. Matching
+    records are reduced to the fields accounting reads so assistant content
+    is not retained.
     """
     try:
-        lines = Path(path).read_text().splitlines()
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            records = []
+            for line in fh:
+                if not any(marker in line for marker in _READ_MARKERS):
+                    continue
+                try:
+                    records.append(_slim(json.loads(line)))
+                except json.JSONDecodeError:
+                    continue
     except OSError:
         return SessionUsage()
-    records = []
-    for line in lines:
-        if not any(marker in line for marker in _READ_MARKERS):
-            continue
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
     return usage_from_records(records)
 
 

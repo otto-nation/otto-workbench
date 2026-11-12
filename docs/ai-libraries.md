@@ -3752,6 +3752,20 @@ not the same as recording through these types: the review-findings pass
 re-renders the review document from its outcomes rather than writing a record
 at all.
 
+### pr/fix_checkpoint.py
+
+A comments-fix pass checkpoint, so settle and finish can adopt a partial snapshot.
+
+`pr comments --fix` writes `state.json` only at the end of a successful pass.
+An interrupted run therefore has no snapshot for `--settle` or `--finish` to
+read. This file is the in-flight record of that pass: phase, triage, engine
+progress, and the answers collected so far. Adopting a partial snapshot turns
+unanswered fixable items into needs-human rows and unlanded fixes into
+needs-human rows, then marks the checkpoint adopted so it cannot be resumed.
+
+The file lives under `pr.comments.artifacts_dir`, beside the tracking file,
+not in the worktree.
+
 ### pr/fix_state.py
 
 Writing what a comment fix pass did into the PR's state file.

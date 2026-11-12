@@ -55,7 +55,7 @@ every other phase flag alongside it (the argparse layer in `cli.review_threads`)
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -66,6 +66,7 @@ import git.push
 import pr.comments
 import pr.comments_fix
 import pr.context
+import pr.fix_checkpoint
 import pr.permalinks
 import pr.state
 import pr.summary_model
@@ -827,6 +828,7 @@ def run_settle(
     as_name: str,
     reason: str,
     commit: str,
+    answers: Sequence[ItemOutcome] = (),
     *,
     fetch_threads: Callable[[], Mapping[str, ReportThread]] | None = None,
 ) -> int:
@@ -853,6 +855,7 @@ def run_settle(
 
     wt_path = ctx.require_worktree()
     state = pr.state.load_state(ctx.target_dir)
+    state = pr.fix_checkpoint.adopt_partial(ctx, state, answers=answers)
     known = {
         o.id for o in (state.fix.fix.items if state is not None else []) if o.id
     }

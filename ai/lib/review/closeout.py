@@ -42,10 +42,13 @@ import git.push
 from git.land import CommitStatus
 import gh.owner_hooks
 import gh.owners
+import fix.batches
+import fix.tracking
 import pr.attribution
 import pr.comments
 import pr.comments_fix
 import pr.context
+import pr.fix_checkpoint
 import pr.history_rewrite
 import pr.settlement
 import pr.state
@@ -55,6 +58,19 @@ from pr.comments_state import ThreadState
 from pr.fix import FixOutcome, ItemOutcome
 from pr.thread_models import CommentItem, CommentSourceKind, PRReport, ReportThread
 import review.deferred_issue
+
+
+def tracking_answers(target_dir: Path) -> tuple[ItemOutcome, ...]:
+    """Ticked non-DEFERRED outcomes from the interrupted pass's tracking file.
+
+    Layer 4 cannot import `fix.tracking`, so callers above it parse the file
+    and pass the answers into `adopt_partial`. An absent file is no answers.
+    """
+    path = pr.comments.artifacts_dir(target_dir) / fix.batches.TRACKING_FILENAME
+    return tuple(
+        o for o in fix.tracking.parse(path)
+        if o.outcome is not FixOutcome.DEFERRED
+    )
 
 
 def warn_if_snapshot_stale(state: pr.state.PRState, wt_path: Path) -> None:
@@ -103,6 +119,9 @@ def finish_deferred_work(
     if not ctx.pr_number:
         return True
     state = pr.state.load_state(ctx.target_dir)
+    state = pr.fix_checkpoint.adopt_partial(
+        ctx, state, answers=tracking_answers(ctx.target_dir),
+    )
     if state is None:
         return True
     threads_by_id = {t.id: t for t in report.threads}

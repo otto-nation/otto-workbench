@@ -148,6 +148,7 @@ def _github_only(
         )
     return pr.settlement.run_settle(
         ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
+        answers=review.closeout.tracking_answers(ctx.target_dir),
         fetch_threads=lambda: {
             t.id: t
             for t in review.comment_threads.read_report(

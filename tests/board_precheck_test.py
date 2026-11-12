@@ -162,6 +162,25 @@ def test_viewer_change_invalidates(tmp_path, monkeypatch):
     assert calls["n"] == 1
 
 
+def test_a_change_to_row_building_code_outside_board_invalidates(
+    tmp_path, monkeypatch,
+):
+    found = _seed_offline(tmp_path, monkeypatch)
+    module = tmp_path / "listing.py"
+    module.write_text("# stand-in for review/listing.py\n")
+    monkeypatch.setattr("board.precheck._CODE_OUTSIDE", (module,))
+    doc = build(Phase.LISTING, [found.path], offline=True)
+    _bump_mtime(module)
+    calls = _count_rows(monkeypatch)
+    again = build(
+        Phase.LISTING, [found.path], if_changed=doc["stamp"], offline=True,
+    )
+    # The rebuilt document is identical, so the stamp still answers unchanged;
+    # what the code term guarantees is that the walk ran instead of the memo.
+    assert again["stamp"] == doc["stamp"]
+    assert calls["n"] == 1
+
+
 def test_a_change_during_the_walk_is_not_masked(tmp_path, monkeypatch):
     found = _seed_offline(tmp_path, monkeypatch)
 

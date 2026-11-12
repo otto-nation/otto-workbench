@@ -8,9 +8,8 @@ module only decides whether that walk can be skipped.
 
 # ceiling: the offline document's inputs are listed here by hand; if board.rows
 # or board presentation gains an input outside them, add a term or drop the
-# pre-check. The code term covers only board/*.py; a change confined to
-# review.listing (row_for) or batch.store (busy_prs) is not fingerprinted and
-# is picked up once another input changes.
+# pre-check. The code term is board/*.py plus the modules outside it that build
+# offline rows (_CODE_OUTSIDE); add a module there when rows start using one.
 
 # doc-group: board
 
@@ -30,6 +29,9 @@ import review.listing
 from board.model import SCHEMA_VERSIONS, Phase
 
 _BOARD_DIR = Path(__file__).resolve().parent
+# Modules outside board/ whose code shapes an offline document: review rows
+# (review.listing.row_for) and the busy set (batch.store.busy_prs).
+_CODE_OUTSIDE = (Path(review.listing.__file__), Path(batch.store.__file__))
 
 
 @dataclass(frozen=True)
@@ -71,12 +73,15 @@ def take(
     viewer: str,
     phase: Phase,
 ) -> Precheck:
-    """Fingerprint the offline inputs for *phase* over *checkouts*, resolved and sorted as ``board.flight.lock_key`` does.
+    """Fingerprint the offline inputs for *phase* over *checkouts*.
+
+    The memo key resolves and sorts checkouts as ``board.flight.lock_key`` does.
 
     The phase is in the memo key and the fingerprint: offline phases share
     their inputs, so without it a stamp from one phase could answer another.
     """
-    blob = json.dumps([phase.value, sorted(str(Path(c).resolve()) for c in checkouts)], separators=(",", ":"))
+    keyed = sorted(str(Path(c).resolve()) for c in checkouts)
+    blob = json.dumps([phase.value, keyed], separators=(",", ":"))
     digest = hashlib.sha256(blob.encode()).hexdigest()[:16]
     path = core.workbench_paths.cache_dir("board") / "precheck" / f"{digest}.json"
     payload = json.dumps(
@@ -172,13 +177,14 @@ def _batch_states() -> list[list]:
 
 def _board_py_files() -> list[dict]:
     files = sorted(_BOARD_DIR.glob("*.py"), key=lambda path: path.name)
+    files += list(_CODE_OUTSIDE)
     out = []
     for path in files:
         fields = _stat_fields(path)
         if fields is None:
             continue
         out.append({
-            "name": path.name,
+            "name": f"{path.parent.name}/{path.name}",
             "size": fields["size"],
             "mtime_ns": fields["mtime_ns"],
         })

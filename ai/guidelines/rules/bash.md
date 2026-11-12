@@ -11,6 +11,7 @@
 - Quote all variables: `"$VAR"` not `$VAR`
 - Use meaningful argument names — not `$1`, `$2`
 - Guard clauses and early returns over nested `if` blocks
+- A loop whose variable is not read (a retry/wait loop: `for i in $(seq 1 50)`) is written `for _ in ...` — ShellCheck SC2034 rejects the unused name and the pre-push hook runs ShellCheck at severity warning over every shell script and `.bats` file, so the unused name refuses the push (observed 2026-11: two wait loops in new bats suites were refused at pre-push, twice, for models that wrote `local i; for i in`)
 
 ## Best Practices
 - Scripts in `bin/` should include usage documentation (what, usage, env vars, side effects)

@@ -6,7 +6,7 @@
     <state_dir>/batch/<run-id>/requests/*.json  the inbox: cancels and releases waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
     <state_dir>/batch/<run-id>.reaping          tombstone during reap; run_ids() ignores it
-    <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stderr of each step attempt
+    <state_dir>/batch/<run-id>/logs/<slug>-<pr>-<step>-<n>.log     stdout and stderr of each step attempt
     <state_dir>/batch/<run-id>/logs/<slug>-<pr>-publish-<n>.log    output of each publish attempt
 
 `state.json` is written only by a `Session` that loaded it under the run's

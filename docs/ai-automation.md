@@ -1005,8 +1005,8 @@ Keys: `run` (`id`, `status`, `active`, `exit_hint`, `hint`, `pending_requests`,
 `pr batch status` and `pr batch report` carry `github` unless `--offline`. Keys and checkout rules are in
 [`batch/live.py`](ai-libraries.md#batchlivepy).
 
-Step stderr stays in the run's `logs/`; `run --verbose` and `resume --verbose`
-also stream it as `step_log` events. `resume` continues an interrupted run; a
+Step stdout and stderr stay in the run's `logs/`; `run --verbose` and `resume --verbose`
+also stream stderr as `step_log` events. `resume` continues an interrupted run; a
 recorded cancel is final and resume refuses it.
 
 Admission counts every batch driver on the machine: a step starts when free memory, less other

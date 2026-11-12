@@ -69,6 +69,10 @@ and test specifics live with their owners (pointers below).
   (see `git-operations.md` § Cross-Worktree Safety)
 - Look at the artifact — the diff, the screenshot, the output file — not the
   summary of it
+- After any subagent history rewrite (fold, rebase, squash), check
+  `git diff --stat origin/main...HEAD` (three dots) and expect only the
+  branch's own files: a subagent's `reset --soft origin/main` produced a
+  commit that reverted a merged PR (see `git-operations.md` § Commit History)
 - An AI-resolved merge is a claim, not a result. `pr rebase --fix` reports
   `files_one_sided` and `one_sided_regions` when it kept one side of a conflict;
   the other side's change is gone. What to do with that output is the

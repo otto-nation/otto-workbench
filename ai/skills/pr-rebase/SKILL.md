@@ -226,7 +226,10 @@ null.
   branch of 24 commits ended as a single commit titled for its first, a
   test-only step). Read `git log -1` after the rebase and, before pushing,
   replace the message so the header describes the whole change (conventional
-  header, ≤ 72 chars, a body for the parts) by `git reset --soft <base>` and a
+  header, ≤ 72 chars, a body for the parts) by
+  `git reset --soft "$(git merge-base HEAD origin/main)"` (the branch's
+  merge-base, which after a `pr rebase` is the new base; why not origin/main
+  is `git-operations.md` § Commit History) and a
   new `git commit` (never `--amend` on a pushed commit; on an unpushed one a
   soft reset and recommit is the same thing and is how this repo does it).
 

@@ -390,9 +390,7 @@ def _fold_answers(
     by_id = {o.id: o for o in outcomes if o.id}
     anonymous = [o for o in outcomes if not o.id]
     if phase.reached(CheckpointPhase.AGENT_DONE):
-        for answer in engine:
-            if answer.id:
-                by_id[answer.id] = answer
+        by_id.update({a.id: a for a in engine if a.id})
         return list(by_id.values()) + anonymous
     if phase is CheckpointPhase.AGENT_RUNNING:
         settled = (

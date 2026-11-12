@@ -318,11 +318,12 @@ def run_threads(trail, args, ctx) -> int:
     # Triage and/or fix mode
     rc = 0
     if args.triage:
-        resume_ckpt = None
+        resume_ckpt, refused = None, False
         if args.fix:
-            resume_ckpt, refused = _resume_decision(args, ctx, toplevel, report, trail)
-            if refused:
-                return 1
+            resume_ckpt, refused = _resume_decision(
+                args, ctx, toplevel, report, trail)
+        if refused:
+            return 1
         triage_mode = "fix" if args.fix else "triage"
         trail.decision("triage_mode", f"running {triage_mode}",
                        reason="--fix flag" if args.fix else "--triage flag",

@@ -231,6 +231,11 @@ were already dirty when the pass started are never committed; commit or stash
 those, or re-run so the interrupted edits resume. An empty round will not
 commit leftovers.
 
+A dirty or unpushed worktree demotes `already_addressed` and `invalid` triage
+verdicts to `needs_human` until the tree is on the remote. Push first, then
+re-run; `--finish --post` also refuses while HEAD is unpublished, so those
+verdicts cannot be published against local-only code.
+
 **If `commit_status` is `push_held`:** the fixes are committed locally and
 nothing has been published, because something in the run judged the branch not
 safe to assert progress on — one of the three holds above. Say so plainly and

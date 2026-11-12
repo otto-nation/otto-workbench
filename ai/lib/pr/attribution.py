@@ -14,8 +14,11 @@ picked for having no relationship to the row.
 
 :class:`AddressingHistory` is the per-row evidence that makes an honest answer
 possible: the newest commit to touch the one line a thread is anchored to, dated
-against when the reviewer opened it. It is a memo because `git log -L` costs a
-process per location and every surface asks about the same threads.
+against when the reviewer opened it. That date decides whether a satisfied
+thread reads as in-response; already-addressed rows never cite the SHA itself.
+Fixed rows still may, via :meth:`AddressingHistory.cited_commit`. It is a memo
+because `git log -L` costs a process per location and every surface asks about
+the same threads.
 """
 
 # doc-group: publishing
@@ -247,9 +250,9 @@ def attribute_commit(
         # would not find it — the evidence is missing, not unrepresentable.
         # Upgrade when a row records a fingerprint of the change it fixed,
         # which is what would let a content search reach past the anchor.
-        framing = history.framing(entry, thread) if history else AddressedFraming(False)
-        if framing.in_response and framing.cited:
-            return CommitAttribution(CommitClaim.RESOLVED, framing.sha)
+        sha = history.cited_commit(entry, thread) if history else ""
+        if sha:
+            return CommitAttribution(CommitClaim.RESOLVED, sha)
         return CommitAttribution(CommitClaim.UNDETERMINED)
     if pass_sha:
         return CommitAttribution(CommitClaim.UNRECORDED)
@@ -420,9 +423,9 @@ def thread_opened_at(thread: ReportThread | None) -> float:
 def handled_outside(entry: CommentItem) -> bool:
     """Whether this entry records work the fix pass did not land.
 
-    The one question :meth:`AddressingHistory.framing` and the summary's fixed
-    cell both ask before naming a commit for a row, so the summary cell, the
-    thread reply and the permalink under it cannot answer it differently.
+    The one question :meth:`AddressingHistory.cited_commit` and the summary's
+    fixed cell both ask before naming a commit for a row, so the summary cell,
+    the thread reply and the permalink under it cannot answer it differently.
 
     Such a row can still name a commit that was *recorded* for it — the SHA
     --settle resolved, or the single commit that landed outside the pass — but
@@ -447,19 +450,12 @@ class AddressedFraming:
     did it before the reviewer spoke, and only one of those readings tells them
     their comment needed no action.
 
-    `sha` is the commit that made it true, when the branch can name one. It is
-    populated only alongside a reading it actually supports — a commit older
-    than the comment cannot be the one a fix pass just landed — so `cited` is
-    the one question a renderer asks before writing a commit link.
+    Already-addressed rows never cite a commit from line history. The date of
+    `in_response` still comes from the newest commit on one line; that commit
+    is not named here.
     """
 
     in_response: bool
-    sha: str = ""
-
-    @property
-    def cited(self) -> bool:
-        """Whether a commit may be named for this entry."""
-        return bool(self.sha)
 
 
 class AddressingHistory:
@@ -500,13 +496,21 @@ class AddressingHistory:
         """The worktree this history reads, for callers that link into its tree."""
         return self._wt_path
 
+    # ceiling: already-addressed rows cite no commit. `in_response` is dated
+    # from the newest commit on one line, which is not the commit that carried
+    # the change.
+    # Upgrade when a round carries forward the commit a prior round recorded
+    # or published for the same thread.
     def framing(
         self,
         entry: CommentItem,
         thread: ReportThread | None,
         acted: bool = False,
     ) -> AddressedFraming:
-        """How this entry's reply and summary row should read.
+        """How this entry's already-addressed reply and summary row should read.
+
+        Returns only `in_response`. Already-addressed rows never cite a commit
+        derived from line history; :meth:`cited_commit` is the fixed-row path.
 
         `acted` is for the caller that already knows the pass fixed the entry
         and only came here because the resolver could not cite a commit for it.
@@ -515,14 +519,10 @@ class AddressingHistory:
         carried a fix made after it, so the entry keeps the in-response reading
         and names nothing.
 
-        An entry :func:`handled_outside` recognises names nothing either, for a
-        different reason. `git log -L` answers what last changed the line, which
-        is evidence about a row the pass itself fixed and about nothing else:
-        the reason on such a row says the pass did not, and reconciliation
-        stamps it from a thread merely looking settled on GitHub — resolution
-        also covers answered, deferred and declined. Crediting the newest commit
-        to touch a busy file to one of those contradicts the reply standing on
-        the thread. How the row reads is untouched; only the commit link goes.
+        An entry :func:`handled_outside` recognises is dated the same way: the
+        prefix is whether the line moved after the review, never a SHA. `git
+        log -L` answers what last changed the line, which is evidence about a
+        row the pass itself fixed and about nothing else.
         """
         sha = self._commit_for(entry)
         landed_after = bool(sha) and self._postdates(sha, entry, thread)
@@ -533,7 +533,23 @@ class AddressingHistory:
         # A line no branch commit touched is code that predates the branch, and
         # so predates the review: that is the genuine already-addressed case and
         # the one the flat prefix is reserved for.
-        return AddressedFraming(landed_after, sha)
+        return AddressedFraming(landed_after)
+
+    def cited_commit(
+        self, entry: CommentItem, thread: ReportThread | None,
+    ) -> str:
+        """The SHA a fixed row may name from line history, or "".
+
+        Only when that SHA postdates the thread and the pass itself landed the
+        work — today's RESOLVED behaviour, unchanged. Already-addressed rows
+        never call this.
+        """
+        if handled_outside(entry):
+            return ""
+        sha = self._commit_for(entry)
+        if sha and self._postdates(sha, entry, thread):
+            return sha
+        return ""
 
     def _commit_for(self, entry: CommentItem) -> str:
         """The branch commit behind this entry's code, or "" when there is none.

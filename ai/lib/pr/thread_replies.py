@@ -451,9 +451,10 @@ def post_already_addressed_replies(
     """Post replies to threads the current code satisfies. Returns count posted.
 
     Two readings, one body. A thread whose code was made to satisfy the
-    reviewer after they asked gets the `Applied:` / `Fixed in <sha>` framing the
-    `fixed` verdict uses, because that is what happened to it; `Already
-    addressed` is left for code that predates the comment.
+    reviewer after they asked gets the `Applied:` framing the `fixed` verdict
+    uses, because that is what happened to it; `Already addressed` is left for
+    code that predates the comment. Neither cites a commit from line history;
+    the permalink is current behaviour at HEAD.
 
     `acted` says the caller landed the change itself — the unattributed half of
     `reply_to_fixed`, which is here for the linkless body and not because the
@@ -482,11 +483,6 @@ def post_already_addressed_replies(
             entry, repo, head_sha, wt_path, verify_evidence=False, host=host)
         if link:
             parts.append(f"Current behaviour is at {link}.")
-        if framing.cited:
-            sha = framing.sha
-            commit_url = pr.permalinks.commit_permalink(repo, sha, host)
-            lead = "Fixed in" if framing.in_response else "Addressed in"
-            parts.append(f"{lead} [`{git.client.abbrev(sha)}`]({commit_url}).")
         # Both paths owe the hedge now. The `acted` half landed a change and
         # makes the claim `post_fix_replies` makes; a true already-addressed
         # reply is checked by the verify gate before it is sent

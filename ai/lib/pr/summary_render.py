@@ -193,17 +193,17 @@ def build_summary_body(
             e,
             pr.summary_row.fixed_status_for(
                 e, cp, repo, history, threads_by_id.get(e.id), host),
-            getattr(e, "commit_sha", "") or link_sha,
+            pr.attribution.attribute_commit(
+                e, cp, history, threads_by_id.get(e.id)).sha or link_sha,
         )
         for e in fixed
     ])
-    # link_sha, not the addressing commit: the file cell's line number was read
-    # at HEAD, and the commit answers "when", not "where".
+    # link_sha, not a line-history commit: already-addressed rows cite no
+    # commit, and the file cell's line number was read at HEAD.
     addressed_shown = [
         (framing, emit(
             e,
-            pr.summary_row.addressed_status_for(
-                framing, repo, host, verified=e.verified),
+            pr.summary_row.addressed_status_for(framing),
             link_sha,
         ))
         for e, framing in zip(already_addressed, addressed_framings, strict=True)

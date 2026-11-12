@@ -292,7 +292,7 @@ class TestAddressingCommitIsPerLine:
         with patch.object(git.topology, "default_branch_cached", return_value="main"):
             assert pr.attribution.find_addressing_commit(branch.path, "a.py", 99) is None
 
-    def test_two_threads_on_one_file_cite_different_commits(self, branch):
+    def test_two_threads_on_one_file_cite_no_commit(self, branch):
         entries = [
             CommentItem(id="t1", summary="line one", file="a.py", line=1),
             CommentItem(id="t2", summary="line two", file="a.py", line=2),
@@ -306,22 +306,10 @@ class TestAddressingCommitIsPerLine:
             pr.thread_replies.post_already_addressed_replies(
                 entries, threads_by_id, "owner/repo", 42, branch.path,
             )
-        # The "Addressed in" line only: the blob permalink beside it pins HEAD
-        # for both threads, because where to read the code is the same question
-        # for both and when it became true is not.
-        cited = {
-            call[0][2]: [ln for ln in call[0][3].splitlines()
-                         if ln.startswith("Addressed in")]
-            for call in post.call_args_list
-        }
-        assert cited[111] == [
-            f"Addressed in [`{branch.first[:7]}`]"
-            f"(https://github.com/owner/repo/commit/{branch.first}).",
-        ]
-        assert cited[222] == [
-            f"Addressed in [`{branch.second[:7]}`]"
-            f"(https://github.com/owner/repo/commit/{branch.second}).",
-        ]
+        bodies = [call[0][3] for call in post.call_args_list]
+        assert len(bodies) == 2
+        assert all("/commit/" not in body and "Addressed in" not in body
+                   for body in bodies)
 
 
 # ── attribution survives a history rewrite ─────────────────────────────────
@@ -414,7 +402,9 @@ class TestAttributionSurvivesARebase:
         """The recorded line now points at code the row was never about."""
         entry = CommentItem(id="t1", summary="guard it", file="moved.py",
                             line=1, read_sha=rebased.read)
-        assert not self._framing(entry, rebased.path).cited
+        with patch.object(git.topology, "default_branch_cached", return_value="main"):
+            history = pr.attribution.AddressingHistory(rebased.path)
+            assert not history.cited_commit(entry, self._thread(entry.id))
 
     def test_a_rewritten_committer_date_claims_no_fix(self, rebased):
         """The line is honest; only the rebase makes the commit look recent.

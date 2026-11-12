@@ -193,12 +193,13 @@ class TestResolveSettledCommit:
         return ItemOutcome(id="t1", outcome=FixOutcome.NEEDS_HUMAN,
                            file="a.py", line=line)
 
-    def test_infers_the_commit_that_changed_the_threads_own_line(self, tmp_path):
+    def test_an_unnamed_commit_is_not_inferred_from_the_threads_line(self, tmp_path):
         repo = _hand_fixed(tmp_path)
-        with patch.object(git.topology, "default_branch_cached", return_value="main"):
+        with patch.object(pr.attribution, "find_addressing_commit") as infer:
             resolved = pr.settlement.resolve_settled_commit(repo.path, self._outcome(), "")
+        infer.assert_not_called()
         assert resolved.ok
-        assert resolved.sha == repo.sha[:7]
+        assert resolved.sha == ""
 
     def test_an_unpushed_fix_is_still_recorded_but_cites_nothing(self, tmp_path):
         """A link into a commit the remote never saw is a 404 for the reviewer."""

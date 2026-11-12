@@ -10,7 +10,7 @@ between models is the harness's job; this is about the prompt and the review.
 - End the prompt with the exact verification command and ask for its output. A subagent given the check reports its own result, which makes review faster
 - Retry a stalled or aborted call on the same model before changing models — the stall is usually the call, not the model
 - A subagent drifts in small ways: an import moved, a colour or flag added, a branch skipped because it was "different". Read the whole diff. A passing check proves the code loads, not that it looks or behaves the same
-- A subagent does not inherit the dispatcher's rules — they live in the dispatcher's context, not its own — so the task prompt carries every command and prohibition the work depends on. For a rebase that is `pr rebase --repo-dir <absolute worktree> --branch <branch> --fix` and a ban on `git rebase` and any `git push --force` / `--force-with-lease`. Which tool a rebase request uses is `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts
+- A subagent does not inherit the dispatcher's rules — they live in the dispatcher's context, not its own — so the task prompt carries every command and prohibition the work depends on. For a rebase that is `pr rebase --repo-dir <absolute worktree> --branch <branch> --fix` a ban on `git rebase` and any raw `git push --force` / `--force-with-lease`, and a statement that `pr rebase` pushing the result is expected and needs no confirmation. Which tool a rebase request uses is `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts
 
 ## Audits
 

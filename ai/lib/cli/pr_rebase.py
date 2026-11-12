@@ -28,7 +28,7 @@ Usage:
   pr-rebase --fix                     # resolve conflicts with AI, rebase, and force-push
   pr-rebase --fix --no-push           # resolve conflicts with AI, but do not push
   pr-rebase --stop-on-conflict        # pause on conflicts (tree dirty) instead of aborting
-  pr-rebase --force                   # rebase even when the branch already landed
+  pr rebase --force-landed            # rebase even when the branch already landed
   pr-rebase --abort                   # abort in-progress rebase
   pr-rebase --onto origin/release/1.2 # rebase onto an explicit ref, used as given (or --base)
   pr-rebase --fork-point <ref>        # replay only the commits after <ref>
@@ -111,9 +111,13 @@ def build_parser() -> ToolParser:
         help="Skip the pre-push hook on the force-push. For a hook failure "
              "already understood — a flake, or one the branch did not cause",
     )
-    parser.add_argument("--force", action="store_true",
-                        help="Rebase even when the branch's work already "
-                             "landed on the target ref")
+    parser.add_argument("--force-landed", dest="force", action="store_true",
+                        help="Rebase even when the branch's work already landed on the "
+                             "target ref, and replay its landed prefix too. Not a force "
+                             "push: every push is leased")
+    # The old spelling, kept so scripts and muscle memory still work; hidden so
+    # nothing new learns a name that reads as a force push.
+    parser.add_argument("--force", dest="force", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--abort", action="store_true",
                         help="Abort in-progress rebase")
     add_trail_args(parser)

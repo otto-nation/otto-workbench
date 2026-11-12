@@ -36,6 +36,11 @@ class ConflictStrategy(StrEnum):
     BINARY_ERROR = "binary_error"
     AI_MERGE = "ai_merge"
 
+    @property
+    def doc(self) -> "StrategyDoc":
+        """What this class is and what each mode does with it (`_STRATEGY_DOCS`)."""
+        return _STRATEGY_DOCS[self]
+
 
 class DeleteSide(StrEnum):
     """Which side of a modify/delete conflict removed the file."""
@@ -70,6 +75,11 @@ class RefusalSignal(StrEnum):
     CONFLICTS_OVER_BUDGET = "conflicts_over_budget"
     RESOLUTIONS_OVER_BUDGET = "resolutions_over_budget"
     TRACKER_REFUSED = "tracker_refused"
+
+    @property
+    def doc(self) -> "SignalDoc":
+        """Which status this signal reports and what it found (`_SIGNAL_DOCS`)."""
+        return _SIGNAL_DOCS[self]
 
 
 class ParseFailure(StrEnum):
@@ -125,6 +135,87 @@ class RunMode(StrEnum):
         printed a manual-push hint ahead of an automatic push.
         """
         return self in (RunMode.FIX, RunMode.PUSH)
+
+
+@dataclass(frozen=True)
+class StrategyDoc:
+    """What one conflict class is, and what `pr rebase` does with it per mode."""
+
+    what: str
+    without_fix: str
+    with_fix: str
+
+
+# Without --fix, a step continues only when every conflict in it is generated.
+_CONTINUES = ("the rebase continues only when every conflict in the step is regenerate or "
+              "accept_theirs and every rebuild succeeds; otherwise ")
+_ABORTS = ("the run aborts to a clean tree (exit 3, tree clean), or pauses with "
+           "--stop-on-conflict (exit 3, tree paused)")
+
+_STRATEGY_DOCS = {
+    ConflictStrategy.REGENERATE: StrategyDoc(
+        what="A lockfile with a known regenerator: "
+             + ", ".join(sorted(git.regenerate.LOCKFILE_REGENERATORS)),
+        without_fix="rebuilt by its regenerator; " + _CONTINUES + _ABORTS,
+        with_fix="rebuilt by its regenerator, deferred to the end of the step",
+    ),
+    ConflictStrategy.ACCEPT_THEIRS: StrategyDoc(
+        what="A generated file (a regenerate=/linguist-generated gitattribute or a "
+             "generated-file header)",
+        without_fix="the incoming side is staged, then rebuilt by its regenerate= attribute "
+                    "or the declared rebase.regenerate commands (left stale in files_stale "
+                    "when there is neither); " + _CONTINUES + _ABORTS,
+        with_fix="as without --fix, and the repo's conventional generate task (for "
+                 "example mise) is also tried",
+    ),
+    ConflictStrategy.DELETE: StrategyDoc(
+        what="A modify/delete conflict: one side deleted the file",
+        without_fix=_ABORTS,
+        with_fix="the deletion is accepted (git rm --force)",
+    ),
+    ConflictStrategy.BINARY_ERROR: StrategyDoc(
+        what="A binary file",
+        without_fix=_ABORTS,
+        with_fix="never resolved automatically: the rebase pauses with the file in files",
+    ),
+    ConflictStrategy.AI_MERGE: StrategyDoc(
+        what="A hand-written text file",
+        without_fix=_ABORTS,
+        with_fix="merged by AI region by region; an answer that loses its markers, keeps a "
+                 "conflict marker, or no longer parses (gofmt -e, ast.parse, bash -n, "
+                 "JSON/YAML/TOML) leaves the file unresolved and the rebase paused",
+    ),
+}
+
+
+@dataclass(frozen=True)
+class SignalDoc:
+    """Which `status` a refusal signal reports, and what it found."""
+
+    status: str
+    found: str
+
+
+_SIGNAL_DOCS = {
+    RefusalSignal.PR_MERGED: SignalDoc(RebaseStatus.ALREADY_LANDED.value, "GitHub reports the PR merged"),
+    RefusalSignal.EMPTY_DIFF: SignalDoc(
+        RebaseStatus.ALREADY_LANDED.value, "the branch has commits but no diff against its base — what a "
+                          "squash merge leaves behind"),
+    RefusalSignal.COMMITS_UPSTREAM: SignalDoc(
+        RebaseStatus.ALREADY_LANDED.value, "every commit already has an upstream equivalent by patch id"),
+    RefusalSignal.NO_MERGE_BASE: SignalDoc(
+        RebaseStatus.UNRELATED_HISTORY.value, "the branch and its base share no commit"),
+    RefusalSignal.CONFLICTS_OVER_BUDGET: SignalDoc(
+        RebaseStatus.CONFLICTS_OVER_BUDGET.value, "conflicts span more files than automatic resolution "
+                                 "should attempt; the rebase was aborted"),
+    RefusalSignal.RESOLUTIONS_OVER_BUDGET: SignalDoc(
+        RebaseStatus.CONFLICTS_OVER_BUDGET.value, "the same files conflict commit after commit, past the AI "
+                                 "call budget; the rebase was aborted"),
+    RefusalSignal.TRACKER_REFUSED: SignalDoc(
+        RebaseStatus.TRACKER_UNREAD.value,
+        "GitHub was not asked whether the PR merged (budget latch), so landing could not "
+        "be ruled out"),
+}
 
 
 # ── Dataclasses ─────────────────────────────────────────────────────────────
@@ -354,7 +445,7 @@ class RefDivergence:
 
 REFUSAL_EXIT = core.exit_codes.ExitCode.REFUSED
 CONFLICTS_EXIT = core.exit_codes.ExitCode.CONFLICTS
-REFUSAL_OVERRIDE_FLAG = "--force"
+REFUSAL_OVERRIDE_FLAG = pr.domains.REBASE_LANDED_OVERRIDE
 CONFLICT_FILE_BUDGET = 20
 
 # The second half of the breaker, and the one that measures the cost. The file

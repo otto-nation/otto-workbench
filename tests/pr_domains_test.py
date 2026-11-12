@@ -547,7 +547,7 @@ def test_rebase_render_already_landed():
     ).render_status()
     assert len(result) == 1
     assert "already landed" in result[0]
-    assert "pr rebase --force" in result[0]
+    assert "pr rebase --force-landed" in result[0]
 
 
 def test_rebase_render_unrelated_history():

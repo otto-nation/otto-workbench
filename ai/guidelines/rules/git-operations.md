@@ -49,6 +49,7 @@ This is also enforced mechanically: `ai/claude/settings.json` sets `attribution.
 ## Commit History
 
 - Never use `git commit --amend` — always create a new commit. Amending a pushed commit causes force-push situations, and amending after a failed pre-commit hook silently modifies the previous commit instead of creating the intended one
+- To fold or reword unpushed commits use `git reset --soft "$(git merge-base HEAD origin/main)"` and a fresh commit, never `git reset --soft origin/main` (or any moving ref): origin/main moves under you, and a soft reset to the moved tip keeps the old tree, so the commit reverts whatever merged since the branch point. Check afterwards that `git diff --stat origin/main...HEAD` (three dots) lists only the branch's own files. Rebasing onto a moved base is `pr rebase` (see `## Rebase, Cherry-Pick, Merge Conflicts`)
 
 ## Cross-Worktree Safety
 

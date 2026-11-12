@@ -77,10 +77,13 @@ the same mtime *and* the same size as the cached source, which a real edit
 rarely produces.
 
 Revert the line that was actually wrong, which is not always the line the test
-names. A helper can be correct and its caller defeat it: a cache read that a
-caller already invalidated, a flag the caller never passes, a guard the caller
-skips. Reverting the helper fails the helper's test and proves nothing about
-the wiring, so the bug ships under a green suite. When a change adds a function
+names, and never the expectation: a revert check that edits the expected value
+only proves the assertion compares; the revert that counts breaks the subject
+line and restores it by rewriting that line. A helper can be correct and its
+caller defeat it: a cache read that a caller already invalidated, a flag the
+caller never passes, a guard the caller skips. Reverting the helper fails the
+helper's test and proves nothing about the wiring, so the bug ships under a
+green suite. When a change adds a function
 *and* a call to it, the revert that settles it is at the call site — delete the
 argument, restore the old call, put the wrong order back — and a test that
 survives that is testing the unit, not the behaviour.
@@ -132,6 +135,7 @@ the finding, for the same reason a bare `ceiling:` does not satisfy its gate.
 - Cover the path the change is actually on before the edge case beside it. A commit that reworks a common-path helper and adds a case only for non-ASCII input, an empty list, or a rare error has tested the thing it did not change; the common path it did change is still held by nothing
 - Assert the exit status alongside the output. A test matching only stdout passes for a command that emitted the expected line and then failed
 - Cover both unset and empty-string when testing a config or env-var fallback — real environments export `VAR=""`, and `get(k, default)` returns the empty string where `get(k) or default` returns the default
+- Extracting code that two consumers share: pin the existing behaviour first with characterization tests that run against the unmodified code (they must pass before the move, which also proves the test is true), then move the code with that suite untouched. A value the plan or the author predicted that the real code disproves is a recorded ruling — the test follows the code, never the reverse. An intended behaviour change goes in its own commit that edits only the tests it names, so "no behaviour change" stays checkable everywhere else. Observed 2026-11: a 17-test characterization harness over a 600-line view module found one wrong predicted value and one guard (`!listingOnly || !prev?.repo`) that no test pinned until the store's own suite did.
 
 ## Test Isolation
 

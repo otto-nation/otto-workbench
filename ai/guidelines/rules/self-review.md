@@ -123,6 +123,8 @@ the result qualifies the tally in the line itself:
 | `3 fixed, 1 skipped (unverified: the checks ran with N file(s) this commit leaves out)` | Green, but over a tree holding files the pass touched and did not commit, so it says nothing about the commit. The body names the files. `Fix-Checks: partial` |
 | `3 fixed, 1 skipped (unverified: the checks rewrote N tracked file(s), which were restored)` | Green, but the checks rewrote tracked files that containment restored, so they passed against content the commit does not hold. CI will likely fail on exactly those files. `Fix-Checks: partial` |
 
+A `Fix-Checks: partial` commit means part of a fix is still in the working tree: run `git status --short` right after the pass, read what it left, and commit those files (they usually complete the committed half: observed 2026-11, the pass committed the script half of a UI fix and left its markup, its CSS rule and the regenerated doc behind, so the committed tree had a script writing to an element that did not exist), then re-run the review on the new HEAD before opening the PR (the review covers one commit).
+
 This closes the *collateral* half of the problem — an edit that breaks something no finding
 named. It does not close the attribution half above: one command over the whole pass cannot
 say which of sixteen items broke the tree, which is why a red run marks every claimed fix

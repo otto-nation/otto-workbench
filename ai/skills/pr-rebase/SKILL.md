@@ -209,6 +209,30 @@ report both the SHA and those subjects to the user; they are not in
 `commits_replayed`. Report `squashed_commits` the same way when it is not
 null.
 
+- `files_one_sided` / `one_sided_regions` (console: `Resolved to one side only`
+  and `Resolved to one side: … — push held`) mean an AI resolution kept one
+  side of a conflicting region and the other side's change is gone; the tool
+  holds the push on purpose. A rebase with one-sided files is not done: before
+  `pr rebase --push-only`, check each listed region against both sides (the
+  target branch's change and the branch's own) — `git diff <fork-or-merge-base>
+  <target> -- <file>` against the file at HEAD, or git's 3-way merge in a
+  throwaway clone under `/tmp` compared byte for byte — port whatever was
+  dropped, then publish. Observed 2026-11 (through `pr rebase --fix`): it
+  dropped three upstream behaviours (a per-machine serialization helper, a
+  fall-through throttle and a doc-budget line) while reporting `status:
+  completed`.
+- When `squashed_commits` is non-null, the resulting commit keeps the first
+  squashed commit's message, which describes one step of the work (observed: a
+  branch of 24 commits ended as a single commit titled for its first, a
+  test-only step). Read `git log -1` after the rebase and, before pushing,
+  replace the message so the header describes the whole change (conventional
+  header, ≤ 72 chars, a body for the parts) by
+  `git reset --soft "$(git merge-base HEAD origin/main)"` (the branch's
+  merge-base, which after a `pr rebase` is the new base; why not origin/main
+  is `git-operations.md` § Commit History) and a
+  new `git commit` (never `--amend` on a pushed commit; on an unpushed one a
+  soft reset and recommit is the same thing and is how this repo does it).
+
 Every conflict is resolved by the run itself: git's rerere cache is held off, so
 no unreviewed resolution is recorded for a later rebase.
 

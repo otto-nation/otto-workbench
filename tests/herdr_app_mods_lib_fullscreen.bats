@@ -54,3 +54,9 @@ _js() {
   _js '[m.healDue("stranded", undefined, 1), m.healDue("stranded", 20, 10), m.healDue("stranded", 10, 10), m.healDue("stranded", 10, 11), m.healDue("on", undefined, 1), m.healDue("off", undefined, 1), m.healDue("stranded", null, 1), m.healDue("stranded", NaN, 1)]'
   [ "$output" = '[true,false,true,true,false,false,true,true]' ]
 }
+
+@test "panelShown: true only while the panel shows the PRs board; no layout reads as shown" {
+  _js '[m.panelShown(null), m.panelShown({id:"r",children:[{id:"panel",children:[{id:"panel-body",active:"prs-panel"}]}]}), m.panelShown({id:"r",children:[{id:"panel",hidden:true,children:[{id:"panel-body",active:"prs-panel"}]}]}), m.panelShown({id:"r",children:[{id:"panel",children:[{id:"panel-body",active:"files"}]}]})]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[true,true,false,false]' ]
+}

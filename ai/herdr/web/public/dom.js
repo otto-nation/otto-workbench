@@ -50,10 +50,15 @@ export function sectionLabel(text, count = null) {
   return h('div', { class: 'section-label' }, text, count == null ? null : h('span', { class: 'count' }, String(count)));
 }
 
-// A board lane's heading (_ui/ui.js laneTitle): title-role label and a meta count when given.
-export function laneTitle(label, count = null) {
-  return h('div', { class: 'lane-title' }, h('span', { class: 'label trunc' }, label), count == null ? null : h('span', { class: 'count' }, String(count)));
+// A lane heading: label, then its count — or, while the lane's data is loading or failed, DESIGN.md's
+// static status glyph (… running, × fail) named by the lane's message. As prs/board.js's laneTitle.
+export function laneTitle(label, count = null, { status: st = 'ready', message = null } = {}) {
+  const slot = st === 'loading' ? statusMark('running', message)
+    : st === 'error' ? statusMark('fail', message)
+      : count == null ? null : h('span', { class: 'count' }, String(count));
+  return h('div', { class: 'lane-title' }, h('span', { class: 'label trunc' }, label), slot);
 }
+const statusMark = (kind, message) => status(kind, null, { aria: message ?? kind });
 
 // lib/markdown.js escapes its whole input before any rule runs; nothing else may reach innerHTML.
 export function trustedMarkdown(el, html) {

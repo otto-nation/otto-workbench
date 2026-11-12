@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# site/.node-version owns which Node the site builds on: site.yml and pages.yml
+# site/.node-version owns which Node the site builds on and the bats shards test on: site.yml and pages.yml
 # both consume it by reference through setup-node's node-version-file, and mise
 # reads it locally. @types/node restates that same fact at compile time — its
 # major IS a Node version, not an independent quality axis — so the two have to
@@ -67,4 +67,13 @@ _types_major() {
     echo "Types describe the runtime, so .node-version is the one to change first."
     return 1
   }
+}
+
+# The bats shards run node suites (tests/herdr_app_host_helper.bash needs node >= 20.6), so their node
+# comes from the same pin, by reference, never from whatever the runner image ships.
+@test "the bats shards set up node from site/.node-version" {
+  local ci="$REPO_ROOT/.github/workflows/ci.yml"
+  run yq -r '.jobs."bats-shard".steps[] | select(.uses // "" | test("^actions/setup-node@[0-9a-f]{40}$")) | .with."node-version-file"' "$ci"
+  [ "$status" -eq 0 ]
+  [ "$output" = "site/.node-version" ]
 }

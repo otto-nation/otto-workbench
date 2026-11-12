@@ -3,7 +3,7 @@ import { theme } from "herdr";
 import { prPresentation } from "./_lib/pr_status.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, ROW_H, BREAKPOINT } from "./_lib/tokens.js";
-import { sectionLabel, hoverRow, text, type, badge, tag } from "./_ui/ui.js";
+import { sectionLabel, hoverRow, text, type, badge, tag, errorLine, placeholder } from "./_ui/ui.js";
 import { batchAction } from "./board.js";
 
 export function renderCompact({ sections, onOpen, width, onBatch, empty, workflowOf }) {
@@ -28,8 +28,10 @@ export function renderCompact({ sections, onOpen, width, onBatch, empty, workflo
   return v_flex().size_full().min_h(0).overflow_y_scrollbar()
     .children(list.map((s) => v_flex().flex_none()
       .child(h_flex().items_center().px(SP.md).pt(SP.md).pb(SP.xs)
-        .child(sectionLabel(s.label, s.count))
+        .child(sectionLabel(s.label, s.count, { status: s.status, message: s.message }))
         .child(h_flex().flex_1())
-        .children([batchAction({ key: s.key, items: s.items }, onBatch)].filter(Boolean)))
+        .children([batchAction(s, onBatch)].filter(Boolean)))
+      .when(s.status === "error", (e) => e.child(errorLine(s.message).px(SP.md)))
+      .when(!s.items.length && s.status === "loading", (e) => e.child(placeholder(s.message).px(SP.md)))
       .children(s.items.map(row))));
 }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
-# Tests for ai/herdr/app/mods/_lib/pr_status.js and _lib/status.js: the shared golden fixture, and
-# parity of the status kinds, columns and batch step order with their Python owners.
+# Tests for ai/herdr/app/mods/_lib/pr_status.js and _lib/status.js: status kinds,
+# columns and batch step order against their Python owners.
 bats_require_minimum_version 1.5.0
 # select-on: ai/herdr/app/mods/_lib/*.js ai/lib/board/*.py ai/lib/batch/model.py tests/fixtures/board_presentation.json
 
@@ -44,11 +44,6 @@ print(json.dumps($1))
 "
 }
 
-@test "prPresentation matches every golden case" {
-  _js "fx.cases.filter((k) => canon(m.prPresentation({ ...fx.base, ...k.pr }, { item: k.item })) !== canon(k.presentation)).map((k) => k.name)"
-  [ "$status" -eq 0 ]
-  [ "$output" = '[]' ]
-}
 
 @test "every golden item's cardState is the batch_state the Python case is given" {
   _js "fx.cases.filter((k) => canon(k.item ? b.cardState(k.item) : null) !== canon(k.batch_state)).map((k) => k.name)"
@@ -56,11 +51,6 @@ print(json.dumps($1))
   [ "$output" = '[]' ]
 }
 
-@test "every golden case's lanes are teamColumn and mineColumn" {
-  _js "fx.cases.filter((k) => { const pr = { ...fx.base, ...k.pr }; return c.teamColumn(pr) !== k.lanes.team || c.mineColumn(pr) !== k.lanes.mine; }).map((k) => k.name)"
-  [ "$status" -eq 0 ]
-  [ "$output" = '[]' ]
-}
 
 @test "the golden cases cover every status kind and badge kind" {
   _js "(() => { const all = fx.cases.flatMap((k) => { const p = k.presentation; return [...p.badges, ...p.detail_issues, p.ci, p.decision, p.busy, p.review].filter(Boolean); });

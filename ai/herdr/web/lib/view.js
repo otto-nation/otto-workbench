@@ -1,55 +1,23 @@
 /**
- * The board page's view model: which lanes, cards and states to draw for a snapshot and the page's UI
- * state, through the same _lib/columns.js functions prs/board.js uses. Pure; runs in the browser.
+ * The board page's view model: _lib/board_model.js boardModel (shared with the herdr-app mod) for the
+ * page's UI state, plus the page-only helpers below. Pure; runs in the browser.
  */
-import {
-  TEAM_COLUMNS, MINE_COLUMNS, teamColumn, mineColumn, filterPrs, isMine, groupColumns, visibleColumns,
-  DEFAULT_FILTERS, filterOn,
-} from '../../app/mods/_lib/columns.js';
-import { barModel, facetView, filterAction, normalizeFilters } from '../../app/mods/_lib/filters.js';
-import { compactSections } from '../../app/mods/_lib/compact.js';
+import { DEFAULT_FILTERS } from '../../app/mods/_lib/columns.js';
+import { boardModel as sharedModel } from '../../app/mods/_lib/board_model.js';
+import { filterAction, normalizeFilters } from '../../app/mods/_lib/filters.js';
 
-// Flag defaults are _lib's DEFAULT_FILTERS (one owner for the mod and the web; drafts hidden on Team,
-// Mine and the Batch form), never restated here. There is no repo scope: the board always covers every
-// repo the server discovers (the mod's "All spaces"), and the filter bar is the only repo filter.
+// Flag defaults are _lib's DEFAULT_FILTERS (one owner for the mod and the web), never restated here.
+// There is no repo scope: the board always covers every repo the server discovers (the mod's
+// "All spaces"), and the filter bar is the only repo filter.
 export const DEFAULT_UI = Object.freeze({
   tab: 'team',
   theme: 'auto',
   filters: Object.freeze(normalizeFilters(DEFAULT_FILTERS)),
 });
 
-// The viewer's PRs on Mine, as prs/board.js renderBoard: isMine, and drafts only with the Mine Drafts chip.
-// With drafts hidden (the default) Mine's Draft lane is empty, so hidden unless Empty lanes; intended.
-export function mineList(prs, me, filters) {
-  return prs.filter((p) => isMine(p, me) && (filterOn(filters, 'mineDrafts') || !p.isDraft));
-}
-
 export function boardModel(snapshot, ui) {
-  const prs = snapshot?.prs ?? [];
-  const me = snapshot?.me ?? '';
-  const f = ui.filters;
-  const mine = ui.tab === 'mine';
-  const base = mine ? mineList(prs, me, f) : filterPrs(prs, f, me);
-  const fv = facetView(base, f, {
-    tab: ui.tab,
-    me,
-    loadedRepos: snapshot?.repoSlugs,
-    authorsFrom: prs,
-  });
-  const repoSlugs = [...(snapshot?.repoSlugs ?? [])].sort();
-  const bar = barModel(f, {
-    tab: ui.tab,
-    options: { repos: repoSlugs, labels: fv.options.labels, authors: fv.options.authors },
-  });
-  const grouped = groupColumns(fv.list, mine ? mineColumn : teamColumn, mine ? MINE_COLUMNS : TEAM_COLUMNS);
-  return {
-    columns: visibleColumns(grouped, filterOn(f, 'empty')),
-    sections: compactSections(grouped),
-    authors: fv.options.authors,
-    repoSlugs,
-    bar,
-    filterCount: bar.count,
-  };
+  const model = sharedModel(snapshot, { tab: ui.tab, filters: ui.filters, scope: 'all' });
+  return { ...model, authors: model.options.authors };
 }
 
 export function toggleFilter(ui, name) {

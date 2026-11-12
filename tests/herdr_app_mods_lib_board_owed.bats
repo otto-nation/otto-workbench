@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for herdr-app Has Comments data: pr's comments-only plan read into the board.
+# Tests for herdr-app owedDue cadence on the board.
 bats_require_minimum_version 1.5.0
 # select-on: ai/herdr/app/mods/_lib/*.js
 
@@ -20,51 +20,6 @@ _js() {
   "
 }
 
-@test "owedFrom keeps only this repo's rows whose comments need is set" {
-  _js '
-    const doc = { rows: [
-      { repo: "O/N", pr: 7, needs: { comments: { needed: true, reason: "2 unresolved threads" } } },
-      { repo: "o/n", pr: 8, needs: { comments: { needed: false, reason: "no unresolved threads" } } },
-      { repo: "o/other", pr: 9, needs: { comments: { needed: true, reason: "x" } } },
-      { repo: "o/n", pr: "10", needs: { comments: { needed: true, reason: "x" } } },
-      { repo: "o/n", pr: 11, needs: {} },
-    ] };
-    process.stdout.write(JSON.stringify([[...m.owedFrom(doc, "o/n")], [...m.owedFrom(null, "o/n")]]));
-  '
-  [ "$status" -eq 0 ]
-  [ "$output" = '[[[7,"2 unresolved threads"]],[]]' ]
-}
-
-@test "loadOwed runs the comments-only plan in the checkout and maps it" {
-  _js '
-    const seen = [];
-    const exec = async (cmd, args, opts) => {
-      seen.push([cmd, ...args, opts.cwd]);
-      return { code: 0, stdout: JSON.stringify({ rows: [
-        { repo: "o/n", pr: 3, needs: { comments: { needed: true, reason: "1 PR comment" } } }] }), stderr: "" };
-    };
-    const r = await m.loadOwed(exec, { cwd: "/co", on: null }, "o/n");
-    process.stdout.write(JSON.stringify({ seen, ok: r.ok, owed: [...r.owed] }));
-  '
-  [ "$status" -eq 0 ]
-  [ "$output" = '{"seen":[["pr","batch","plan","--checkout","/co","--needs","comments","/co"]],"ok":true,"owed":[[3,"1 PR comment"]]}' ]
-}
-
-@test "assemble puts each PR's owed feedback on it, null when none is known" {
-  _js '
-    const out = m.assemble({
-      openPrs: [{ number: 7, headSha: "a", requestedReviewers: [], latestReviews: [] },
-                { number: 8, headSha: "b", requestedReviewers: [], latestReviews: [] }],
-      landedPrs: [], listing: [], slug: "o/n", host: "github.com", login: "me",
-      busy: new Set(), owed: new Map([[7, "2 unresolved threads"]]),
-    });
-    const bare = m.assemble({ openPrs: [{ number: 7, headSha: "a", requestedReviewers: [], latestReviews: [] }],
-      landedPrs: [], listing: [], slug: "o/n", host: "github.com", login: "me", busy: new Set() });
-    process.stdout.write(JSON.stringify([out.map((p) => p.owedFeedback), bare[0].owedFeedback]));
-  '
-  [ "$status" -eq 0 ]
-  [ "$output" = '[["2 unresolved threads",null],null]' ]
-}
 
 @test "owedDue is true when owedAt is missing or the ttl has elapsed" {
   _js '

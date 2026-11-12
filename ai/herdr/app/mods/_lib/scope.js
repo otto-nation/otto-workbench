@@ -182,6 +182,7 @@ export function boardState(targets, states, scope) {
       phase: repoPhase(st),
       error: st.error ?? null,
       partial: Boolean(st.partial),
+      owed: { state: st.owedState ?? 'idle', error: st.owedError ?? null },
       updatedAt: st.updatedAt ?? null,
     });
   });

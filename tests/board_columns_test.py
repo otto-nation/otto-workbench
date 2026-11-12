@@ -30,7 +30,7 @@ def _row(**kwargs) -> Row:
     return Row(**kwargs)
 
 
-# 14 teamColumn bats cases: 13 on team_lane, reviewing as team_reviewing.
+# 14 Python team-lane cases: 13 on team_lane, reviewing as team_reviewing.
 TEAM_LANE_CASES = [
     ("merged -> landed", dict(state=PrState.MERGED), TeamLane.LANDED),
     ("inMergeQueue -> landed", dict(in_merge_queue=True), TeamLane.LANDED),
@@ -111,7 +111,7 @@ TEAM_LANE_CASES = [
 ]
 
 
-# 17 mineColumn bats cases minus the reviewing overlay (tested separately).
+# 17 Python mine-lane cases minus the reviewing overlay (tested separately).
 MINE_LANE_CASES = [
     ("merged", dict(state=PrState.MERGED), MineLane.MERGED),
     ("inMergeQueue -> in-queue", dict(in_merge_queue=True), MineLane.IN_QUEUE),

@@ -10,12 +10,15 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `_lib`, `_ui
 - Pure logic: `_lib/*.js`, covered by `tests/herdr_app_mods_lib_*.bats`
 - Handlers use the long-lived context saved in `init` (`this.acx`), never the render's `cx`, for notify and spawn
 
+## Board code lives in _lib
+
+- Pull composition (`_lib/board_store.js` `createBoardStore` over `_lib/board_pull.js` `pullTarget`), lanes, facets, chips, counts, lane status and lane Batch presets (`_lib/board_model.js` `boardModel`), and badges (`_lib/pr_status.js` `presentationOf`) live in `_lib`. The herdr-app mod and the web board only choose targets, say what they show (`want`, from `wantFor`), schedule and draw. A board feature lands in `_lib` or in neither view; `tests/herdr_board_parity.bats` enforces it. Python owns facts, lanes, badges and columns (`pr board`); the views add only the live review terminal and the batch item. An older `pr` on a machine reads as `outdated`, never a partial board.
+- Has Comments (owed) loads on demand: only while Mine is in view (`LANE_NEEDS` / `wantFor(tab)`; the mod's panel copy while the panel shows the board, the web while a connected page is on Mine). Until owed has loaded, the lane shows a static `…` and "Loading comments…", never an empty lane that reads as no comments; a failed read shows `×` and the reason. It ranks above Changes Requested: owed feedback is the author's work, while a request with every comment answered waits on the reviewer
+
 ## The Mine board
 
-- The app reads the board from `pr board` (`_lib/board_data.js` `loadBoard`, `_lib/board_pull.js` `pullTarget`, rows renamed by `_lib/board_doc.js` `rowToPr`): Python owns facts, lanes, badges and columns; the app adds only the live review terminal and the batch item (`presentationOf`, `laneOf`). An older `pr` on a machine reads as `outdated`, never a partial board. `teamColumn`/`mineColumn`/`prIssues`/`legacyPresentation` remain only for the web server's rows.
-- Lanes, in precedence order: Merged, In Queue, In Review (a review running now), Has Conflicts, CI Failing, Has Comments, Changes Requested, Approved, Awaiting Review (`_lib/columns.js` `mineColumn`)
-- Card problems and every PR slot come from `_lib/pr_status.js` `prPresentation` (client twin of `board/presentation.py`), shared by prs/board.js, prs/compact.js, prs/detail.js and the web; state tags sit top right in the title row; positive state shows only in the detail; batch run/step/item status kinds and step labels come from `_lib/batch.js` (`RUN_STATUS`, `STEP_STATUS`, `STEP_LABEL`, `AI_STEPS`), never a view map
-- Has Comments is feedback `pr comments` would answer, read with `pr batch plan --needs comments` only while Mine shows. It ranks above Changes Requested: owed feedback is the author's work, while a request with every comment answered waits on the reviewer
+- Lanes, in precedence order: Merged, In Queue, In Review (a review running now), Has Conflicts, CI Failing, Has Comments, Changes Requested, Approved, Awaiting Review (`board/columns.py`, read through `_lib/columns.js` `laneOf`)
+- Card problems and every PR slot come from `_lib/pr_status.js` `presentationOf`, shared by prs/board.js, prs/compact.js, prs/detail.js and the web; state tags sit top right in the title row; positive state shows only in the detail; batch run/step/item status kinds and step labels come from `_lib/batch.js` (`RUN_STATUS`, `STEP_STATUS`, `STEP_LABEL`, `AI_STEPS`), never a view map
 - A lane's Batch button opens the Batch page with the lane's shown PRs selected and its step set, and starts nothing. `COLUMN_BATCH` in `_lib/batch_launch.js` owns which lanes have one (Has Conflicts and Has Comments with AI on, CI Failing, Approved with PRs only behind); a lane that waits on someone else has none
 - Team, Mine and the Batch page share one `prs.filters`. `_lib/filters.js` owns `filterAction`/`facetView`/`barModel` (shared with the web); `prs/filter_bar.js` and `web/public/filter_bar.js` only draw. Each value is included or hidden; exclude wins; Author and Hide bots are Team only; a stale include is ignored; a stale exclude is kept as a tag. Drafts is one setting for Team and one for Mine and Batch; a draft sits in the lane for its real state with a Draft tag, never in a lane of its own, and keeps its real CI status
 
@@ -57,8 +60,9 @@ and record the gap in otto-nation/otto-nation.github.io's issue tracker.
 
 - Owners: `_lib/scope.js` `repoStates`, `_lib/load_state.js` `errorsStatus`, `prs/load_status.js`
 - Indicators are static glyphs (queued `·`, loading/hydrating `…`, stale `!`, failed `×`): no spin, frames, loop, or CSS animation
+- A lane whose data is read on demand carries `status`/`message` from `_lib/board_model.js` (`ready`, `loading`, `error`): until owed has loaded for every shown repo, Has Comments shows `…` in its count slot and "Loading comments…" in an empty body, never "None"; a failed owed read shows `×` and the reason. The lane stays shown while not ready and offers no Batch until it is. Views draw it (`_ui/ui.js` `laneTitle`/`sectionLabel`, `web/public/dom.js` `laneTitle`) and decide nothing
 - The header line, progress, and strip appear only after 1s (`LOAD_DELAY_MS`); before that, empty boards stay muted "Loading…"
-- `hydrating` and `hydrated: false` (CI loading in `prIssues`) are consumer support for the `pr board` document; the JS loaders never set them, so those branches stay idle until that producer replaces them
+- `hydrating` and `hydrated: false` come from `pr board`'s listing phase (CI loading in a row's presentation) until its status phase lands
 
 ## Checking and installing
 

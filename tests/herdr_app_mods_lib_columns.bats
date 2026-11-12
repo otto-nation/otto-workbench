@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for herdr-app team/mine PR column classification and list filters.
+# Tests for herdr-app PR board list filters and document lanes.
 bats_require_minimum_version 1.5.0
 # select-on: ai/herdr/app/mods/_lib/*.js
 
@@ -20,36 +20,6 @@ _cols() {
   "
 }
 
-# Overlay JSON on an open, empty PR; print teamColumn.
-_team() {
-  run node --input-type=module -e "
-    const { teamColumn } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
-    const pr = Object.assign({
-      state: 'OPEN', isDraft: false, inMergeQueue: false,
-      mergeable: 'MERGEABLE', ciStatus: 'none', reviewDecision: null,
-      myReviewState: null, isRequestedReviewer: false,
-      hasNewChangesSinceReview: false, reviewing: false,
-      author: 'alice', reviewRuns: [],
-    }, JSON.parse(process.argv[1]));
-    process.stdout.write(teamColumn(pr));
-  " -- "$1"
-}
-
-# Overlay JSON; print mineColumn.
-_mine() {
-  run node --input-type=module -e "
-    const { mineColumn } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
-    const pr = Object.assign({
-      state: 'OPEN', isDraft: false, inMergeQueue: false,
-      mergeable: 'MERGEABLE', ciStatus: 'none', reviewDecision: null,
-      myReviewState: null, isRequestedReviewer: false,
-      hasNewChangesSinceReview: false, reviewing: false,
-      author: 'alice', reviewRuns: [],
-    }, JSON.parse(process.argv[1]));
-    process.stdout.write(mineColumn(pr));
-  " -- "$1"
-}
-
 # prs JSON, filters JSON, me; print JSON array of PR numbers.
 _filter() {
   run node --input-type=module -e "
@@ -61,204 +31,6 @@ _filter() {
   " -- "$1" "$2" "$3"
 }
 
-@test "teamColumn: reviewing beats merged" {
-  _team '{"reviewing":true,"state":"MERGED"}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "in-queue" ]
-}
-
-@test "teamColumn: merged -> landed" {
-  _team '{"state":"MERGED"}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "landed" ]
-}
-
-@test "teamColumn: inMergeQueue -> landed" {
-  _team '{"inMergeQueue":true}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "landed" ]
-}
-
-@test "teamColumn: merged beats isRequestedReviewer" {
-  _team '{"state":"MERGED","isRequestedReviewer":true}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "landed" ]
-}
-
-@test "teamColumn: isRequestedReviewer -> needs-my-review" {
-  _team '{"isRequestedReviewer":true}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "needs-my-review" ]
-}
-
-@test "teamColumn: hasNewChangesSinceReview -> needs-my-review" {
-  _team '{"hasNewChangesSinceReview":true}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "needs-my-review" ]
-}
-
-@test "teamColumn: needs-my-review beats an unposted run" {
-  _team '{"isRequestedReviewer":true,"reviewRuns":[{"postedEvent":null}]}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "needs-my-review" ]
-}
-
-@test "teamColumn: unposted newer than posted -> review-ready" {
-  _team '{"reviewRuns":[{"postedEvent":null},{"postedEvent":"approve"}]}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "review-ready" ]
-}
-
-@test "teamColumn: unposted older than newest posted -> reviewed" {
-  _team '{"reviewRuns":[{"postedEvent":"approve"},{"postedEvent":null}]}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "reviewed" ]
-}
-
-@test "teamColumn: only unposted run (never posted) -> review-ready" {
-  _team '{"reviewRuns":[{"postedEvent":null}]}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "review-ready" ]
-}
-
-@test "teamColumn: dismissed counts as posted -> reviewed" {
-  _team '{"reviewRuns":[{"postedEvent":"dismissed"},{"postedEvent":null}]}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "reviewed" ]
-}
-
-@test "teamColumn: myReviewState APPROVED without runs -> reviewed" {
-  _team '{"myReviewState":"APPROVED"}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "reviewed" ]
-}
-
-@test "teamColumn: runs all posted -> reviewed" {
-  _team '{"reviewRuns":[{"postedEvent":"approve"},{"postedEvent":"comment"}]}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "reviewed" ]
-}
-
-@test "teamColumn: nothing -> open" {
-  _team '{}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "open" ]
-}
-
-@test "mineColumn: merged" {
-  _mine '{"state":"MERGED"}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "merged" ]
-}
-
-@test "mineColumn: inMergeQueue -> in-queue" {
-  _mine '{"inMergeQueue":true}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "in-queue" ]
-}
-
-@test "mineColumn: a running review -> in-review, ahead of conflicts and CI, behind merged and the queue" {
-  _mine '{"reviewing":true}'
-  [ "$output" = "in-review" ]
-  _mine '{"reviewing":true,"mergeable":"CONFLICTING","ciStatus":"failing"}'
-  [ "$output" = "in-review" ]
-  _mine '{"reviewing":true,"inMergeQueue":true}'
-  [ "$output" = "in-queue" ]
-  _mine '{"reviewing":true,"state":"MERGED"}'
-  [ "$output" = "merged" ]
-  _mine '{"reviewing":false}'
-  [ "$output" = "awaiting-review" ]
-}
-
-@test "mineColumn: merged beats inMergeQueue" {
-  _mine '{"state":"MERGED","inMergeQueue":true}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "merged" ]
-}
-
-@test "mineColumn: mergeable CONFLICTING -> has-conflicts" {
-  _mine '{"mergeable":"CONFLICTING"}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "has-conflicts" ]
-}
-
-@test "mineColumn: CONFLICTING beats ciStatus failing" {
-  _mine '{"mergeable":"CONFLICTING","ciStatus":"failing"}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "has-conflicts" ]
-}
-
-@test "mineColumn: ci failing -> ci-failing" {
-  _mine '{"ciStatus":"failing"}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "ci-failing" ]
-}
-
-@test "mineColumn: ci-failing beats CHANGES_REQUESTED" {
-  _mine '{"ciStatus":"failing","reviewDecision":"CHANGES_REQUESTED"}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "ci-failing" ]
-}
-
-@test "mineColumn: owed feedback -> has-comments, ahead of changes requested and draft" {
-  _mine '{"owedFeedback":"2 unresolved threads","reviewDecision":"CHANGES_REQUESTED","isDraft":true}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "has-comments" ]
-}
-
-@test "mineColumn: conflicts and failing CI still come before has-comments" {
-  _mine '{"owedFeedback":"x","mergeable":"CONFLICTING"}'
-  [ "$output" = "has-conflicts" ]
-  _mine '{"owedFeedback":"x","ciStatus":"failing"}'
-  [ "$output" = "ci-failing" ]
-}
-
-@test "mineColumn: CHANGES_REQUESTED -> changes-requested" {
-  _mine '{"reviewDecision":"CHANGES_REQUESTED"}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "changes-requested" ]
-}
-
-@test "mineColumn: changes-requested beats isDraft" {
-  _mine '{"reviewDecision":"CHANGES_REQUESTED","isDraft":true}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "changes-requested" ]
-}
-
-@test "mineColumn: a draft is in the lane for its real state, never a lane of its own" {
-  _mine '{"isDraft":true}'
-  [ "$output" = "awaiting-review" ]
-  _mine '{"isDraft":true,"mergeable":"CONFLICTING"}'
-  [ "$output" = "has-conflicts" ]
-  _mine '{"isDraft":true,"ciStatus":"failing"}'
-  [ "$output" = "ci-failing" ]
-  _cols 'm.MINE_COLUMNS.map((c) => c.key)'
-  [ "$output" = '["has-conflicts","ci-failing","has-comments","changes-requested","in-review","awaiting-review","approved","in-queue","merged"]' ]
-}
-
-@test "mineColumn: APPROVED + ciStatus passing -> approved" {
-  _mine '{"reviewDecision":"APPROVED","ciStatus":"passing"}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "approved" ]
-}
-
-@test "mineColumn: APPROVED + none -> approved" {
-  _mine '{"reviewDecision":"APPROVED","ciStatus":"none"}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "approved" ]
-}
-
-@test "mineColumn: APPROVED + pending -> awaiting-review" {
-  _mine '{"reviewDecision":"APPROVED","ciStatus":"pending"}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "awaiting-review" ]
-}
-
-@test "mineColumn: default -> awaiting-review" {
-  _mine '{}'
-  [ "$status" -eq 0 ]
-  [ "$output" = "awaiting-review" ]
-}
 
 @test "isMine: viewer wins over me; author vs me is case-insensitive" {
   run node --input-type=module -e "
@@ -309,13 +81,13 @@ _filter() {
 }
 
 @test "filterPrs: landed column hidden by default" {
-  _filter '[{"number":1,"author":"bob","isDraft":false,"state":"MERGED","reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{}' 'alice'
+  _filter '[{"number":1,"author":"bob","isDraft":false,"state":"MERGED","lanes":{"team":"landed"},"reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","lanes":{"team":"open"},"reviewRuns":[]}]' '{}' 'alice'
   [ "$status" -eq 0 ]
   [ "$output" = "[2]" ]
 }
 
 @test "filterPrs: landed shown with landed:true" {
-  _filter '[{"number":1,"author":"bob","isDraft":false,"state":"MERGED","reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"landed":true}' 'alice'
+  _filter '[{"number":1,"author":"bob","isDraft":false,"state":"MERGED","lanes":{"team":"landed"},"reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","lanes":{"team":"open"},"reviewRuns":[]}]' '{"landed":true}' 'alice'
   [ "$status" -eq 0 ]
   [ "$output" = "[1,2]" ]
 }

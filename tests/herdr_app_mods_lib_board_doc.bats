@@ -207,6 +207,46 @@ _pull() {
   [ "$output" = '[false,"outdated",0]' ]
 }
 
+@test "pullTarget: owed may be a getter; false when owed would start skips the read" {
+  _pull '
+    let want = false;
+    const r = await p.pullTarget(exec, { cwd: "/w", on: null }, null, { owed: () => want, now: 1000 }, publish);
+    process.stdout.write(JSON.stringify([r, calls]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"ok":true},["listing","status"]]' ]
+}
+
+@test "pullTarget: an owed answer that lands after the getter turned false is dropped, not published" {
+  _pull '
+    let want = true;
+    globalThis.answer = (phase) => { if (phase === "owed") want = false; return null; };
+    const r = await p.pullTarget(exec, { cwd: "/w", on: null }, null, { owed: () => want, now: 1000 }, publish);
+    process.stdout.write(JSON.stringify([r, calls, seen.length]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"ok":true,"owed":"dropped"},["listing","status","owed"],2]' ]
+}
+
+@test "pullTarget: a failed owed read is reported with its error; the rows stay as status left them" {
+  _pull '
+    const fail = async (cmd, args) => (args.includes("owed") ? { code: 1, stdout: "", stderr: "boom" } : exec(cmd, args));
+    const r = await p.pullTarget(fail, { cwd: "/w", on: null }, null, { owed: true, now: 1000 }, publish);
+    process.stdout.write(JSON.stringify([r, seen.map((s) => s[0])]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"ok":true,"owed":"failed","owedError":{"kind":"failed","message":"boom"}},["hydrating","loaded"]]' ]
+}
+
+@test "pullTarget: a read owed says so" {
+  _pull '
+    const r = await p.pullTarget(exec, { cwd: "/w", on: null }, null, { owed: () => true, now: 1000 }, publish);
+    process.stdout.write(JSON.stringify(r));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"ok":true,"owed":"read"}' ]
+}
+
 @test "eachByMachine: one at a time per machine, groups in parallel, order kept" {
   _js '
     const items = [{ on: null, id: 1 }, { on: "", id: 2 }, { on: "m1", id: 3 }, { on: "m1", id: 4 }];
@@ -286,9 +326,9 @@ _pull() {
   [ "$output" = '["","","","m1"]' ]
 }
 
-@test "board_view pull groups targets by machine instead of Promise.all" {
-  grep -q 'eachByMachine(targets' "$REPO_ROOT/ai/herdr/app/mods/prs/board_view.js"
-  run grep -q 'Promise.all(targets' "$REPO_ROOT/ai/herdr/app/mods/prs/board_view.js"
+@test "board_store pull groups targets by machine instead of Promise.all" {
+  grep -q 'eachByMachine(targets' "$REPO_ROOT/ai/herdr/app/mods/_lib/board_store.js"
+  run grep -q 'Promise.all(targets' "$REPO_ROOT/ai/herdr/app/mods/_lib/board_store.js"
   [ "$status" -eq 1 ]
 }
 
@@ -348,17 +388,17 @@ _pull() {
   [ "$output" = '[true,true,false,"the workbench `pr` on box does not match this board (run otto-workbench sync there)","this space is not in a git repository; open a space in a repo or use All spaces","origin is not a GitHub remote","boom"]' ]
 }
 
-@test "lanes: laneOf picks the reviewing variant and the legacy columns defer to lanes" {
+@test "lanes: laneOf picks the reviewing variant" {
   run node --input-type=module -e "
     const c = await import('$LIB/columns.js');
     const pr = { lanes: { team: 'reviewed', mine: 'has-comments', team_reviewing: 'in-queue', mine_reviewing: 'in-review' }, isMine: true };
     process.stdout.write(JSON.stringify([
-      c.laneOf(pr, 'team'), c.laneOf({ ...pr, reviewing: true }, 'mine'), c.teamColumn(pr), c.mineColumn({ ...pr, reviewing: true }),
+      c.laneOf(pr, 'team'), c.laneOf({ ...pr, reviewing: true }, 'mine'),
       c.isMine(pr, 'someone'), c.columnsFor([{ board: 'team', key: 'b', order: 1 }, { board: 'mine', key: 'x', order: 0 }, { board: 'team', key: 'a', order: 0 }], 'team').map((x) => x.key),
     ]));
   "
   [ "$status" -eq 0 ]
-  [ "$output" = '["reviewed","in-review","reviewed","in-review",true,["a","b"]]' ]
+  [ "$output" = '["reviewed","in-review",true,["a","b"]]' ]
 }
 
 @test "presentationOf: a document row draws as the document says; a live review or batch item re-splices the live slot" {

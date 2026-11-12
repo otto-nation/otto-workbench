@@ -25,7 +25,13 @@ _js() {
 @test "compactSections: drops empty groups" {
   _js 'compactSections([{key:"open",label:"Open",items:[{n:1}]},{key:"landed",label:"Landed",items:[]}])'
   [ "$status" -eq 0 ]
-  jq -e 'length==1 and .[0].key=="open" and .[0].count==1 and (.[0].items|length)==1' <<<"$output"
+  jq -e 'length==1 and .[0].key=="open" and .[0].count==1 and (.[0].items|length)==1 and .[0].status=="ready" and .[0].batch==null' <<<"$output"
+}
+
+@test "compactSections: keeps an empty group that is loading or failed, with its status and message" {
+  _js 'compactSections([{key:"has-comments",label:"Has Comments",items:[],status:"loading",message:"Loading comments…",batch:null},{key:"landed",label:"Landed",items:[]}])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"key":"has-comments","label":"Has Comments","count":0,"items":[],"batch":null,"status":"loading","message":"Loading comments…"}]' ]
 }
 
 @test "groupColumns: buckets by colOf and ignores unknown keys" {

@@ -242,3 +242,9 @@ _js() {
   [ "$status" -eq 0 ]
   jq -e '.a=="run gh auth login on homelab · maximum" and .b=="install gh on box" and .c=="run gh auth login on m" and .d=="run gh auth login on this Mac"' <<<"$output"
 }
+
+@test "boardState: repoStates carry the owed state, idle by default" {
+  _js '[boardState([{cwd:"/a"}],[{repo:{slug:"o/a"},prs:[]}],"this").repoStates[0].owed, boardState([{cwd:"/a"}],[{repo:{slug:"o/a"},prs:[],owedState:"error",owedError:{kind:"failed",message:"m"}}],"this").repoStates[0].owed]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"state":"idle","error":null},{"state":"error","error":{"kind":"failed","message":"m"}}]' ]
+}

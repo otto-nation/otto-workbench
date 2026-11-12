@@ -1,7 +1,7 @@
 """Comments-owed map from a comments-only `batch.plan`.
 
-Ports `_lib/board_data.js` `owedFrom` / `loadOwed`. Each owed PR carries the
-plan row's head SHA so a later document can drop a stale reason.
+Each owed PR carries the plan row's head SHA so a later document can drop a
+stale reason.
 """
 
 # doc-group: board

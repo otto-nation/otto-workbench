@@ -22,6 +22,7 @@ const JSON_TYPE = 'application/json; charset=utf-8';
 const MAX_BODY = 16384;
 // GitHub owners are letters, digits and hyphens; a repo name may hold dots but is never . or ..
 export const REPO_RE = /^[A-Za-z0-9-]+\/(?!\.\.?$)[A-Za-z0-9_.-]+$/;
+export const VIEWS = Object.freeze(['team', 'mine']);
 
 export function respond(body, { status = 200, type = JSON_TYPE, headers = {} } = {}) {
   const h = new Headers({ ...SECURITY_HEADERS, 'content-type': type, ...headers });
@@ -49,7 +50,7 @@ export async function readBody(request) {
 export function createApp({
   config, board, hub, files, readTextFile, statics, pages, version,
   budget = createGuessBudget(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
-  onSubscribe = () => {}, routes = [],
+  onSubscribe = (_view) => {}, routes = [],
 }) {
   const unauthorized = (request) => {
     const wantsHtml = request.method === 'GET' && (request.headers.get('accept') ?? '').includes('text/html');
@@ -135,8 +136,11 @@ export function createApp({
       if (pathname === '/favicon.ico') return respond(null, { status: 204, type: HTML });
       if (pathname === '/api/board') return json(board.snapshot());
       if (pathname === '/api/events') {
-        const res = hub.subscribe([['board', board.snapshot()]]);
-        onSubscribe();
+        // The page's tab rides its subscription: it lives exactly as long as the stream (spec § 5.5).
+        const view = url.searchParams.get('view') ?? 'team';
+        if (!VIEWS.includes(view)) return json({ error: 'bad_request' }, 400);
+        const res = hub.subscribe([['board', board.snapshot()]], { view });
+        onSubscribe(view);
         return res;
       }
       if (pathname === '/api/review') return review(url);

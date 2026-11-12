@@ -24,7 +24,24 @@ export const hooks = { detailSlots: null, onBoard: [], headExtra: null, cardItem
 
 const selectedPr = () => (S.sel ? S.snap?.prs.find((p) => cardId(p) === S.sel) ?? null : null);
 
-function setUi(ui) { S.ui = ui; saveUi(ui); render(); }
+const STREAM = {
+  board: (snap) => {
+    S.snap = snap; if (!snap.refreshing) S.refreshing = false;
+    const busy = loadState(snap.repoStates).busy;
+    if (busy && S.loadSince == null) { S.loadSince = Date.now(); setTimeout(render, LOAD_DELAY_MS); }
+    else if (!busy) S.loadSince = null;
+    for (const fn of hooks.onBoard) fn(snap, S); render();
+  },
+  status: (st) => { if (S.snap) Object.assign(S.snap, st); if (!st.refreshing) S.refreshing = false; render(); },
+};
+
+function setUi(ui) {
+  const moved = ui.tab !== S.ui.tab;
+  S.ui = ui; saveUi(ui);
+  // The server reads owed only while a page shows Mine: tell it by resubscribing with the new tab.
+  if (moved && S.es) { S.es.close(); S.es = events(STREAM, { view: ui.tab }); }
+  render();
+}
 export const ui = () => S.ui;
 
 function applyTheme() {
@@ -142,7 +159,7 @@ export function render() {
       renderSections($('#msections'), model, { loading, collapsed: S.collapsed, selectedId: S.sel, onOpen: (pr) => openPr(pr), itemOf: hooks.cardItem,
         onToggleSection: (key) => { S.collapsed.has(key) ? S.collapsed.delete(key) : S.collapsed.add(key); render(); } });
     } else {
-      renderBoard($('#board'), model, { loading, tab: S.ui.tab, selectedId: S.sel, onOpen: (pr) => openPr(pr), itemOf: hooks.cardItem });
+      renderBoard($('#board'), model, { loading, selectedId: S.sel, onOpen: (pr) => openPr(pr), itemOf: hooks.cardItem });
     }
     const pr = selectedPr();
     if (pr && S.detail.tab === 'files') loadFiles(pr);
@@ -168,16 +185,7 @@ function boot() {
   window.addEventListener('resize', () => render());
   setInterval(render, 30000);
   applyTheme();
-  events({
-    board: (snap) => {
-      S.snap = snap; if (!snap.refreshing) S.refreshing = false;
-      const busy = loadState(snap.repoStates).busy;
-      if (busy && S.loadSince == null) { S.loadSince = Date.now(); setTimeout(render, LOAD_DELAY_MS); }
-      else if (!busy) S.loadSince = null;
-      for (const fn of hooks.onBoard) fn(snap, S); render();
-    },
-    status: (st) => { if (S.snap) Object.assign(S.snap, st); if (!st.refreshing) S.refreshing = false; render(); },
-  });
+  S.es = events(STREAM, { view: S.ui.tab });
   routeFromHash();
 }
 

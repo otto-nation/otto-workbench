@@ -24,6 +24,7 @@ _sha_check() {
   [ "$(cat "$OUT/VERSION")" = "v9.9.9-test" ]
   for f in ai/herdr/web/server/main.js ai/herdr/web/package.json ai/herdr/web/.bun-version ai/herdr/web/lib/css.js \
            ai/herdr/web/public/index.html ai/herdr/app/mods/_lib/board_data.js ai/herdr/app/mods/_lib/brand.generated.js \
+           ai/herdr/app/mods/_lib/board_store.js ai/herdr/app/mods/_lib/board_model.js ai/herdr/app/mods/_lib/board_pull.js ai/herdr/app/mods/_lib/board_doc.js \
            ai/herdr/app/themes/otto-light.generated.json ai/herdr/app/themes/otto-dark.generated.json; do
     [ -f "$OUT/$f" ]
   done
@@ -76,4 +77,59 @@ _sha_check() {
   run curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $tok" \
     "http://127.0.0.1:$port/"
   [ "$output" = "200" ]
+}
+
+# Follows static `from`, side-effect `import './x'`, `export * from`, and
+# dynamic `import('./x')` with a string-literal specifier. Specifiers that are
+# not relative (or not a string) are ignored.
+_walk_imports() {
+  local root="$1"
+  shift
+  cat > "$BATS_TEST_TMPDIR/walk_imports.mjs" <<'JS'
+import fs from "node:fs"; import path from "node:path";
+const root = process.argv[2];
+const entries = process.argv.slice(3);
+const seen = new Set(); const missing = [];
+const specsOf = (src) => {
+  const specs = [];
+  for (const m of src.matchAll(/(?:^|\n)\s*import\s*["'](\.{1,2}\/[^"']+)["']/g)) specs.push(m[1]);
+  for (const m of src.matchAll(/(?:^|\n)\s*(?:import|export)\s[^;]*?\bfrom\s*["'](\.{1,2}\/[^"']+)["']/g)) specs.push(m[1]);
+  for (const m of src.matchAll(/\bimport\s*\(\s*["'](\.{1,2}\/[^"']+)["']\s*\)/g)) specs.push(m[1]);
+  return specs;
+};
+const walk = (f) => {
+  if (seen.has(f)) return; seen.add(f);
+  if (!fs.existsSync(f)) { missing.push(path.relative(root, f)); return; }
+  for (const s of specsOf(fs.readFileSync(f, "utf8"))) walk(path.resolve(path.dirname(f), s));
+};
+for (const e of entries) walk(path.join(root, e));
+process.stdout.write(JSON.stringify({
+  seen: [...seen].map((f) => path.relative(root, f)).sort(),
+  missing: missing.sort(),
+}));
+JS
+  run node "$BATS_TEST_TMPDIR/walk_imports.mjs" "$root" "$@"
+}
+
+@test "release: every module the server and the page import is in the tree" {
+  run "$REL" --out "$OUT" --ref v9.9.9-test
+  [ "$status" -eq 0 ]
+  _walk_imports "$OUT" ai/herdr/web/server/main.js ai/herdr/web/public/app.js
+  [ "$status" -eq 0 ]
+  missing="$(node -e 'process.stdout.write(JSON.stringify(JSON.parse(process.argv[1]).missing))' -- "$output")"
+  [ "$missing" = '[]' ]
+}
+
+@test "release: the import walker follows from, side-effect, export-star, and dynamic import" {
+  local tree="$BATS_TEST_TMPDIR/imports"
+  mkdir -p "$tree"
+  cat > "$tree/entry.js" <<'JS'
+import { x } from './from.js';
+import './side.js';
+export * from './star.js';
+const d = await import('./dyn.js');
+JS
+  _walk_imports "$tree" entry.js
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"seen":["dyn.js","entry.js","from.js","side.js","star.js"],"missing":["dyn.js","from.js","side.js","star.js"]}' ]
 }

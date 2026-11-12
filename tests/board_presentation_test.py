@@ -1,4 +1,4 @@
-"""board.presentation against the golden fixture the JS twin reads too."""
+"""board.presentation against the golden fixture."""
 
 import json
 from pathlib import Path

@@ -4566,8 +4566,8 @@ enforcement comes from ``SCHEMA_VERSIONS`` being allowed to shrink.
 
 Comments-owed map from a comments-only `batch.plan`.
 
-Ports `_lib/board_data.js` `owedFrom` / `loadOwed`. Each owed PR carries the
-plan row's head SHA so a later document can drop a stale reason.
+Each owed PR carries the plan row's head SHA so a later document can drop a
+stale reason.
 
 ### board/precheck.py
 
@@ -4589,24 +4589,24 @@ batch, CI, review decision), plus the ordered badge lists a card
 never carry a ``pass`` status; positive state (CI passing, Approved, a
 finished batch) is for the detail's ``ci``, ``decision`` and ``busy`` slots.
 *reviewing* and *batch* are what a client's terminals and batch run know;
-the board document passes neither. ``ai/herdr/app/mods/_lib/pr_status.js``
-``prPresentation`` is the client twin, held to the same output by
-``tests/fixtures/board_presentation.json``.
+the board document passes neither. Clients draw it as is
+(``_lib/pr_status.js`` ``presentationOf``, which only re-splices the live
+review and batch slots).
 
 ### board/reviews.py
 
 Join `pr review` listing rows onto GitHub PR records.
 
-Ports `_lib/reviews.js`. Listing rows may be `review.listing.ReviewRow`
-objects or the dicts that document emits; field names are snake_case.
+Listing rows may be `review.listing.ReviewRow` objects or the dicts that
+document emits; field names are snake_case.
 
 ### board/rows.py
 
 Assemble board rows from the merged cache, reviews listing and busy set.
 
-Ports the row assembly of `_lib/board_data.js`. Each row merges the listing
-and status cache entries, marks the viewer's own PRs, and attaches the lanes
-and issues from `board.columns` plus any owed or busy state.
+Each row merges the listing and status cache entries, marks the viewer's own
+PRs, and attaches the lanes and issues from `board.columns` plus any owed or
+busy state.
 
 ## AI backends
 

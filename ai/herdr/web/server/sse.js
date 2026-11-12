@@ -6,6 +6,8 @@
  * reader therefore never grows the queue past the stream's high-water mark; later snapshots go out
  * once it consumes. Intermediate snapshots may be skipped — the board is last-write-wins. A closed
  * stream (`desiredSize == null`) drops the client and stops its heartbeat, same as a throwing enqueue.
+ * A subscriber carries the view its page shows (`/api/events?view=`); `views()` lists the open ones,
+ * so a closed stream stops counting the moment it is dropped.
  */
 import { SECURITY_HEADERS } from './app.js';
 
@@ -32,11 +34,12 @@ export function createHub({
   };
   return {
     count: () => clients.size,
-    subscribe(initial = []) {
+    views: () => [...clients].map((e) => e.view),
+    subscribe(initial = [], { view = 'team' } = {}) {
       let entry;
       const stream = new ReadableStream({
         start(controller) {
-          entry = { controller, timer: undefined };
+          entry = { controller, timer: undefined, view };
           clients.add(entry);
           try {
             for (const [event, data] of initial) push(entry, frame(event, data));

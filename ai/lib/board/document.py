@@ -94,10 +94,11 @@ def build(
     wanted = phase if isinstance(phase, Phase) else Phase(phase)
     viewer = board.cache.viewer(refresh=not offline)
     now = _now()
-    listing = review.listing.rows()
     numbers = _int_prs(prs)
+    resolved = [(path, _resolve(path)) for path in checkouts]
+    listing = _listing_rows(resolved)
     repos, rows, complete = _assemble(
-        wanted, list(checkouts), numbers, listing, viewer, now, offline=offline,
+        wanted, resolved, numbers, listing, viewer, now, offline=offline,
     )
     doc = {
         "schema_version": SCHEMA_VERSIONS[-1],
@@ -130,9 +131,19 @@ def _int_prs(prs: Sequence[int] | None) -> list[int] | None:
 _LISTING_REUSE_S = 60
 
 
+def _listing_rows(resolved: list[tuple[str, Checkout | RepoError]]):
+    """Listing rows for resolved checkouts only; skip the walk when none."""
+    targets = tuple(found for _, found in resolved if isinstance(found, Checkout))
+    if not targets:
+        return []
+    return review.listing.rows(
+        keep=lambda entry: board.reviews.entry_matches_any(entry, targets),
+    )
+
+
 def _assemble(
     phase: Phase,
-    checkouts: list[str],
+    resolved: list[tuple[str, Checkout | RepoError]],
     prs: list[int] | None,
     listing,
     viewer: str,
@@ -140,9 +151,6 @@ def _assemble(
     *,
     offline: bool = False,
 ) -> tuple[list[RepoStatus], list[dict], bool]:
-    resolved: list[tuple[str, Checkout | RepoError]] = [
-        (path, _resolve(path)) for path in checkouts
-    ]
     if offline:
         return _offline_phase(resolved, listing, viewer, now)
     if phase is Phase.LISTING:

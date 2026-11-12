@@ -90,6 +90,7 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -315,8 +316,12 @@ def row_for(entry: ReviewEntry) -> ReviewRow:
 # session-log usage is cached (review.usage_cache). Upgrade trigger: if
 # `pr review --list` takes over 3 s on a real reviews root once the cache is
 # warm, cache each finished row by its source files' mtimes.
-def rows() -> list[ReviewRow]:
+def rows(*, keep: Callable[[ReviewEntry], bool] | None = None) -> list[ReviewRow]:
     """Every review at the reviews root, in the walk's order.
+
+    *keep*, when given, is applied to each review entry before the row is
+    built; an entry it rejects is omitted and never parsed. The default is
+    every review, which is what `pr review --list` asks for.
 
     Orphaned directories and stray files are not reviews and are left to `pr
     gc`; a consumer asking what has been reviewed is not asking about a run
@@ -328,6 +333,7 @@ def rows() -> list[ReviewRow]:
         row_for(entry)
         for entry in iter_review_entries()
         if entry.kind is ReviewEntryKind.REVIEW
+        and (keep is None or keep(entry))
     ]
 
 

@@ -8,6 +8,7 @@ objects or the dicts that document emits; field names are snake_case.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -57,14 +58,36 @@ def _host_ok(row, host: str) -> bool:
     return row_host is None or row_host == "" or row_host == host
 
 
+def _mode_of(row) -> object:
+    mode = _field(row, "mode")
+    if mode is None:
+        return None
+    return getattr(mode, "value", mode)
+
+
 def matches_repo(row, repo: str, host: str) -> bool:
     return (
         _field(row, "repo") == repo
-        and _field(row, "mode") == "pr"
+        and _mode_of(row) == "pr"
         and isinstance(_field(row, "pr_number"), int)
         and not isinstance(_field(row, "pr_number"), bool)
         and _host_ok(row, host)
     )
+
+
+def entry_matches_any(entry, targets: Iterable[object]) -> bool:
+    """Whether *entry*'s meta is a PR review for any of *targets*.
+
+    *targets* are resolved board checkouts (anything with ``slug`` and
+    ``host``). The match is ``matches_repo`` against the sidecar, so a
+    self-review or a different repo never qualifies, and the review is
+    skipped before its records and session logs are parsed. Missing meta is
+    not a match.
+    """
+    meta = getattr(entry, "meta", None)
+    if meta is None:
+        return False
+    return any(matches_repo(meta, target.slug, target.host) for target in targets)
 
 
 def posted(run) -> bool:

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import board.reviews
 import core.serde
+import review.listing
 from board.cache import path_for, read, write
 from board.document import Checkout, build, stamp
 from board.github import PullList, StatusFetch
@@ -13,6 +14,7 @@ from board.model import CiStatus, Mergeable, Phase, PrState, PullFacts, StatusFa
 from batch.model import Step
 from batch.plan import Plan, PlanRow, StepNeed
 from conftest import init_repo
+from review_record_support import seed_record
 
 DOCUMENT_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "board_document.json"
 
@@ -21,12 +23,16 @@ def _co(tmp_path, key="k"):
     return Checkout(str(tmp_path / "co"), "acme/box", "github.com", key)
 
 
-def _env(tmp_path, monkeypatch, *, checkout=None, pulls=None, status=None, owed_plan=None, listing=None):
+def _env(tmp_path, monkeypatch, *, checkout=None, pulls=None, status=None, owed_plan=None, listing=None, real_listing=False):
     monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
     found = checkout or _co(tmp_path)
     listing_rows = list(listing or [])
     monkeypatch.setattr("gh.client.login", lambda: "me")
-    monkeypatch.setattr("board.document.review.listing.rows", lambda: listing_rows)
+    if not real_listing:
+        monkeypatch.setattr(
+            "board.document.review.listing.rows",
+            lambda *a, **k: listing_rows,
+        )
     monkeypatch.setattr("board.rows.batch.store.busy_prs", lambda ref: frozenset())
     monkeypatch.setattr("board.document._resolve", lambda path: found)
     monkeypatch.setattr(
@@ -212,7 +218,7 @@ def test_if_changed_unchanged_envelope(tmp_path, monkeypatch):
 def test_missing_checkout_is_repo_error_and_still_a_document(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr("gh.client.login", lambda: "me")
-    monkeypatch.setattr("board.document.review.listing.rows", lambda: [])
+    monkeypatch.setattr("board.document.review.listing.rows", lambda *a, **k: [])
     missing = str(tmp_path / "no-such-checkout")
     doc = build(Phase.LISTING, [missing])
     assert doc["schema_version"] == 1
@@ -254,7 +260,7 @@ def test_listing_auth_failure_is_auth_kind(tmp_path, monkeypatch):
 def test_not_git_is_distinct_from_no_origin(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
     monkeypatch.setattr("gh.client.login", lambda: "me")
-    monkeypatch.setattr("board.document.review.listing.rows", lambda: [])
+    monkeypatch.setattr("board.document.review.listing.rows", lambda *a, **k: [])
     plain = tmp_path / "plain"
     plain.mkdir()
     not_git = build(Phase.LISTING, [str(plain)])
@@ -541,3 +547,72 @@ def test_status_document_fixture_matches_after_scrub(tmp_path, monkeypatch):
     assert doc["rows"][2]["is_draft"] is True
     assert doc["rows"][3]["state"] == "MERGED"
     assert _scrub_document(doc) == _scrub_document(expected)
+
+
+def _spy_row_for(monkeypatch):
+    seen = []
+    real = review.listing.row_for
+
+    def spy(entry):
+        seen.append(entry.path.name)
+        return real(entry)
+
+    monkeypatch.setattr(review.listing, "row_for", spy)
+    return seen
+
+
+def test_build_skips_row_for_unless_pr_matches_checkout(tmp_path, monkeypatch, reviews_dir):
+    seed_record(
+        reviews_dir, name="self-box", repo="acme/box", pr_number=7, mode="self",
+    )
+    seed_record(
+        reviews_dir, name="other-repo", repo="other/repo", pr_number=7, mode="pr",
+    )
+    seed_record(
+        reviews_dir, name="match-box", repo="acme/box", pr_number=7, mode="pr",
+    )
+    found = _env(
+        tmp_path, monkeypatch, pulls=[_pull(7, "aaa")], real_listing=True,
+    )
+    seen = _spy_row_for(monkeypatch)
+    build(Phase.LISTING, [found.path])
+    assert seen == ["match-box"]
+
+
+def test_non_git_checkout_does_not_call_listing_rows(tmp_path, monkeypatch, reviews_dir):
+    seed_record(
+        reviews_dir, name="match-box", repo="acme/box", pr_number=7, mode="pr",
+    )
+    monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr("gh.client.login", lambda: "me")
+    called = {"rows": 0}
+    real_rows = review.listing.rows
+
+    def spy_rows(*, keep=None):
+        called["rows"] += 1
+        return real_rows(keep=keep)
+
+    monkeypatch.setattr(review.listing, "rows", spy_rows)
+    seen = _spy_row_for(monkeypatch)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    doc = build(Phase.LISTING, [str(plain)])
+    assert called["rows"] == 0
+    assert seen == []
+    assert doc["repos"][0]["error"]["kind"] == "not-git"
+
+
+def test_matching_review_still_joins_when_listing_is_filtered(
+    tmp_path, monkeypatch, reviews_dir,
+):
+    seed_record(
+        reviews_dir, name="match-box", repo="acme/box", pr_number=7, mode="pr",
+        head_sha="aaa",
+    )
+    found = _env(
+        tmp_path, monkeypatch, pulls=[_pull(7, "aaa")], real_listing=True,
+    )
+    doc = build(Phase.LISTING, [found.path])
+    by_number = {row["number"]: row for row in doc["rows"]}
+    assert by_number[7]["review_runs"]
+    assert by_number[7]["review_runs"][0]["head_sha"] == "aaa"

@@ -13,7 +13,7 @@ LIB_DIR = str(REPO_ROOT / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 import agent.usage
-from agent.usage import SessionUsage, merge, normalize_usage, parse_session_log
+from agent.usage import SessionUsage, merge, normalize_usage, parse_session_log, usage_from_records
 
 
 def _write_result(path, **rec):
@@ -154,6 +154,117 @@ def test_parse_session_log_skips_malformed_lines(tmp_path):
 
 def test_parse_session_log_missing_file_returns_empty(tmp_path):
     assert parse_session_log(str(tmp_path / "nope.jsonl")) == SessionUsage()
+
+
+def _decode_dict(line):
+    try:
+        rec = json.loads(line)
+    except json.JSONDecodeError:
+        return None
+    return rec if isinstance(rec, dict) else None
+
+
+def _fully_decoded(path):
+    with open(path, encoding="utf-8", errors="replace") as fh:
+        return [r for r in map(_decode_dict, fh) if r is not None]
+
+
+def _write_claude_session(path):
+    path.write_text("".join(json.dumps(r) + "\n" for r in (
+        {"type": "system", "subtype": "init", "model": "claude-sonnet-4-6"},
+        {"type": "user", "message": {"content": "hello " * 80}},
+        {
+            "type": "assistant",
+            "message": {
+                "id": "msg_1",
+                "model": "claude-sonnet-4-6",
+                "content": [{"type": "text", "text": "long answer " * 40}],
+                "usage": {
+                    "input_tokens": 100,
+                    "cache_read_input_tokens": 20,
+                    "cache_creation_input_tokens": 5,
+                },
+            },
+        },
+        {
+            "type": "assistant",
+            "parent_tool_use_id": "toolu_1",
+            "message": {
+                "id": "msg_sub",
+                "model": "claude-sonnet-4-6",
+                "content": "subagent",
+                "usage": {"input_tokens": 99_999},
+            },
+        },
+        {
+            "type": "result",
+            "total_cost_usd": 0.42,
+            "duration_ms": 1800,
+            "num_turns": 2,
+            "modelUsage": {
+                "claude-sonnet-4-6": {
+                    "inputTokens": 12, "outputTokens": 340,
+                    "cacheReadInputTokens": 9000, "cacheCreationInputTokens": 100,
+                    "costUSD": 0.42,
+                },
+            },
+        },
+    )))
+
+
+def _write_pi_session(path):
+    fixture = REPO_ROOT / "tests" / "fixtures" / "pi_prompt_session.jsonl"
+    result = {
+        "type": "result",
+        "total_cost_usd": 0.01224245,
+        "duration_ms": 4000,
+        "num_turns": 2,
+        "usage": {
+            "input_tokens": 23, "output_tokens": 382,
+            "cache_read_input_tokens": 78282, "cache_creation_input_tokens": 1985,
+        },
+    }
+    path.write_text(fixture.read_text() + json.dumps(result) + "\n")
+
+
+@pytest.mark.parametrize("write_log", [_write_claude_session, _write_pi_session])
+def test_parse_session_log_matches_usage_from_full_records(tmp_path, write_log):
+    """The projection must not drop a field usage_from_records reads."""
+    log = tmp_path / "session.jsonl"
+    write_log(log)
+    parsed = parse_session_log(str(log))
+    assert parsed == usage_from_records(_fully_decoded(log))
+    assert parsed.cost > 0
+
+
+def test_parse_session_log_peak_memory_stays_below_file_size(tmp_path):
+    import tracemalloc
+
+    log = tmp_path / "big.jsonl"
+    blob = "x" * 100_000
+    n = 220
+    with log.open("w", encoding="utf-8") as fh:
+        for i in range(n):
+            fh.write(
+                '{"type":"assistant","message":{"id":"msg_%d","model":"m",'
+                '"content":"%s","usage":{"input_tokens":10,'
+                '"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}\n'
+                % (i, blob)
+            )
+        fh.write(json.dumps({
+            "type": "result", "total_cost_usd": 1.0, "duration_ms": 1000,
+            "num_turns": n,
+            "usage": {"input_tokens": 10 * n, "output_tokens": 1},
+        }) + "\n")
+    size = log.stat().st_size
+    assert size >= 20 * 1024 * 1024
+    tracemalloc.start()
+    usage = parse_session_log(str(log))
+    _current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert usage.cost == pytest.approx(1.0)
+    assert usage.num_turns == n
+    assert peak < size / 4
 
 
 # ── derived properties ────────────────────────────────────────────────────────

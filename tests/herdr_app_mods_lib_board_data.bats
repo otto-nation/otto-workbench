@@ -27,7 +27,7 @@ _bd() {
     const calls = [];
     let exec = async (cmd, args, opts) => {
       // Remote calls are wrapped to put ~/.local/bin on PATH; the table speaks of the inner command.
-      if (cmd === 'sh' && args[0] === '-c' && args[1].includes('exec \"\$@\"') && args[2] === 'sh') {
+      if (cmd === 'sh' && args[0] === '-c' && args[1] === m.REMOTE_PREAMBLE && args[2] === 'sh') {
         [cmd, args] = [args[3], args.slice(4)];
       }
       calls.push({ cmd, args: [...args], cwd: opts && opts.cwd, on: opts && opts.on, timeout: opts && opts.timeout });
@@ -477,4 +477,168 @@ _gql() {
   '
   [ "$status" -eq 0 ]
   [[ "$output" == *'"text":"# from cat:cat/r.mdagent"'* ]]
+}
+
+@test "remote loadBoard argv contains the isolation wrapper with the phase seconds and MemoryMax" {
+  _rr '
+    const calls = [];
+    const exec = async (cmd, args, opts) => {
+      calls.push({ cmd, args: [...args], timeout: opts.timeout, isolate: Object.hasOwn(opts, "isolate") });
+      return { code: 1, stdout: "", stderr: "skip" };
+    };
+    for (const phase of ["listing", "status", "owed"]) {
+      await m.loadBoard(exec, { cwd: "/w", on: "mac" }, phase);
+    }
+    process.stdout.write(JSON.stringify(calls.map((c) => ({
+      cmd: c.cmd,
+      dashc: c.args[0],
+      preamble: c.args[1] === m.REMOTE_ISOLATE_PREAMBLE,
+      dollar0: c.args[2],
+      seconds: c.args[3],
+      memory: c.args[4],
+      mode: c.args[5],
+      inner: c.args.slice(6, 13),
+      phase: c.args[13],
+      timeout: c.timeout,
+      isolateInExec: c.isolate,
+    }))));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"cmd":"sh","dashc":"-c","preamble":true,"dollar0":"sh","seconds":"55","memory":"768M","mode":"scope","inner":["pr","board","--schema-version","1","--checkout","/w","--phase"],"phase":"listing","timeout":60000,"isolateInExec":false},{"cmd":"sh","dashc":"-c","preamble":true,"dollar0":"sh","seconds":"175","memory":"768M","mode":"scope","inner":["pr","board","--schema-version","1","--checkout","/w","--phase"],"phase":"status","timeout":180000,"isolateInExec":false},{"cmd":"sh","dashc":"-c","preamble":true,"dollar0":"sh","seconds":"115","memory":"768M","mode":"scope","inner":["pr","board","--schema-version","1","--checkout","/w","--phase"],"phase":"owed","timeout":120000,"isolateInExec":false}]' ]
+}
+
+@test "local loadBoard argv is unchanged and has no isolation wrapper" {
+  _rr '
+    const calls = [];
+    const exec = async (cmd, args, opts) => {
+      calls.push({ cmd, args: [...args], timeout: opts.timeout });
+      return { code: 1, stdout: "", stderr: "skip" };
+    };
+    await m.loadBoard(exec, { cwd: "/w", on: null }, "listing");
+    await m.loadBoard(exec, { cwd: "/w", on: "" }, "status");
+    process.stdout.write(JSON.stringify(calls));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"cmd":"pr","args":["board","--schema-version","1","--checkout","/w","--phase","listing"],"timeout":60000},{"cmd":"pr","args":["board","--schema-version","1","--checkout","/w","--phase","status"],"timeout":180000}]' ]
+}
+
+@test "toolCall without isolate is unchanged for remote" {
+  _rr '
+    const a = m.toolCall({ on: "homelab" }, "pr", ["batch", "status", "--full", "--offline"]);
+    const b = m.toolCall({ on: "homelab" }, "gh", ["api"]);
+    process.stdout.write(JSON.stringify([
+      a.cmd, a.args[1] === m.REMOTE_PREAMBLE, a.args[1] === m.REMOTE_ISOLATE_PREAMBLE, a.args.slice(2),
+      b.args[1] === m.REMOTE_PREAMBLE,
+    ]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["sh",true,false,["sh","pr","batch","status","--full","--offline"],true]' ]
+}
+
+@test "classifyCode treats exit 124 as timeout" {
+  _rr '
+    process.stdout.write(JSON.stringify([
+      m.classifyCode({ code: 124, stdout: "", stderr: "timeout: sending signal TERM" }),
+      m.classifyCode({ code: 124, stdout: "", stderr: "" }),
+    ]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"kind":"timeout","message":"timeout: sending signal TERM"},{"kind":"timeout","message":"exit 124"}]' ]
+}
+
+@test "isolated remote call retries under plain timeout when systemd-run itself fails" {
+  _rr '
+    const modes = [];
+    const exec = async (cmd, args) => {
+      modes.push(args[5]);
+      if (args[5] === "scope") {
+        return { code: 1, stdout: "", stderr: "Failed to start transient scope unit: Access denied\n" };
+      }
+      return { code: 0, stdout: "{}", stderr: "" };
+    };
+    const r = await m.invoke(exec, { cwd: "/w", on: "box" }, "pr", ["board"],
+      { timeout: 60000, isolate: { seconds: 55, memoryMax: "768M" } });
+    process.stdout.write(JSON.stringify({ modes, ok: r.ok }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"modes":["scope","plain"],"ok":true}' ]
+}
+
+@test "isolated remote call does not retry when the command itself fails" {
+  _rr '
+    let calls = 0;
+    const exec = async () => { calls += 1; return { code: 1, stdout: "", stderr: "pr board: boom" }; };
+    const r = await m.invoke(exec, { cwd: "/w", on: "box" }, "pr", ["board"],
+      { isolate: { seconds: 55, memoryMax: "768M" } });
+    process.stdout.write(JSON.stringify({ calls, kind: r.error.kind }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"calls":1,"kind":"failed"}' ]
+}
+
+@test "isolated remote exit 137 names the memory cap and deadline" {
+  _rr '
+    const exec = async () => ({ code: 137, stdout: "", stderr: "" });
+    const r = await m.invoke(exec, { cwd: "/w", on: "box" }, "pr", ["board"],
+      { isolate: { seconds: 55, memoryMax: "768M" } });
+    process.stdout.write(JSON.stringify(r.error));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"kind":"failed","message":"killed at its 768M memory cap or 55s deadline"}' ]
+}
+
+_write_echo_stub() {
+  local path="$1" name="$2"
+  printf '%s\n' '#!/bin/sh' "printf '%s' '${name}'" 'printf '\'' %s'\'' "$@"' 'printf '\''\n'\''' > "$path"
+  chmod +x "$path"
+}
+
+@test "REMOTE_ISOLATE_PREAMBLE picks systemd-run, timeout, or exec" {
+  local preamble bin
+  preamble="$(node --input-type=module -e "
+    import { REMOTE_ISOLATE_PREAMBLE } from '$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js';
+    process.stdout.write(REMOTE_ISOLATE_PREAMBLE);
+  ")"
+  [ -n "$preamble" ]
+  bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$bin"
+  _write_echo_stub "$bin/systemd-run" systemd-run
+  _write_echo_stub "$bin/timeout" timeout
+  printf '%s\n' '#!/bin/sh' 'printf '\''payload'\''' 'printf '\'' %s'\'' "$@"' 'printf '\''\n'\''' 'exit 3' > "$bin/payload"
+  chmod +x "$bin/payload"
+
+  # systemd-run on PATH but no user bus socket: fall back to a bare timeout.
+  mkdir -p "$BATS_TEST_TMPDIR/run"
+  run env -u XDG_RUNTIME_DIR PATH="$bin" HOME="$BATS_TEST_TMPDIR" \
+    XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run" \
+    /bin/sh -c "$preamble" sh 55 768M scope payload a
+  [ "$status" -eq 0 ]
+  [ "$output" = 'timeout -k 5 55 payload a' ]
+
+  python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' \
+    "$BATS_TEST_TMPDIR/run/bus"
+  run env -u XDG_RUNTIME_DIR PATH="$bin" HOME="$BATS_TEST_TMPDIR" \
+    XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run" \
+    /bin/sh -c "$preamble" sh 55 768M scope payload a
+  [ "$status" -eq 0 ]
+  [ "$output" = 'systemd-run --user --scope --quiet --collect -p MemoryMax=768M -p MemorySwapMax=0 -- timeout -k 5 55 payload a' ]
+
+  # plain mode skips systemd-run even when it and the bus are usable.
+  run env -u XDG_RUNTIME_DIR PATH="$bin" HOME="$BATS_TEST_TMPDIR" \
+    XDG_RUNTIME_DIR="$BATS_TEST_TMPDIR/run" \
+    /bin/sh -c "$preamble" sh 55 768M plain payload a
+  [ "$status" -eq 0 ]
+  [ "$output" = 'timeout -k 5 55 payload a' ]
+
+  rm -f "$bin/systemd-run"
+  run env -u XDG_RUNTIME_DIR PATH="$bin" HOME="$BATS_TEST_TMPDIR" \
+    /bin/sh -c "$preamble" sh 55 768M scope payload a
+  [ "$status" -eq 0 ]
+  [ "$output" = 'timeout -k 5 55 payload a' ]
+
+  rm -f "$bin/timeout"
+  run env -u XDG_RUNTIME_DIR PATH="$bin" HOME="$BATS_TEST_TMPDIR" \
+    /bin/sh -c "$preamble" sh 55 768M scope payload a
+  [ "$status" -eq 3 ]
+  [ "$output" = 'payload a' ]
 }

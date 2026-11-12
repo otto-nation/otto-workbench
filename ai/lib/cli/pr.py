@@ -35,7 +35,10 @@ import os
 import sys
 from pathlib import Path
 
+import agent.phases
 import cli.boundary
+import config.workbench_config
+import core.errors
 import cli.dispatch
 import cli.locks
 import cli.needs
@@ -258,6 +261,12 @@ def build_global_parser() -> argparse.ArgumentParser:
     parser.add_argument("--schema-version", dest="schema_version", metavar="n",
                         help="Serve a versioned JSON document on stdout instead of "
                              "a human table, where the command has a contract")
+    parser.add_argument("--phase-model", dest="phase_model", action="append",
+                        default=[], metavar="PHASE=MODEL",
+                        help="Run one phase on MODEL for this invocation only "
+                             "(repeatable); a tier name works too. Same layer as "
+                             "WORKBENCH_AI_<PHASE>_MODEL, so `--model` outranks it "
+                             "and a review phase still refuses a light model")
     add_trail_args(parser)
     return parser
 
@@ -631,6 +640,13 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     args.repo_dir = global_args.repo_dir
     args.branch = global_args.branch
     args.pr = global_args.pr
+    if global_args.phase_model:
+        try:
+            os.environ.update(agent.phases.phase_model_overrides(
+                global_args.phase_model, config.workbench_config.load_config(args.repo_dir)))
+        except core.errors.OperatorError as exc:
+            print(f"{SCRIPT}: {exc}", file=sys.stderr)
+            return 2
 
     usage = _build_usage()
 

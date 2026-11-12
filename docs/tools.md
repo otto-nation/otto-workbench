@@ -879,6 +879,7 @@ is in [AI Libraries](ai-libraries.md).
 | `--branch` `<name>` | Branch to act on, resolved to the worktree it is checked out in. |
 | `--pr` `<num\|url>` | PR number or URL to act on. |
 | `--schema-version` `<n>` | Serve a versioned JSON document on stdout instead of a human table, where the command has a contract. |
+| `--phase-model` `<phase=model>` | Run one phase on MODEL for this invocation only (repeatable); a tier name works too. Same layer as WORKBENCH_AI_<PHASE>_MODEL, so `--model` outranks it and a review phase still refuses a light model. |
 
 **`pr create`** — Create a PR, or preview it with --dry-run
 

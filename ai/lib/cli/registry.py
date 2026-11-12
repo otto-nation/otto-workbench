@@ -157,13 +157,15 @@ _SPECS: tuple[CommandSpec, ...] = (
                 handler="cli.pr_commands:cmd_fix"),
     CommandSpec("rebase",   "Rebase onto the branch's base",
                 rebase_need,  script="pr-rebase",
-                handler="cli.pr_rebase:main"),
+                handler="cli.pr_rebase:main",
+                contract="cli.pr_rebase:CONTRACT"),
     # A plain leased push of HEAD. Git alone answers it, so LOCAL; an explicit
     # --pr still escalates through resolve_at. No backing script: the handler
     # and its parser are the whole command, as with create.
     CommandSpec("push",     "Push HEAD with a lease on the remote head you expect",
                 Need(LOCAL,  update=False, locks=TARGET_AND_CHECKOUT),
-                handler="cli.pr_push:main"),
+                handler="cli.pr_push:main",
+                contract="cli.pr_push:CONTRACT"),
     CommandSpec("describe", "Revise the PR description",
                 Need(REMOTE, update=True,  locks=TARGET_AND_CHECKOUT),  script="pr-describe",
                 handler="cli.pr_describe:main"),

@@ -197,3 +197,26 @@ def test_offline_stamp_still_hashes_the_document(tmp_path, monkeypatch):
     found = _seed_offline(tmp_path, monkeypatch)
     doc = build(Phase.LISTING, [found.path], offline=True)
     assert stamp(doc) == doc["stamp"]
+
+
+def test_remember_skips_rewrite_when_memo_current(tmp_path, monkeypatch):
+    import board.precheck as pc
+
+    _env(tmp_path, monkeypatch)
+    pre = pc.take(["/x"], [], "me", Phase.LISTING)
+    pre.remember("s1")
+    writes = []
+    monkeypatch.setattr("core.serde.write_json", lambda *a, **k: writes.append(a))
+    pre.remember("s1")
+    assert writes == []
+    pre.remember("s2")
+    assert len(writes) == 1
+
+
+def test_memo_key_resolves_checkout_paths(tmp_path, monkeypatch):
+    import board.precheck as pc
+
+    _env(tmp_path, monkeypatch)
+    a = pc.take([str(tmp_path)], [], "me", Phase.LISTING)
+    b = pc.take([str(tmp_path) + "/"], [], "me", Phase.LISTING)
+    assert a.path == b.path

@@ -8,7 +8,9 @@ module only decides whether that walk can be skipped.
 
 # ceiling: the offline document's inputs are listed here by hand; if board.rows
 # or board presentation gains an input outside them, add a term or drop the
-# pre-check.
+# pre-check. The code term covers only board/*.py; a change confined to
+# review.listing (row_for) or batch.store (busy_prs) is not fingerprinted and
+# is picked up once another input changes.
 
 # doc-group: board
 
@@ -50,6 +52,13 @@ class Precheck:
         )
 
     def remember(self, stamp: str) -> None:
+        memo = _read_memo(self.path)
+        if (
+            memo is not None
+            and memo.get("fingerprint") == self.fingerprint
+            and memo.get("stamp") == stamp
+        ):
+            return
         core.serde.write_json(self.path, {
             "fingerprint": self.fingerprint,
             "stamp": stamp,
@@ -62,12 +71,12 @@ def take(
     viewer: str,
     phase: Phase,
 ) -> Precheck:
-    """Fingerprint the offline inputs for *phase* over *checkouts* as given.
+    """Fingerprint the offline inputs for *phase* over *checkouts*, resolved and sorted as ``board.flight.lock_key`` does.
 
     The phase is in the memo key and the fingerprint: offline phases share
     their inputs, so without it a stamp from one phase could answer another.
     """
-    blob = json.dumps([phase.value, list(checkouts)], separators=(",", ":"))
+    blob = json.dumps([phase.value, sorted(str(Path(c).resolve()) for c in checkouts)], separators=(",", ":"))
     digest = hashlib.sha256(blob.encode()).hexdigest()[:16]
     path = core.workbench_paths.cache_dir("board") / "precheck" / f"{digest}.json"
     payload = json.dumps(

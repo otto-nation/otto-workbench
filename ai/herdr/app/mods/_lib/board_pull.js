@@ -20,7 +20,7 @@ export function machineOf(on) {
 /**
  * Group `items` by `machineOf(onOf(item))`, preserving order. Groups run in parallel;
  * items in a group run in sequence. A rejection is recorded and the rest of that
- * group still runs; the first error is rethrown after every group finishes.
+ * group still runs; only the first error is rethrown after every group finishes; later errors are dropped.
  */
 export async function eachByMachine(items, onOf, fn) {
   const groups = new Map();

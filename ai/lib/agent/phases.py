@@ -101,14 +101,14 @@ def _is_light_model(model_id: str) -> bool:
     return "haiku" in model_id.lower()
 
 
-def _refuse_light_review(phase: Phase, resolved: ResolvedModel) -> None:
+def _refuse_light_review(phase: Phase, resolved: ResolvedModel, allow_light: bool) -> None:
     """Raise `ReviewModelTooLight` when a review-domain phase resolved to a light model.
 
     Checked on the resolved reference rather than per layer, so ``--model``,
     both env keys, ``agent.phases`` and ``models.<tier>`` are held to one rule:
     a tier name that resolves to Haiku is caught the same as Haiku spelled out.
     """
-    if PHASES[phase].domain is not PhaseDomain.REVIEW:
+    if allow_light or PHASES[phase].domain is not PhaseDomain.REVIEW:
         return
     if resolved.tier is Tier.LIGHT or _is_light_model(resolved.ref.id):
         raise ReviewModelTooLight(phase, resolved.key, resolved.ref.id)
@@ -156,6 +156,7 @@ def _config(cfg: WorkbenchConfig | None) -> WorkbenchConfig:
 
 def resolve_phase_model(
     phase: Phase, explicit: str | None, cfg: WorkbenchConfig | None = None,
+    *, allow_light: bool = False,
 ) -> ResolvedModel | None:
     """The model a phase runs on and the layer that named it; None when none does.
 
@@ -166,6 +167,9 @@ def resolve_phase_model(
     and one naming an unset tier raises `agent.models.UnsetTier` rather than
     letting a lower layer answer. The phase's own tier unset is not an error:
     it runs on the backend's default.
+
+    *allow_light* skips the review floor; only `eval.task` passes it, so
+    `eval-models` can measure a light model against the review baselines.
     """
     reject_removed_provider_env()
     phase = Phase(phase)
@@ -182,14 +186,14 @@ def resolve_phase_model(
         ref = resolve(value, cfg.models, where=where)
         if ref is not None:
             resolved = ResolvedModel(ref, layer, key=where, tier=named_tier(value))
-            _refuse_light_review(phase, resolved)
+            _refuse_light_review(phase, resolved, allow_light)
             return resolved
     tier = PHASES[phase].tier
     ref = tier_ref(tier, cfg.models)
     if ref is None:
         return None
     resolved = ResolvedModel(ref, ModelLayer.TIER, key=f"models.{tier.value}")
-    _refuse_light_review(phase, resolved)
+    _refuse_light_review(phase, resolved, allow_light)
     return resolved
 
 
@@ -307,7 +311,7 @@ def resolve_phase_thinking(
 
 def phase_settings(
     phase: Phase, explicit: str | None, cfg: WorkbenchConfig | None = None,
-    effort: Effort | None = None,
+    effort: Effort | None = None, *, allow_light: bool = False,
 ) -> PhaseSettings:
     """Model, provider and thinking level for one invocation of *phase*.
 
@@ -330,7 +334,7 @@ def phase_settings(
     reject_removed_provider_env()
     phase = Phase(phase)
     cfg = _config(cfg)
-    resolved = resolve_phase_model(phase, explicit, cfg)
+    resolved = resolve_phase_model(phase, explicit, cfg, allow_light=allow_light)
     thinking = resolve_phase_thinking(phase, resolved, cfg, effort)
     ref = resolved.ref if resolved is not None else None
     return PhaseSettings(

@@ -7,9 +7,9 @@ batch, CI, review decision), plus the ordered badge lists a card
 never carry a ``pass`` status; positive state (CI passing, Approved, a
 finished batch) is for the detail's ``ci``, ``decision`` and ``busy`` slots.
 *reviewing* and *batch* are what a client's terminals and batch run know;
-the board document passes neither. ``ai/herdr/app/mods/_lib/pr_status.js``
-``prPresentation`` is the client twin, held to the same output by
-``tests/fixtures/board_presentation.json``.
+the board document passes neither. Clients draw it as is
+(``_lib/pr_status.js`` ``presentationOf``, which only re-splices the live
+review and batch slots).
 """
 
 # doc-group: board

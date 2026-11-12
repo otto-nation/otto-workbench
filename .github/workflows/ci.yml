@@ -90,6 +90,15 @@ jobs:
         with:
           bun-version-file: ai/herdr/web/.bun-version
 
+      # tests/herdr_app_host_helper.bash loads mod views under node with loader hooks (node >= 20.6).
+      # The pin is site/.node-version, the repo's one Node declaration (tests/site_node_version.bats).
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: site/.node-version
+
+      - name: Show node
+        run: node --version
+
       # zsh is not on the runner image; workbench_roots.bats cross-validates the
       # root chain against the zsh definition in zsh/config.d/aliases/.
       - name: Install bats, parallel, and zsh

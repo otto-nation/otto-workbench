@@ -201,3 +201,47 @@ const call = async (path, init = {}) => { const r = await app.fetch(new Request(
   [ "$status" -eq 0 ]
   [ "$output" = '3' ]
 }
+
+@test "sse: a subscriber's view is listed while its stream is open and gone once it closes" {
+  _web "const { createHub } = await import(W + '/server/sse.js');
+        const hub = createHub({ every: () => 0, stopEvery: () => {} });
+        const a = hub.subscribe([], { view: 'mine' });
+        hub.subscribe([]);
+        const open = hub.views();
+        await a.body.cancel();
+        out({ open, after: hub.views() });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"open":["mine","team"],"after":["team"]}' ]
+}
+
+@test "app: /api/events takes view=team|mine, defaults to team, refuses anything else" {
+  _web "const { createApp } = await import(W + '/server/app.js');
+        const { createHub } = await import(W + '/server/sse.js');
+        const { loadStatics } = await import(W + '/server/static.js');
+        const auth = await import(W + '/server/auth.js');
+        const TOK = '0123456789abcdef0123456789abcdef';
+        const seen = [];
+        const board = { snapshot: () => ({ prs: [] }), findPr: () => null, refresh: () => Promise.resolve(), reviewsRootFor: () => null };
+        const app = createApp({
+          config: { token: TOK, origin: null }, board, hub: createHub({ every: () => 0, stopEvery: () => {} }),
+          files: { files: async () => ({ ok: true, files: [] }), patch: async () => ({ ok: true, patch: '' }) },
+          readTextFile: async () => '', statics: await loadStatics(new URL('file://' + W + '/../')), version: 'v1',
+          pages: { index: '<html>board</html>', login: (m) => '<form>login ' + m + '</form>', loginCss: 'body{}', themeCss: ':root{}', tokensCss: ':root{}' },
+          sleep: async () => {}, onSubscribe: (view) => seen.push(view),
+        });
+        const H = 'http://127.0.0.1:7330';
+        const cookie = { cookie: 'pr_board_session=' + auth.sessionValue(TOK) };
+        const call = async (path, init = {}) => {
+          const r = await app.fetch(new Request(H + path, init));
+          const t = r.headers.get('content-type');
+          if (t && t.startsWith('text/event-stream')) { await r.body.cancel(); return { s: r.status, t, b: '' }; }
+          return { s: r.status, t, b: await r.text() };
+        };
+        const mine = await call('/api/events?view=mine', { headers: cookie });
+        const def = await call('/api/events', { headers: cookie });
+        const bad = await call('/api/events?view=all', { headers: cookie });
+        const none = await call('/api/events?view=mine');
+        out({ mine: [mine.s, mine.t.startsWith('text/event-stream')], def: seen[1], bad: [bad.s, JSON.parse(bad.b)], none: none.s, seen });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"mine":[200,true],"def":"team","bad":[400,{"error":"bad_request"}],"none":401,"seen":["mine","team"]}' ]
+}

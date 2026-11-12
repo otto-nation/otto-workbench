@@ -13,6 +13,8 @@ import { createFiles } from './files.js';
 import { loadStatics } from './static.js';
 import { fill } from './pages.js';
 import { checkTools } from '../../app/mods/_lib/board_data.js';
+import { wantFor } from '../../app/mods/_lib/board_model.js';
+import { NO_WANT } from '../../app/mods/_lib/board_store.js';
 import * as tokens from '../../app/mods/_lib/tokens.js';
 import { BRAND } from '../../app/mods/_lib/brand.generated.js';
 import { mediaQueries, themeCss, tokensCss } from '../lib/css.js';
@@ -56,14 +58,17 @@ const pages = {
 const exec = makeExec({ hcBin: config.hcBin, env: process.env, maxProcs: config.maxProcs });
 const hub = createHub();
 const feed = changeFeed(hub);
-const board = createBoard({ exec, name: config.name, version, onChange: feed });
+const board = createBoard({
+  exec, name: config.name, version, onChange: feed,
+  want: () => (hub.views().some((v) => wantFor(v).owed) ? { owed: true } : NO_WANT),
+});
 const poller = createPoller({ board, hub, fullMs: config.fullMs, listingMs: config.listingMs });
 const app = createApp({
   config, board, hub, version, pages,
   files: createFiles({ exec }),
   readTextFile: makeReadTextFile({ exec, rootFor: (on) => board.reviewsRootFor(on) }),
   statics: await loadStatics(HERDR),
-  onSubscribe: () => poller.wake(),
+  onSubscribe: (view) => poller.wake(wantFor(view).owed),
 });
 
 const server = Bun.serve({ hostname: config.host, port: config.port, idleTimeout: IDLE_TIMEOUT_S, development: false, fetch: (req) => app.fetch(req) });

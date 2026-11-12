@@ -1,5 +1,6 @@
 /**
- * Fetch and join team-PR board data through `exec`.
+ * Run the board's commands through `exec`: the `pr board` read, files and patches,
+ * terminals, tool checks.
  *
  * `exec(cmd, args, {cwd, on})` returns `Promise<{code, stdout, stderr}>`
  * and rejects on a timeout, a program that cannot start, or an unreachable
@@ -9,26 +10,16 @@
  * `timeout`, `exec`, `auth`, `failed`, or `bad-json`.
  */
 
-import { busyPrs } from './batch.js';
 import { boardArgv, PHASE_TIMEOUT_MS } from './board_doc.js';
 import { busyMap, getArgv, lsArgv, terminalsOf } from './busy.js';
 import {
-  batches,
   FILES_PER_PAGE,
   filesArgv,
   filesPageArgv,
-  graphqlArgv,
-  landedArgv,
-  mapGraphql,
-  mapPulls,
   pagePatchesArgv,
   patchArgv,
-  pullsArgv,
-  userArgv,
 } from './github.js';
 import { attrArgvs, generatedPaths, mapFiles, markGenerated } from './diff.js';
-import { hostOf, remoteSlug } from './location.js';
-import { joinReviews, keepLanded, landedCandidates } from './reviews.js';
 
 function messageOf(err) {
   if (err == null) return '';
@@ -184,123 +175,6 @@ export function readPages(text) {
   return { ok: true, value: pages };
 }
 
-function emptyEnrich() {
-  return {
-    isDraft: false,
-    inMergeQueue: false,
-    mergeable: 'UNKNOWN',
-    ciStatus: 'none',
-    ciUnknown: false,
-    reviewDecision: null,
-    additions: 0,
-    deletions: 0,
-    changedFiles: 0,
-    latestReviews: [],
-    requestedReviewers: [],
-  };
-}
-
-function asOpen(pull, extra) {
-  const e = extra ?? {};
-  return {
-    ...emptyEnrich(),
-    ...pull,
-    state: e.state ?? 'OPEN',
-    isDraft: e.isDraft ?? pull.draft,
-    inMergeQueue: e.inMergeQueue ?? false,
-    mergeable: e.mergeable ?? 'UNKNOWN',
-    ciStatus: e.ciStatus ?? 'none',
-    // Enrichment missing: failed batch or null alias, so CI/mergeability/reviews unknown.
-    ciUnknown: extra == null,
-    reviewDecision: e.reviewDecision ?? null,
-    additions: e.additions ?? 0,
-    deletions: e.deletions ?? 0,
-    changedFiles: e.changedFiles ?? 0,
-    latestReviews: e.latestReviews ?? [],
-    requestedReviewers: e.requestedReviewers ?? [],
-  };
-}
-
-// Stay well under GitHub concurrency limits.
-// ceiling: the mod has no process cap so fan-out is up to 4 per repo across all repos at once;
-// if many repos on one remote hit ssh MaxSessions or GitHub secondary rate limits, add a per-target cap.
-const GRAPHQL_CONCURRENCY = 4;
-
-async function graphqlByNumber(exec, ctx, slug, numbers, argvOf) {
-  let partial = false;
-  const byNumber = {};
-  const groups = batches(numbers);
-  let next = 0;
-  const workerCount = Math.min(GRAPHQL_CONCURRENCY, groups.length);
-  async function worker() {
-    while (true) {
-      const i = next;
-      next += 1;
-      if (i >= groups.length) return;
-      const batch = groups[i];
-      const ran = await invoke(exec, ctx, 'gh', argvOf(slug, batch));
-      if (!ran.ok) {
-        partial = true;
-        continue;
-      }
-      const parsed = readJson(ran.stdout);
-      if (!parsed.ok) {
-        partial = true;
-        continue;
-      }
-      Object.assign(byNumber, mapGraphql(parsed.value, batch));
-    }
-  }
-  await Promise.all(Array.from({ length: workerCount }, () => worker()));
-  return { byNumber, partial };
-}
-
-export async function loadRepo(exec, ctx) {
-  if (ctx.cwd == null) {
-    return { ok: false, error: { kind: 'failed', message: 'not in a repository' } };
-  }
-  const ran = await invoke(exec, ctx, 'git', ['remote', 'get-url', 'origin']);
-  if (!ran.ok) return ran;
-  const url = ran.stdout.trim();
-  const slug = remoteSlug(url);
-  const host = hostOf(url);
-  if (slug == null) {
-    return {
-      ok: false,
-      error: { kind: 'failed', message: 'origin is not a GitHub remote' },
-    };
-  }
-  return { ok: true, slug, host };
-}
-
-export async function loadUser(exec, ctx) {
-  const ran = await invoke(exec, ctx, 'gh', userArgv());
-  if (!ran.ok) return ran;
-  return { ok: true, login: ran.stdout.trim() };
-}
-
-export async function loadOpenPrs(exec, ctx, slug) {
-  let ran;
-  try {
-    const call = toolCall(ctx, 'gh', pullsArgv(slug));
-    ran = await exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on });
-  } catch (err) {
-    return { ok: false, error: classifyCaught(err, ctx.on, labelOf('gh', pullsArgv(slug))) };
-  }
-  const coded = classifyCode(ran);
-  if (coded) return { ok: false, error: coded };
-  const parsed = readPages(ran.stdout ?? '');
-  if (!parsed.ok) return parsed;
-  const pulls = mapPulls(parsed.value);
-  const numbers = pulls.map((p) => p.number);
-  const { byNumber, partial } = await graphqlByNumber(
-    exec, ctx, slug, numbers, graphqlArgv,
-  );
-  return { ok: true, prs: pulls.map((p) => asOpen(p, byNumber[p.number])), partial };
-}
-
-// A review on another machine is read two ways at once, first answer wins: herdr's readTextFile,
-// and `cat` through exec. Either alone can stall on a remote, which left the card on "Loading…".
 export async function readReview(readTextFile, path, on, exec = null) {
   const remote = on != null && on !== '';
   try {
@@ -327,17 +201,6 @@ export async function readReview(readTextFile, path, on, exec = null) {
 
 // `prior` is this machine's last good listing: pr is asked to answer `unchanged` against its
 // stamp instead of rebuilding every row, and on that answer the prior result stands.
-export async function loadListing(exec, ctx, prior = null) {
-  const stamp = prior?.listing?.stamp;
-  const ran = await invoke(exec, ctx, 'pr', [
-    'review', '--list', '--schema-version', '1', ...(stamp ? ['--if-changed', stamp] : []),
-  ]);
-  if (!ran.ok) return ran;
-  const parsed = readJson(ran.stdout);
-  if (!parsed.ok) return parsed;
-  if (parsed.value?.unchanged === true && prior != null) return prior;
-  return { ok: true, listing: parsed.value, reviewsRoot: parsed.value.reviews_root };
-}
 
 // ceiling: 768M for one isolated `pr board` child; raise if a single-repo
 // board legitimately exceeds it (the remote child is OOM-killed under 768M).
@@ -501,82 +364,6 @@ export async function loadPatch(exec, ctx, slug, number, file, cache) {
   return { ok: true, patch: patch == null || patch === '' ? null : patch };
 }
 
-export async function loadBatchDoc(exec, ctx) {
-  let ran;
-  try {
-    const call = toolCall(ctx, 'pr', ['batch', 'status', '--full', '--offline']);
-    ran = await exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on });
-  } catch {
-    return { ok: true, doc: null };
-  }
-  if (ran.code !== 0) return { ok: true, doc: null };
-  try {
-    return { ok: true, doc: JSON.parse(ran.stdout) };
-  } catch {
-    return { ok: true, doc: null };
-  }
-}
-
-export async function loadBusy(exec, ctx, slug) {
-  const ran = await loadBatchDoc(exec, ctx);
-  return { ok: true, busy: busyPrs(ran.doc, slug) };
-}
-
-function listingRows(listing) {
-  if (Array.isArray(listing)) return listing;
-  if (listing != null && Array.isArray(listing.reviews)) return listing.reviews;
-  return [];
-}
-
-function rowFor(listing, slug, host, number) {
-  let best = null;
-  for (const row of listingRows(listing)) {
-    if (row.repo !== slug || row.pr_number !== number) continue;
-    if (row.host != null && row.host !== '' && row.host !== host) continue;
-    if (best == null || (row.reviewed_at ?? '') > (best.reviewed_at ?? '')) best = row;
-  }
-  return best;
-}
-
-function asLanded(number, extra, row) {
-  const e = extra ?? {};
-  return {
-    number,
-    title: `#${number}`,
-    author: '',
-    branch: row?.head_ref ?? '',
-    baseBranch: '',
-    draft: false,
-    url: '',
-    headSha: row?.head_sha ?? '',
-    labels: [],
-    createdAt: null,
-    updatedAt: null,
-    ...emptyEnrich(),
-    ...e,
-    state: 'MERGED',
-    isDraft: e.isDraft ?? false,
-  };
-}
-
-export async function loadLanded(exec, ctx, slug, listing, host, openPrs, nowMs) {
-  const numbers = landedCandidates(openPrs, listing, slug, host);
-  const { byNumber, partial } = await graphqlByNumber(
-    exec, ctx, slug, numbers, landedArgv,
-  );
-  const merged = [];
-  for (const n of numbers) {
-    const extra = byNumber[n];
-    if (extra == null) continue;
-    merged.push(asLanded(n, extra, rowFor(listing, slug, host, n)));
-  }
-  return { ok: true, prs: keepLanded(merged, nowMs), partial };
-}
-
-// Live terminals the board or pane started. `hc ls` carries no labels, so each listed address
-// is read with `hc get` (a handful at most). The local core also reports remote machines'
-// terminals, so one pass covers every target. A failed listing is an empty map: a missing
-// spinner must not fail the board.
 export async function loadTerminals(exec, ctx) {
   try {
     const ran = await exec('hc', lsArgv(), { cwd: ctx.cwd });
@@ -603,44 +390,6 @@ export const OWED_TTL_MS = 60000;
 export function owedDue(owedAt, now, ttlMs = OWED_TTL_MS) {
   if (!Number.isFinite(owedAt)) return true;
   return now - owedAt >= ttlMs;
-}
-
-// `owed` maps a PR number to what `pr` says it is owed an answer for (see owedFrom); a PR
-// absent from it has nothing owed, or nothing known yet.
-export function assemble({ openPrs, landedPrs, listing, slug, host, login, busy, running, owed }) {
-  return joinReviews(
-    [...(openPrs ?? []), ...(landedPrs ?? [])],
-    listing, slug, host, login, running ?? new Map(),
-  ).map((pr) => ({ ...pr, busy: busy.has(pr.number), owedFeedback: owed?.get(pr.number) ?? null }));
-}
-
-/** Argv after `pr` for the comments-only plan of a checkout: reads no branches. */
-export function owedArgv(cwd) {
-  return ['batch', 'plan', '--checkout', cwd, '--needs', 'comments'];
-}
-
-/**
- * PR number -> what it is owed, from a `pr batch plan` document, for the rows of `slug`.
- * Only rows whose comments need is set; the reason is pr.owed_feedback's own summary, so the
- * board says exactly what `pr comments` would answer.
- */
-export function owedFrom(doc, slug) {
-  const out = new Map();
-  const want = String(slug ?? '').toLowerCase();
-  for (const row of doc?.rows ?? []) {
-    if (String(row?.repo ?? '').toLowerCase() !== want || !Number.isInteger(row?.pr)) continue;
-    const need = row?.needs?.comments;
-    if (need?.needed) out.set(row.pr, String(need.reason ?? ''));
-  }
-  return out;
-}
-
-export async function loadOwed(exec, ctx, slug) {
-  const ran = await invoke(exec, ctx, 'pr', owedArgv(ctx.cwd));
-  if (!ran.ok) return ran;
-  const parsed = readJson(ran.stdout);
-  if (!parsed.ok) return parsed;
-  return { ok: true, owed: owedFrom(parsed.value, slug) };
 }
 
 export async function checkTools(exec, ctx) {

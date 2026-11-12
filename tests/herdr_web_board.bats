@@ -11,76 +11,120 @@ setup() {
 }
 teardown() { common_teardown; }
 
-BOARD_TABLE='const PULL = JSON.stringify([{ number: 3, title: "Fix it", user: { login: "bob" }, head: { ref: "feat", sha: "abc1234" },
-  base: { ref: "main" }, draft: false, html_url: "https://github.com/acme/box/pull/3", labels: [], created_at: "c", updated_at: "u" }]);
-const GQL = { data: { repository: { pr0: { isDraft: false, reviewDecision: null, mergeable: "MERGEABLE", additions: 1, deletions: 2,
-  changedFiles: 3, mergeQueueEntry: null, commits: { nodes: [] }, latestReviews: { nodes: [] }, reviewRequests: { nodes: [] } } } } };
-const LISTING = { schema_version: 1, reviews_root: "/r", reviews: [] };
+BOARD_TABLE='const fs = await import("node:fs");
+const DOC = JSON.parse(fs.readFileSync(W + "/../../../tests/fixtures/board_document.json", "utf8"));
+const docAs = (slug, phase, extra = {}) => ({ ...DOC, phase, stamp: "st-" + phase, repos: [{ ...DOC.repos[0], slug }], ...extra });
 const table = (terminals) => [
   { prefix: "hc ls --json --label", stdout: { terminals: [] } },
   { prefix: "hc ls --json", stdout: { terminals } },
   { prefix: "sh -c command -v", stdout: "/b/pr\n/b/gh\n/b/wt\n" },
-  { prefix: "git remote get-url origin", stdout: "git@github.com:acme/box.git\n" },
-  { prefix: "gh api /user", stdout: "ada\n" },
-  { prefix: "gh api /repos/acme/box/pulls", stdout: PULL + "\n" },
-  { prefix: "gh api graphql", stdout: GQL },
-  { prefix: "pr review --list --schema-version 1", stdout: LISTING },
-  { prefix: "pr batch status", code: 1, stdout: "", stderr: "pr batch: no batch runs yet" },
-];'
+];
+const phaseOf = (args) => args[args.indexOf("--phase") + 1];
+// answer(phase, opts) may return a whole exec result ({code, …}) or document fields to lay over the default.
+const withPr = (rows, slugOf = () => "acme/box", extra = {}, answer = () => null) => async (cmd, args, opts = {}) => {
+  if (cmd === "pr" && args[0] === "board") {
+    calls.push({ cmd, args: [...args], cwd: opts.cwd ?? null, on: opts.on ?? null, timeout: opts.timeout ?? null });
+    const over = await answer(phaseOf(args), opts);
+    if (over && "code" in over) return over;
+    return { code: 0, stdout: JSON.stringify({ ...docAs(slugOf(opts.cwd), phaseOf(args), extra), ...(over ?? {}) }), stderr: "" };
+  }
+  return fakeExec(rows)(cmd, args, opts);
+};'
 
-@test "board: a terminal in a GitHub checkout yields that repo's PRs, without server paths" {
+@test "board: a terminal in a GitHub checkout yields that repo's PRs from pr board, without server paths; no page on Mine reads no owed" {
   _web "$BOARD_TABLE
         const { createBoard } = await import(W + '/server/board.js');
-        const b = createBoard({ exec: fakeExec(table([{ address: 't1', cwd: '/w/box', state: 'live' }])), name: 'srv', version: 'v1', now: () => 5 });
+        const b = createBoard({ exec: withPr(table([{ address: 't1', cwd: '/w/box', state: 'live' }]), undefined, { reviews_root: '/r' }), name: 'srv', version: 'v1', now: () => 5 });
         await b.refresh();
         const s = b.snapshot();
-        out({ me: s.me, slugs: s.repoSlugs, n: s.prs.length, pr: s.prs[0].repoSlug + '#' + s.prs[0].number, cwd: 'cwd' in s.prs[0],
-              checkout: s.prs[0].hasCheckout, errors: s.errors, loading: s.loading, at: s.updatedAt, version: s.version,
-              rec: b.findPr('acme/box', 3).cwd, root: b.reviewsRootFor(null), repoStates: s.repoStates });"
+        out({ me: s.me, slugs: s.repoSlugs, n: s.prs.length, cwd: 'cwd' in s.prs[0], checkout: s.prs[0].hasCheckout,
+              errors: s.errors, at: s.updatedAt, rec: b.findPr('acme/box', 7).cwd, root: b.reviewsRootFor(null),
+              cols: s.columns.length, owed: s.repoStates[0].owed,
+              phases: calls.filter((c) => c.cmd === 'pr').map((c) => phaseOf(c.args) + ':' + c.timeout) });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"me":"ada","slugs":["acme/box"],"n":1,"pr":"acme/box#3","cwd":false,"checkout":true,"errors":[],"loading":false,"at":5,"version":"v1","rec":"/w/box","root":"/r","repoStates":[{"slug":"acme/box","folder":"box","on":null,"phase":"loaded","partial":false,"updatedAt":5,"error":null}]}' ]
+  [ "$output" = '{"me":"me","slugs":["acme/box"],"n":4,"cwd":false,"checkout":true,"errors":[],"at":5,"rec":"/w/box","root":"/r","cols":15,"owed":{"state":"idle","error":null},"phases":["listing:60000","status:180000"]}' ]
 }
 
-@test "board: a gh api graphql row with code 1 still loads PRs as partial" {
+@test "board: while a page wants owed it is read, then again only once a minute" {
   _web "$BOARD_TABLE
         const { createBoard } = await import(W + '/server/board.js');
-        const rows = table([{ address: 't1', cwd: '/w/box', state: 'live' }]);
-        rows.unshift({ prefix: 'gh api graphql', code: 1, stderr: 'boom' });
-        const b = createBoard({ exec: fakeExec(rows), name: 'srv', version: 'v1', now: () => 5 });
-        await b.refresh();
-        const s = b.snapshot();
-        out({ n: s.prs.length, partial: s.repoStates[0].partial, phase: s.repoStates[0].phase });"
+        let t = 1000;
+        const b = createBoard({ exec: withPr(table([{ address: 't1', cwd: '/w/box', state: 'live' }])), name: 'srv', version: 'v1', now: () => t, want: () => ({ owed: true }) });
+        const take = () => { const p = calls.filter((c) => c.cmd === 'pr').map((c) => ({ phase: phaseOf(c.args), offline: c.args.includes('--offline'), timeout: c.timeout })); calls.length = 0; return p; };
+        await b.refresh(); const a = take();
+        t = 1010; await b.refresh({ listingOnly: true }); const b1 = take();
+        t = 70000; await b.refresh({ listingOnly: true }); const c = take();
+        out({ steps: [a, b1, c].map((xs) => xs.map((x) => x.phase)), offline: [b1, c].map((xs) => xs.filter((x) => x.phase === 'listing').every((x) => x.offline)),
+              owedTimeout: c.find((x) => x.phase === 'owed').timeout, owed: b.snapshot().repoStates[0].owed.state });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"n":1,"partial":true,"phase":"loaded"}' ]
+  [ "$output" = '{"steps":[["listing","status","owed"],["listing"],["listing","owed"]],"offline":[true,true],"owedTimeout":120000,"owed":"ready"}' ]
 }
 
-@test "board: snapshot listing rows keep review file paths off the page" {
+@test "board: owed follows want: none while unwanted, read when wanted, a late answer dropped" {
   _web "$BOARD_TABLE
-        const listing = {
-          schema_version: 1, reviews_root: '/secret/reviews',
-          reviews: [{
-            repo: 'acme/box', pr_number: 3, mode: 'pr', stamp: 's1',
-            review_file: '/secret/review.md', head_sha: 'abc1234', status: 'complete', reviewed_at: 'u',
-            history: [{ stamp: 's0', review_file: '/secret/old.md', head_sha: 'old', status: 'complete', reviewed_at: 't' }],
-          }],
+        const { createBoard } = await import(W + '/server/board.js');
+        let showing = false, late = false, t = 1000;
+        const exec = withPr(table([{ address: 't1', cwd: '/w/box', state: 'live' }]), undefined, {}, (phase) => (phase === 'owed' && late ? (showing = false, { complete: false, rows: [{ ...DOC.rows[1], lanes: { ...DOC.rows[1].lanes, mine: 'has-comments' } }] }) : null));
+        const b = createBoard({ exec, name: 'srv', version: 'v1', now: () => t, want: () => ({ owed: showing }) });
+        const take = () => { const p = calls.filter((c) => c.cmd === 'pr').map((c) => phaseOf(c.args)); calls.length = 0; return p; };
+        await b.refresh(); const a = { phases: take(), owed: b.snapshot().repoStates[0].owed.state };
+        showing = true; await b.refresh({ listingOnly: true }); const b1 = { phases: take(), owed: b.snapshot().repoStates[0].owed.state };
+        late = true; t = 70000; await b.refresh({ listingOnly: true });
+        const eight = b.snapshot().prs.find((p) => p.number === 8);
+        const c = { phases: take(), mine: eight.lanes.mine, owed: b.snapshot().repoStates[0].owed.state };
+        t = 140000; await b.refresh({ listingOnly: true }); const d = take();
+        out({ a, b1, c, d });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"a":{"phases":["listing","status"],"owed":"idle"},"b1":{"phases":["listing","owed"],"owed":"ready"},"c":{"phases":["listing","owed"],"mine":"awaiting-review","owed":"ready"},"d":["listing"]}' ]
+}
+
+@test "board: a failed owed read is the repo's owed error, in words" {
+  _web "$BOARD_TABLE
+        const { createBoard } = await import(W + '/server/board.js');
+        const exec = withPr(table([{ address: 't1', cwd: '/w/box', state: 'live' }]), undefined, {}, (phase) => (phase === 'owed' ? { code: 1, stdout: '', stderr: 'boom' } : null));
+        const b = createBoard({ exec, name: 'srv', version: 'v1', want: () => ({ owed: true }) });
+        await b.refresh();
+        const s = b.snapshot();
+        out({ owed: s.repoStates[0].owed, errors: s.errors, n: s.prs.length });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"owed":{"state":"error","error":"boom"},"errors":[],"n":4}' ]
+}
+
+@test "board: Mine's Has Comments lane is drawn from the document, loading until owed lands" {
+  _web "$BOARD_TABLE
+        const { createBoard } = await import(W + '/server/board.js');
+        const v = await import(W + '/lib/view.js');
+        const ui = { ...v.DEFAULT_UI, tab: 'mine' };
+        const wanted = createBoard({ exec: withPr(table([{ address: 't1', cwd: '/w/box', state: 'live' }])), name: 'srv', version: 'v1', want: () => ({ owed: true }) });
+        await wanted.refresh();
+        const none = createBoard({ exec: withPr(table([{ address: 't1', cwd: '/w/box', state: 'live' }])), name: 'srv', version: 'v1' });
+        await none.refresh();
+        out({ want: v.boardModel(wanted.snapshot(), ui).columns.map((c) => [c.key, c.status]), none: v.boardModel(none.snapshot(), ui).columns.map((c) => [c.key, c.status]) });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"want":[["has-comments","ready"]],"none":[["has-comments","loading"]]}' ]
+}
+
+@test "board: snapshot keeps review file paths and checkouts off the page" {
+  _web "$BOARD_TABLE
+        const extra = {
+          reviews_root: '/secret/reviews',
+          repos: [{ ...DOC.repos[0], slug: 'acme/box', checkout: '/secret/w' }],
+          rows: DOC.rows.map((r, i) => i ? r : { ...r, review_runs: r.review_runs.map((run, j) => j ? run : { ...run, review_file: '/secret/r.md' }) }),
         };
-        const rows = table([{ address: 't1', cwd: '/w/box', state: 'live' }]);
-        rows.find((r) => r.prefix.startsWith('pr review')).stdout = listing;
         const { createBoard } = await import(W + '/server/board.js');
-        const b = createBoard({ exec: fakeExec(rows), name: 'srv', version: 'v1', now: () => 5 });
+        const b = createBoard({ exec: withPr(table([{ address: 't1', cwd: '/w/box', state: 'live' }]), undefined, extra), name: 'srv', version: 'v1', now: () => 5 });
         await b.refresh();
         const s = b.snapshot();
         out({ leak: JSON.stringify(s).includes('/secret'), stamps: (s.prs[0].reviewRuns || []).map((r) => r.run && r.run.stamp) });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"leak":false,"stamps":["s1","s0"]}' ]
+  [ "$output" = '{"leak":false,"stamps":["20260102T000000","20260101T000000"]}' ]
 }
 
 @test "board: a terminal outside any repo is skipped, not an error" {
   _web "$BOARD_TABLE
         const { createBoard } = await import(W + '/server/board.js');
-        const rows = table([{ address: 't1', cwd: '/home/a', state: 'live' }]);
-        rows.unshift({ prefix: 'git remote get-url origin', code: 128, stderr: 'fatal: not a git repository (or any of the parent directories): .git' });
-        const b = createBoard({ exec: fakeExec(rows), name: 'srv', version: 'v1' });
+        const exec = withPr(table([{ address: 't1', cwd: '/home/a', state: 'live' }]), undefined, {}, () => ({ repos: [{ slug: null, phase: 'failed', error: { kind: 'not-git', message: 'x' } }], rows: [] }));
+        const b = createBoard({ exec, name: 'srv', version: 'v1' });
         await b.refresh();
         const s = b.snapshot();
         out({ skipped: s.skipped, errors: s.errors.length, prs: s.prs.length });"
@@ -88,15 +132,15 @@ const table = (terminals) => [
   [ "$output" = '{"skipped":1,"errors":0,"prs":0}' ]
 }
 
-@test "board: two terminals in one repo fetch its PRs once after the first pull; listing-only skips gh pulls" {
+@test "board: two terminals in one repo pull it once after the first pull; listing-only reads no status" {
   _web "$BOARD_TABLE
         const { createBoard } = await import(W + '/server/board.js');
-        const b = createBoard({ exec: fakeExec(table([{ address: 't1', cwd: '/w/box' }, { address: 't2', cwd: '/w/box/sub' }])), name: 'srv', version: 'v1' });
-        const pulls = () => calls.filter((c) => c.cmd === 'gh' && c.args[1] === '/repos/acme/box/pulls').length;
-        await b.refresh(); const first = pulls();
-        await b.refresh(); const second = pulls() - first;
-        await b.refresh({ listingOnly: true }); const third = pulls() - first - second;
-        out([first, second, third, b.snapshot().prs.length]);"
+        const b = createBoard({ exec: withPr(table([{ address: 't1', cwd: '/w/box' }, { address: 't2', cwd: '/w/box/sub' }])), name: 'srv', version: 'v1' });
+        const statusN = () => calls.filter((c) => c.cmd === 'pr' && phaseOf(c.args) === 'status').length;
+        await b.refresh(); const first = statusN();
+        await b.refresh(); const second = statusN() - first;
+        await b.refresh({ listingOnly: true }); const third = statusN() - first - second;
+        out([first, second, third, b.snapshot().repoSlugs.length]);"
   [ "$status" -eq 0 ]
   [ "$output" = '[2,1,0,1]' ]
 }
@@ -104,37 +148,35 @@ const table = (terminals) => [
 @test "board: each repo is published as it loads, before the slowest repo finishes" {
   _web "$BOARD_TABLE
         const { createBoard } = await import(W + '/server/board.js');
-        const inner = fakeExec(table([{ address: 't1', cwd: '/w/box' }, { address: 't2', cwd: '/w/kit' }]));
         let release;
         const gate = new Promise((r) => { release = r; });
-        const exec = async (cmd, args, opts = {}) => {
-          if (cmd === 'git' && opts.cwd === '/w/kit') return { code: 0, stdout: 'git@github.com:acme/kit.git\\n', stderr: '' };
-          if (cmd === 'gh' && args.includes('/repos/acme/kit/pulls')) { await gate; return { code: 0, stdout: '[]\\n', stderr: '' }; }
-          return inner(cmd, args, opts);
-        };
+        const slugOf = (cwd) => (cwd && String(cwd).includes('kit') ? 'acme/kit' : 'acme/box');
+        const exec = withPr(table([{ address: 't1', cwd: '/w/box' }, { address: 't2', cwd: '/w/kit' }]), slugOf, {}, async (phase, opts) => {
+          if (phase === 'listing' && opts.cwd === '/w/kit') await gate;
+          return null;
+        });
         const seen = [];
         const b = createBoard({ exec, name: 'srv', version: 'v1', onChange: (s) => seen.push(s) });
         const done = b.refresh();
         let early = null;
         for (let i = 0; i < 200 && !early; i++) {
-          early = seen.find((s) => s.prs.length === 1);
+          early = seen.find((s) => (s.repoStates ?? []).some((r) => r.folder === 'box' && r.phase === 'loaded')
+            && (s.repoStates ?? []).some((r) => r.folder === 'kit' && r.phase === 'loading'));
           if (!early) await new Promise((r) => setTimeout(r, 5));
         }
         release();
         await done;
         const box = early.repoStates.find((r) => r.folder === 'box');
         const kit = early.repoStates.find((r) => r.folder === 'kit');
-        out({ early: [early.refreshing, early.loading, early.prs[0].repoSlug], last: seen.at(-1).refreshing,
-              box: { slug: box.slug, folder: box.folder, phase: box.phase },
-              kit: { slug: kit.slug, folder: kit.folder, phase: kit.phase } });"
+        out({ early: [early.refreshing, box.phase, kit.phase], last: seen.at(-1).refreshing });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"early":[true,true,"acme/box"],"last":false,"box":{"slug":"acme/box","folder":"box","phase":"loaded"},"kit":{"slug":null,"folder":"kit","phase":"loading"}}' ]
+  [ "$output" = '{"early":[true,"loaded","loading"],"last":false}' ]
 }
 
 @test "board: refreshes asked for during a pull collapse into one more pull" {
   _web "$BOARD_TABLE
         const { createBoard } = await import(W + '/server/board.js');
-        const b = createBoard({ exec: fakeExec(table([{ address: 't1', cwd: '/w/box' }])), name: 'srv', version: 'v1' });
+        const b = createBoard({ exec: withPr(table([{ address: 't1', cwd: '/w/box' }])), name: 'srv', version: 'v1' });
         const p = b.refresh(); b.refresh(); b.refresh({ listingOnly: true }); b.refresh();
         await p; await new Promise((r) => setTimeout(r, 50)); while (b.snapshot().refreshing) await new Promise((r) => setTimeout(r, 20));
         out(calls.filter((c) => c.cmd === 'hc' && c.args.length === 2).length);"
@@ -145,32 +187,52 @@ const table = (terminals) => [
 @test "board: an unreachable herdr-core keeps the last targets and reports it" {
   _web "$BOARD_TABLE
         const { createBoard } = await import(W + '/server/board.js');
-        let rows = table([{ address: 't1', cwd: '/w/box' }]);
-        const exec = (cmd, args, o) => fakeExec(rows)(cmd, args, o);
+        let failHc = false;
+        const inner = withPr(table([{ address: 't1', cwd: '/w/box' }]));
+        const exec = async (cmd, args, o) => {
+          if (failHc && cmd === 'hc' && args.length === 2) return { code: 1, stdout: '', stderr: 'core not running' };
+          return inner(cmd, args, o);
+        };
         const b = createBoard({ exec, name: 'srv', version: 'v1' });
         await b.refresh();
-        rows = [{ prefix: 'hc ls --json', code: 1, stderr: 'core not running' }, ...rows.slice(2)];
+        failHc = true;
         await b.refresh();
         const s = b.snapshot();
         out({ prs: s.prs.length, err: s.errors[0].message });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"prs":1,"err":"herdr-core: core not running"}' ]
+  [ "$output" = '{"prs":4,"err":"herdr-core: core not running"}' ]
 }
 
-@test "board: a failed refresh over loaded data keeps the PRs and reports when they last loaded (stale, not failed)" {
+@test "board: a failed refresh over loaded data keeps the PRs and reports when they last loaded" {
   _web "$BOARD_TABLE
         const { createBoard } = await import(W + '/server/board.js');
-        let rows = table([{ address: 't1', cwd: '/w/box' }]);
+        let failPr = false;
+        const inner = withPr(table([{ address: 't1', cwd: '/w/box' }]));
         let t = 5;
-        const b = createBoard({ exec: (cmd, args, o) => fakeExec(rows)(cmd, args, o), name: 'srv', version: 'v1', now: () => t });
+        const exec = async (cmd, args, o) => {
+          if (failPr && cmd === 'pr') return { code: 1, stdout: '', stderr: 'boom' };
+          return inner(cmd, args, o);
+        };
+        const b = createBoard({ exec, name: 'srv', version: 'v1', now: () => t });
         await b.refresh();
         t = 9;
-        rows = [{ prefix: 'gh api /repos/acme/box/pulls', code: 1, stderr: 'boom' }, ...rows];
+        failPr = true;
         await b.refresh();
         const s = b.snapshot();
         out({ prs: s.prs.length, n: s.errors.length, at: s.errors[0].updatedAt, phase: s.repoStates[0].phase });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"prs":1,"n":1,"at":5,"phase":"stale"}' ]
+  [ "$output" = '{"prs":4,"n":1,"at":5,"phase":"stale"}' ]
+}
+
+@test "board: a gh partial is the document's partial" {
+  _web "$BOARD_TABLE
+        const { createBoard } = await import(W + '/server/board.js');
+        const extra = { repos: [{ ...DOC.repos[0], slug: 'acme/box', partial: true }] };
+        const b = createBoard({ exec: withPr(table([{ address: 't1', cwd: '/w/box' }]), undefined, extra), name: 'srv', version: 'v1' });
+        await b.refresh();
+        out(b.snapshot().repoStates[0].partial);"
+  [ "$status" -eq 0 ]
+  [ "$output" = 'true' ]
 }
 
 @test "poller: wakes a never-pulled board fully, a recent one not at all, and polls only with a page connected" {
@@ -185,7 +247,10 @@ const table = (terminals) => [
         t += 20000; p.wake();
         for (const [fn] of ticks) fn();
         pages = 1; for (const [fn] of ticks) fn();
-        out({ asked, intervals: ticks.map(([, ms]) => ms) });"
+        const base = [...asked];
+        at = t; p.wake(true); const recent = asked.slice(base.length);
+        at = null; p.wake(true); const never = asked.slice(base.length + recent.length);
+        out({ asked: base, intervals: ticks.map(([, ms]) => ms), recent, never });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"asked":["full","listing","full","listing"],"intervals":[180000,15000]}' ]
+  [ "$output" = '{"asked":["full","listing","full","listing"],"intervals":[180000,15000],"recent":["listing"],"never":["full"]}' ]
 }

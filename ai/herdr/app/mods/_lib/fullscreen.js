@@ -15,6 +15,9 @@
  * Only "on" and "off" are stable: "stranded" must be healed by a caller (prs-button does,
  * via healDue) or the main area stays hidden.
  *
+ * panelShown(root) -> whether the panel copy is on screen: `panel` not hidden and
+ * `panel-body.active` is "prs-panel". No root reads as shown (nothing says otherwise).
+ *
  * enterPlan(root) -> { savedPx, steps }. savedPx is panel.size.px when that is a
  * finite number > 0, else null. steps hide `main` then resize `panel` to weight 1.
  *
@@ -45,6 +48,13 @@ export function fullscreenState(root) {
   const body = findNode(root, "panel-body");
   if (panel && !panel.hidden && body?.active === "prs-panel") return "on";
   return "stranded";
+}
+
+export function panelShown(root) {
+  if (!root) return true;
+  const panel = findNode(root, "panel");
+  const body = findNode(root, "panel-body");
+  return Boolean(panel && !panel.hidden && body?.active === "prs-panel");
 }
 
 export function enterPlan(root) {

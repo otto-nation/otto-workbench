@@ -1,23 +1,8 @@
 /**
- * Classify a PR record into team / mine kanban columns and apply list filters.
+ * Document lanes and list filters for the PR board.
  *
- * The record uses ui-code TeamPrInfo names:
- *   state: 'OPEN' | 'MERGED' | 'CLOSED'
- *   isDraft: boolean
- *   inMergeQueue: boolean
- *   mergeable: 'MERGEABLE' | 'CONFLICTING' | 'UNKNOWN'
- *   ciStatus: 'passing' | 'failing' | 'pending' | 'none'
- *   ciUnknown: boolean
- *   reviewDecision: 'APPROVED' | 'CHANGES_REQUESTED' | ... | null
- *   myReviewState: string | null
- *   isRequestedReviewer: boolean
- *   hasNewChangesSinceReview: boolean
- *   reviewing: boolean — ui-code's isReviewQueued, stored on the PR here
- *   author: login
- *   owedFeedback: string | null — what `pr comments` would answer, from pr's own plan
- *   hydrated: boolean — false means listing-only; CI and review fields are not loaded yet
- *   reviewRuns: array NEWEST FIRST of { postedEvent: null | string }
- *     null = unposted; any non-null, including 'dismissed', counts as posted
+ * Python owns lane membership (`pr.lanes`); `laneOf` reads it. Filters hide
+ * drafts and landed unless their chips are on.
  */
 
 export const TEAM_COLUMNS = [
@@ -41,7 +26,8 @@ export const MINE_COLUMNS = [
   { key: 'merged', label: 'Merged' },
 ];
 
-// A document row carries its lanes (Python owns them); `reviewing` picks the variant the live
+// A document row always carries its lanes (Python owns them; `pr board` via rowToPr is the only producer),
+// so a row without them is malformed and groupColumns drops it.  `reviewing` picks the variant the live
 // review terminal changes. `board` is 'team' or 'mine'.
 export function laneOf(pr, board) {
   const l = pr.lanes ?? {};
@@ -51,74 +37,6 @@ export function laneOf(pr, board) {
 // The document's column specs for one board, in order.
 export function columnsFor(columns, board) {
   return (columns ?? []).filter((c) => c.board === board).sort((a, b) => a.order - b.order);
-}
-
-// ceiling: teamColumn and mineColumn below are the client twin of board.columns, kept for the web
-// server, whose rows are not document rows. Upgrade trigger: once the web reads `pr board`, rows
-// always carry lanes and these (and prIssues) are deleted.
-export function teamColumn(pr) {
-  if (pr.lanes) return laneOf(pr, 'team');
-  if (pr.reviewing) {
-    return 'in-queue';
-  }
-  if (pr.state === 'MERGED' || pr.inMergeQueue) {
-    return 'landed';
-  }
-  if (pr.isRequestedReviewer || pr.hasNewChangesSinceReview) {
-    return 'needs-my-review';
-  }
-  if (pr.reviewRuns.length > 0) {
-    const latestPostedIdx = pr.reviewRuns.findIndex((r) => r.postedEvent !== null);
-    const hasNewerUnposted =
-      latestPostedIdx === -1
-        ? pr.reviewRuns.some((r) => r.postedEvent === null)
-        : pr.reviewRuns.slice(0, latestPostedIdx).some((r) => r.postedEvent === null);
-    if (hasNewerUnposted) return 'review-ready';
-  }
-  if (pr.myReviewState) {
-    return 'reviewed';
-  }
-  if (pr.reviewRuns.length > 0) {
-    return 'reviewed';
-  }
-  return 'open';
-}
-
-export function mineColumn(pr) {
-  if (pr.lanes) return laneOf(pr, 'mine');
-  if (pr.state === 'MERGED') return 'merged';
-  if (pr.inMergeQueue) return 'in-queue';
-  // A review running right now: the PR is the reviewer's until it finishes, whatever else is wrong.
-  if (pr.reviewing) return 'in-review';
-  if (pr.mergeable === 'CONFLICTING') return 'has-conflicts';
-  if (pr.ciStatus === 'failing') return 'ci-failing';
-  // Before Changes Requested: feedback still owed is the author's work, while a request with
-  // every comment answered waits on the reviewer.
-  if (pr.owedFeedback) return 'has-comments';
-  if (pr.reviewDecision === 'CHANGES_REQUESTED') return 'changes-requested';
-  // A draft is not a lane: it sits in the lane for its real state and carries a Draft badge,
-  // and the Drafts chip decides whether it is listed at all.
-  if (pr.reviewDecision === 'APPROVED' && (pr.ciStatus === 'passing' || pr.ciStatus === 'none'))
-    return 'approved';
-  return 'awaiting-review';
-}
-
-// Every problem a PR has, independent of its lane, in mineColumn's precedence order.
-export function prIssues(pr) {
-  if (pr.state === 'MERGED') return [];
-  if (pr.hydrated === false) {
-    const out = [{ kind: 'ci-pending', label: 'CI loading', status: 'none' }];
-    if (pr.owedFeedback) out.push({ kind: 'has-comments', label: String(pr.owedFeedback).split(',')[0], status: 'warn' });
-    return out;
-  }
-  const out = [];
-  if (pr.mergeable === 'CONFLICTING') out.push({ kind: 'conflicts', label: 'Conflicts', status: 'fail' });
-  if (pr.ciStatus === 'failing') out.push({ kind: 'ci-failing', label: 'CI failing', status: 'fail' });
-  else if (pr.ciStatus === 'pending') out.push({ kind: 'ci-running', label: 'CI running', status: 'running' });
-  else if (pr.ciUnknown) out.push({ kind: 'ci-unknown', label: 'CI unknown', status: 'none' });
-  if (pr.owedFeedback) out.push({ kind: 'has-comments', label: String(pr.owedFeedback).split(',')[0], status: 'warn' });
-  if (pr.reviewDecision === 'CHANGES_REQUESTED') out.push({ kind: 'changes-requested', label: 'Changes requested', status: 'warn' });
-  return out;
 }
 
 // Show-menu flag defaults
@@ -197,7 +115,7 @@ export function filterPrs(prs, filters, me) {
   // facets are _lib/filters.js facetView
   return prs.filter((pr) => {
     if (!drafts && pr.isDraft) return false;
-    if (!landed && teamColumn(pr) === 'landed') return false;
+    if (!landed && laneOf(pr, 'team') === 'landed') return false;
     return true;
   });
 }

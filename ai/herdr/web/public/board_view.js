@@ -1,5 +1,5 @@
 // Header status, filters, lanes and the compact list: the mockup's layout with prs/board.js's look; the compact list draws prs/compact.js rows.
-import { badge, h, laneTitle, tag } from './dom.js';
+import { badge, h, laneTitle, status, tag } from './dom.js';
 import { skeletonLanes } from './load_status.js';
 import { cardId } from '../../app/mods/_lib/scope.js';
 import { prPresentation } from '../../app/mods/_lib/pr_status.js';
@@ -24,20 +24,24 @@ export function compactRow(pr, { selected, onOpen, itemOf }) {
     h('div', { class: 'meta-row' }, h('span', { class: 'trunc grow' }, `${p.ref} · ${p.author}`), ...p.row_badges.map(badge)));
 }
 
-export function renderBoard(el, model, { loading, tab, selectedId, onOpen, itemOf }) {
+export function renderBoard(el, model, { loading, selectedId, onOpen, itemOf }) {
   if (loading) {
-    el.replaceChildren(...skeletonLanes(tab));
+    el.replaceChildren(...skeletonLanes(model.spec));
     return;
   }
   if (!model.columns.length) {
     el.replaceChildren(h('div', { class: 'none pad' }, 'No pull requests'));
     return;
   }
-  el.replaceChildren(...model.columns.map((c) => h('section', { class: 'col' },
-    laneTitle(c.label, c.items.length),
-    h('div', { class: 'lane', dataset: { scroll: `lane-${c.key}` } },
-      c.items.length ? c.items.map((pr) => card(pr, { selected: cardId(pr) === selectedId, onOpen, itemOf }))
-        : h('div', { class: 'none' }, 'None')))));
+  el.replaceChildren(...model.columns.map((c) => {
+    const err = c.status === 'error' ? [status('fail', c.message, { role: 'body' })] : [];
+    const rows = c.items.length
+      ? c.items.map((pr) => card(pr, { selected: cardId(pr) === selectedId, onOpen, itemOf }))
+      : [h('div', { class: 'none' }, c.status === 'loading' ? c.message : 'None')];
+    return h('section', { class: 'col' },
+      laneTitle(c.label, c.items.length, c),
+      h('div', { class: 'lane', dataset: { scroll: `lane-${c.key}` } }, ...err, ...rows));
+  }));
 }
 
 export function renderSections(el, model, { loading, collapsed, onToggleSection, selectedId, onOpen, itemOf }) {
@@ -45,9 +49,21 @@ export function renderSections(el, model, { loading, collapsed, onToggleSection,
     el.replaceChildren(h('div', { class: 'none pad' }, loading ? 'Loading…' : 'No pull requests'));
     return;
   }
-  el.replaceChildren(...model.sections.map((s) => h('section', { class: 'msec' },
-    h('button', { 'aria-expanded': collapsed.has(s.key) ? 'false' : 'true', onclick: () => onToggleSection(s.key) },
-      `${collapsed.has(s.key) ? '▸' : '▾'} ${s.label}`, h('span', { class: 'meta-text' }, String(s.count))),
-    collapsed.has(s.key) ? null
-      : h('div', { class: 'mlist' }, s.items.map((pr) => compactRow(pr, { selected: cardId(pr) === selectedId, onOpen, itemOf }))))));
+  el.replaceChildren(...model.sections.map((s) => {
+    const count = s.status === 'ready' || s.status == null
+      ? h('span', { class: 'meta-text' }, String(s.count))
+      : status(s.status === 'loading' ? 'running' : 'fail', null, { aria: s.message });
+    let body = null;
+    if (!collapsed.has(s.key)) {
+      const rows = s.items.map((pr) => compactRow(pr, { selected: cardId(pr) === selectedId, onOpen, itemOf }));
+      const empty = !s.items.length && s.status && s.status !== 'ready'
+        ? [s.status === 'error' ? status('fail', s.message, { role: 'body' }) : h('div', { class: 'none' }, s.message)]
+        : [];
+      body = h('div', { class: 'mlist' }, ...empty, ...rows);
+    }
+    return h('section', { class: 'msec' },
+      h('button', { 'aria-expanded': collapsed.has(s.key) ? 'false' : 'true', onclick: () => onToggleSection(s.key) },
+        `${collapsed.has(s.key) ? '▸' : '▾'} ${s.label}`, count),
+      body);
+  }));
 }

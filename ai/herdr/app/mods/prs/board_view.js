@@ -7,19 +7,15 @@ import {
   exec, spaces, panes, focused, shared, setShared, watchFolder, theme, run, props, layout,
 } from "herdr";
 import { locate } from "./_lib/location.js";
-import { fullscreenState, isPanelCopy } from "./_lib/fullscreen.js";
+import { fullscreenState, isPanelCopy, panelShown } from "./_lib/fullscreen.js";
 import { enterFullscreen, exitFullscreen } from "./_lib/fullscreen_run.js";
-import { boardState, cardId, friendlyError, repoId, representatives, spaceTargets, staleKeys } from "./_lib/scope.js";
+import { cardId, friendlyError, spaceTargets } from "./_lib/scope.js";
 import { LOAD_DELAY_MS, loadState, errorsStatus } from "./_lib/load_state.js";
 import { runStatus } from "./_lib/batch.js";
-import { checkTools, loadTerminals } from "./_lib/board_data.js";
-import { pullTarget, eachByMachine, FULL_PULL_MS } from "./_lib/board_pull.js";
-import {
-  TEAM_COLUMNS, MINE_COLUMNS, columnsFor, teamColumn, mineColumn, filterPrs, filterOn,
-  isMine, groupColumns,
-} from "./_lib/columns.js";
-import { normalizeFilters, filterAction, facetView, barModel } from "./_lib/filters.js";
-import { viewOf, compactSections } from "./_lib/compact.js";
+import { createBoardStore, ctxKey, NO_WANT, FULL_PULL_MS } from "./_lib/board_store.js";
+import { boardModel, mineOpen, wantFor } from "./_lib/board_model.js";
+import { normalizeFilters, filterAction } from "./_lib/filters.js";
+import { viewOf } from "./_lib/compact.js";
 import { renderBoard } from "./board.js";
 import { loadPlaceholder, renderLoadLine, renderLoadProgress, renderLoadStrip } from "./load_status.js";
 import { renderCompact } from "./compact.js";
@@ -49,37 +45,12 @@ function targetsOf() {
   return [{ on: c.on, cwd: c.cwd }];
 }
 
-function ctxKey(ctx) {
-  return JSON.stringify({ on: ctx?.on ?? null, cwd: ctx?.cwd ?? null });
-}
-
 function filtersOf() {
   return normalizeFilters(shared("prs.filters"));
 }
 
 function tabOf() {
   return shared("prs.tab") === "mine" ? "mine" : "team";
-}
-
-// Unfiltered: the Batch form applies the shared chips itself (BatchLauncher.shown), so a selected
-// PR a chip hides still counts as hidden rather than vanishing.
-function mineOpen(state) {
-  return (state.prs ?? [])
-    .filter((p) => isMine(p, state.me) && p.state !== "MERGED" && p.state !== "CLOSED");
-}
-
-function tabBase(state, filters, tab) {
-  const me = state.me ?? "";
-  if (tab === "mine") {
-    return (state.prs ?? []).filter((p) => isMine(p, me) && (filterOn(filters, "mineDrafts") || !p.isDraft));
-  }
-  return filterPrs(state.prs ?? [], filters, me);
-}
-
-function tabView(state, filters, tab) {
-  return facetView(tabBase(state, filters, tab), filters, {
-    tab, me: state.me ?? "", loadedRepos: state.repoSlugs, authorsFrom: state.prs ?? [],
-  });
 }
 
 
@@ -91,6 +62,7 @@ export default class PrsBoard extends View {
     // The copy mounted in the side panel (not its width) decides whether it offers Full screen.
     this.inPanel = isPanelCopy(props());
     this.fsState = null;
+    this.wasShown = this.shown();
     if (this.inPanel) {
       cx.timer.every(1000, (cx) => {
         const s = fullscreenState(layout());
@@ -98,6 +70,10 @@ export default class PrsBoard extends View {
           this.fsState = s;
           cx.notify();
         }
+        // Coming on screen on Mine is entering Mine: a comments-only refresh, as showMine does.
+        const on = this.shown();
+        if (on && !this.wasShown && this.want().owed) this.refresh(cx, { listingOnly: true });
+        this.wasShown = on;
       });
     }
     this.workflows = new Workflows(cx, () => this.activeTargets());
@@ -109,11 +85,8 @@ export default class PrsBoard extends View {
     });
     this.filterBar = new FilterBar(cx);
     this.batchOpen = false;
-    this.cache = new Map();
-    this.toolsByOn = new Map();
-    this.repoByKey = new Map();
-    // Last offline→online fall-through per target, so a queued cache is not pulled every 15s.
-    this.fellAt = new Map();
+    // Every pull goes through the shared store (_lib/board_store.js); this view only schedules and draws.
+    this.store = createBoardStore({ exec, now: () => Date.now() });
     this.inflight = this.again = this.againListing = false;
     this.watchRoot = this.key = null;
     this.pollListing = false;
@@ -166,115 +139,46 @@ export default class PrsBoard extends View {
   activeTargets() {
     const all = targetsOf();
     if (scopeOf() !== "all") return all;
-    return representatives(all, (c) => this.repoByKey.get(ctxKey(c)));
+    return this.store.active(all);
   }
 
   same(key) { return this.activeTargets().some((c) => ctxKey(c) === key); }
 
-  begin(key) {
-    this.cache.set(key, { ...(this.cache.get(key) ?? {}), pulling: true });
-  }
+  // Whether this copy is on screen: the panel copy while the panel shows the PRs board; a copy opened
+  // as a tab has no visibility signal herdr gives a mod (Task 1 ruling), so it counts as shown.
+  shown() { return !this.inPanel || panelShown(layout()); }
 
-  end(key) {
-    const cur = this.cache.get(key);
-    if (!cur?.pulling) return;
-    const next = { ...cur };
-    delete next.pulling;
-    this.cache.set(key, next);
-  }
+  // What on-demand data this copy shows now (owed: Mine's Has Comments, only while on screen).
+  want() { return this.shown() ? wantFor(tabOf()) : NO_WANT; }
 
-  fail(key, error) {
-    // Rows stay; dropping `phase` lets repoPhase read the error (stale with rows, failed without).
-    const next = { ...(this.cache.get(key) ?? {}), error, stale: true };
-    delete next.phase;
-    this.cache.set(key, next);
-  }
-
-  commit(key, data, ctx, cx) {
-    this.cache.set(key, { ...data, stale: false });
-    // The watch follows the machine's reviews root, not a checkout.
-    if (ctx.on == null) this.startWatch(cx, data.reviewsRoot);
-  }
-
-  async ensureTools(ctx, key) {
-    const onKey = String(ctx.on);
-    let have = this.toolsByOn.get(onKey);
-    if (!have) {
-      const tools = await checkTools(exec, ctx);
-      if (!this.same(key)) return null;
-      if (!tools.ok) { this.fail(key, tools.error); return null; }
-      this.toolsByOn.set(onKey, have = tools.have);
-    }
-    const missing = ["pr", "gh"].filter((n) => !have[n]);
-    if (missing.length) {
-      this.fail(key, { kind: "missing-tool", tools: missing, message: missing.join(", ") });
-      return null;
-    }
-    return have;
-  }
-
-  terminalsFor(ctx, cycle) {
-    if (!cycle.has("terminals")) cycle.set("terminals", loadTerminals(exec, ctx));
-    return cycle.get("terminals");
+  stateView() {
+    return this.store.view(this.activeTargets(), scopeOf());
   }
 
   async pull(cx, listingOnly) {
-    const cycle = new Map();
     const fresh = !listingOnly && this.freshNext;
     if (!listingOnly) this.freshNext = false;
-    const targets = this.activeTargets();
-    for (const ctx of targets) this.begin(ctxKey(ctx));
     this.pullStartedAt = Date.now();
     cx.timer.after(LOAD_DELAY_MS, (cx) => cx.notify());
-    cx.notify();
-    await eachByMachine(targets, (c) => c.on, async (ctx) => {
-      const key = ctxKey(ctx);
-      try {
-        if (!ctx.cwd) {
-          this.cache.set(key, { error: { kind: "failed", message: "Not in a repository" }, stale: false });
-          return;
-        }
-        await this.pullOne(ctx, key, cx, cycle, listingOnly, fresh);
-        cx.notify();
-      } finally {
-        this.end(key);
-      }
+    await this.store.pull({
+      targets: this.activeTargets(), listingOnly, fresh,
+      want: () => this.want(),
+      isCurrent: (key) => this.same(key),
+      keep: () => [ctxOf(), ...spaceTargets(spaces(), panes())],
+    }, {
+      onChange: () => cx.notify(),
+      // The watch follows the machine's reviews root, not a checkout.
+      onCommit: (state, ctx) => { if (ctx.on == null) this.startWatch(cx, state.reviewsRoot); },
     });
-    const keep = [ctxKey(ctxOf()), ...spaceTargets(spaces(), panes()).map(ctxKey)];
-    for (const k of staleKeys(this.cache.keys(), keep)) {
-      this.cache.delete(k);
-      this.repoByKey.delete(k);
-      this.fellAt.delete(k);
-    }
   }
 
-  // What each PR is owed is read only while Mine shows, and only when the last read is older than a
-  // minute: a listing pull reads it when due.
+  // Entering Mine reads what each PR is owed (when the last read is a minute old): a comments-only
+  // refresh. Leaving it needs nothing: want() turns false, so no owed read starts and one in flight is dropped.
   showMine() {
     setShared("prs.tab", "mine");
     this.refresh(this.acx, { listingOnly: true });
   }
 
-  // One target: the `pr board` phases, each committed as it lands (_lib/board_pull.js).
-  async pullOne(ctx, key, cx, cycle, listingOnly, fresh) {
-    const prev = this.cache.get(key);
-    if (!listingOnly || !prev?.repo) {
-      const have = await this.ensureTools(ctx, key);
-      if (!have || !this.same(key)) return;
-    }
-    const terms = await this.terminalsFor(ctx, cycle);
-    if (!this.same(key)) return;
-    const done = await pullTarget(exec, ctx, prev, {
-      listingOnly, fresh, owed: tabOf() === "mine", entries: terms.entries, now: Date.now(),
-      isCurrent: () => this.same(key),
-      fellAt: this.fellAt.get(key), onFall: (t) => this.fellAt.set(key, t),
-    }, (state) => {
-      if (state.repo?.slug) this.repoByKey.set(key, repoId(state.repo));
-      this.commit(key, state, ctx, cx);
-      cx.notify();
-    });
-    if (!done.ok) this.fail(key, done.error);
-  }
 
   startWatch(cx, root) {
     if (!root || this.watchRoot === root) return;
@@ -307,9 +211,8 @@ export default class PrsBoard extends View {
     if (this.key !== scopeKey) {
       this.key = scopeKey; this.refresh(cx, { listingOnly: true });
     }
-    const states = targets.map((c) => this.cache.get(ctxKey(c)) ?? {});
     const scope = scopeOf();
-    const view = boardState(targets, states, scope);
+    const view = this.stateView();
     const load = loadState(view.repoStates, { since: this.pullStartedAt ?? null, now: Date.now() });
     const errLine = (e) => {
       const base = String(e.cwd).split("/").filter(Boolean).pop();
@@ -323,11 +226,11 @@ export default class PrsBoard extends View {
     const note = (e) => e.on_size_change((size, cx2) => this.onSize(size, cx2));
     if (this.batchOpen && tabOf() === "mine") {
       this.launcher.loaded = view.repoSlugs;
-      this.launcher.knownLabels = tabView(view, filtersOf(), "mine").options.labels;
+      this.launcher.knownLabels = this.model(view, "mine").options.labels;
       return note(renderBatchPage({
         launcher: this.launcher,
         workflows: this.workflows,
-        prs: mineOpen(view),
+        prs: mineOpen(view.prs, view.me ?? ""),
         allPrs: view.prs,
         filterBar: this.filterBar,
         onOpenPr: (pr) => this.openDetail(pr, cx, "batch"),
@@ -351,8 +254,8 @@ export default class PrsBoard extends View {
     return this.boardView(cx, targets[0], view, t, load);
   }
 
-  listed(state) {
-    return tabView(state, filtersOf(), tabOf()).list;
+  model(view, tab = tabOf()) {
+    return boardModel(view, { tab, filters: filtersOf(), scope: scopeOf() });
   }
 
   // The detail replaces the board in this same pane; Back returns. The card is looked up in the
@@ -438,16 +341,14 @@ export default class PrsBoard extends View {
 
   compactView(state, t, cx, load) {
     const tab = tabOf(), mine = tab === "mine";
-    const docSpec = columnsFor(state.columns, mine ? "mine" : "team");
-    const spec = docSpec.length ? docSpec : mine ? MINE_COLUMNS : TEAM_COLUMNS;
-    const sections = compactSections(groupColumns(this.listed(state), mine ? mineColumn : teamColumn, spec));
+    const model = this.model(state, tab);
     const empty = state.loading && !state.repos ? loadPlaceholder(load) : placeholder("No pull requests");
     return pane("prs")
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.compactHeader(state, tab, load))
       .when(Boolean(load.shown), (e) => e.child(renderLoadProgress(load)))
       .child(renderCompact({
-        sections, onOpen: (pr) => this.openDetail(pr, cx),
+        sections: model.sections, onOpen: (pr) => this.openDetail(pr, cx),
         width: this.size?.width, onBatch: mine ? (items, preset) => this.batchFor(items, preset) : null,
         empty,
         workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
@@ -463,22 +364,19 @@ export default class PrsBoard extends View {
   }
 
   boardView(cx, ctx, state, t, load) {
-    const filters = filtersOf(), tab = tabOf();
-    const fv = tabView(state, filters, tab);
-    const repos = scopeOf() === "all" ? [...(state.repoSlugs ?? [])].sort() : [];
+    const tab = tabOf();
+    const model = this.model(state, tab);
     return pane("prs")
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.header(ctx, state, tab, t, load))
       .when(Boolean(load.shown), (e) => e.child(renderLoadProgress(load)))
-      .child(this.filterBar.render(barModel(filters, {
-        tab, options: { repos, labels: fv.options.labels, authors: fv.options.authors },
-      }), (a) => this.toggleChip(a, this.acx)))
+      .child(this.filterBar.render(model.bar, (a) => this.toggleChip(a, this.acx)))
       .when(load.strip.length > 0, (e) => e.child(renderLoadStrip(load)))
       .child(renderBoard({
-        tab, prs: this.listed(state), filters, me: state.me ?? "",
+        columns: model.columns, spec: model.spec,
         onOpen: (pr) => this.openDetail(pr, cx),
-        onBatch: (items, preset) => this.batchFor(items, preset),
-        loading: Boolean(state.loading && !state.repos), columns: state.columns,
+        onBatch: tab === "mine" ? (items, preset) => this.batchFor(items, preset) : null,
+        loading: Boolean(state.loading && !state.repos),
         workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
       }));
   }

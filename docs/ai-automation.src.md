@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 894 -->
+<!-- doc-budget: 895 -->
 
 # AI Automation
 
@@ -80,7 +80,7 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   review, re-run, recover, post, dismiss, cancel, and watch. Each but cancel and watch runs
   `pr review --pr N --repo-dir DIR` as a labelled `hc` terminal; watch shows the run output in the pane and can open it as a tab.
   A Files tab lists the PR's changed files (from `gh api …/pulls/N/files`, page 1 first then the rest in parallel) and shows a file's diff inline (first 1,500 lines); files marked `linguist-generated` in `.gitattributes` sort last and are left out of the header's file and line counts; Open for Review checks the PR out with `wt switch pr:N` and selects, or opens, a space on that worktree (this machine only).
-  Mine's Batch button (with "running" beside it while runs are active) opens a Batch page: running runs with Log/Cancel/Kill, a Start form (your shown PRs by repo, under the shared filters, plus steps and AI and push options; it starts one `pr batch run` per repo), and recent runs to look back; cards show their batch state and a PR's detail has a Batch tab; run, step and item states are `_lib/batch.js` `runStatus`/`stepStatus` and `pr_status.js` `itemStatus`. Cards show state tags (Merged, In merge queue, Draft) top right and every problem as status text in any lane (× Conflicts, × CI failing, … CI running, · CI unknown, · CI loading, ! owed feedback, ! Changes requested), then a running review and the batch state; positive state (CI passing, Approved) shows only in a PR's detail, and every view reads `_lib/pr_status.js` `prPresentation`, the twin of `pr board`'s per-row `presentation`; a draft keeps its real CI. Status is fetched in concurrent batches. The web publishes each repo as it loads and shows every problem except owed feedback. The lanes and each lane's Batch shortcut are described in `ai/herdr/app/mods/AGENTS.md`. While repos load, after a second the header reads "… Loading N of M repos" over a thin progress line, a strip beside the filters marks each repo queued (·), loading (…), stale (!) or failed (×); the header's stale · age, failed or N failed is `_lib/load_state.js` `errorsStatus`, shared with the web, and lanes show static dashed placeholders until the first repo lands.
+  Mine's Batch button (with "running" beside it while runs are active) opens a Batch page: running runs with Log/Cancel/Kill, a Start form (your shown PRs by repo, under the shared filters, plus steps and AI and push options; it starts one `pr batch run` per repo), and recent runs to look back; cards show their batch state and a PR's detail has a Batch tab; run, step and item states are `_lib/batch.js` `runStatus`/`stepStatus` and `pr_status.js` `itemStatus`. Cards show state tags (Merged, In merge queue, Draft) top right and every problem as status text in any lane (× Conflicts, × CI failing, … CI running, · CI unknown, · CI loading, ! owed feedback, ! Changes requested), then a running review and the batch state; positive state (CI passing, Approved) shows only in a PR's detail, and every view reads `_lib/pr_status.js` `presentationOf` on `pr board`'s per-row `presentation`; a draft keeps its real CI. Status is fetched in concurrent batches. The web reads the same `pr board` document through the same `_lib` store and model, so it shows owed feedback and lanes as the app does, and publishes each repo as it loads. Owed (Has Comments) is read only while a view shows Mine and is on screen; until it lands the lane reads "Loading comments…", and a failed read shows its reason. The lanes and each lane's Batch shortcut are described in `ai/herdr/app/mods/AGENTS.md`. While repos load, after a second the header reads "… Loading N of M repos" over a thin progress line, a strip beside the filters marks each repo queued (·), loading (…), stale (!) or failed (×); the header's stale · age, failed or N failed is `_lib/load_state.js` `errorsStatus`, shared with the web, and lanes show static dashed placeholders until the first repo lands.
 - **PR board on the web** (`ai/herdr/web/`): the same board in a browser or on a phone, for the repos the
   agent's herdr-core terminals sit in. A Bun server (`bun ai/herdr/web/server/main.js`) reuses
   `ai/herdr/app/mods/_lib/` for every fetch and decision, binds `127.0.0.1`, and requires its access
@@ -142,7 +142,7 @@ bun DIR/ai/herdr/web/server/main.js
 Bun ≥ 1.2; tested with the version in `DIR/ai/herdr/web/.bun-version` (`1.4.2`, the homelab's
 `ovis_bun_version`). Working directory irrelevant. Logs to stdout/stderr (journal): one start line
 `pr-board <version> listening on http://<host>:<port>`, tool-check warnings, refresh failures. Exits 2 on a
-bad configuration (message on stderr), 0 on SIGTERM/SIGINT. No network at start: the first `gh` call
+bad configuration (message on stderr), 0 on SIGTERM/SIGINT. No network at start: the first tool call
 happens on the first pull, which runs only once a page connects.
 
 **8.3 Environment**
@@ -173,13 +173,15 @@ All resolved through `PATH` (except `hc` → `PR_BOARD_HC`), run as the agent:
 | Tool | Calls (phase) |
 |---|---|
 | `hc` / `herdr-core` | `ls --json` (repo discovery, 1), `ls --json --label otto.app=pr` + `get <t> --json` (busy, 1), `run --bg --json …` (2, 3, 4), `get <t> --json` (run follow-up, 2), `read <t> --lines 80` (2, 4), `kill <t>` (2), `exec --json --on …` (remote targets only) |
-| `gh` | `api /user`, `api /repos/<o>/<n>/pulls`, `api graphql`, `api …/files`, patch pages (1); via `wt` (3) |
-| `git` | `remote get-url origin`, `check-attr -z linguist-generated` (1) |
-| `pr` | `pr board --schema-version 1 --checkout DIR --phase listing\|status\|owed [--offline] [--if-changed STAMP]` (the app: one per target, serialized; the web still reads the rows below itself), `pr review --list --schema-version 1`, `pr review --list --schema-version 1 --if-changed STAMP`, `pr batch status --full --offline` (1); `pr review` inside launched terminals (2); `pr batch status --list --schema-version 2`, `pr batch status RUN --full --offline --schema-version 2`, `pr batch cancel --kill RUN --schema-version 2` (4); `pr batch run --checkout DIR --prs KEYS --steps STEPS --with-review --with-ai STEPS --auto-publish ff --select SEL` inside launched terminals (4) |
+| `gh` | `api …/files`, patch pages (1); `pr board` runs its own `gh` calls as its children; via `wt` (3) |
+| `git` | `check-attr -z linguist-generated` (1) |
+| `pr` | `pr board --schema-version 1 --checkout DIR --phase listing\|status\|owed [--offline] [--if-changed STAMP]` (app and web: one per target per pull, serialized per machine; `owed` only while a page shows Mine, at most once a minute per repo) (1); `pr review` inside launched terminals (2); `pr batch status --list --schema-version 2`, `pr batch status RUN --full --offline --schema-version 2`, `pr batch cancel --kill RUN --schema-version 2` (4); `pr batch run --checkout DIR --prs KEYS --steps STEPS --with-review --with-ai STEPS --auto-publish ff --select SEL` inside launched terminals (4) |
 | `tail` | `tail -n 200 <step log path>` (4; path from `pr batch status`) |
 | `wt` | `switch pr:<n> --no-cd --format json` (3) |
 | `sh` | `sh -c 'command -v pr; command -v gh; command -v wt; true'` (1) |
 | `pi` | started by herdr-core in the Open-for-Review terminal (3) — resolved by the **core's** PATH |
+
+The agent's `pr` must be at or after `d42eb4152` (`pr board --offline`); an older `pr` shows as `outdated` on every repo, never a partial board. Each `pr board` can run up to 4 `gh` children that `PR_BOARD_MAX_PROCS` does not bound.
 
 **Requirement on herdr-core's environment (homelab side).** Terminals started by `hc run` get the core's
 environment, not the board's, and local runs are not PATH-wrapped by `hcRunArgv`/`hcBatchArgv` (only remote
@@ -196,17 +198,16 @@ spawn need (the same credentials reviews already use). Check as the agent:
   `/api/board`. A deploy must fail if either is not `401`. (`/login.css` is public by design; do not probe
   it for `401`.)
 - `curl -s -H "Authorization: Bearer $PR_BOARD_TOKEN" http://127.0.0.1:$PR_BOARD_PORT/api/board` → `200`.
-- SSE: `/api/events` sends a `: ping` comment every 15 s; Bun's idle timeout is set to 60 s. Caddy flushes
+- SSE: `/api/events?view=team|mine` (the page's tab; anything else is 400) sends a `: ping` comment every 15 s; Bun's idle timeout is set to 60 s. Caddy flushes
   `text/event-stream` immediately; no `flush_interval` change needed.
 
 **8.6 Memory**
 
 Expected: server RSS 50–100 MB steady with a loaded board (Bun runtime + snapshot of a few hundred PRs ≈ 1–2 MB + files cache
-for ≤ 10 PRs). Measured empty, Bun 1.4.4: ≈ 39 MB idle, ≈ 41 MB with a page and SSE client. Children run inside the unit's cgroup: `pr review --list` (Python, ≈ 60–100 MB while it
-runs), `pr batch status` (Python, phase 4, every 15 s per machine while a page is connected), `gh`
+for ≤ 10 PRs). Measured empty, Bun 1.4.4: ≈ 39 MB idle, ≈ 41 MB with a page and SSE client. Children run inside the unit's cgroup: `pr board` (Python, ≈ 60–100 MB per running phase, with up to 4 `gh` children of its own that `PR_BOARD_MAX_PROCS` does not bound; the `owed` phase runs only while a page shows Mine, so a Team-only or idle board never pays for it), `pr batch status` (Python, phase 4, every 15 s per machine while a page is connected), `gh`
 (≈ 20–30 MB each), `git`, bounded by `PR_BOARD_MAX_PROCS=4`. Peak cgroup ≈ 250–300 MB during a full pull.
 Recommendation: `MemoryMax=384M`, `OOMPolicy=stop`. Terminals launched with `hc run` (reviews, batch runs,
-pi) live in herdr-core's cgroup, not the board's. Phase 1 measures and records actual figures in the PR.
+pi) live in herdr-core's cgroup, not the board's. Not re-measured after the shared store; Phase 1's figures stand until Task 11 measures.
 
 **8.7 Behaviour the unit should know**
 
@@ -214,7 +215,7 @@ pi) live in herdr-core's cgroup, not the board's. Phase 1 measures and records a
 - Restart: stateless (`actions.jsonl` arrives in a later phase); `Restart=on-failure` is safe. Sessions survive restarts
   (cookie derived from the token). A restart forgets which batch terminal belongs to which repo (the Log
   button), not the runs themselves: those are `pr batch`'s state.
-- Polling (board and batch) stops when no page is connected; an idle instance makes no `gh` or `pr` calls.
+- Polling (board and batch) stops when no page is connected; an idle instance makes no `gh` or `pr` calls; owed (`pr board --phase owed`) runs only while a connected page shows Mine.
 - The session cookie gets `Secure` only when the request carries `X-Forwarded-Proto: https`, which Caddy's `reverse_proxy` sends by default.
 
 ## Configuration

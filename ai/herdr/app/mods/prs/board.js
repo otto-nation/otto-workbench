@@ -1,14 +1,12 @@
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
-import { columnsFor, teamColumn, mineColumn, TEAM_COLUMNS, MINE_COLUMNS, filterPrs, filterOn, isMine, groupColumns, visibleColumns } from "./_lib/columns.js";
-import { columnPreset } from "./_lib/batch_launch.js";
 import { prPresentation } from "./_lib/pr_status.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
 import {
   button, badgeRow, statsRow, card, placeholder, scrollBody,
-  laneTitle, tag, text, type,
+  laneTitle, tag, text, type, errorLine,
 } from "./_ui/ui.js";
 import { skeletonLanes } from "./load_status.js";
 
@@ -17,44 +15,35 @@ const { colMin: COL_MIN, colMax: COL_MAX } = LAYOUT;
 function column(col, opts) {
   const t = theme();
   const empty = !col.items.length;
+  const waiting = col.status !== "ready" && col.status != null;
   return v_flex().id(`col-${col.key}`).h_full().min_h(0).rounded(RADIUS.card).bg(`${t.raised}${FILL.lane}`)
     .flex_1().min_w(COL_MIN).max_w(COL_MAX)
-    .child(laneTitle(col.label, col.items.length, batchAction(col, opts.onBatch)))
+    .child(laneTitle(col.label, col.items.length, batchAction(col, opts.onBatch), { status: col.status, message: col.message }))
     .child(scrollBody().p(SP.sm).gap(SP.sm)
-      .when(empty, (e) => e.child(placeholder("None").px(SP.md)))
+      // The lane's own state first: an empty lane still loading never reads as "None".
+      .when(col.status === "error", (e) => e.child(errorLine(col.message).px(SP.md)))
+      .when(empty && col.status === "loading", (e) => e.child(placeholder(col.message).px(SP.md)))
+      .when(empty && !waiting, (e) => e.child(placeholder("None").px(SP.md)))
       .children(col.items.map((pr) => renderCard(pr, opts))));
 }
 
-// A Mine column a batch step can move PRs out of offers a shortcut to the Batch page with its
-// PRs and that step set up (COLUMN_BATCH); an empty column, or one waiting on others, offers none.
-export function batchAction(col, onBatch) {
-  const preset = columnPreset(col);
-  if (!onBatch || !preset) return null;
-  return button(`batch-${col.key}`, "Batch", () => onBatch(col.items, preset));
+// A Mine lane a batch step can move PRs out of offers a shortcut to the Batch page with its PRs
+// and that step set up; which lanes do is _lib/board_model.js `batch` (COLUMN_BATCH).
+export function batchAction(lane, onBatch) {
+  if (!onBatch || !lane.batch) return null;
+  return button(`batch-${lane.key}`, "Batch", () => onBatch(lane.items, lane.batch));
 }
 
-export function renderBoard({
-  tab, prs, filters, me, onOpen, loading, workflowOf, onBatch, columns = null,
-}) {
+// `columns` and `spec` are _lib/board_model.js boardModel's shown lanes and lane order.
+export function renderBoard({ columns, spec, loading, onOpen, onBatch, workflowOf }) {
   const t = theme();
-  const mine = tab === "mine";
-  const list = mine
-    ? prs.filter((p) => isMine(p, me) && (filterOn(filters, "mineDrafts") || !p.isDraft))
-    : filterPrs(prs, filters, me);
-  // The document's columns when one has landed; the static list labels the lanes before the first.
-  const fromDoc = columnsFor(columns, mine ? "mine" : "team");
-  const spec = fromDoc.length ? fromDoc : mine ? MINE_COLUMNS : TEAM_COLUMNS;
-  const cols = groupColumns(list, mine ? mineColumn : teamColumn, spec);
-  const shown = visibleColumns(cols, filterOn(filters, "empty"));
   const board = type(h_flex().id("prs-board").flex_1().h_full().min_h(0).min_w(0).gap(SP.sm).px(SP.lg).py(SP.sm)
     .bg(t.background).text_color(t.foreground).overflow_x_scrollbar(), "body");
   if (loading) return board.children(skeletonLanes(spec));
-  if (!shown.length) {
+  if (!columns.length) {
     return board.child(placeholder("No pull requests").p(SP.lg));
   }
-  return board.children(shown.map((c) => column(c, {
-    onOpen, workflowOf, onBatch: mine ? onBatch : null,
-  })));
+  return board.children(columns.map((c) => column(c, { onOpen, workflowOf, onBatch })));
 }
 
 export function renderCard(pr, { onOpen, workflowOf }) {

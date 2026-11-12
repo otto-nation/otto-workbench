@@ -11,11 +11,19 @@ setup() {
 }
 teardown() { common_teardown; }
 
-VIEW_FIX='const pr = (n, o = {}) => ({ number: n, repoSlug: "acme/box", title: "t" + n, author: "bob", viewer: "ada", branch: "b", state: "OPEN",
+VIEW_FIX='const fs = await import("node:fs");
+const bd = await import(L + "/board_doc.js");
+const doc = JSON.parse(fs.readFileSync(W + "/../../../tests/fixtures/board_document.json", "utf8"));
+const rows = doc.rows.map(bd.rowToPr).map((p) => ({ ...p, repoSlug: "acme/box", viewer: doc.viewer }));
+const kit = rows.map((p) => ({ ...p, repoSlug: "acme/kit", number: p.number + 100, labels: ["infra"], author: p.number === 8 ? "dependabot[bot]" : p.author }));
+const snap = { me: doc.viewer, repoSlugs: ["acme/box", "acme/kit"], prs: [...rows, ...kit], columns: doc.columns };
+const pr = (n, o = {}) => ({ number: n, repoSlug: "acme/box", title: "t" + n, author: "bob", viewer: "ada", branch: "b", state: "OPEN",
   isDraft: false, inMergeQueue: false, mergeable: "MERGEABLE", ciStatus: "passing", reviewDecision: null, myReviewState: null,
-  isRequestedReviewer: false, hasNewChangesSinceReview: false, reviewing: false, reviewRuns: [], labels: [], busy: false, ...o });
-const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2, { isDraft: true }), pr(3, { author: "ada", mergeable: "CONFLICTING" }),
-  pr(4, { repoSlug: "acme/kit", author: "cy" }), pr(5, { state: "MERGED" }), pr(6, { author: "ada", isDraft: true })] };'
+  isRequestedReviewer: false, hasNewChangesSinceReview: false, reviewing: false, reviewRuns: [], labels: [], busy: false, ...o });'
+
+PRES_FIX='const fs = await import("node:fs");
+const fx = JSON.parse(fs.readFileSync(W + "/../../../tests/fixtures/board_presentation.json", "utf8"));
+const docRow = (name) => ({ presentation: fx.cases.find((c) => c.name === name).document_presentation });'
 
 @test "view: filter defaults come from _lib DEFAULT_FILTERS (drafts hidden on both tabs), not a restated copy" {
   _web "const v = await import(W + '/lib/view.js'); const c = await import(L + '/columns.js');
@@ -32,17 +40,17 @@ const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2
         out({ cols: m.columns.map((c) => c.key + ':' + c.items.map((p) => p.number).join(',')), kit: k.columns.flatMap((c) => c.items.map((p) => p.number)),
               authors: m.authors, repos: m.repoSlugs, count: [m.filterCount, k.filterCount], ui: Object.keys(v.DEFAULT_UI) });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"cols":["open:1,3,4"],"kit":[4],"authors":["bob","cy"],"repos":["acme/box","acme/kit"],"count":[0,1],"ui":["tab","theme","filters"]}' ]
+  [ "$output" = '{"cols":["open:8,108","reviewed:7,107"],"kit":[108,107],"authors":["dependabot[bot]","pat","you"],"repos":["acme/box","acme/kit"],"count":[0,1],"ui":["tab","theme","filters"]}' ]
 }
 
-@test "view: mine tab buckets the viewer's PRs with MINE_COLUMNS; drafts hidden by default, shown with the Drafts chip in the lane for their real state" {
+@test "view: mine tab buckets the viewer's PRs from the document; Has Comments is the owed lane" {
   _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
         const off = v.boardModel(snap, { ...v.DEFAULT_UI, tab: 'mine' });
         const on = v.boardModel(snap, v.toggleFilter({ ...v.DEFAULT_UI, tab: 'mine' }, 'mineDrafts'));
         const stored = v.boardModel(snap, { ...v.DEFAULT_UI, tab: 'mine', filters: { ...v.DEFAULT_UI.filters, mineDrafts: true } });
         out([off.columns.map((c) => c.key), off.sections.map((s) => s.key + ':' + s.count), on.columns.map((c) => c.key), on.sections.map((s) => s.key + ':' + s.count), stored.columns.map((c) => c.key)]);"
   [ "$status" -eq 0 ]
-  [ "$output" = '[["has-conflicts"],["has-conflicts:1"],["has-conflicts","awaiting-review"],["has-conflicts:1","awaiting-review:1"],["has-conflicts","awaiting-review"]]' ]
+  [ "$output" = '[["has-comments"],["has-comments:2"],["has-comments"],["has-comments:2"],["has-comments"]]' ]
 }
 
 @test "view: toggleFilter is immutable and counts every chip off its default, including Drafts" {
@@ -54,7 +62,7 @@ const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2
         out([a.filters.authors, b.filters.authors, b.filters.repos, b.filters.landed, c.filters.authors,
              v.boardModel(snap, b).filterCount, v.boardModel(snap, d).filterCount, v.boardModel(snap, m).filterCount]);"
   [ "$status" -eq 0 ]
-  [ "$output" = '[[],["bob"],["acme/box"],true,[],3,1,1]' ]
+  [ "$output" = '[[],["bob"],["acme/box"],true,[],2,1,1]' ]
 }
 
 @test "view: boardModel exclude facets, hideBots, and stale author include; bar keys per tab" {
@@ -67,46 +75,44 @@ const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2
         const nums = (m) => m.columns.flatMap((c) => c.items.map((p) => p.number)).sort((a, b) => a - b);
         out([nums(team), nums(mine), team.bar.tags.map((t) => t.text), team.bar.facets.map((f) => f.key), mine.bar.facets.map((f) => f.key)]);"
   [ "$status" -eq 0 ]
-  [ "$output" = '[[1,3],[3],["not kit","not bug","not cy","Bots hidden"],["show","repos","labels","authors"],["show","repos","labels"]]' ]
+  [ "$output" = '[[7,8],[7],["not kit","not bug","not cy","Bots hidden"],["show","repos","labels","authors"],["show","repos","labels"]]' ]
 }
 
 @test "view: card badges are text, status or tag (never pills), as prPresentation().badges" {
-  _web "$VIEW_FIX const m = await import(L + '/pr_status.js');
-        const p = pr(1, { isDraft: true, state: 'OPEN', inMergeQueue: true, mergeable: 'CONFLICTING', ciStatus: 'failing', reviewDecision: 'CHANGES_REQUESTED', busy: true, reviewRuns: [{}, {}], labels: ['a', 'b', 'c'] });
-        out(m.prPresentation(p).badges);"
+  _web "$PRES_FIX const m = await import(L + '/pr_status.js');
+        out(m.prPresentation(docRow('draft, conflicts, failing CI, changes requested, owed feedback')).badges);"
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"kind":"status","status":"fail","text":"Conflicts"},{"kind":"status","status":"fail","text":"CI failing"},{"kind":"status","status":"warn","text":"Changes requested"},{"kind":"status","status":"running","text":"Batch · working"},{"kind":"text","status":null,"text":"2 reviews"},{"kind":"tag","status":null,"text":"a"},{"kind":"tag","status":null,"text":"b"}]' ]
+  [ "$output" = '[{"kind":"status","status":"fail","text":"Conflicts"},{"kind":"status","status":"fail","text":"CI failing"},{"kind":"status","status":"warn","text":"2 unresolved threads"},{"kind":"status","status":"warn","text":"Changes requested"},{"kind":"text","status":null,"text":"2 reviews"},{"kind":"tag","status":null,"text":"infra"},{"kind":"tag","status":null,"text":"ui"}]' ]
 }
 
 @test "view: ciUnknown is a CI unknown status badge" {
-  _web "$VIEW_FIX const m = await import(L + '/pr_status.js');
-        const s = await import(W + '/lib/snapshot.js');
-        const p = pr(1, { ciUnknown: true, ciStatus: 'none' });
-        const shot = s.toSnapshot({ prs: [p] }, { name: 'n', version: '1' });
-        out(m.prPresentation(shot.prs[0]).badges);"
+  _web "$PRES_FIX const m = await import(L + '/pr_status.js');
+        out(m.prPresentation(docRow('CI unknown')).badges);"
   [ "$status" -eq 0 ]
   [ "$output" = '[{"kind":"status","status":"none","text":"CI unknown"}]' ]
 }
 
 @test "view: toSnapshot whitelists repoStates and stringifies error" {
   _web "const s = await import(W + '/lib/snapshot.js');
-        const shot = s.toSnapshot({
-          repoStates: [{ slug: 'acme/x', folder: 'x', on: null, phase: 'failed', partial: false, updatedAt: 1,
-            error: { message: 'boom' }, cwd: '/w/x', extra: 'nope' }],
-        }, { name: 'n', version: '1' });
-        const row = shot.repoStates[0];
-        out({ keys: Object.keys(row).sort(), cwd: 'cwd' in row, extra: 'extra' in row, error: row.error });"
+        const cols = [{ board: 'team', key: 'open', label: 'Open', order: 0 }];
+        const withCols = s.toSnapshot({ columns: cols, repoStates: [{ slug: 'acme/x', folder: 'x', on: null, phase: 'failed', partial: false, updatedAt: 1,
+          error: { message: 'boom' }, cwd: '/w/x', extra: 'nope', owed: { state: 'error', error: { kind: 'auth' } } }] }, { name: 'srv', version: '1' });
+        const empty = s.toSnapshot(null, { name: 'n', version: '1' });
+        const idle = s.toSnapshot({ repoStates: [{ slug: 'acme/x', folder: 'x', on: null, phase: 'loaded', partial: false, updatedAt: 1, error: null }] }, { name: 'n', version: '1' });
+        const row = withCols.repoStates[0];
+        out({ keys: Object.keys(row).sort(), cwd: 'cwd' in row, extra: 'extra' in row, error: row.error, columns: withCols.columns, empty: empty.columns, owed: row.owed, idle: idle.repoStates[0].owed });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"keys":["error","folder","on","partial","phase","slug","updatedAt"],"cwd":false,"extra":false,"error":"boom"}' ]
+  [ "$output" = '{"keys":["error","folder","on","owed","partial","phase","slug","updatedAt"],"cwd":false,"extra":false,"error":"boom","columns":[{"board":"team","key":"open","label":"Open","order":0}],"empty":[],"owed":{"state":"error","error":"run gh auth login on srv"},"idle":{"state":"idle","error":null}}' ]
 }
 
 @test "view: state tags (Merged, In merge queue, Draft) are presentation tags, not badges" {
-  _web "$VIEW_FIX const m = await import(L + '/pr_status.js');
-        const p = pr(1, { state: 'MERGED', isDraft: true });
-        const pres = m.prPresentation(p);
-        out([pres.tags, pres.badges.some((b) => b.text === 'Draft' || b.text === 'Merged')]);"
+  _web "$PRES_FIX const m = await import(L + '/pr_status.js');
+        const names = ['merged', 'in merge queue', 'draft, conflicts, failing CI, changes requested, owed feedback', 'batch busy without a run item'];
+        const pres = names.map((n) => m.prPresentation(docRow(n)));
+        const state = new Set(['Draft', 'Merged', 'In merge queue']);
+        out([pres.map((p) => p.tags), pres.some((p) => p.badges.some((b) => state.has(b.text)))]);"
   [ "$status" -eq 0 ]
-  [ "$output" = '[["Merged","Draft"],false]' ]
+  [ "$output" = '[[["Merged"],["In merge queue"],["Draft"],[]],false]' ]
 }
 
 @test "view: h() puts untrusted text in a text node, never innerHTML" {
@@ -140,7 +146,7 @@ const snap = { me: "ada", repoSlugs: ["acme/box", "acme/kit"], prs: [pr(1), pr(2
         const ui = { ...v.DEFAULT_UI, filters: { ...v.DEFAULT_UI.filters, empty: 'yes' } };
         out(v.boardModel(snap, ui).columns.map((c) => c.key));"
   [ "$status" -eq 0 ]
-  [ "$output" = '["open"]' ]
+  [ "$output" = '["open","reviewed"]' ]
 }
 
 @test "view: prUrl accepts only credential-free https; host is a hostname" {
@@ -223,38 +229,34 @@ FAKE_DOM='class N {}
         es.fire("error"); es.fire("error");
         out({ afterErrors, threw, got, fetches, url: es.url });'
   [ "$status" -eq 0 ]
-  [ "$output" = '{"afterErrors":1,"threw":false,"got":[{"ok":1}],"fetches":["/api/board","/api/board"],"url":"/api/events"}' ]
+  [ "$output" = '{"afterErrors":1,"threw":false,"got":[{"ok":1}],"fetches":["/api/board","/api/board"],"url":"/api/events?view=team"}' ]
 }
 
 @test "view: status wide adds class wide; skeletonLanes uses column labels without a count" {
   _web "$FAKE_DOM
         const { status } = await import(W + '/public/dom.js');
         const { skeletonLanes } = await import(W + '/public/load_status.js');
-        const { MINE_COLUMNS, TEAM_COLUMNS } = await import(L + '/columns.js');
         const wide = status('running', 'Loading 1 of 3 repos', { wide: true });
         const plain = status('running', 'x');
-        const mine = skeletonLanes('mine');
-        const team = skeletonLanes('team');
+        const cols = skeletonLanes([{ key: 'open', label: 'Open' }]);
         const titleKids = (col) => col.children[0].children.map((c) => c.className);
         out({
           wide: wide.className, plain: plain.className,
-          mineN: mine.length, teamN: team.length,
-          mineLabel: mine[0].children[0].children[0].children[0].text,
-          teamLabel: team[0].children[0].children[0].children[0].text,
-          wantMine: MINE_COLUMNS[0].label, wantTeam: TEAM_COLUMNS[0].label,
-          mineKeys: mine.map((c) => c.className),
-          skel: [mine[0].children[1].className, mine[0].children[2].className],
-          titleKids: titleKids(mine[0]),
+          n: cols.length,
+          label: cols[0].children[0].children[0].children[0].text,
+          keys: cols.map((c) => c.className),
+          skel: [cols[0].children[1].className, cols[0].children[2].className],
+          titleKids: titleKids(cols[0]),
         });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"wide":"status running wide","plain":"status running","mineN":9,"teamN":6,"mineLabel":"Has Conflicts","teamLabel":"Open","wantMine":"Has Conflicts","wantTeam":"Open","mineKeys":["col","col","col","col","col","col","col","col","col"],"skel":["skel","skel short"],"titleKids":["label trunc"]}' ]
+  [ "$output" = '{"wide":"status running wide","plain":"status running","n":1,"label":"Open","keys":["col"],"skel":["skel","skel short"],"titleKids":["label trunc"]}' ]
 }
 
 @test "view: renderBoard loading draws skeletons; empty not-loading is No pull requests" {
   _web "$FAKE_DOM
         const { renderBoard, renderSections } = await import(W + '/public/board_view.js');
         const board = document.createElement('div');
-        renderBoard(board, { columns: [] }, { loading: true, tab: 'team' });
+        renderBoard(board, { columns: [], spec: [{ key: 'open', label: 'Open' }, { key: 'landed', label: 'Landed' }] }, { loading: true });
         const loadingCols = board.children.map((c) => c.className);
         renderBoard(board, { columns: [] }, { loading: false });
         const empty = board.children[0].children[0].text;
@@ -265,7 +267,7 @@ FAKE_DOM='class N {}
         const noneMsg = secs.children[0].children[0].text;
         out({ loadingCols, empty, loadMsg, noneMsg });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"loadingCols":["col","col","col","col","col","col"],"empty":"No pull requests","loadMsg":"Loading…","noneMsg":"No pull requests"}' ]
+  [ "$output" = '{"loadingCols":["col","col"],"empty":"No pull requests","loadMsg":"Loading…","noneMsg":"No pull requests"}' ]
 }
 
 @test "view: renderLoad prepends a wide running line, fills progress, and paints the strip" {
@@ -294,9 +296,62 @@ FAKE_DOM='class N {}
         const { renderSections } = await import(W + '/public/board_view.js');
         const txt = (n) => n.text ?? (n.children ?? []).map(txt).join('');
         const el = document.createElement('div');
-        renderSections(el, { sections: [{ key: 'open', label: 'Open', count: 1, items: [snap.prs[2]] }] }, { loading: false, collapsed: new Set(), onOpen: () => {} });
+        renderSections(el, { sections: [{ key: 'open', label: 'Open', count: 1, items: [snap.prs[0]] }] }, { loading: false, collapsed: new Set(), onOpen: () => {} });
         const row = el.children[0].children[1].children[0];
         out([row.className, txt(row.children[0]), txt(row.children[1]), el.children[0].children[1].className]);"
   [ "$status" -eq 0 ]
-  [ "$output" = '["mrow","t3","box#3 · ada×Conflicts","mlist"]' ]
+  [ "$output" = '["mrow","Fix comments","box#7 · me!2 unresolved threads","mlist"]' ]
+}
+
+@test "view: boardModel is the shared model (lanes carry their Batch preset)" {
+  _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
+        const ui = { ...v.DEFAULT_UI, tab: 'mine' };
+        const ready = v.boardModel({ ...snap, repoStates: [{ slug: 'acme/box', on: null, error: null, owed: { state: 'ready', error: null } }] }, ui);
+        const lane = ready.lanes.find((l) => l.key === 'has-comments');
+        out({ keys: Object.keys(ready).sort(), authors: ready.authors, batch: lane.batch, status: lane.status });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"keys":["authors","bar","columns","filterCount","lanes","list","options","repoSlugs","sections","spec","tab"],"authors":["dependabot[bot]","pat","you"],"batch":{"steps":["comments"],"ai":true},"status":"ready"}' ]
+}
+
+@test "view: a loading lane shows the running glyph in its count slot and Loading comments… instead of None" {
+  _web "$FAKE_DOM
+        const { renderBoard } = await import(W + '/public/board_view.js');
+        const txt = (n) => n.text ?? (n.children ?? []).map(txt).join('');
+        const board = document.createElement('div');
+        renderBoard(board, { columns: [{ key: 'has-comments', label: 'Has Comments', items: [], status: 'loading', message: 'Loading comments…' }] }, { loading: false });
+        const title = board.children[0].children[0];
+        const slot = title.children[1];
+        const body = board.children[0].children[1];
+        out({ slotClass: slot.className, aria: slot.attrs['aria-label'], count: title.children.some((c) => c.className === 'count'), body: txt(body), none: txt(body).includes('None') });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"slotClass":"status running","aria":"Loading comments…","count":false,"body":"Loading comments…","none":false}' ]
+}
+
+@test "view: a failed lane shows × and the reason, above any PRs it still has" {
+  _web "$FAKE_DOM $VIEW_FIX
+        const { renderBoard } = await import(W + '/public/board_view.js');
+        const txt = (n) => n.text ?? (n.children ?? []).map(txt).join('');
+        const board = document.createElement('div');
+        const msg = 'Could not load comments: run gh auth login on srv';
+        renderBoard(board, { columns: [{ key: 'has-comments', label: 'Has Comments', items: [snap.prs[0]], status: 'error', message: msg }] }, { loading: false });
+        const title = board.children[0].children[0];
+        const slot = title.children[1];
+        const lane = board.children[0].children[1];
+        out({ slotClass: slot.className, aria: slot.attrs['aria-label'], first: lane.children[0].className, firstText: txt(lane.children[0]), second: lane.children[1].className });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"slotClass":"status fail","aria":"Could not load comments: run gh auth login on srv","first":"status fail body","firstText":"×Could not load comments: run gh auth login on srv","second":"card"}' ]
+}
+
+@test "view: compact sections show the same state" {
+  _web "$FAKE_DOM
+        const { renderSections } = await import(W + '/public/board_view.js');
+        const txt = (n) => n.text ?? (n.children ?? []).map(txt).join('');
+        const secs = document.createElement('div');
+        renderSections(secs, { sections: [{ key: 'has-comments', label: 'Has Comments', count: 0, items: [], status: 'loading', message: 'Loading comments…' }] }, { loading: false, collapsed: new Set() });
+        const btn = secs.children[0].children[0];
+        const slot = btn.children.find((c) => (c.className || '').startsWith('status'));
+        const body = secs.children[0].children[1];
+        out({ slotClass: slot.className, aria: slot.attrs['aria-label'], body: txt(body), count: btn.children.some((c) => c.className === 'meta-text') });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"slotClass":"status running","aria":"Loading comments…","body":"Loading comments…","count":false}' ]
 }

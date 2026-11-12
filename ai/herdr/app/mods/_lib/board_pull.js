@@ -69,23 +69,27 @@ async function step(exec, ctx, cur, phase, slot, { offline = false, entries, now
   return { state: withTerminals(next, entries), doc: read.doc };
 }
 
-// What each PR is owed, patched onto the rows; a failed read keeps the last good state.
-export async function pullOwed(exec, ctx, prev, { entries, now }, publish) {
+// Internal step of pullTarget (not exported): what each PR is owed, patched onto the rows. `wanted()` is asked again when the answer lands: a view
+// that stopped showing Has Comments meanwhile gets nothing committed (exec cannot be aborted, so the
+// read finishes and is ignored). A failed read keeps the last good rows and is reported, not hidden.
+async function pullOwed(exec, ctx, prev, { entries, now, wanted }, publish) {
   const owed = await step(exec, ctx, prev, 'owed', 'owed', { entries, now });
-  if (owed.error) return { ok: true, kept: true };
+  if (!wanted()) return { ok: true, owed: 'dropped' };
+  if (owed.error) return { ok: true, owed: 'failed', owedError: owed.error };
   publish({ ...owed.state, owedAt: now });
-  return { ok: true };
+  return { ok: true, owed: 'read' };
 }
 
 /**
- * Listing, then status, then (when `owed`) owed. `listingOnly` re-reads the cache with no GitHub
- * call and falls through to a full pull when there is nothing cached, at most once per
- * FULL_PULL_MS per target (`fellAt` / `onFall`). `fresh` ignores every stamp.
- * `isCurrent()` is asked between phases; false abandons the pull. Resolves {ok:true} or
+ * Listing, then status, then (when `owed` — a boolean or a getter asked when owed would start) owed.
+ * `listingOnly` re-reads the cache with no GitHub call and falls through to a full pull when there is
+ * nothing cached, at most once per FULL_PULL_MS per target (`fellAt` / `onFall`). `fresh` ignores every
+ * stamp. `isCurrent()` is asked between phases; false abandons the pull. Resolves {ok:true} or
  * {ok:false, error}; a repo that failed in the document is published with its error, not returned.
  */
 export async function pullTarget(exec, ctx, prev, opts, publish) {
-  const { listingOnly = false, fresh = false, owed = false, entries = [], now = Date.now() } = opts;
+  const { listingOnly = false, fresh = false, entries = [], now = Date.now() } = opts;
+  const wanted = typeof opts.owed === 'function' ? opts.owed : () => Boolean(opts.owed);
   const isCurrent = opts.isCurrent ?? (() => true);
   const base = { entries, now };
   // A fresh pull asks for every row: no stamp is sent, so nothing answers unchanged.
@@ -97,8 +101,8 @@ export async function pullTarget(exec, ctx, prev, opts, publish) {
     if (!isCurrent()) return { ok: true };
     if (r.unchanged || r.doc.repos?.[0]?.phase !== 'queued') {
       publish(r.state);
-      if (r.state.error || !owed || !owedDue(r.state.owedAt, now)) return { ok: true };
-      return pullOwed(exec, ctx, r.state, { entries, now }, publish);
+      if (r.state.error || !wanted() || !owedDue(r.state.owedAt, now)) return { ok: true };
+      return pullOwed(exec, ctx, r.state, { entries, now, wanted }, publish);
     }
     // The throttle bounds the offline→online fall-through to once per FULL_PULL_MS per target.
     if (!owedDue(opts.fellAt, now, FULL_PULL_MS)) {
@@ -120,7 +124,7 @@ export async function pullTarget(exec, ctx, prev, opts, publish) {
   if (!isCurrent()) return { ok: true };
   cur = status.state.error ? status.state : { ...status.state, phase: 'loaded' };
   publish(cur);
-  if (cur.error || !owed || !owedDue(cur.owedAt, now)) return { ok: true };
+  if (cur.error || !wanted() || !owedDue(cur.owedAt, now)) return { ok: true };
 
-  return pullOwed(exec, ctx, cur, { entries, now }, publish);
+  return pullOwed(exec, ctx, cur, { entries, now, wanted }, publish);
 }

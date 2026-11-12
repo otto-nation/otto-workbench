@@ -1,6 +1,7 @@
 /**
  * What the page receives: the merged board (scope.js boardState) with errors already in words and no
- * server paths. Pure.
+ * server paths, plus the document's column specs, which carry no paths, and each repo's owed state
+ * with its error in words. Pure.
  */
 import { friendlyError } from '../../app/mods/_lib/scope.js';
 
@@ -61,6 +62,7 @@ export function toSnapshot(view, { name, version, updatedAt = null, refreshing =
     skipped: v.skipped ?? 0,
     errors,
     prs: (v.prs ?? []).map(publicPr),
+    columns: [...(v.columns ?? [])],
     repoStates: (v.repoStates ?? []).map((r) => ({
       slug: r.slug,
       folder: r.folder,
@@ -69,6 +71,12 @@ export function toSnapshot(view, { name, version, updatedAt = null, refreshing =
       partial: r.partial,
       updatedAt: r.updatedAt,
       error: r.error == null ? null : friendlyError(r.error, r.on, 'all', name),
+      owed: {
+        state: r.owed?.state ?? 'idle',
+        error: r.owed?.error == null ? null
+          : typeof r.owed.error === 'string' ? r.owed.error
+            : friendlyError(r.owed.error, r.on, 'all', name),
+      },
     })),
   };
 }

@@ -95,12 +95,21 @@ export function statusText(kind, label, { role = "meta", aria, gap = SP.xxs } = 
   return row.accessibility_label(aria ?? kind);
 }
 
+// The count slot of a lane or section heading: the count, or while the lane's data is still loading
+// or failed, DESIGN.md's static status glyph (… running, × fail) named by the message.
+function countSlot(count, { status = 'ready', message = null } = {}) {
+  if (status === 'loading') return statusText('running', null, { aria: message ?? 'Loading' });
+  if (status === 'error') return statusText('fail', null, { aria: message ?? 'Failed' });
+  return count == null ? null : text('meta', String(count), theme().muted);
+}
+
 // section-label: sentence case, muted; a count beside it is meta.
-export function sectionLabel(label, count = null) {
+export function sectionLabel(label, count = null, state = {}) {
   const t = theme();
+  const slot = countSlot(count, state);
   return h_flex().flex_none().gap(SP.sm).items_center()
     .child(text("section", label, t.muted))
-    .when(count != null, (e) => e.child(text("meta", String(count), t.muted)));
+    .when(slot != null, (e) => e.child(slot));
 }
 
 // A page's section heading: the title role in ink, where sectionLabel is a muted 11px label.
@@ -226,11 +235,11 @@ export function popoverSurface() {
 
 // A board lane's heading: title in ink with its count in meta beside it, and an optional
 // control at the far end.
-export function laneTitle(label, count = null, action = null) {
-  const t = theme();
+export function laneTitle(label, count = null, action = null, state = {}) {
+  const slot = countSlot(count, state);
   return h_flex().flex_none().px(SP.md).py(SP.md).gap(SP.sm).items_center()
     .child(text("title", label).min_w(0).truncate())
-    .when(count != null, (e) => e.child(text("meta", String(count), t.muted)))
+    .when(slot != null, (e) => e.child(slot))
     .when(Boolean(action), (e) => e.child(div().flex_1()).child(action));
 }
 

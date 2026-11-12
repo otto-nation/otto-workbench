@@ -1,7 +1,7 @@
 """Join `pr review` listing rows onto GitHub PR records.
 
-Ports `_lib/reviews.js`. Listing rows may be `review.listing.ReviewRow`
-objects or the dicts that document emits; field names are snake_case.
+Listing rows may be `review.listing.ReviewRow` objects or the dicts that
+document emits; field names are snake_case.
 """
 
 # doc-group: board

@@ -14,8 +14,9 @@ export const postJson = (path, body) => fetch(path, {
 
 export const q = (params) => new URLSearchParams(params).toString();
 
-export function events(handlers) {
-  const es = new EventSource('/api/events');
+// The view is the tab the page shows; the server reads owed only while some page shows Mine.
+export function events(handlers, { view = 'team' } = {}) {
+  const es = new EventSource('/api/events?' + q({ view }));
   // EventSource retries on its own; a lapsed session shows as repeated errors, so ask once
   // per page load and again only after a successful message (reconnect storms otherwise).
   let probed = false;

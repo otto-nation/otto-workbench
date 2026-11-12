@@ -1,7 +1,8 @@
 // Workflows: `pr batch` runs on every machine the board reads, shown from the Batch button and a PR's Batch tab.
 import { exec, watchFolder } from "herdr";
 import {
-  listArgv, statusArgv, logTailArgv, parseRunList, parseRunDoc, stateChanged,
+  listArgv, statusArgv, reportArgv, logTailArgv, parseRunList, parseRunDoc, parseSessions,
+  stateChanged, laneOf,
 } from "./_lib/batch.js";
 import { cancelArgv, runProgress } from "./_lib/batch_launch.js";
 import { invoke, readJson } from "./_lib/board_data.js";
@@ -34,6 +35,12 @@ export class Workflows {
     this.visible = false;
     this.pinned = null;
     this.openKey = this.step = this.log = null;
+    this.sessionStamp = null;
+    this.sessionMap = null;
+    this.sessionLoading = false;
+    this.sessionError = null;
+    this.onRun = null;
+    this.onTerminal = null;
     // The log path being read, so a slow tail is not doubled by the 3 s timer; another step's
     // click still starts its own read.
     this.logInflight = null;
@@ -124,6 +131,7 @@ export class Workflows {
     if (this.machines.get(key) !== m) return;
     m.docs = next;
     m.error = err;
+    this.ensureSession(cx);
     if (m.ctx.on != null) return;
     for (const r of m.runs) {
       if (r.active && r.runDir) this.startWatch(cx, r.runDir);
@@ -262,14 +270,60 @@ export class Workflows {
     };
   }
 
+  sessionOf(key) {
+    return this.sessionMap?.get(String(key ?? "").toLowerCase()) ?? null;
+  }
+
   tabState() {
+    const hit = this.ownerOf(this.openKey);
+    const local = hit != null && hit.on == null;
     return {
       step: this.step,
       log: this.log,
       nowMs: Date.now(),
       onStep: (s) => this.selectStep(s),
-      doc: this.ownerOf(this.openKey)?.doc ?? null,
+      doc: hit?.doc ?? null,
+      session: this.sessionOf(this.openKey),
+      sessionLoading: this.sessionLoading,
+      sessionError: this.sessionError,
+      onRun: this.onRun,
+      onTerminal: local ? this.onTerminal : null,
     };
+  }
+
+  ensureSession(cx) {
+    const key = this.openKey;
+    const hit = key ? this.ownerOf(key) : null;
+    if (!hit || !hit.run?.id || laneOf(hit.item) !== "attention") {
+      this.sessionStamp = null;
+      this.sessionMap = null;
+      this.sessionLoading = false;
+      this.sessionError = null;
+      return;
+    }
+    // Findings length is a cheap staleness proxy: a re-run changes status or the
+    // count; in-place content edits within one run are not tracked.
+    const stamp = `${k(hit.on)}\0${hit.run.id}\0${key}\0${hit.item.status}\0${(hit.item.findings ?? []).length}`;
+    if (this.sessionStamp === stamp) return;
+    this.sessionStamp = stamp;
+    this.sessionLoading = true;
+    this.sessionError = null;
+    this.sessionMap = null;
+    const ctx = this.machines.get(k(hit.on))?.ctx ?? { on: hit.on, cwd: null };
+    const runId = hit.run.id;
+    cx.spawn(async (cx) => {
+      const parsed = await prParse(ctx, reportArgv(runId), parseSessions);
+      if (this.sessionStamp !== stamp) return;
+      this.sessionLoading = false;
+      if (!parsed.ok) {
+        this.sessionError = parsed.error?.message ?? "Could not read session";
+        this.sessionMap = null;
+      } else {
+        this.sessionError = null;
+        this.sessionMap = parsed.sessions;
+      }
+      cx.notify();
+    });
   }
 
   stepStatus() {
@@ -279,9 +333,13 @@ export class Workflows {
   }
 
   openItem(key) {
-    if (this.openKey === key) return;
+    if (this.openKey === key) {
+      this.ensureSession(this.acx);
+      return;
+    }
     this.openKey = key;
     this.step = this.log = null;
+    this.ensureSession(this.acx);
     this.acx.notify();
   }
 

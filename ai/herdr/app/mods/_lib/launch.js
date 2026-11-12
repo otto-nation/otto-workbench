@@ -98,6 +98,7 @@ const DONE = {
   review: 'Review', rerun: 'Review', recover: 'Recovery',
   'post-comment': 'Post', 'post-approve': 'Approval', 'post-request-changes': 'Request for changes',
   dismiss: 'Dismissal',
+  'batch-fix': 'Fix',
 };
 
 // Notification text for a finished action terminal; exitCode null means it ended without one.

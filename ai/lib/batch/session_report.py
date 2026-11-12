@@ -16,19 +16,19 @@ no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
 (`closeout owed per pr state`), never `CloseoutDebt.command` (which appends
 `--track-all` when an issue is owed).
 
-| Finding | Command |
-|---|---|
-| `conflict_handwritten` | `pr rebase --fix --no-push --repo-dir WT` |
-| `conflict_generated` | `pr rebase --fix --no-push --repo-dir WT` |
-| `stale_generated` | `git -C WT reset --hard <pre_rebase_head>` |
-| `ci_failing` | `pr ci --fix --repo-dir WT` |
-| `review_findings` | `pr review --self --fix --repo-dir WT` |
-| `threads_need_human` | `pr comments --fix --repo-dir WT` |
-| `closeout_owed` | `pr comments --finish --post --repo-dir WT` |
-| `ready_to_push` | `publish.plan` push argv |
-| `wrong_branch` | `git -C WT switch <branch>` |
-| deferred issue | `pr comments --finish --track ID… --post --repo-dir WT` (on request) |
-| open review findings | `pr review --self --track ID… --post --repo-dir WT` (on request) |
+| Finding | Command | Action |
+|---|---|---|
+| `conflict_handwritten` | `pr rebase --fix --no-push --repo-dir WT` | `rebase` |
+| `conflict_generated` | `pr rebase --fix --no-push --repo-dir WT` | `rebase_generated` |
+| `stale_generated` | `git -C WT reset --hard <pre_rebase_head>` | `undo_rebase` |
+| `ci_failing` | `pr ci --fix --repo-dir WT` | `ci` |
+| `review_findings` | `pr review --self --fix --repo-dir WT` | `review` |
+| `threads_need_human` | `pr comments --fix --repo-dir WT` | `comments` |
+| `closeout_owed` | `pr comments --finish --post --repo-dir WT` | `closeout` |
+| `ready_to_push` | `publish.plan` push argv | `push` |
+| `wrong_branch` | `git -C WT switch <branch>` | `switch_branch` |
+| deferred issue | `pr comments --finish --track ID… --post --repo-dir WT` (on request) | `file_threads_issue` |
+| open review findings | `pr review --self --track ID… --post --repo-dir WT` (on request) | `file_review_issue` |
 """
 
 # doc-group: batch
@@ -68,11 +68,12 @@ _CLOSEOUT_ARGV = tuple(shlex.split(CLOSEOUT_COMMAND))
 class SessionCommand:
     argv: tuple[str, ...]
     why: str
+    action: str
     push: bool = False
     files_issue: bool = False
 
     def to_dict(self) -> dict:
-        row: dict = {"argv": list(self.argv), "why": self.why}
+        row: dict = {"argv": list(self.argv), "why": self.why, "action": self.action}
         if self.push:
             row["push"] = True
         if self.files_issue:
@@ -112,11 +113,12 @@ class SessionEntry:
 
 def sessions(run: Run, *, closeout: CloseoutFn | None = None,
              tree: TreeFn | None = None) -> list[SessionEntry]:
-    """Focused-session entries for a settled run; empty while active or waiting."""
+    """Focused-session entries for settled items; in-flight items are skipped while running."""
+    items = run.items
     if run.status in _ACTIVE:
-        return []
+        items = [item for item in items if item.terminal]
     reader = closeout or batch.plan.closeout_debt
-    entries = [_session(run, item, reader, tree) for item in run.items
+    entries = [_session(run, item, reader, tree) for item in items
                if item.status is not ItemStatus.SKIPPED_CLOSED]
     return _order([e for e in entries if e.findings or e.commands])
 
@@ -219,6 +221,7 @@ def _commands(item: Item, findings: list[Finding],
         commands.append(SessionCommand(
             tuple(planned.plan.commands[0]),
             "push under the planned lease",
+            action="push",
             push=True,
         ))
     if filing := _filing_command(item, checkout):
@@ -232,29 +235,33 @@ def _command_for(item: Item, finding: Finding, checkout: str | None) -> SessionC
     repo = _repo_args(item, checkout)
     if finding.reason is FindingReason.CONFLICT_HANDWRITTEN and repo:
         return SessionCommand(("pr", "rebase", "--fix", "--no-push", *repo),
-                              "resolve hand-written conflicts")
+                              "resolve hand-written conflicts", action="rebase")
     if finding.reason is FindingReason.CONFLICT_GENERATED and repo:
         return SessionCommand(
             ("pr", "rebase", "--fix", "--no-push", *repo),
             "rebuild generated files, or declare `rebase.regenerate` and run `pr rebase --no-push`",
+            action="rebase_generated",
         )
     if finding.reason is FindingReason.CI_FAILING and repo:
         jobs = finding.data.get("jobs") or []
         why = f"fix failing CI ({', '.join(jobs)})" if jobs else "fix failing CI"
-        return SessionCommand(("pr", "ci", "--fix", *repo), why)
+        return SessionCommand(("pr", "ci", "--fix", *repo), why, action="ci")
     if finding.reason is FindingReason.REVIEW_FINDINGS and repo:
         return SessionCommand(("pr", "review", "--self", "--fix", *repo),
-                              "address open review findings")
+                              "address open review findings", action="review")
     if finding.reason is FindingReason.STALE_GENERATED and item.pre_rebase_head:
         if git_cmd := _git(item, checkout, "reset", "--hard", item.pre_rebase_head):
-            return SessionCommand(git_cmd, "undo the rebase, then regenerate")
+            return SessionCommand(git_cmd, "undo the rebase, then regenerate",
+                                  action="undo_rebase")
     if finding.reason is FindingReason.THREADS_NEED_HUMAN and repo:
-        return SessionCommand(("pr", "comments", "--fix", *repo), "address review comments")
+        return SessionCommand(("pr", "comments", "--fix", *repo), "address review comments",
+                              action="comments")
     if finding.reason is FindingReason.CLOSEOUT_OWED and repo:
-        return SessionCommand((*_CLOSEOUT_ARGV, *repo), CLOSEOUT_WHY)
+        return SessionCommand((*_CLOSEOUT_ARGV, *repo), CLOSEOUT_WHY, action="closeout")
     if finding.reason is FindingReason.WRONG_BRANCH:
         if git_cmd := _git(item, checkout, "switch", item.branch):
-            return SessionCommand(git_cmd, f"check out {item.branch}")
+            return SessionCommand(git_cmd, f"check out {item.branch}",
+                                  action="switch_branch")
     return None
 
 
@@ -275,6 +282,7 @@ def _review_filing_command(item: Item, findings: list[Finding],
     return SessionCommand(
         tuple(argv),
         "file tracking issues for open review findings (only on request; runs no review)",
+        action="file_review_issue",
         files_issue=True,
     )
 
@@ -297,6 +305,7 @@ def _filing_command(item: Item, checkout: str | None) -> SessionCommand | None:
     return SessionCommand(
         tuple(argv),
         "file a tracking issue for deferred threads (only on request)",
+        action="file_threads_issue",
         files_issue=True,
     )
 

@@ -66,6 +66,12 @@ _js() {
   [ "$output" = '[{"terminal":"t9","exitCode":1,"action":"review"},null,{"terminal":"t9","exitCode":1,"action":"review"}]' ]
 }
 
+@test "busyMap does not count a batch-fix terminal as reviewing" {
+  _js '(()=>{const extra={id:"t12",state:"live",labels:{"otto.pr":"o/n#12","otto.action":"batch-fix"}};const post={id:"t13",state:"live",labels:{"otto.pr":"o/n#13","otto.action":"post-comment"}};const b=m.busyMap(m.terminalsOf([...list, extra, post]),"o/n");return [[...b.keys()],b.has(12),b.get(13)];})()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[7,8,13],false,{"terminal":"t13","action":"post-comment"}]' ]
+}
+
 @test "mergePending keeps pending unless finished and does not mutate" {
   _js '(()=>{const entries=m.terminalsOf(list);const snap=JSON.stringify(entries);const busy=m.busyMap(entries,"o/n");const pending={11:"t-new",9:"t9"};const pSnap=JSON.stringify(pending);const size=busy.size;const merged=m.mergePending(busy,pending,entries);return {keys:[...merged.keys()],t11:merged.get(11),has9:merged.has(9),busySize:busy.size===size,pendingSame:JSON.stringify(pending)===pSnap,entriesSame:JSON.stringify(entries)===snap};})()'
   [ "$status" -eq 0 ]

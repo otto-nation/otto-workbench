@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import tempfile
 from pathlib import Path
 
 import batch.live
@@ -101,25 +102,38 @@ def cmd_plan(args) -> int:
     return EXIT_OK
 
 
-def write_report(run: Run, *, offline: bool) -> tuple[Path, dict]:
+def write_report(run: Run, *, offline: bool) -> tuple[Path | None, dict]:
     """Write `report.json` and `report.md` under the run dir; return the path and document.
 
     Offline skips GitHub and `peek_tree`; the tree is read from local objects.
-    A missing worktree is never probed.
+    A missing worktree is never probed. An active run returns the document
+    without writing files, so a live driver is not racing a report rewrite.
     """
     github = _github(run, offline)
     reader = batch.publish.local_tree if offline else batch.publish.peek_tree
     entries = batch.session_report.sessions(run, tree=lambda item: _tree(item, reader))
-    doc = report(run, cli.pr_batch_common.is_active(run.id), github,
-                 sessions=[e.to_dict() for e in entries])
+    active = cli.pr_batch_common.is_active(run.id)
+    doc = report(run, active, github, sessions=[e.to_dict() for e in entries])
+    if active:
+        return None, doc
     directory = batch.store.run_dir(run.id)
     directory.mkdir(parents=True, exist_ok=True)
     core.serde.write_json(directory / "report.json", doc)
     markdown = batch.report_md.render_markdown(doc)
-    tmp = directory / "report.md.tmp"
-    tmp.write_text(markdown)
     dest = directory / "report.md"
-    core.serde.replace_file(tmp, dest)
+    fd, tmp = tempfile.mkstemp(dir=directory, prefix="report.md.", suffix=".tmp")
+    try:
+        try:
+            handle = os.fdopen(fd, "w")
+        except BaseException:
+            os.close(fd)
+            raise
+        with handle:
+            handle.write(markdown)
+        core.serde.replace_file(Path(tmp), dest)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     return dest, doc
 
 
@@ -137,12 +151,13 @@ def cmd_report(args) -> int:
         core.report.emit_json(doc)
         return EXIT_OK
     if args.format == "md":
-        print(path.read_text(), end="")
+        print(batch.report_md.render_markdown(doc), end="")
         return EXIT_OK
     lines = batch.report_md.stdout_lines(doc)
     if lines:
         print(lines)
-    print(f"report: {path}")
+    if path is not None:
+        print(f"report: {path}")
     return EXIT_OK
 
 

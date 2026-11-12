@@ -55,6 +55,10 @@ export function statusArgv(runId) {
   return ['--schema-version', '2', 'batch', 'status', ...(runId ? [runId] : []), '--full', '--offline'];
 }
 
+export function reportArgv(runId) {
+  return ['--schema-version', '2', 'batch', 'report', '--format', 'json', '--offline', runId];
+}
+
 export function logTailArgv(path, n = 200) {
   return ['tail', '-n', String(n), path];
 }
@@ -114,7 +118,57 @@ function findingRec(f) {
     detail: f.detail ?? null,
     files: Array.isArray(f.files) ? f.files : [],
     logPath: f.log_path ?? null,
+    jobs: Array.isArray(f.data?.jobs) ? f.data.jobs : [],
   };
+}
+
+function commandRec(c) {
+  return {
+    argv: Array.isArray(c.argv) ? c.argv : [],
+    why: c.why ?? '',
+    action: c.action ?? null,
+    push: Boolean(c.push),
+    filesIssue: Boolean(c.files_issue),
+  };
+}
+
+export function parseSessions(doc) {
+  if (!isObj(doc) || !Array.isArray(doc.sessions)) {
+    return badJson('expected object with sessions array');
+  }
+  const sessions = new Map();
+  for (const raw of doc.sessions) {
+    if (!isObj(raw) || typeof raw.pr !== 'string') continue;
+    sessions.set(raw.pr.toLowerCase(), {
+      worktree: raw.worktree ?? null,
+      notes: Array.isArray(raw.notes) ? raw.notes : [],
+      commands: Array.isArray(raw.commands) ? raw.commands.filter(isObj).map(commandRec) : [],
+    });
+  }
+  return { ok: true, sessions };
+}
+
+export const ACTION_LABEL = Object.freeze({
+  ci: STEP_LABEL.ci,
+  comments: STEP_LABEL.comments,
+  rebase: 'Resolve conflicts',
+  rebase_generated: 'Rebuild generated files',
+  review: 'Fix review findings',
+  closeout: 'Close out comments',
+  push: 'Push',
+  switch_branch: 'Switch branch',
+  undo_rebase: 'Undo rebase',
+  file_threads_issue: 'File issue for threads',
+  file_review_issue: 'File issues for findings',
+});
+
+export function actionLabel(cmd) {
+  return ACTION_LABEL[cmd?.action] ?? 'Run';
+}
+
+export function writesGitHub(cmd) {
+  if (cmd?.push) return true;
+  return Array.isArray(cmd?.argv) && cmd.argv.includes('--post');
 }
 
 function parseItem(raw) {

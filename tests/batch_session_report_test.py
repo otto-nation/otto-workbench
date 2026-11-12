@@ -16,7 +16,8 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.session_report  # noqa: E402
-from batch.model import DecisionKind, FindingReason, ItemStatus, RunStatus, Step  # noqa: E402
+from batch.model import (DecisionKind, Finding, FindingReason, ItemStatus,  # noqa: E402
+                         RunStatus, Step)
 from batch.plan import PlanRow, StepNeed  # noqa: E402
 from batch.publish import Refusal, TreeState  # noqa: E402
 from batch.scheduler import new_run  # noqa: E402
@@ -52,6 +53,8 @@ def test_push_argv_has_full_sha_and_absolute_repo_dir(tmp_path):
     assert Path(repo_dir).is_absolute()
     assert all(tok not in c.argv for c in entries[0].commands for tok in _JOIN_CHARS)
     assert push.argv[0] == "pr"
+    assert push.action == "push"
+    assert push.to_dict()["action"] == "push"
 
 
 def test_relative_repo_dir_yields_no_checkout():
@@ -123,6 +126,7 @@ def test_closeout_command_never_track_all():
     argv = entries[0].commands[0].argv
     assert "--track-all" not in argv
     assert argv[:4] == ("pr", "comments", "--finish", "--post")
+    assert entries[0].commands[0].action == "closeout"
 
 
 def test_new_run_copies_is_draft():
@@ -133,12 +137,50 @@ def test_new_run_copies_is_draft():
     assert run.items[0].is_draft is True
 
 
-def test_waiting_and_running_runs_have_no_sessions():
-    item = make_item(1, status=ItemStatus.AWAITING_DECISION)
-    d = make_decision(DecisionKind.FAILED, "rebase", {"reason": "error"})
-    running = make_run([item], [d], status=RunStatus.RUNNING)
-    assert batch.session_report.sessions(running, closeout=no_debt, tree=None) == []
-    waiting = make_run([item], [d], status=RunStatus.WAITING)
+def test_session_commands_carry_stable_action_ids(tmp_path):
+    wt = str(tmp_path)
+    cases = [
+        (FindingReason.CONFLICT_HANDWRITTEN, "rebase", {}),
+        (FindingReason.CONFLICT_GENERATED, "rebase_generated", {}),
+        (FindingReason.CI_FAILING, "ci", {}),
+        (FindingReason.REVIEW_FINDINGS, "review", {}),
+        (FindingReason.THREADS_NEED_HUMAN, "comments", {}),
+        (FindingReason.WRONG_BRANCH, "switch_branch", {}),
+        (FindingReason.STALE_GENERATED, "undo_rebase", {"pre_rebase_head": SHA}),
+    ]
+    for reason, action, extra in cases:
+        item = make_item(1, worktree=wt, repo_dir=wt, status=ItemStatus.NEEDS_SESSION,
+                         **extra)
+        item.findings = [Finding(reason, "x")]
+        entries = batch.session_report.sessions(
+            make_run([item]), closeout=no_debt, tree=None)
+        actions = [c.action for e in entries for c in e.commands if not c.files_issue]
+        assert actions == [action]
+        assert entries[0].commands[0].to_dict()["action"] == action
+
+
+def test_running_run_sessions_only_terminal_items():
+    settled = make_item(1, status=ItemStatus.NEEDS_SESSION)
+    inflight = make_item(2, status=ItemStatus.RUNNING)
+    running = make_run(
+        [settled, inflight],
+        [
+            make_decision(DecisionKind.REBASE_CONFLICT, "rebase", {"files": ["a.go"]},
+                          id="d1", item=settled.key),
+            make_decision(DecisionKind.REBASE_CONFLICT, "rebase", {"files": ["b.go"]},
+                          id="d2", item=inflight.key),
+        ],
+        status=RunStatus.RUNNING,
+    )
+    entries = batch.session_report.sessions(running, closeout=no_debt, tree=None)
+    assert [e.pr for e in entries] == [settled.key]
+    assert [c.action for c in entries[0].commands] == ["rebase"]
+    waiting_item = make_item(1, status=ItemStatus.AWAITING_DECISION)
+    waiting = make_run(
+        [waiting_item],
+        [make_decision(DecisionKind.FAILED, "rebase", {"reason": "error"})],
+        status=RunStatus.WAITING,
+    )
     assert batch.session_report.sessions(waiting, closeout=no_debt, tree=None)
 
 

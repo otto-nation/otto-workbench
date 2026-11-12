@@ -22,7 +22,8 @@ import batch.store  # noqa: E402
 import cli.pr  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from batch_report_support import make_item, make_run  # noqa: E402
-from batch_session_support import seed_raw  # noqa: E402
+from batch.store import Role  # noqa: E402
+from batch_session_support import holding, seed_raw  # noqa: E402
 
 BIN_DIR = REPO_ROOT / "ai" / "bin"
 
@@ -50,6 +51,18 @@ def test_report_writes_files_and_prints_path(capsys):
     out = capsys.readouterr().out.strip().splitlines()
     assert out[-1] == f"report: {md}"
     assert Path(out[-1].split(" ", 1)[1]).is_absolute()
+
+
+def test_active_run_report_writes_no_files(capsys):
+    item = make_item(1)
+    run = make_run([item], status=batch.model.RunStatus.RUNNING)
+    seed_raw(run)
+    with holding(run.id, Role.DRIVER):
+        assert _main(["batch", "report", run.id, "--offline", "--format", "json"]) == 0
+    directory = batch.store.run_dir(run.id)
+    assert not (directory / "report.md").exists()
+    assert not (directory / "report.json").exists()
+    capsys.readouterr()
 
 
 def test_offline_calls_neither_github_nor_peek_tree(monkeypatch, capsys):

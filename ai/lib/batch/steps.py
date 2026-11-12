@@ -287,8 +287,12 @@ class StepProcess:
         self._out: list[str] = []
         self._kill_sent_at: float | None = None
         self.pid = popen.pid
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._log = log_path.open("w")
+        self._log_lock = threading.Lock()
+        self._readers_left = 2
         self._readers = [
-            threading.Thread(target=self._read_err, args=(log_path,), daemon=True),
+            threading.Thread(target=self._read_err, daemon=True),
             threading.Thread(target=self._read_out, daemon=True),
         ]
         for t in self._readers:
@@ -306,16 +310,32 @@ class StepProcess:
                                  start_new_session=True)
         return cls(popen, log_path)
 
-    def _read_err(self, log_path: Path) -> None:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("w") as log:
+    def _close_log(self) -> None:
+        with self._log_lock:
+            self._readers_left -= 1
+            if self._readers_left == 0:
+                self._log.close()
+
+    def _write_log(self, line: str) -> None:
+        with self._log_lock:
+            self._log.write(line)
+            self._log.flush()
+
+    def _read_err(self) -> None:
+        try:
             for line in self._popen.stderr:
-                log.write(line)
-                log.flush()
+                self._write_log(line)
                 self._lines.put(line.rstrip("\n"))
+        finally:
+            self._close_log()
 
     def _read_out(self) -> None:
-        self._out.append(self._popen.stdout.read())
+        try:
+            for line in self._popen.stdout:
+                self._out.append(line)
+                self._write_log(line)
+        finally:
+            self._close_log()
 
     def poll(self) -> int | None:
         code = self._popen.poll()

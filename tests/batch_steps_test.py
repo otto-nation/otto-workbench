@@ -87,7 +87,9 @@ def test_streams_stderr_logs_it_and_captures_stdout(tmp_path):
     assert _wait(proc) == 3
     assert proc.drain_lines() == ["one", "two"]
     assert proc.stdout().strip() == '{"ok": true}'
-    assert (tmp_path / "s.log").read_text() == "one\ntwo\n"
+    logged = (tmp_path / "s.log").read_text()
+    assert "one\n" in logged and "two\n" in logged
+    assert '{"ok": true}\n' in logged
 
 
 def test_child_has_no_stdin_no_tty_and_inherits_the_trail_root(tmp_path):

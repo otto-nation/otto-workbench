@@ -22,7 +22,7 @@ import fix.tracking
 from fix.types import FixItem
 import pr.comments
 import pr.comments_state
-import pr.fix_checkpoint as ckpt_mod
+import pr.fix_checkpoint
 import pr.settlement
 import pr.state
 from pr.comments_state import ThreadState
@@ -69,18 +69,18 @@ def _addressed(tid="t3") -> CommentItem:
     )
 
 
-def _filled(ctx, **kw) -> ckpt_mod.CommentsFixCheckpoint:
-    kw.setdefault("version", ckpt_mod.CHECKPOINT_VERSION)
-    kw.setdefault("phase", ckpt_mod.CheckpointPhase.TRIAGED)
+def _filled(ctx, **kw) -> pr.fix_checkpoint.CommentsFixCheckpoint:
+    kw.setdefault("version", pr.fix_checkpoint.CHECKPOINT_VERSION)
+    kw.setdefault("phase", pr.fix_checkpoint.CheckpointPhase.TRIAGED)
     kw.setdefault("repo", ctx.repo)
     kw.setdefault("pr", ctx.pr_number or 0)
     kw.setdefault("branch", ctx.branch)
     kw.setdefault("head_sha", ctx.head_sha)
-    ckpt = ckpt_mod.CommentsFixCheckpoint(**kw)
+    ckpt = pr.fix_checkpoint.CommentsFixCheckpoint(**kw)
     # `load` discards a checkpoint at AGENT_RUNNING or later that has no
     # `head_before`, so fill one in for those phases.
     if (
-        ckpt.phase.reached(ckpt_mod.CheckpointPhase.AGENT_RUNNING)
+        ckpt.phase.reached(pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING)
         and not ckpt.engine.head_before
     ):
         ckpt = replace(
@@ -90,7 +90,7 @@ def _filled(ctx, **kw) -> ckpt_mod.CommentsFixCheckpoint:
 
 
 def _write(ctx, ckpt) -> None:
-    assert ckpt_mod.save(ctx.target_dir, ckpt)
+    assert pr.fix_checkpoint.save(ctx.target_dir, ckpt)
 
 
 def _by_id(summary) -> dict[str, ItemOutcome]:
@@ -103,9 +103,9 @@ def _by_id(summary) -> dict[str, ItemOutcome]:
 class TestSchema:
     def test_start_records_supplied_head_sha_not_ctx(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path, head_sha="githubsha")
-        ckpt = ckpt_mod.start(ctx, head_sha="localsha")
+        ckpt = pr.fix_checkpoint.start(ctx, head_sha="localsha")
         assert ckpt.head_sha == "localsha"
-        loaded = ckpt_mod.load(tmp_path)
+        loaded = pr.fix_checkpoint.load(tmp_path)
         assert loaded is not None
         assert loaded.head_sha == "localsha"
 
@@ -113,11 +113,11 @@ class TestSchema:
         ctx = make_ctx(target_dir=tmp_path)
         original = _filled(
             ctx,
-            phase=ckpt_mod.CheckpointPhase.AGENT_RUNNING,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
             triage=TriageResult(threads=[_fixable(), _dismissed()]),
             outcomes=[ItemOutcome(id="t1", outcome=FixOutcome.FIXED, reason="held")],
             replies=ReplyOutcome(posted=2, resolved=(ThreadState.ADDRESSED,)),
-            engine=ckpt_mod.EngineProgress(
+            engine=pr.fix_checkpoint.EngineProgress(
                 answers=[ItemOutcome(id="t1", outcome=FixOutcome.FIXED)],
                 agent_files=["a.py"],
                 suite={"status": "green"},
@@ -130,9 +130,9 @@ class TestSchema:
             seen_issue_comments={11: "stamp"},
         )
         _write(ctx, original)
-        loaded = ckpt_mod.load(tmp_path)
+        loaded = pr.fix_checkpoint.load(tmp_path)
         assert loaded is not None
-        assert loaded.phase is ckpt_mod.CheckpointPhase.AGENT_RUNNING
+        assert loaded.phase is pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING
         assert loaded.triage.threads[0].id == "t1"
         assert loaded.triage.threads[0].classification is Classification.ACTIONABLE_SUGGESTION
         assert loaded.outcomes[0].outcome is FixOutcome.FIXED
@@ -148,43 +148,43 @@ class TestSchema:
     def test_version_mismatch_is_none(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
         _write(ctx, _filled(ctx))
-        path = ckpt_mod.checkpoint_path(tmp_path)
+        path = pr.fix_checkpoint.checkpoint_path(tmp_path)
         raw = json.loads(path.read_text())
-        raw["version"] = ckpt_mod.CHECKPOINT_VERSION + 1
+        raw["version"] = pr.fix_checkpoint.CHECKPOINT_VERSION + 1
         path.write_text(json.dumps(raw))
-        assert ckpt_mod.load(tmp_path) is None
+        assert pr.fix_checkpoint.load(tmp_path) is None
 
     def test_failed_replace_returns_false_and_leaves_the_old_file(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
-        first = _filled(ctx, phase=ckpt_mod.CheckpointPhase.TRIAGED)
+        first = _filled(ctx, phase=pr.fix_checkpoint.CheckpointPhase.TRIAGED)
         _write(ctx, first)
-        path = ckpt_mod.checkpoint_path(tmp_path)
+        path = pr.fix_checkpoint.checkpoint_path(tmp_path)
         before = path.read_text()
-        later = _filled(ctx, phase=ckpt_mod.CheckpointPhase.LANDED)
+        later = _filled(ctx, phase=pr.fix_checkpoint.CheckpointPhase.LANDED)
         with patch("core.serde.replace_file", side_effect=OSError("disk full")):
-            assert ckpt_mod.save(tmp_path, later) is False
+            assert pr.fix_checkpoint.save(tmp_path, later) is False
         assert path.read_text() == before
-        assert ckpt_mod.load(tmp_path).phase is ckpt_mod.CheckpointPhase.TRIAGED
+        assert pr.fix_checkpoint.load(tmp_path).phase is pr.fix_checkpoint.CheckpointPhase.TRIAGED
 
     def test_advance_is_monotonic(self):
-        ckpt = ckpt_mod.CommentsFixCheckpoint(
-            phase=ckpt_mod.CheckpointPhase.AGENT_RUNNING,
+        ckpt = pr.fix_checkpoint.CommentsFixCheckpoint(
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
         )
-        back = ckpt_mod.advance(ckpt, ckpt_mod.CheckpointPhase.TRIAGED)
-        assert back.phase is ckpt_mod.CheckpointPhase.AGENT_RUNNING
-        forward = ckpt_mod.advance(ckpt, ckpt_mod.CheckpointPhase.LANDED)
-        assert forward.phase is ckpt_mod.CheckpointPhase.LANDED
-        same = ckpt_mod.advance(ckpt, ckpt_mod.CheckpointPhase.AGENT_RUNNING)
-        assert same.phase is ckpt_mod.CheckpointPhase.AGENT_RUNNING
+        back = pr.fix_checkpoint.advance(ckpt, pr.fix_checkpoint.CheckpointPhase.TRIAGED)
+        assert back.phase is pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING
+        forward = pr.fix_checkpoint.advance(ckpt, pr.fix_checkpoint.CheckpointPhase.LANDED)
+        assert forward.phase is pr.fix_checkpoint.CheckpointPhase.LANDED
+        same = pr.fix_checkpoint.advance(ckpt, pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING)
+        assert same.phase is pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING
 
     def test_complete_and_adopted_are_terminal(self):
-        assert ckpt_mod.CheckpointPhase.COMPLETE.terminal
-        assert ckpt_mod.CheckpointPhase.ADOPTED.terminal
-        assert not ckpt_mod.CheckpointPhase.AGENT_RUNNING.terminal
-        assert ckpt_mod.CheckpointPhase.LANDED.reached(
-            ckpt_mod.CheckpointPhase.AGENT_RUNNING)
-        assert not ckpt_mod.CheckpointPhase.TRIAGED.reached(
-            ckpt_mod.CheckpointPhase.LANDED)
+        assert pr.fix_checkpoint.CheckpointPhase.COMPLETE.terminal
+        assert pr.fix_checkpoint.CheckpointPhase.ADOPTED.terminal
+        assert not pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING.terminal
+        assert pr.fix_checkpoint.CheckpointPhase.LANDED.reached(
+            pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING)
+        assert not pr.fix_checkpoint.CheckpointPhase.TRIAGED.reached(
+            pr.fix_checkpoint.CheckpointPhase.LANDED)
 
 
 # ── partial_summary ───────────────────────────────────────────────────────
@@ -193,39 +193,39 @@ class TestSchema:
 class TestPartialSummary:
     def test_triaged_unanswered_fixable_needs_a_person(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
-        summary = ckpt_mod.partial_summary(_filled(
+        summary = pr.fix_checkpoint.partial_summary(_filled(
             ctx,
             triage=TriageResult(threads=[_fixable(), _dismissed(), _addressed()]),
         ))
         by_id = _by_id(summary)
         assert by_id["t1"].outcome is FixOutcome.NEEDS_HUMAN
-        assert by_id["t1"].reason == ckpt_mod.INTERRUPTED_REASON
+        assert by_id["t1"].reason == pr.fix_checkpoint.INTERRUPTED_REASON
         assert by_id["t2"].outcome is FixOutcome.DISMISSED
         assert by_id["t3"].outcome is FixOutcome.ALREADY_ADDRESSED
 
     def test_agent_running_unlanded_fixed_needs_a_person(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
-        summary = ckpt_mod.partial_summary(_filled(
+        summary = pr.fix_checkpoint.partial_summary(_filled(
             ctx,
-            phase=ckpt_mod.CheckpointPhase.AGENT_RUNNING,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
             triage=TriageResult(threads=[_fixable("t1"), _fixable("t4")]),
-            engine=ckpt_mod.EngineProgress(answers=[
+            engine=pr.fix_checkpoint.EngineProgress(answers=[
                 ItemOutcome(id="t1", outcome=FixOutcome.FIXED, reason="held"),
             ]),
         ))
         by_id = _by_id(summary)
         assert by_id["t1"].outcome is FixOutcome.NEEDS_HUMAN
-        assert by_id["t1"].reason == ckpt_mod.UNLANDED_REASON
+        assert by_id["t1"].reason == pr.fix_checkpoint.UNLANDED_REASON
         assert by_id["t4"].outcome is FixOutcome.NEEDS_HUMAN
-        assert by_id["t4"].reason == ckpt_mod.INTERRUPTED_REASON
+        assert by_id["t4"].reason == pr.fix_checkpoint.INTERRUPTED_REASON
 
     def test_landed_keeps_fixed(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
-        summary = ckpt_mod.partial_summary(_filled(
+        summary = pr.fix_checkpoint.partial_summary(_filled(
             ctx,
-            phase=ckpt_mod.CheckpointPhase.LANDED,
+            phase=pr.fix_checkpoint.CheckpointPhase.LANDED,
             triage=TriageResult(threads=[_fixable()]),
-            engine=ckpt_mod.EngineProgress(
+            engine=pr.fix_checkpoint.EngineProgress(
                 answers=[ItemOutcome(id="t1", outcome=FixOutcome.FIXED)],
                 commit_sha="landed1",
                 commit_status=CommitStatus.PUSH_HELD,
@@ -250,32 +250,32 @@ class TestAdoptPartial:
         pr.state.save_state(tmp_path, prior)
         _write(ctx, _filled(
             ctx,
-            phase=ckpt_mod.CheckpointPhase.AGENT_RUNNING,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
             triage=TriageResult(threads=[_fixable()]),
-            engine=ckpt_mod.EngineProgress(
+            engine=pr.fix_checkpoint.EngineProgress(
                 head_before="abc1234", agent_files=["a.py"],
             ),
         ))
-        state = ckpt_mod.adopt_partial(ctx, pr.state.load_state(tmp_path))
+        state = pr.fix_checkpoint.adopt_partial(ctx, pr.state.load_state(tmp_path))
         assert {o.id for o in state.fix.fix.items} >= {"t1", "old"}
         assert state.fix.fix.commit_sha == "abc1234"
         assert state.fix.fix.commit_status is CommitStatus.PUSHED
-        loaded = ckpt_mod.load(tmp_path)
-        assert loaded.phase is ckpt_mod.CheckpointPhase.ADOPTED
+        loaded = pr.fix_checkpoint.load(tmp_path)
+        assert loaded.phase is pr.fix_checkpoint.CheckpointPhase.ADOPTED
 
     def test_second_call_does_not_overwrite_a_later_settlement(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
         _write(ctx, _filled(
             ctx,
-            phase=ckpt_mod.CheckpointPhase.AGENT_RUNNING,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
             triage=TriageResult(threads=[_fixable()]),
         ))
-        state = ckpt_mod.adopt_partial(ctx, None)
+        state = pr.fix_checkpoint.adopt_partial(ctx, None)
         item = next(o for o in state.fix.fix.items if o.id == "t1")
         item.outcome = FixOutcome.DISMISSED
         item.reason = "not our layer"
         pr.state.save_state(tmp_path, state)
-        again = ckpt_mod.adopt_partial(ctx, pr.state.load_state(tmp_path))
+        again = pr.fix_checkpoint.adopt_partial(ctx, pr.state.load_state(tmp_path))
         settled = next(o for o in again.fix.fix.items if o.id == "t1")
         assert settled.outcome is FixOutcome.DISMISSED
         assert settled.reason == "not our layer"
@@ -284,7 +284,7 @@ class TestAdoptPartial:
         ctx = make_ctx(target_dir=tmp_path, branch="feat/test")
         other = make_ctx(target_dir=tmp_path, branch="other")
         _write(other, _filled(other, triage=TriageResult(threads=[_fixable()])))
-        assert ckpt_mod.adopt_partial(ctx, None) is None
+        assert pr.fix_checkpoint.adopt_partial(ctx, None) is None
 
 
 # ── settle / finish from a partial ────────────────────────────────────────
@@ -298,7 +298,7 @@ class TestSettleAndFinishFromPartial:
         )
         _write(ctx, _filled(
             ctx,
-            phase=ckpt_mod.CheckpointPhase.AGENT_RUNNING,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
             triage=TriageResult(threads=[_fixable()]),
         ))
         assert pr.state.load_state(ctx.target_dir) is None
@@ -307,7 +307,7 @@ class TestSettleAndFinishFromPartial:
         ) == 0
         state = pr.state.load_state(ctx.target_dir)
         assert state.fix.fix.items[0].outcome is FixOutcome.DISMISSED
-        assert ckpt_mod.load(ctx.target_dir).phase is ckpt_mod.CheckpointPhase.ADOPTED
+        assert pr.fix_checkpoint.load(ctx.target_dir).phase is pr.fix_checkpoint.CheckpointPhase.ADOPTED
         assert "pr comments --finish" in capsys.readouterr().err
 
     def test_finish_from_partial(self, worktree):
@@ -317,7 +317,7 @@ class TestSettleAndFinishFromPartial:
         )
         _write(ctx, _filled(
             ctx,
-            phase=ckpt_mod.CheckpointPhase.AGENT_RUNNING,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
             triage=TriageResult(threads=[_fixable()]),
         ))
         assert pr.state.load_state(ctx.target_dir) is None
@@ -331,7 +331,7 @@ class TestSettleAndFinishFromPartial:
         state = pr.state.load_state(ctx.target_dir)
         assert state is not None
         assert state.fix.fix.items[0].outcome is FixOutcome.NEEDS_HUMAN
-        assert ckpt_mod.load(ctx.target_dir).phase is ckpt_mod.CheckpointPhase.ADOPTED
+        assert pr.fix_checkpoint.load(ctx.target_dir).phase is pr.fix_checkpoint.CheckpointPhase.ADOPTED
 
     def test_finish_warns_the_stopped_phase_and_resume_flags(self, worktree, capsys):
         ctx = make_ctx(
@@ -340,7 +340,7 @@ class TestSettleAndFinishFromPartial:
         )
         _write(ctx, _filled(
             ctx,
-            phase=ckpt_mod.CheckpointPhase.AGENT_RUNNING,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
             triage=TriageResult(threads=[_fixable()]),
         ))
         with patch.object(review.closeout, "post_pending_fix_replies"), \
@@ -360,7 +360,7 @@ class TestSettleAndFinishFromPartial:
         ctx = make_ctx(target_dir=tmp_path)
         _write(ctx, _filled(
             ctx,
-            phase=ckpt_mod.CheckpointPhase.AGENT_RUNNING,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
             triage=TriageResult(threads=[_fixable()]),
         ))
         path = pr.comments.artifacts_dir(tmp_path) / fix.batches.TRACKING_FILENAME
@@ -373,7 +373,7 @@ class TestSettleAndFinishFromPartial:
         )
         path.write_text(text)
         answers = review.closeout.tracking_answers(tmp_path)
-        state = ckpt_mod.adopt_partial(ctx, None, answers=answers)
+        state = pr.fix_checkpoint.adopt_partial(ctx, None, answers=answers)
         item = next(o for o in state.fix.fix.items if o.id == "t1")
         assert item.outcome is FixOutcome.NEEDS_HUMAN
         assert item.reason == "wants a design call"
@@ -386,54 +386,54 @@ class TestSettleAndFinishFromPartial:
         (tmp_path / "wt").mkdir()
         _write(ctx, _filled(
             ctx,
-            phase=ckpt_mod.CheckpointPhase.AGENT_RUNNING,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
             triage=TriageResult(threads=[_fixable()]),
         ))
         assert pr.settlement.run_settle(
             ctx, ["typo"], "dismissed", "not our layer", "",
         ) == 1
-        loaded = ckpt_mod.load(ctx.target_dir)
+        loaded = pr.fix_checkpoint.load(ctx.target_dir)
         assert loaded is not None
-        assert loaded.phase is ckpt_mod.CheckpointPhase.AGENT_RUNNING
+        assert loaded.phase is pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING
 
     def test_failed_adopted_save_raises(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
         _write(ctx, _filled(
             ctx,
-            phase=ckpt_mod.CheckpointPhase.AGENT_RUNNING,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
             triage=TriageResult(threads=[_fixable()]),
         ))
-        real = ckpt_mod.save
+        real = pr.fix_checkpoint.save
 
         def boom(target_dir, ckpt):
-            if ckpt.phase is ckpt_mod.CheckpointPhase.ADOPTED:
+            if ckpt.phase is pr.fix_checkpoint.CheckpointPhase.ADOPTED:
                 return False
             return real(target_dir, ckpt)
 
-        with patch.object(ckpt_mod, "save", side_effect=boom):
+        with patch.object(pr.fix_checkpoint, "save", side_effect=boom):
             try:
-                ckpt_mod.adopt_partial(ctx, None)
-            except ckpt_mod.CheckpointAdoptError:
+                pr.fix_checkpoint.adopt_partial(ctx, None)
+            except pr.fix_checkpoint.CheckpointAdoptError:
                 pass
             else:
                 raise AssertionError("expected CheckpointAdoptError")
-        assert ckpt_mod.load(tmp_path).phase is ckpt_mod.CheckpointPhase.AGENT_RUNNING
+        assert pr.fix_checkpoint.load(tmp_path).phase is pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING
 
 
 class TestFoldAndLoad:
     def test_triaged_stale_tracking_does_not_leak(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
-        summary = ckpt_mod.partial_summary(
+        summary = pr.fix_checkpoint.partial_summary(
             _filled(
                 ctx,
-                phase=ckpt_mod.CheckpointPhase.TRIAGED,
+                phase=pr.fix_checkpoint.CheckpointPhase.TRIAGED,
                 triage=TriageResult(threads=[_fixable()]),
             ),
             answers=[ItemOutcome(id="t1", outcome=FixOutcome.FIXED, reason="stale")],
         )
         item = next(o for o in summary.fix.items if o.id == "t1")
         assert item.outcome is FixOutcome.NEEDS_HUMAN
-        assert item.reason == ckpt_mod.INTERRUPTED_REASON
+        assert item.reason == pr.fix_checkpoint.INTERRUPTED_REASON
 
     def test_landed_keeps_engine_demotion_over_tracking_fixed(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
@@ -441,12 +441,12 @@ class TestFoldAndLoad:
             id="t1", outcome=FixOutcome.FIXED, verified=False,
             verify_detail="the repo's checks are red with this pass's changes in the tree",
         )
-        summary = ckpt_mod.partial_summary(
+        summary = pr.fix_checkpoint.partial_summary(
             _filled(
                 ctx,
-                phase=ckpt_mod.CheckpointPhase.LANDED,
+                phase=pr.fix_checkpoint.CheckpointPhase.LANDED,
                 triage=TriageResult(threads=[_fixable()]),
-                engine=ckpt_mod.EngineProgress(
+                engine=pr.fix_checkpoint.EngineProgress(
                     answers=[demoted],
                     commit_sha="landed1",
                     commit_status=CommitStatus.PUSH_HELD,
@@ -461,21 +461,21 @@ class TestFoldAndLoad:
 
     def test_agent_running_without_head_before_is_unreadable(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
-        ckpt = ckpt_mod.CommentsFixCheckpoint(
-            version=ckpt_mod.CHECKPOINT_VERSION,
-            phase=ckpt_mod.CheckpointPhase.AGENT_RUNNING,
+        ckpt = pr.fix_checkpoint.CommentsFixCheckpoint(
+            version=pr.fix_checkpoint.CHECKPOINT_VERSION,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
             repo=ctx.repo, pr=ctx.pr_number or 0, branch=ctx.branch,
             head_sha=ctx.head_sha,
         )
         _write(ctx, ckpt)
-        assert ckpt_mod.load(tmp_path) is None
+        assert pr.fix_checkpoint.load(tmp_path) is None
 
     def test_save_stamps_checkpoint_version(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
-        ckpt = ckpt_mod.CommentsFixCheckpoint(
-            version=0, phase=ckpt_mod.CheckpointPhase.TRIAGED,
+        ckpt = pr.fix_checkpoint.CommentsFixCheckpoint(
+            version=0, phase=pr.fix_checkpoint.CheckpointPhase.TRIAGED,
             repo=ctx.repo, pr=ctx.pr_number or 0, branch=ctx.branch,
         )
         _write(ctx, ckpt)
-        raw = json.loads(ckpt_mod.checkpoint_path(tmp_path).read_text())
-        assert raw["version"] == ckpt_mod.CHECKPOINT_VERSION
+        raw = json.loads(pr.fix_checkpoint.checkpoint_path(tmp_path).read_text())
+        assert raw["version"] == pr.fix_checkpoint.CHECKPOINT_VERSION

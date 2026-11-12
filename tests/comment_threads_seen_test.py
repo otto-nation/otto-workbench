@@ -27,7 +27,7 @@ import agent.invoke
 import fix.comments
 import cli.review_threads
 import pr.comments
-import pr.fix_checkpoint as ckpt_mod
+import pr.fix_checkpoint
 import pr.state
 import pr.thread_context
 from pr.fix_checkpoint import CheckpointPhase, EngineProgress
@@ -197,7 +197,7 @@ def _git_ctx(tmp_path):
 
 
 def _resume_fix(tmp_path, ctx, ckpt, *, answer=None):
-    ckpt_mod.save(ctx.target_dir, ckpt)
+    pr.fix_checkpoint.save(ctx.target_dir, ckpt)
     pr_data = PRData(
         viewer_login="isaacg", head_sha=ctx.head_sha,
         head_ref=ctx.branch, base_ref="main",
@@ -230,7 +230,7 @@ def _resume_fix(tmp_path, ctx, ckpt, *, answer=None):
 class TestResumedFixKeepsTheCheckpointSeenRecord:
     def test_resumed_fix_does_not_call_the_triage_prompt(self, tmp_path):
         ctx = _git_ctx(tmp_path)
-        ckpt = ckpt_mod.CommentsFixCheckpoint(
+        ckpt = pr.fix_checkpoint.CommentsFixCheckpoint(
             repo=ctx.repo, pr=ctx.pr_number or 0, branch=ctx.branch,
             head_sha=ctx.head_sha, phase=CheckpointPhase.AGENT_DONE,
             engine=EngineProgress(head_before=ctx.head_sha),
@@ -244,7 +244,7 @@ class TestResumedFixKeepsTheCheckpointSeenRecord:
 
     def test_a_comment_posted_after_the_checkpoint_stays_unseen(self, tmp_path):
         ctx = _git_ctx(tmp_path)
-        ckpt = ckpt_mod.CommentsFixCheckpoint(
+        ckpt = pr.fix_checkpoint.CommentsFixCheckpoint(
             repo=ctx.repo, pr=ctx.pr_number or 0, branch=ctx.branch,
             head_sha=ctx.head_sha, phase=CheckpointPhase.AGENT_DONE,
             engine=EngineProgress(head_before=ctx.head_sha),

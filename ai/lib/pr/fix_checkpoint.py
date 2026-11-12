@@ -343,7 +343,7 @@ def prepared_partial(
             branch=ctx.branch,
             pr_number=ctx.pr_number,
             head_sha=ctx.head_sha,
-            worktree_root=str(ctx.worktree_root or ""),
+            worktree_root=str(ctx.worktree_root) if ctx.worktree_root else "",
         )
     pr.state.apply(st, summary)
     return st, ckpt

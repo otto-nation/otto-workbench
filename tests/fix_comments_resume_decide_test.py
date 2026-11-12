@@ -11,9 +11,9 @@ if str(LIB_DIR) not in sys.path:
 
 from conftest import commit_all, git_out, make_ctx
 from review_convergence_support import committed_repo, head
-import fix.comments_resume as resume
-import fix.pass_resume as fix_resume
-import pr.fix_checkpoint as ckpt_mod
+import fix.comments_resume
+import fix.pass_resume
+import pr.fix_checkpoint
 from pr.comments_state import ThreadState
 from pr.fix_checkpoint import CheckpointPhase, EngineProgress
 from pr.thread_models import CommentItem, PRReport, ReportThread, TriageResult
@@ -29,7 +29,7 @@ def _ctx(repo: Path, target: Path, **kw):
 
 
 def _write(ctx, **kw):
-    kw.setdefault("version", ckpt_mod.CHECKPOINT_VERSION)
+    kw.setdefault("version", pr.fix_checkpoint.CHECKPOINT_VERSION)
     kw.setdefault("phase", CheckpointPhase.TRIAGED)
     kw.setdefault("repo", ctx.repo)
     kw.setdefault("pr", ctx.pr_number or 0)
@@ -39,8 +39,8 @@ def _write(ctx, **kw):
         CheckpointPhase.AGENT_RUNNING
     ):
         kw["engine"] = EngineProgress(head_before=kw["head_sha"])
-    ckpt = ckpt_mod.CommentsFixCheckpoint(**kw)
-    assert ckpt_mod.save(ctx.target_dir, ckpt)
+    ckpt = pr.fix_checkpoint.CommentsFixCheckpoint(**kw)
+    assert pr.fix_checkpoint.save(ctx.target_dir, ckpt)
     return ckpt
 
 
@@ -53,19 +53,19 @@ def _report(*tids: str) -> PRReport:
 
 
 def _decide(ctx, repo, mode, report=None):
-    return resume.decide(ctx, repo, mode, report or PRReport())
+    return fix.comments_resume.decide(ctx, repo, mode, report or PRReport())
 
 
 def test_mode_for_maps_the_flags():
-    assert resume.mode_for(False, False) is resume.ResumeMode.AUTO
-    assert resume.mode_for(True, False) is resume.ResumeMode.REQUIRE
-    assert resume.mode_for(False, True) is resume.ResumeMode.FRESH
+    assert fix.comments_resume.mode_for(False, False) is fix.comments_resume.ResumeMode.AUTO
+    assert fix.comments_resume.mode_for(True, False) is fix.comments_resume.ResumeMode.REQUIRE
+    assert fix.comments_resume.mode_for(False, True) is fix.comments_resume.ResumeMode.FRESH
 
 
 def test_no_file_auto_is_empty(tmp_path):
     repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
     ctx = _ctx(repo, tmp_path / "target")
-    decision = _decide(ctx, repo, resume.ResumeMode.AUTO)
+    decision = _decide(ctx, repo, fix.comments_resume.ResumeMode.AUTO)
     assert not decision.resumes
     assert not decision.refused
 
@@ -73,7 +73,7 @@ def test_no_file_auto_is_empty(tmp_path):
 def test_no_file_require_refuses(tmp_path):
     repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
     ctx = _ctx(repo, tmp_path / "target")
-    decision = _decide(ctx, repo, resume.ResumeMode.REQUIRE)
+    decision = _decide(ctx, repo, fix.comments_resume.ResumeMode.REQUIRE)
     assert decision.refused
     assert "no interrupted `pr comments --fix` pass to resume for PR #7" in (
         decision.refusal
@@ -84,10 +84,10 @@ def test_fresh_deletes(tmp_path):
     repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
     ctx = _ctx(repo, tmp_path / "target")
     _write(ctx)
-    assert ckpt_mod.checkpoint_path(ctx.target_dir).is_file()
-    decision = _decide(ctx, repo, resume.ResumeMode.FRESH)
+    assert pr.fix_checkpoint.checkpoint_path(ctx.target_dir).is_file()
+    decision = _decide(ctx, repo, fix.comments_resume.ResumeMode.FRESH)
     assert not decision.resumes
-    assert not ckpt_mod.checkpoint_path(ctx.target_dir).is_file()
+    assert not pr.fix_checkpoint.checkpoint_path(ctx.target_dir).is_file()
 
 
 def test_head_moved_auto_none_require_refusal(tmp_path, capsys):
@@ -97,13 +97,13 @@ def test_head_moved_auto_none_require_refusal(tmp_path, capsys):
     (repo / "a.py").write_text("y\n")
     commit_all(repo, "moved")
     moved = _ctx(repo, ctx.target_dir)
-    auto = _decide(moved, repo, resume.ResumeMode.AUTO)
+    auto = _decide(moved, repo, fix.comments_resume.ResumeMode.AUTO)
     assert not auto.resumes
     assert not auto.refused
     err = capsys.readouterr().err
     assert "PR #7" in err
     assert "starting a fresh pass" in err
-    req = _decide(moved, repo, resume.ResumeMode.REQUIRE)
+    req = _decide(moved, repo, fix.comments_resume.ResumeMode.REQUIRE)
     assert req.refused
     assert "HEAD has moved" in req.refusal
     assert "PR #7" in req.refusal
@@ -120,7 +120,7 @@ def test_checked_with_one_commit_on_top_resumes(tmp_path):
         engine=EngineProgress(head_before=first, file_shas={"a.py": blob}),
     )
     live = _ctx(repo, ctx.target_dir)
-    decision = _decide(live, repo, resume.ResumeMode.AUTO)
+    decision = _decide(live, repo, fix.comments_resume.ResumeMode.AUTO)
     assert decision.resumes
     assert decision.checkpoint.phase is CheckpointPhase.CHECKED
 
@@ -139,7 +139,7 @@ def test_landed_at_landed_sha_resumes(tmp_path):
         ),
     )
     live = _ctx(repo, ctx.target_dir, head_sha=landed)
-    decision = _decide(live, repo, resume.ResumeMode.AUTO)
+    decision = _decide(live, repo, fix.comments_resume.ResumeMode.AUTO)
     assert decision.resumes
 
 
@@ -152,7 +152,7 @@ def test_agent_file_edited_refuses_naming_it(tmp_path):
         engine=EngineProgress(head_before=ctx.head_sha, file_shas={"a.py": blob}),
     )
     (repo / "a.py").write_text("edited\n")
-    decision = _decide(ctx, repo, resume.ResumeMode.AUTO)
+    decision = _decide(ctx, repo, fix.comments_resume.ResumeMode.AUTO)
     assert decision.refused
     assert "a.py" in decision.refusal
     assert "--no-resume" in decision.refusal
@@ -167,9 +167,9 @@ def test_terminal_phases_ignored(tmp_path):
     ctx = _ctx(repo, tmp_path / "target")
     for phase in (CheckpointPhase.COMPLETE, CheckpointPhase.ADOPTED):
         _write(ctx, phase=phase)
-        auto = _decide(ctx, repo, resume.ResumeMode.AUTO)
+        auto = _decide(ctx, repo, fix.comments_resume.ResumeMode.AUTO)
         assert not auto.resumes
-        req = _decide(ctx, repo, resume.ResumeMode.REQUIRE)
+        req = _decide(ctx, repo, fix.comments_resume.ResumeMode.REQUIRE)
         assert req.refused
         assert "no interrupted" in req.refusal
 
@@ -183,7 +183,7 @@ def test_new_open_thread_at_triaged_auto_fresh(tmp_path, capsys):
         triage=TriageResult(threads=[CommentItem(id="t1")]),
     )
     decision = _decide(
-        ctx, repo, resume.ResumeMode.AUTO, _report("t1", "t2"),
+        ctx, repo, fix.comments_resume.ResumeMode.AUTO, _report("t1", "t2"),
     )
     assert not decision.resumes
     assert not decision.refused
@@ -198,7 +198,7 @@ def test_new_open_thread_at_agent_done_resumes(tmp_path):
         triage=TriageResult(threads=[CommentItem(id="t1")]),
     )
     decision = _decide(
-        ctx, repo, resume.ResumeMode.AUTO, _report("t1", "t2"),
+        ctx, repo, fix.comments_resume.ResumeMode.AUTO, _report("t1", "t2"),
     )
     assert decision.resumes
 
@@ -207,7 +207,7 @@ def test_matching_head_auto_resumes(tmp_path):
     repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
     ctx = _ctx(repo, tmp_path / "target")
     written = _write(ctx)
-    decision = _decide(ctx, repo, resume.ResumeMode.AUTO)
+    decision = _decide(ctx, repo, fix.comments_resume.ResumeMode.AUTO)
     assert decision.resumes
     assert decision.checkpoint.phase is written.phase
 
@@ -220,7 +220,7 @@ def test_new_open_thread_at_triaged_require_resumes(tmp_path):
         triage=TriageResult(threads=[CommentItem(id="t1")]),
     )
     decision = _decide(
-        ctx, repo, resume.ResumeMode.REQUIRE, _report("t1", "t2"),
+        ctx, repo, fix.comments_resume.ResumeMode.REQUIRE, _report("t1", "t2"),
     )
     assert decision.resumes
 
@@ -229,10 +229,10 @@ def test_wrong_pr_is_unusable(tmp_path):
     repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
     ctx = _ctx(repo, tmp_path / "target")
     _write(ctx, pr=99)
-    auto = _decide(ctx, repo, resume.ResumeMode.AUTO)
+    auto = _decide(ctx, repo, fix.comments_resume.ResumeMode.AUTO)
     assert not auto.resumes
     assert not auto.refused
-    req = _decide(ctx, repo, resume.ResumeMode.REQUIRE)
+    req = _decide(ctx, repo, fix.comments_resume.ResumeMode.REQUIRE)
     assert req.refused
     assert "no interrupted" in req.refusal
 
@@ -241,8 +241,8 @@ def test_unreadable_worktree_refuses(tmp_path):
     repo = committed_repo(tmp_path / "wt", {"a.py": "x\n"})
     ctx = _ctx(repo, tmp_path / "target")
     _write(ctx, phase=CheckpointPhase.AGENT_DONE)
-    with patch.object(fix_resume, "edited_since", return_value=None):
-        decision = _decide(ctx, repo, resume.ResumeMode.AUTO)
+    with patch.object(fix.pass_resume, "edited_since", return_value=None):
+        decision = _decide(ctx, repo, fix.comments_resume.ResumeMode.AUTO)
     assert decision.refused
     assert "cannot read the worktree" in decision.refusal
 
@@ -265,7 +265,7 @@ def test_landed_with_committed_agent_blob_resumes(tmp_path):
             head_before=first, file_shas={"a.py": blob}, commit_sha=landed,
         ),
     )
-    decision = _decide(ctx, repo, resume.ResumeMode.AUTO)
+    decision = _decide(ctx, repo, fix.comments_resume.ResumeMode.AUTO)
     assert decision.resumes
     assert not decision.refused
 
@@ -281,7 +281,7 @@ def test_checked_one_past_with_committed_agent_blob_resumes(tmp_path):
         engine=EngineProgress(head_before=first, file_shas={"a.py": blob}),
     )
     live = _ctx(repo, ctx.target_dir)
-    decision = _decide(live, repo, resume.ResumeMode.AUTO)
+    decision = _decide(live, repo, fix.comments_resume.ResumeMode.AUTO)
     assert decision.resumes
     assert not decision.refused
 
@@ -291,7 +291,7 @@ def test_replied_with_operator_dirty_file_resumes(tmp_path):
     ctx = _ctx(repo, tmp_path / "target")
     _write(ctx, phase=CheckpointPhase.REPLIED)
     (repo / "a.py").write_text("operator\n")
-    decision = _decide(ctx, repo, resume.ResumeMode.AUTO)
+    decision = _decide(ctx, repo, fix.comments_resume.ResumeMode.AUTO)
     assert decision.resumes
     assert not decision.refused
 
@@ -304,7 +304,7 @@ def test_github_head_match_does_not_resume_when_local_head_moved(tmp_path):
     (repo / "a.py").write_text("y\n")
     commit_all(repo, "moved")
     stale = _ctx(repo, ctx.target_dir, head_sha=first)
-    auto = _decide(stale, repo, resume.ResumeMode.AUTO)
+    auto = _decide(stale, repo, fix.comments_resume.ResumeMode.AUTO)
     assert not auto.resumes
     assert not auto.refused
 
@@ -318,7 +318,7 @@ def test_local_head_matches_engine_head_before_despite_github_head(tmp_path):
         engine=EngineProgress(head_before=first),
     )
     live = _ctx(repo, ctx.target_dir, head_sha="deadbeefgithub")
-    decision = _decide(live, repo, resume.ResumeMode.AUTO)
+    decision = _decide(live, repo, fix.comments_resume.ResumeMode.AUTO)
     assert decision.resumes
 
 
@@ -328,7 +328,7 @@ def test_before_agent_running_keys_on_checkpoint_head_sha(tmp_path):
     ctx = _ctx(repo, tmp_path / "target", head_sha="deadbeefgithub")
     _write(ctx, phase=CheckpointPhase.TRIAGED, head_sha=first)
     live = _ctx(repo, ctx.target_dir, head_sha="deadbeefgithub")
-    decision = _decide(live, repo, resume.ResumeMode.AUTO)
+    decision = _decide(live, repo, fix.comments_resume.ResumeMode.AUTO)
     assert decision.resumes
 
 
@@ -343,7 +343,7 @@ def test_checked_one_past_uses_engine_head_before_not_checkpoint_head(tmp_path):
         engine=EngineProgress(head_before=first, file_shas={"a.py": blob}),
     )
     live = _ctx(repo, ctx.target_dir, head_sha="deadbeefgithub")
-    decision = _decide(live, repo, resume.ResumeMode.AUTO)
+    decision = _decide(live, repo, fix.comments_resume.ResumeMode.AUTO)
     assert decision.resumes
 
 
@@ -358,5 +358,5 @@ def test_addressed_thread_is_not_new_feedback(tmp_path):
         ReportThread(id="t1", state=ThreadState.NEW),
         ReportThread(id="t2", state=ThreadState.ADDRESSED),
     ])
-    decision = _decide(ctx, repo, resume.ResumeMode.AUTO, report)
+    decision = _decide(ctx, repo, fix.comments_resume.ResumeMode.AUTO, report)
     assert decision.resumes

@@ -790,7 +790,7 @@ pass commits under one static subject, so content is the only field that tells
 two of them apart — and cites the branch's own history from there. Nothing
 clears on a guess: a commit still on the branch is unpushed for the ordinary
 reason, and an orphan with no replay, or with two, holds too and says how to
-recover. Re-running `--fix` is not the way; it discards reviewed replies.
+recover. Re-running `--fix` after a completed pass discards reviewed replies; an interrupted pass resumes on the same HEAD (`--no-resume` starts over). Checkpoint resume skips finished phases; leftover-adoption still applies when no checkpoint exists.
 
 ### Closing out comments
 
@@ -807,47 +807,9 @@ PR)`). An id found neither place is still refused.
 Closeout warns `<id>: left open — <reason>` for FIXED/ALREADY_ADDRESSED threads
 it did not resolve. Every reason except `not on the PR` keeps reply debt, so
 `pr status` still shows closeout owed. Open unanswered threads with no snapshot
-row are listed with `pr comments --fix` or `pr comments --settle`.
+row are listed with `pr comments --fix` or `pr comments --settle`. A comments `--fix` stopped mid-agent records leftovers and, on the next pass at the same HEAD with no checkpoint, resumes matching blobs so they can be committed.
 
-### An interrupted comment fix pass resumes
 
-`pr comments --fix` writes `pr-comments/fix-checkpoint.json` under the run's
-target directory as it goes. The file is the in-flight record of that pass —
-not the snapshot `--settle` and `--finish` normally read, which is written only
-when the pass completes.
-
-Phases, in order: `triaged`, `addressed`, `replied`, `agent_running`,
-`agent_done`, `verified`, `checked`, `landed`, `complete`. `adopted` is terminal
-too: a `--settle` or `--finish` that takes a partial snapshot marks the
-checkpoint adopted, and it cannot be resumed. Unanswered fixable items become
-needs-human; a FIXED outcome recorded before `landed` becomes needs-human
-because the commit never landed.
-
-The resume key is the PR, the branch, HEAD, and the blob shas of files the
-agent edited. Re-run `pr comments --fix` on the same HEAD to continue; phases
-already reached are skipped (triage is not re-prompted, already-addressed
-verdicts and triage replies are not redone, the agent is not re-invoked once
-`agent_done` is recorded). `--resume` requires a resumable pass and exits 1
-when there is none. `--no-resume` discards the checkpoint and starts over.
-Both flags need `--fix`.
-
-New review feedback before `agent_running` starts a fresh AUTO pass; from
-`agent_running` on, the recorded pass resumes and the new feedback is the next
-round. Agent files edited since the kill refuse the resume and name the paths
-plus `--no-resume` to start over, `pr comments --finish`/`--settle` to adopt
-the partial snapshot, or revert your edits (`git diff <path>`). A hard kill
-can also leave verify/suite writes that containment did not restore. Adopting
-a partial snapshot ends resumability. `engine.backup_dir` holds the operator's
-pre-pass dirty files, never the agent's.
-
-When no checkpoint exists (or `--no-resume` discarded it), the older leftover
-adoption still applies: a comments `--fix` stopped mid-agent records leftovers
-and, on the next comments pass at the same HEAD, resumes matching blobs so they
-can be committed. An empty round will not commit those leftovers. A checkpoint
-resume skips leftover-adoption and clears that record so the two cannot disagree.
-
-`fix.verify_timeout` bounds the repo's checks and the baseline re-run together;
-the baseline gets whatever time is left and is skipped at `<= 0`, leaving the
 
 ### The summary comments are the record, not the state file
 

@@ -176,8 +176,8 @@ def read_report(ctx, pr_data: PRData) -> PRReport:
     return report
 
 
-def _resume_decision(args, ctx, toplevel, report, trail):
-    """The checkpoint `--fix` resumes from, and whether the resume was refused."""
+def _resume_decision(args, ctx, toplevel, report, trail) -> fix.comments_resume.ResumeDecision:
+    """The checkpoint `--fix` resumes from, or a refusal/empty decision."""
     decision = fix.comments_resume.decide(
         ctx, toplevel,
         fix.comments_resume.mode_for(
@@ -188,17 +188,17 @@ def _resume_decision(args, ctx, toplevel, report, trail):
     )
     if decision.refused:
         core.log.error(decision.refusal)
-        return None, True
-    if not decision.resumes:
-        return None, False
+        return decision
     ckpt = decision.checkpoint
+    if ckpt is None:
+        return decision
     trail.decision(
         "fix_resume",
         f"resuming interrupted fix pass after {ckpt.phase.value}",
         reason="a checkpoint for this PR, branch and HEAD is resumable",
         data={"phase": ckpt.phase.value},
     )
-    return ckpt, False
+    return decision
 
 
 def run_threads(trail, args, ctx) -> int:
@@ -318,16 +318,17 @@ def run_threads(trail, args, ctx) -> int:
     # Triage and/or fix mode
     rc = 0
     if args.triage:
-        resume_ckpt, refused = None, False
+        decision = fix.comments_resume.ResumeDecision()
         if args.fix:
-            resume_ckpt, refused = _resume_decision(
+            decision = _resume_decision(
                 args, ctx, toplevel, report, trail)
-        if refused:
+        if decision.refused:
             return 1
         triage_mode = "fix" if args.fix else "triage"
         trail.decision("triage_mode", f"running {triage_mode}",
                        reason="--fix flag" if args.fix else "--triage flag",
                        data={"fix": args.fix, "triage": args.triage})
+        resume_ckpt = decision.checkpoint
         if resume_ckpt is not None:
             triage_result, rc = resume_ckpt.triage, 0
         else:

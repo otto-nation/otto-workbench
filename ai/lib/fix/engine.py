@@ -908,7 +908,7 @@ def _run_agent(adapter: FixAdapter, start: _PassStart) -> _AgentRun:
     collected = list(prior.values())
     origin_batches = start.prior.batches if start.prior else 0
     for n, chunk in enumerate(batched, start=1):
-        batch = run_batch(
+        agent_batch = run_batch(
             adapter, chunk,
             name if len(batched) == 1 else f"{name} (batch {n}/{len(batched)})",
             before=(
@@ -916,8 +916,8 @@ def _run_agent(adapter: FixAdapter, start: _PassStart) -> _AgentRun:
                 else dirty_before
             ),
         )
-        results.append(batch)
-        collected.extend(fix.pass_resume.answered(batch.outcomes))
+        results.append(agent_batch)
+        collected.extend(fix.pass_resume.answered(agent_batch.outcomes))
         blobs = _agent_blobs(adapter, start, dirty_before)
         start = _note(
             adapter, start, CheckpointPhase.AGENT_RUNNING,

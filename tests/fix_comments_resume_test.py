@@ -21,7 +21,7 @@ import fix.comments
 import fix.verify
 import git.client
 import git.topology
-import pr.fix_checkpoint as ckpt_mod
+import pr.fix_checkpoint
 import pr.fix_state
 import pr.thread_context
 from pr.comments_state import ThreadState
@@ -45,7 +45,7 @@ def _item(tid, verification, **kw):
 
 
 def _save_then_kill(phase):
-    real = ckpt_mod.save
+    real = pr.fix_checkpoint.save
 
     def wrapped(target, ckpt):
         ok = real(target, ckpt)
@@ -90,7 +90,7 @@ def _run(tmp_path, *, kill_at=None, resume=None, invoke=None, posts=None,
         posts.append(args)
         return True
 
-    save = _save_then_kill(kill_at) if kill_at is not None else ckpt_mod.save
+    save = _save_then_kill(kill_at) if kill_at is not None else pr.fix_checkpoint.save
     with patch.object(agent.backend, "invoke_fix", side_effect=counting_invoke), \
          patch.object(pr.thread_context, "diff_context_for_file", return_value=""), \
          patch.object(fix.comment_checklist, "find_and_update_main_worktree",
@@ -102,7 +102,7 @@ def _run(tmp_path, *, kill_at=None, resume=None, invoke=None, posts=None,
          patch("pr.comments.post_issue_comment", return_value="u"), \
          patch("pr.comments.resolve_thread", return_value=True), \
          patch.object(fix.verify, "run", return_value={}), \
-         patch.object(ckpt_mod, "save", side_effect=save):
+         patch.object(pr.fix_checkpoint, "save", side_effect=save):
         return fix.comments.run_pass(
             TriageResult(threads=threads), report, tmp_path, ctx, resume=resume,
         )
@@ -124,7 +124,7 @@ class TestRunPassResumesFromAKilledSave:
         invocations = []
         with pytest.raises(_Killed):
             _run(tmp_path, kill_at=phase, posts=posts, invocations=invocations)
-        loaded = ckpt_mod.load(tmp_path)
+        loaded = pr.fix_checkpoint.load(tmp_path)
         assert loaded is not None
         assert loaded.phase is phase
 
@@ -133,7 +133,7 @@ class TestRunPassResumesFromAKilledSave:
         assert posted, "a completed resume posted nothing"
         assert len(posted) == len(set(posted)), "a reply was posted twice"
         assert len(invocations) == 1, "agent invoked once across both runs"
-        final = ckpt_mod.load(tmp_path)
+        final = pr.fix_checkpoint.load(tmp_path)
         assert final is not None
         assert final.phase is CheckpointPhase.COMPLETE
 
@@ -144,7 +144,7 @@ class TestRunPassResumesFromAKilledSave:
 
         with pytest.raises(KeyboardInterrupt):
             _run(tmp_path, invoke=tick_then_stop)
-        loaded = ckpt_mod.load(tmp_path)
+        loaded = pr.fix_checkpoint.load(tmp_path)
         assert loaded is not None
         assert loaded.phase is CheckpointPhase.AGENT_RUNNING
         assert any(

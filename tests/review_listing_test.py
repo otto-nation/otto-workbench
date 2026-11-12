@@ -180,6 +180,29 @@ def test_a_missing_reviews_root_yields_no_rows(tmp_path, monkeypatch):
     assert review.listing.rows() == []
 
 
+def test_rows_without_keep_returns_every_review(reviews_dir):
+    _review(reviews_dir, name="pr-mode", repo="acme/widget", pr_number=1, mode="pr")
+    _review(reviews_dir, name="self-mode", repo="acme/widget", pr_number=2, mode="self")
+
+    assert {row.pr_number for row in review.listing.rows()} == {1, 2}
+
+
+def test_rows_keep_skips_row_for_for_rejected_entries(reviews_dir, monkeypatch):
+    _review(reviews_dir, name="keep-me", repo="acme/widget", pr_number=1, mode="pr")
+    _review(reviews_dir, name="drop-me", repo="other/repo", pr_number=2, mode="pr")
+    seen = []
+    real = review.listing.row_for
+
+    def spy(entry):
+        seen.append(entry.path.name)
+        return real(entry)
+
+    monkeypatch.setattr(review.listing, "row_for", spy)
+    rows = review.listing.rows(keep=lambda entry: entry.path.name == "keep-me")
+    assert seen == ["keep-me"]
+    assert [row.pr_number for row in rows] == [1]
+
+
 # ── document ────────────────────────────────────────────────────────────────
 
 

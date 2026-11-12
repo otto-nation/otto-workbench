@@ -62,6 +62,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import TypeVar
 
+from core.exit_codes import ExitCode
+
 _EnumT = TypeVar("_EnumT", bound=StrEnum)
 
 
@@ -191,7 +193,7 @@ def enum_arg(enum_cls: type[_EnumT]) -> Callable[[str], _EnumT]:
 
 
 # argparse's own usage-error status, which an unreadable file argument shares.
-EXIT_USAGE = 2
+EXIT_USAGE = ExitCode.USAGE
 
 
 def read_file_arg(flag: str, path: str) -> str | None:

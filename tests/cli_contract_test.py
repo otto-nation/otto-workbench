@@ -1,0 +1,93 @@
+"""Every `pr` command declares a CommandContract, and the contract agrees with its parser.
+
+UNMIGRATED and WRONG_PROG only ever shrink: each phase of the contracts plan
+removes the commands it migrates, and phase 4 deletes both.
+"""
+
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+LIB_DIR = REPO_ROOT / "ai" / "lib"
+if str(LIB_DIR) not in sys.path:
+    sys.path.insert(0, str(LIB_DIR))
+
+import cli.pr  # noqa: E402
+from cli.needs import NO_LOCK  # noqa: E402
+from cli.registry import COMMANDS, contract_for, need_for  # noqa: E402
+import core.command_contract  # noqa: E402
+from core.exit_codes import ExitCode  # noqa: E402
+from core.tool_parser import ToolParser  # noqa: E402
+
+UNMIGRATED = frozenset({"create", "status", "ci", "review", "comments", "fix",
+                        "describe", "stack", "board", "batch", "gc"})
+WRONG_PROG = frozenset({"ci", "comments", "describe"})
+# (command, trigger) pairs known to write outside the machine. A pinned list on
+# purpose: which flags touch the remote cannot be read off a parser.
+KNOWN_REMOTE = {
+    "rebase": {"", "--fix", "--push-only", "--push-only --expect", "--no-verify"},
+    "push": {"", "--no-verify"},
+}
+MIGRATED = sorted(set(COMMANDS) - UNMIGRATED)
+
+
+def test_the_allow_lists_name_real_commands():
+    assert UNMIGRATED <= set(COMMANDS)
+    assert WRONG_PROG <= set(COMMANDS)
+
+
+@pytest.mark.parametrize("name", sorted(COMMANDS))
+def test_a_command_declares_a_contract_unless_listed(name):
+    contract = contract_for(COMMANDS[name])
+    if name in UNMIGRATED:
+        assert contract is None, f"{name} has a contract — drop it from UNMIGRATED"
+    else:
+        assert isinstance(contract, core.command_contract.CommandContract)
+
+
+@pytest.mark.parametrize("name", MIGRATED)
+def test_the_contract_covers_the_parser(name):
+    assert core.command_contract.coverage_problems(contract_for(COMMANDS[name]),
+                                cli.pr.documented_flag_keys(name)) == []
+
+
+@pytest.mark.parametrize("name", MIGRATED)
+def test_a_locking_command_declares_the_busy_exit(name):
+    if need_for(COMMANDS[name], []).locks != NO_LOCK:
+        assert contract_for(COMMANDS[name]).outcome(ExitCode.TEMPFAIL) is not None
+
+
+@pytest.mark.parametrize("name", MIGRATED)
+def test_the_parser_s_ok_exit_codes_are_declared(name):
+    parser = cli.pr.help_parser(name)
+    if isinstance(parser, ToolParser):
+        contract = contract_for(COMMANDS[name])
+        for code in parser._ok_exit_codes:
+            assert contract.outcome(code) is not None, code
+
+
+@pytest.mark.parametrize("name", sorted(set(KNOWN_REMOTE) - UNMIGRATED))
+def test_known_remote_triggers_have_an_effect(name):
+    triggers = {e.trigger for e in contract_for(COMMANDS[name]).remote_effects}
+    assert KNOWN_REMOTE[name] <= triggers
+
+
+@pytest.mark.parametrize("name", sorted(set(COMMANDS) - WRONG_PROG))
+def test_help_names_the_command_as_typed(name):
+    assert cli.pr.help_parser(name).prog == f"pr {name}"
+
+
+@pytest.mark.parametrize("name", MIGRATED)
+def test_help_shows_the_rendered_contract(name):
+    assert cli.pr.help_parser(name).epilog == core.command_contract.render_help(contract_for(COMMANDS[name]))
+
+
+@pytest.mark.parametrize("name", ["status", "gc", "fix"])
+def test_a_command_without_a_factory_still_answers_help(name, capsys):
+    assert cli.pr.main([name, "--help"], bin_dir=REPO_ROOT / "ai" / "bin") == 0
+    out = capsys.readouterr().out
+    assert f"usage: pr {name}" in out
+    if name == "fix":
+        assert "--post" in out

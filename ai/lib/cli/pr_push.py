@@ -8,16 +8,8 @@ not "not a force push". Use `pr rebase --push-only` after a rebase; use
 `pr push` for anything else. It records where the branch stands (`PushDomain`)
 and records no rebase, so `pr status` does not describe a push as a rewrite.
 
-Exit codes:
-  0  Pushed, and the remote holds HEAD
-  1  Refused, lost, unverified, or a rebase is still in progress
-  2  Usage error
-  75 Another pr run holds the lock (EX_TEMPFAIL — retry once it finishes)
-
-Usage:
-  pr push --expect <sha>               # push HEAD if origin still holds <sha>
-  pr push --expect <sha> --no-verify   # skip the pre-push hook
-  pr push --expect <sha> --repo-dir <path>
+Exit codes, remote writes and examples are `CONTRACT` below, rendered into
+`pr push --help` and the docs.
 """
 
 # doc-group: cli
@@ -25,13 +17,59 @@ Usage:
 from __future__ import annotations
 
 import cli.boundary
+import core.command_contract
 import core.publishing
+from core.exit_codes import ExitCode
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
 import pr.context
 import rebase.commands
+import rebase.lease
 
 SCRIPT = "pr push"
+
+CONTRACT = core.command_contract.CommandContract(
+    summary="Push HEAD to origin under a lease on the remote tip you planned from. Never "
+            "rebases, never creates a branch, never edits the PR.",
+    groups=(core.command_contract.FlagGroup("Push", ("--expect", "--no-verify")),),
+    remote_effects=(
+        core.command_contract.RemoteEffect(
+            "", "refs/heads/<branch> := HEAD", "origin",
+            "git push [--no-verify] "
+            + rebase.lease.PushLease(branch="<branch>", expect="<lease>").args[0]
+            + ", where <lease> is the tip origin holds now (read with ls-remote) when it is "
+              "--expect or an ancestor of --expect (a fast-forward); when origin cannot be "
+              "asked, --expect itself. Records PushDomain in state.json, no rebase.",
+            "origin at neither --expect nor an ancestor of it: refused before pushing "
+            "(stale --expect), exit 1. origin has no such branch: exit 1 — pr push never "
+            "creates a branch. origin moves between the read and the push: stale info, "
+            "nothing written, exit 1."),
+        core.command_contract.RemoteEffect(
+            "--no-verify", "nothing extra: changes how the push runs", "origin",
+            "adds --no-verify to git push, skipping the git pre-push hook; the workbench "
+            "owner check still runs",
+            "as for the push"),
+    ),
+    exits=(
+        core.command_contract.ExitOutcome(ExitCode.OK, "pushed, and origin holds HEAD"),
+        core.command_contract.ExitOutcome(ExitCode.FAILURE, "refused, lost, unverified, or a rebase is in "
+                                         "progress", (
+            core.command_contract.NextStep("", (
+                "git -C {worktree} ls-remote origin refs/heads/{branch}",
+                "if HEAD belongs on top of what origin holds, run pr rebase first; "
+                "otherwise re-run pr push --expect <that SHA>",
+            )),
+        )),
+        core.command_contract.ExitOutcome(ExitCode.USAGE, "--expect missing or empty"),
+        core.command_contract.ExitOutcome(ExitCode.TEMPFAIL, "another pr run holds this branch or checkout; "
+                                          "retry once it finishes"),
+    ),
+    examples=(
+        core.command_contract.Example("pr push --expect 0123456789abcdef0123456789abcdef01234567",
+                   "push HEAD if origin still holds that commit, or an ancestor of it"),
+        core.command_contract.Example("pr push --expect <sha> --no-verify", "the same, skipping the pre-push hook"),
+    ),
+)
 
 
 def build_parser() -> ToolParser:
@@ -74,8 +112,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         # Pushing is the command, so it opens the gate, as `pr rebase` does.
         with core.publishing.run(post=True):
-            return rebase.commands.cmd_push_head(cwd, ctx, expect=args.expect,
-                                                 verify=not args.no_verify, trail=trail)
+            rc = rebase.commands.cmd_push_head(cwd, ctx, expect=args.expect,
+                                               verify=not args.no_verify, trail=trail)
+        core.command_contract.print_next(CONTRACT, rc, branch=ctx.branch, worktree=cwd)
+        return rc
     except Exception as exc:
         cli.boundary.reraise(trail, exc)
     finally:

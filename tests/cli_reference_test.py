@@ -12,6 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
 import core.cli_reference  # noqa: E402
+import core.command_contract  # noqa: E402
+from core.exit_codes import ExitCode  # noqa: E402
 from core.tool_parser import ToolParser  # noqa: E402
 
 
@@ -299,3 +301,38 @@ def test_a_home_default_is_not_rendered_into_the_tables(script, spec, monkeypatc
     monkeypatch.setenv("HOME", "/home/a-unique-user")
     shape = core.cli_reference.load(spec, script, REPO_ROOT)
     assert "a-unique-user" not in core.cli_reference.tables(shape)
+
+
+_C = core.command_contract.CommandContract(
+    summary="S.", groups=(core.command_contract.FlagGroup("G", ("--x",)),),
+    exits=(core.command_contract.ExitOutcome(ExitCode.OK, "ok"),
+           core.command_contract.ExitOutcome(ExitCode.FAILURE, "f"),
+           core.command_contract.ExitOutcome(ExitCode.USAGE, "u")),
+    examples=(core.command_contract.Example("t a --x", "does"),),
+    remote_effects=(core.command_contract.RemoteEffect(
+        "--x", "w", "origin", "h", "r"),))
+
+
+def _shape_with_contract():
+    p = argparse.ArgumentParser(prog="t a", add_help=False)
+    p.add_argument("--x", action="store_true", help="x")
+    return core.cli_reference.CLIShape(prog="t", commands=(
+        core.cli_reference.Command("a", "A.", p, contract=_C),))
+
+
+def test_tables_point_a_contracted_command_at_its_contract():
+    text = core.cli_reference.tables(_shape_with_contract())
+    assert "Exit codes: `0` ok · `1` failure · `2` usage" in text
+    assert "writes remotely" in text and "(ai-automation.md#t-a-contract)" in text
+
+
+def test_contracts_render_every_contracted_command():
+    assert core.cli_reference.contracts(_shape_with_contract()).startswith("#### t a contract")
+
+
+def test_contracts_refuse_a_shape_with_none():
+    p = argparse.ArgumentParser(prog="t a", add_help=False)
+    shape = core.cli_reference.CLIShape(prog="t", commands=(
+        core.cli_reference.Command("a", "A.", p),))
+    with pytest.raises(ValueError):
+        core.cli_reference.contracts(shape)

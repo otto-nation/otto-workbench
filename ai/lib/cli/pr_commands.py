@@ -40,6 +40,7 @@ from pathlib import Path
 import batch.gc
 import cli.dispatch
 from cli.registry import COMMANDS
+import core.exit_codes
 import core.log
 import core.publishing
 from core.trail import Trail
@@ -63,7 +64,7 @@ import review.gc
 # Lives here, next to `cmd_gc`, the only Python producer. The binary re-exports
 # it so `pr_cli.EXIT_BUDGET_EXHAUSTED` in the tests keeps reading the same
 # object; the maintenance script cannot import it and compares against 75.
-EXIT_BUDGET_EXHAUSTED = 75
+EXIT_BUDGET_EXHAUSTED = core.exit_codes.ExitCode.TEMPFAIL
 
 
 def _run_pass(command: str, argv: list[str], ctx: pr.context.ResolvedContext, *,

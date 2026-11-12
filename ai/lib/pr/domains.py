@@ -36,7 +36,7 @@ up to date (no block).
 The already-landed signals answer "is this work already in the base?". Further
 signals answer a different question — "is replaying this branch onto that base a
 safe thing to do at all?" — and refuse on the same exit code, with the same
-``--force`` override:
+``--force-landed`` override:
 
 | Signal | What it reads | When it fires |
 |---|---|---|
@@ -64,7 +64,7 @@ first six commits landed and whose seventh has not reads to them like a branch
 that landed nothing. Replaying that prefix onto itself conflicts each commit
 against its landed version. `pr rebase` detects the prefix and replays only
 what is left (``git rebase --onto <base> <fork-point>``). ``--fork-point REF``
-overrides the detection; ``--force`` turns it off and replays the whole branch.
+overrides the detection; ``--force-landed`` turns it off and replays the whole branch.
 
 The budgets are the circuit breaker for what all of this produces. Conflict
 resolution is an AI call per conflicted file, with edit access to the worktree,
@@ -89,7 +89,7 @@ at risk; the other measures how much the run is spending to find out.
 A resumed rebase waives the budget. The conflicts are already sitting in the
 worktree by then; refusing would strand it mid-rebase with no path forward
 except the manual resolution the command exists to avoid. The waiver is the
-resume path passing `force=True` into the same parameter `--force` sets, so
+resume path passing `force=True` into the same parameter `--force-landed` sets, so
 there is one waiver mechanism rather than two.
 """
 
@@ -122,6 +122,11 @@ if TYPE_CHECKING:
     # is on a method: `get_type_hints` is only ever called on the domain
     # *classes*, to resolve their fields, and never on a signature.
     from pr.state import PRState
+
+# The flag that waives `pr rebase`'s already-landed refusal and its landed-prefix skip.
+# Owned here because this module renders it and `rebase.types` (layer 6) may import
+# it while this layer may not import rebase.
+REBASE_LANDED_OVERRIDE = "--force-landed"
 
 
 @dataclass(frozen=True)
@@ -669,7 +674,7 @@ class RebaseSummary(Domain):
             return ["**Rebase**: conflicts — paused; resolve manually or run `pr rebase --fix`"]
         if self.status in _REFUSAL_REASONS:
             return [f"**Rebase**: refused — {_REFUSAL_REASONS[self.status]} "
-                    "(rerun with `pr rebase --force` to override)"]
+                    f"(rerun with `pr rebase {REBASE_LANDED_OVERRIDE}` to override)"]
         if self.conflicts_resolved == 0:
             desc = f"clean rebase — {self.commits_replayed} commit(s) replayed"
         else:

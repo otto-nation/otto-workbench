@@ -991,8 +991,10 @@ Takes no flags.
 | `--push-only` | Push HEAD with the lease an earlier --no-push run recorded; do not rebase. |
 | `--expect` `<sha>` | With --push-only: lease against SHA instead of the lease a recorded rebase saved; no recorded rebase is needed. |
 | `--no-verify` | Skip the pre-push hook on the force-push. For a hook failure already understood — a flake, or one the branch did not cause. |
-| `--force` | Rebase even when the branch's work already landed on the target ref. |
+| `--force-landed` | Rebase even when the branch's work already landed on the target ref, and replay its landed prefix too. Not a force push: every push is leased. |
 | `--abort` | Abort in-progress rebase. |
+
+Exit codes: `0` ok · `1` failure · `2` usage · `3` conflicts · `4` refused · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-rebase-contract)
 
 **`pr push`** — Push HEAD with a lease on the remote head you expect
 
@@ -1000,6 +1002,8 @@ Takes no flags.
 |------|-------------|
 | `--expect` `<sha>` | The remote tip you planned from. A fast-forward from any ancestor of it pushes under a lease on what origin holds. A moved origin is refused with no force advice. Required. |
 | `--no-verify` | Skip the pre-push hook. For a hook failure already understood — a flake, or one the branch did not cause. |
+
+Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-push-contract)
 
 **`pr describe`** — Revise the PR description
 

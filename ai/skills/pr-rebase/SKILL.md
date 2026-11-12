@@ -2,7 +2,7 @@
 name: pr-rebase
 description: "Rebase onto the branch's base with generated-only conflict rebuild or abort; --fix for AI resolution. TRIGGER when: user asks to rebase a branch, update it onto its base, squash-and-rebase, resolve rebase conflicts, or says hand rebase / rebase by hand. SKIP: simple git pull --rebase with no conflicts; commit rewording."
 source: otto-workbench/ai/skills/pr-rebase/SKILL.md
-invocation: "/pr-rebase [branch] [--fix] [--no-push] [--stop-on-conflict] [--force] [--onto|--base <ref>] [--fork-point <ref>] [--no-verify]"
+invocation: "/pr-rebase [branch] [--fix] [--no-push] [--stop-on-conflict] [--force-landed] [--onto|--base <ref>] [--fork-point <ref>] [--no-verify]"
 trigger: "Use when the user asks to rebase a branch, update it onto its base, squash-and-rebase, resolve rebase conflicts, or says hand rebase / rebase by hand."
 skip: "Do not use for simple git pull --rebase with no conflicts. Do not use for commit rewording."
 output_schema:
@@ -46,7 +46,7 @@ Stop and hand back only where the next move is a decision the tooling exists to
 leave to a person, and say exactly which one it is:
 
 - an exit 4 — the branch already landed, shares no history with its base, or
-  conflicts past the budget, so the only way on is `--force` or deleting the
+  conflicts past the budget, so the only way on is `--force-landed` or deleting the
   branch
 - a resolution that would drop changes git merged cleanly, where you cannot
   rebuild them hunk by hunk or verify each is superseded
@@ -76,7 +76,7 @@ leave to a person, and say exactly which one it is:
 - `--no-push` (optional): Do everything except push. Composes with `--fix`
   independently — under `--fix` the AI still resolves conflicts, and the
   force-push command is printed for the user to run.
-- `--force` (optional): Rebase a branch the preflight refuses — one whose work
+- `--force-landed` (optional): Rebase a branch the preflight refuses — one whose work
   already landed on its base, one sharing no history with it, or one conflicting
   past the file budget — and also replay a landed prefix in full rather than
   skipping it. Only pass it when the user has seen the exit-4 refusal and asked
@@ -336,7 +336,7 @@ their uncommitted work comes back with `git stash pop` after the abort.
   "commits_ahead": null,
   "pr_number": 726,
   "status": "already_landed",
-  "override": "--force"
+  "override": "--force-landed"
 }
 ```
 
@@ -377,10 +377,10 @@ If the user confirms they want the rebase anyway, re-run with the flag in
 `override`:
 
 ```bash
-pr rebase --fix --force --branch <branch>
+pr rebase --fix --force-landed --branch <branch>
 ```
 
-`--force` waives every one of these checks, not just the one that fired. A
+`--force-landed` waives every one of these checks, not just the one that fired. A
 resumed rebase (one already paused in the worktree) waives the conflict budget
 on its own: the conflicts are already there to resolve, and refusing would
 strand the worktree mid-rebase.

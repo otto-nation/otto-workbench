@@ -26,10 +26,11 @@ from collections.abc import Sequence
 import batch.live
 from batch.model import Item, ItemStatus, Run, RunStatus
 from batch.store import FailedRequest
+import core.exit_codes
 
 SCHEMA_VERSION = 2
-EXIT_OK = 0
-EXIT_FAILED = 1
+EXIT_OK = core.exit_codes.ExitCode.OK
+EXIT_FAILED = core.exit_codes.ExitCode.FAILURE
 _STATUS_EXIT = {RunStatus.DONE: EXIT_OK, RunStatus.CANCELLED: EXIT_OK}
 
 

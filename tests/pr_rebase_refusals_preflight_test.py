@@ -231,7 +231,7 @@ def test_refuse_over_budget_aborts_before_refusing(capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload["signal"] == rebase.types.RefusalSignal.CONFLICTS_OVER_BUDGET.value
     assert payload["status"] == pr.domains.RebaseStatus.CONFLICTS_OVER_BUDGET.value
-    assert payload["override"] == "--force"
+    assert payload["override"] == "--force-landed"
     assert "35" in payload["detail"]
 
 
@@ -281,10 +281,10 @@ def test_refuse_landed_emits_the_exit_4_payload(capsys):
         "branch": _LANDED_BRANCH, "signal": "pr_merged",
         "detail": f"PR #{_LANDED_PR} is merged", "commits_ahead": 18,
         "pr_number": _LANDED_PR, "status": "already_landed",
-        "override": "--force",
+        "override": "--force-landed",
     }
     assert f"Refusing to rebase {_LANDED_BRANCH}" in captured.err
-    assert "--force" in captured.err
+    assert "--force-landed" in captured.err
 
 
 def test_refuse_landed_keeps_every_documented_key_when_unmeasured(capsys):

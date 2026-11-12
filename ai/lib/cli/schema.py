@@ -33,10 +33,12 @@ from __future__ import annotations
 import sys
 
 import board.model
+import core.command_contract
+import core.exit_codes
 import core.log
 import cli.review_modes
 from cli.dispatch import PARSER_FACTORIES, resolve
-from cli.registry import COMMANDS
+from cli.registry import COMMANDS, contract_for
 from core.tool_parser import ToolParser
 
 # The command this module describes. Not `Path(__file__).name`: the document
@@ -46,7 +48,7 @@ SCRIPT = "pr"
 # argparse's own exit code for a usage error: the caller asked for something
 # in terms this build cannot answer in. Distinct from 1, so a consumer can
 # tell "we cannot answer that" from "the command ran and failed".
-EXIT_USAGE = 2
+EXIT_USAGE = core.exit_codes.ExitCode.USAGE
 
 
 def tool_schema() -> dict:
@@ -60,8 +62,11 @@ def tool_schema() -> dict:
 
     The `command` enum is `COMMANDS` in declaration order, which is the same
     order `pr --help` lists and the registry's tuple fixes.
+
+    The MCP server forwards only ``inputSchema``, so contract data rides
+    there as an ``x-`` extension that validators ignore.
     """
-    return {
+    doc = {
         "name": SCRIPT,
         "description": "Unified PR lifecycle CLI — CI, review, comments, rebase",
         "input_schema": {
@@ -79,6 +84,15 @@ def tool_schema() -> dict:
             "required": ["command"],
         },
     }
+    contracts = {}
+    for name, spec in COMMANDS.items():
+        contract = contract_for(spec)
+        if contract is None:
+            continue
+        contracts[name] = core.command_contract.schema(contract)
+    if contracts:
+        doc["input_schema"]["x-contracts"] = contracts
+    return doc
 
 
 def subcommand_schema(command: str) -> dict | None:
@@ -114,6 +128,9 @@ def subcommand_schema(command: str) -> dict | None:
         return None
     schema = parser.build_schema()
     schema["name"] = f"{SCRIPT} {command}"
+    contract = contract_for(COMMANDS[command])
+    if contract is not None:
+        schema.update(core.command_contract.schema(contract))
     return schema
 
 

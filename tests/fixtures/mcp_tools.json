@@ -1,7 +1,7 @@
 {
   "pr": {
     "_script": "ai/bin/pr",
-    "description": "Unified PR lifecycle CLI \u2014 creation, CI failures, code review, and review comments\n\nWhen to use: Managing PR lifecycle: opening a PR, checking CI status, running reviews, addressing comments, or viewing unified PR status. Across many open PRs at once (rebase, fix CI, comments, self-review): `pr batch run --checkout DIR`; `pr batch report` prints per-PR session commands; see `pr batch run --help`\n\nUsage: pr create [--draft] [--no-verify] [--dry-run] [--base <branch>] [--title <text>] [--body <text> | --body-file <path>] [--issue <id>] [--closes <id>] [--skip-review <reason>]  |  pr status  |  pr ci [--run <id>] [--fix] [--post] [--wait] [--wait-timeout <sec>] [--wait-interval <sec>] [--head-sha <head-sha>] [--no-rebase] [--no-verify]  |  pr review [--no-post] [--submit] [--self] [--fix] [--track <finding-id>] [--push] [--skip-user-verification] [--force] [--no-holistic] [--no-scout] [--no-group] [--no-synthesis] [--no-disprove] [--disprove] [--json-summary] [--issue <url>] [--focus <text>] [--focus-file <path>] [--base|--onto <base>] [--max-parallel <n>] [--max-cost <usd>] [--model <name>] [--effort <low|medium|high>] [--max-groups <n>] [--generated] [-V|--version] [--post] [--repair] [--summary] [--dismiss] [--recover] [--list] [--event <comment|approve|request_changes>] [--if-changed <stamp>] [<pr|branch> ...]  |  pr comments [--triage] [--fix] [--no-verify] [--no-push-verify] [--finish] [--track <thread-id>] [--track-all] [--post] [--reply <thread-comment-or-review-id>] [--body-file <path>] [--settle <thread-id>] [--as <fixed|dismissed|already_addressed>] [--reason <text>] [--commit <sha>]  |  pr fix [--post] [<review-or-ci-flag> ...]  |  pr rebase [--onto|--base <ref>] [--fork-point <ref>] [--fix] [--stop-on-conflict] [--no-push] [--push-only] [--expect <sha>] [--no-verify] [--force] [--abort]  |  pr push --expect <sha> [--no-verify]  |  pr describe [--force] [--dry-run] [--post] [--title <text>] [--body <text> | --body-file <path>] [--closes <id>]  |  pr stack  |  pr board --checkout <dir> --phase <phase> [--prs <n,n>] [--if-changed <stamp>] [--offline]  |  pr batch plan --checkout <dir> [--needs <steps>]  |  pr batch run --checkout <dir> | --plan <file> [--steps <steps>] [--with-ai <steps>] [--with-review] [--pool <pool>] [--auto-publish <ff>] [--rebase <conflicts|behind>] [--prs <prs>] [--select <key=steps>] [--no-verify] [--focus <text>] [--focus-file <path>] [--verbose]  |  pr batch resume [--steps <steps>] [--verbose] [<run-id>]  |  pr batch cancel [--kill] [<run-id>]  |  pr batch release [--kill] <run-id> <pr>  |  pr batch status [--full] [--list] [--offline] [<run-id>]  |  pr batch report [--format <json|md>] [--offline] [<run-id>]  |  pr gc",
+    "description": "Unified PR lifecycle CLI \u2014 creation, CI failures, code review, and review comments\n\nWhen to use: Managing PR lifecycle: opening a PR, checking CI status, running reviews, addressing comments, or viewing unified PR status. Across many open PRs at once (rebase, fix CI, comments, self-review): `pr batch run --checkout DIR`; `pr batch report` prints per-PR session commands; see `pr batch run --help`\n\nUsage: pr create [--draft] [--no-verify] [--dry-run] [--base <branch>] [--title <text>] [--body <text> | --body-file <path>] [--issue <id>] [--closes <id>] [--skip-review <reason>]  |  pr status  |  pr ci [--run <id>] [--fix] [--post] [--wait] [--wait-timeout <sec>] [--wait-interval <sec>] [--head-sha <head-sha>] [--no-rebase] [--no-verify]  |  pr review [--no-post] [--submit] [--self] [--fix] [--track <finding-id>] [--push] [--skip-user-verification] [--force] [--no-holistic] [--no-scout] [--no-group] [--no-synthesis] [--no-disprove] [--disprove] [--json-summary] [--issue <url>] [--focus <text>] [--focus-file <path>] [--base|--onto <base>] [--max-parallel <n>] [--max-cost <usd>] [--model <name>] [--effort <low|medium|high>] [--max-groups <n>] [--generated] [-V|--version] [--post] [--repair] [--summary] [--dismiss] [--recover] [--list] [--event <comment|approve|request_changes>] [--if-changed <stamp>] [<pr|branch> ...]  |  pr comments [--triage] [--fix] [--no-verify] [--no-push-verify] [--finish] [--track <thread-id>] [--track-all] [--post] [--reply <thread-comment-or-review-id>] [--body-file <path>] [--settle <thread-id>] [--as <fixed|dismissed|already_addressed>] [--reason <text>] [--commit <sha>]  |  pr fix [--post] [<review-or-ci-flag> ...]  |  pr rebase [--onto|--base <ref>] [--fork-point <ref>] [--fix] [--stop-on-conflict] [--no-push] [--push-only] [--expect <sha>] [--no-verify] [--force-landed] [--abort]  |  pr push --expect <sha> [--no-verify]  |  pr describe [--force] [--dry-run] [--post] [--title <text>] [--body <text> | --body-file <path>] [--closes <id>]  |  pr stack  |  pr board --checkout <dir> --phase <phase> [--prs <n,n>] [--if-changed <stamp>] [--offline]  |  pr batch plan --checkout <dir> [--needs <steps>]  |  pr batch run --checkout <dir> | --plan <file> [--steps <steps>] [--with-ai <steps>] [--with-review] [--pool <pool>] [--auto-publish <ff>] [--rebase <conflicts|behind>] [--prs <prs>] [--select <key=steps>] [--no-verify] [--focus <text>] [--focus-file <path>] [--verbose]  |  pr batch resume [--steps <steps>] [--verbose] [<run-id>]  |  pr batch cancel [--kill] [<run-id>]  |  pr batch release [--kill] <run-id> <pr>  |  pr batch status [--full] [--list] [--offline] [<run-id>]  |  pr batch report [--format <json|md>] [--offline] [<run-id>]  |  pr gc",
     "input_schema": {
       "properties": {
         "branch": {
@@ -42,7 +42,120 @@
       "required": [
         "command"
       ],
-      "type": "object"
+      "type": "object",
+      "x-contracts": {
+        "push": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "pushed, and origin holds HEAD",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "refused, lost, unverified, or a rebase is in progress",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "--expect missing or empty",
+              "name": "usage"
+            },
+            {
+              "code": 75,
+              "meaning": "another pr run holds this branch or checkout; retry once it finishes",
+              "name": "tempfail"
+            }
+          ],
+          "remote_effects": [
+            {
+              "how": "git push [--no-verify] --force-with-lease=refs/heads/<branch>:<lease>, where <lease> is the tip origin holds now (read with ls-remote) when it is --expect or an ancestor of --expect (a fast-forward); when origin cannot be asked, --expect itself. Records PushDomain in state.json, no rebase.",
+              "on_refusal": "origin at neither --expect nor an ancestor of it: refused before pushing (stale --expect), exit 1. origin has no such branch: exit 1 \u2014 pr push never creates a branch. origin moves between the read and the push: stale info, nothing written, exit 1.",
+              "trigger": "",
+              "where": "origin",
+              "writes": "refs/heads/<branch> := HEAD"
+            },
+            {
+              "how": "adds --no-verify to git push, skipping the git pre-push hook; the workbench owner check still runs",
+              "on_refusal": "as for the push",
+              "trigger": "--no-verify",
+              "where": "origin",
+              "writes": "nothing extra: changes how the push runs"
+            }
+          ]
+        },
+        "rebase": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "rebased, and pushed unless --no-push (or a one-sided resolution held the push)",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "pre-flight failure, git error, refused or lost push, missing or stale recorded lease",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "flags that cannot combine (--push-only with --fix/--abort/--no-push, --expect without --push-only, --fix with --stop-on-conflict)",
+              "name": "usage"
+            },
+            {
+              "code": 3,
+              "meaning": "conflicts need a person; ConflictReport on stdout, its tree says paused or clean",
+              "name": "conflicts"
+            },
+            {
+              "code": 4,
+              "meaning": "refused before changing anything (already landed, unrelated history, conflicts over budget); RefusalReport on stdout",
+              "name": "refused"
+            },
+            {
+              "code": 75,
+              "meaning": "another pr run holds this branch or checkout; retry once it finishes",
+              "name": "tempfail"
+            }
+          ],
+          "remote_effects": [
+            {
+              "how": "git push [--no-verify] --force-with-lease=refs/heads/<branch>:<expect>, where <expect> is origin/<branch> as this checkout saw it before the run's own fetch (empty when origin has no such branch, which creates it). The git pre-push hook runs unless --no-verify; the workbench owner check (gh.owner_hooks.refuse_outgoing) runs either way.",
+              "on_refusal": "origin moved since the lease was taken: git reports stale info, nothing is written, exit 1. Resume line: git ls-remote origin refs/heads/<branch>. A refused pre-push hook leaves the rebase complete and unpushed (JSON force_pushed false).",
+              "trigger": "",
+              "where": "origin",
+              "writes": "refs/heads/<branch> := the rebased HEAD"
+            },
+            {
+              "how": "git push [--no-verify] --force-with-lease=refs/heads/<branch>:<expect> (same lease as the bare invocation)",
+              "on_refusal": "origin moved since the lease was taken: git reports stale info, nothing is written, exit 1. Resume line: git ls-remote origin refs/heads/<branch>.",
+              "trigger": "--fix",
+              "where": "origin",
+              "writes": "the same push, after AI conflict resolution"
+            },
+            {
+              "how": "git push [--no-verify] --force-with-lease=refs/heads/<branch>:<expect>, where <expect> is RebaseSummary.lease_expect that the last completed rebase saved in the target's state.json",
+              "on_refusal": "No recorded rebase: exit 1. A recorded empty lease while origin has the branch: exit 1 ('recorded lease is stale'). origin moved since the lease was taken: git reports stale info, nothing is written, exit 1. Resume line: git ls-remote origin refs/heads/<branch>.",
+              "trigger": "--push-only",
+              "where": "origin",
+              "writes": "refs/heads/<branch> := current HEAD, commits added since the rebase included; no rebase runs"
+            },
+            {
+              "how": "git push [--no-verify] --force-with-lease=refs/heads/<branch>:<expect>, where <expect> is exactly the SHA given (use the full SHA); no recorded rebase is needed",
+              "on_refusal": "origin moved since the lease was taken: git reports stale info, nothing is written, exit 1. Resume line: git ls-remote origin refs/heads/<branch>.",
+              "trigger": "--push-only --expect",
+              "where": "origin",
+              "writes": "refs/heads/<branch> := current HEAD; no rebase runs"
+            },
+            {
+              "how": "adds --no-verify to git push, skipping the git pre-push hook; the owner check still runs. For a hook failure already understood \u2014 a flake, or a check the branch did not cause",
+              "on_refusal": "as for the push it modifies",
+              "trigger": "--no-verify",
+              "where": "origin",
+              "writes": "nothing extra: changes how the push above runs"
+            }
+          ]
+        }
+      }
     },
     "name": "pr"
   }

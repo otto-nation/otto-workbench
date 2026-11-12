@@ -96,7 +96,7 @@ def _continue_command(mode: RunMode) -> str:
     The run's own command rather than git's: a bare `git rebase --continue`
     would finish the replay without the run that started it, leaving its
     state file describing a stop. Carries `--no-push` when the run that hit
-    the refusal was started with it — a resume ignores `--force` and
+    the refusal was started with it — a resume ignores `--force-landed` and
     `--fork-point` (see `cmd_start`), so those two are never worth repeating
     here, but `--no-push` still governs whether the resume pushes.
     """
@@ -663,7 +663,7 @@ def fresh(
     ``fork_point`` is git's ``<upstream>`` argument, and naming it makes the
     replay ``git rebase --onto <target_ref> <fork_point>`` — only the commits
     after it, overriding detection. Without it, a landed prefix is skipped the
-    same way: detection names the fork point. ``--force`` turns that off and
+    same way: detection names the fork point. ``--force-landed`` turns that off and
     replays the whole branch, which is ``<newbase>`` and ``<upstream>`` as the
     same ref.
     """

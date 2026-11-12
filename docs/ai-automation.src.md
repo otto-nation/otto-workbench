@@ -688,15 +688,13 @@ A second `pr` against the same target or checkout while one still holds the lock
 exits 75 (`EX_TEMPFAIL`, the same value as `pr gc` when the GitHub hourly quota
 is spent). The error names the owning command; retry once that run finishes.
 
-### pr push and its lease
+### pr command contracts
 
-`pr push --expect <sha>` pins the remote tip you planned from, not local HEAD.
-The lease is built from the tip origin actually holds. A fast-forward from any
-ancestor of `--expect` still pushes, under a lease on that current origin tip.
-A moved origin is refused (`stale --expect`) with no force advice. If origin
-moves after planning, git's "stale info" is a stale lease (`ls-remote` on the
-full ref), not a divergence. An un-forced divergence resumes with
-`git pull --rebase`, never `--force-with-lease`.
+What each `pr` command writes to origin or GitHub and how, what each exit means, and the
+next step after one, rendered from the command's `CONTRACT` (`pr <command> --help` prints
+the same text). Lease semantics for `pr rebase` and `pr push` live here and nowhere else.
+
+<!-- include: bin/local/generate-cli-reference --tool pr --emit contract -->
 
 ### Running a branch's own libraries
 

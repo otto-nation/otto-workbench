@@ -294,6 +294,20 @@ def test_rebase_carries_the_exit_codes_that_are_not_failures():
     assert cli.schema.subcommand_schema("rebase")["ok_exit_codes"] == [3, 4]
 
 
+def test_a_contracted_subcommand_schema_carries_exits_and_remote_effects():
+    doc = cli.schema.subcommand_schema("rebase")
+    assert [e["code"] for e in doc["exit_codes"]] == [0, 1, 2, 3, 4, 75]
+    assert any(e["trigger"] == "--push-only" for e in doc["remote_effects"])
+
+
+def test_the_union_schema_carries_contracts_inside_input_schema():
+    """MCP clients see inputSchema only, so the contracts ride there."""
+    contracts = cli.schema.tool_schema()["input_schema"]["x-contracts"]
+    assert set(contracts) >= {"rebase", "push"}
+    assert contracts["push"]["exit_codes"][0] == {"code": 0, "name": "ok",
+                                                  "meaning": "pushed, and origin holds HEAD"}
+
+
 @pytest.mark.parametrize("command", ["status", "fix", "gc"])
 def test_a_command_pr_runs_itself_reports_no_subcommand_schema(command):
     """No delegate parser, so nothing to report — the union already answered."""

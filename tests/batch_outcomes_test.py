@@ -61,10 +61,10 @@ def test_rebase_conflicts_carry_the_conflict_report():
 
 
 def test_rebase_refusal_carries_status_and_override():
-    report = {"status": "already_landed", "override": "--force", "remedy": "r", "detail": "d"}
+    report = {"status": "already_landed", "override": "--force-landed", "remedy": "r", "detail": "d"}
     r = batch.outcomes.classify(batch.model.Step.REBASE, 4, json.dumps(report), item=ITEM, log_tail=[])
     assert r.decisions[0].kind is batch.model.DecisionKind.REBASE_REFUSED
-    assert r.decisions[0].payload["override"] == "--force"
+    assert r.decisions[0].payload["override"] == "--force-landed"
 
 
 def test_rebase_conflicts_without_json_carry_log_tail():

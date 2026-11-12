@@ -29,8 +29,10 @@ going stale now that no `pr` code path would notice if it did.
 
 # doc-group: cli
 
+import importlib
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import cli.review_modes
 import pr.context
@@ -38,6 +40,9 @@ from cli.needs import (
     LOCAL, NO_LOCK, NONE, REMOTE, TARGET_AND_CHECKOUT, TARGET_ONLY, Need,
     ci_need, comments_need, has_flag, rebase_need,
 )
+
+if TYPE_CHECKING:
+    from core.command_contract import CommandContract
 
 
 @dataclass(frozen=True)
@@ -90,6 +95,11 @@ class CommandSpec:
       the command's argv is help before taking locks, so a live batch still
       prints `pr batch run --help` and a `--help` consumed as a flag value
       does not skip the lock. None for every other command.
+    * ``contract`` — ``"<module>:<attr>"`` naming the command's
+      `core.command_contract.CommandContract`, kept in the module that owns
+      its flags. A string for the reason ``handler`` is one: `pr --help`
+      imports no delegate. `tests/cli_contract_test.py` fails for a spec
+      without one unless it is listed as not yet migrated.
     """
 
     name: str
@@ -100,6 +110,7 @@ class CommandSpec:
     handler: str | None = None
     parses_own_argv: bool = False
     parser: str | None = None
+    contract: str | None = None
 
 
 # `ci_need`, `comments_need` and `rebase_need` live in `cli.needs` because the
@@ -146,13 +157,15 @@ _SPECS: tuple[CommandSpec, ...] = (
                 handler="cli.pr_commands:cmd_fix"),
     CommandSpec("rebase",   "Rebase onto the branch's base",
                 rebase_need,  script="pr-rebase",
-                handler="cli.pr_rebase:main"),
+                handler="cli.pr_rebase:main",
+                contract="cli.pr_rebase:CONTRACT"),
     # A plain leased push of HEAD. Git alone answers it, so LOCAL; an explicit
     # --pr still escalates through resolve_at. No backing script: the handler
     # and its parser are the whole command, as with create.
     CommandSpec("push",     "Push HEAD with a lease on the remote head you expect",
                 Need(LOCAL,  update=False, locks=TARGET_AND_CHECKOUT),
-                handler="cli.pr_push:main"),
+                handler="cli.pr_push:main",
+                contract="cli.pr_push:CONTRACT"),
     CommandSpec("describe", "Revise the PR description",
                 Need(REMOTE, update=True,  locks=TARGET_AND_CHECKOUT),  script="pr-describe",
                 handler="cli.pr_describe:main"),
@@ -191,6 +204,14 @@ def need_for(spec: CommandSpec, argv: Sequence[str]) -> Need:
     shapes, so nothing downstream has to know which kind a spec carries.
     """
     return spec.need(argv) if callable(spec.need) else spec.need
+
+
+def contract_for(spec: CommandSpec) -> "CommandContract | None":
+    """The contract *spec* names, imported now; None for a command not yet migrated."""
+    if spec.contract is None:
+        return None
+    module, _, attr = spec.contract.partition(":")
+    return getattr(importlib.import_module(module), attr)
 
 
 def validate_needs(commands: dict[str, CommandSpec]) -> None:

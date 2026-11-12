@@ -1,6 +1,6 @@
 """Replaying only what is left of a partially-landed branch.
 
-Detection skips the landed prefix without a flag. `--force` replays the whole
+Detection skips the landed prefix without a flag. `--force-landed` replays the whole
 branch. `--fork-point` names the start and does not ask detection. The replay
 half runs against a real repository, because what is under test is that git's
 ``--onto <newbase> <upstream>`` form reaches git at all — the two-argument form
@@ -145,7 +145,7 @@ class TestForkPointReplay:
         assert "feat: 1" in warn_lines[0]
         assert "feat: 2" in warn_lines[0]
         assert "feat: 3" not in warn_lines[0]
-        assert "Pass --force to replay the whole branch." in err
+        assert "Pass --force-landed to replay the whole branch." in err
 
         fork_calls = [
             c for c in trail.decision.call_args_list

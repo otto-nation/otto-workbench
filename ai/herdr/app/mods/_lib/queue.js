@@ -1,6 +1,6 @@
 /**
- * otto-queue status and cancel through `exec`. Pure: argv, parse, loaders.
- * Remote calls go through `invoke` with no isolate so PATH gets ~/.local/bin.
+ * otto-queue status, cancel and log tails through `exec`. Pure: argv, parse, labels, loaders.
+ * A null `on` is this machine. Remote calls go through `invoke` with no isolate so PATH gets ~/.local/bin.
  *
  * loadStatus shapes:
  *   {ok:true, busy:true, rows:[]}  otto-queue exited 75 (ledger busy; retry next poll)
@@ -48,30 +48,87 @@ export function liveCounts(rows) {
   return { queued, running };
 }
 
-const SHORT_ARGV = 64;
+// A review key is `review:` plus a SHA-256: opaque, so it is no title.
+const OPAQUE_KEY = /^review:[0-9a-f]{64}$/;
 
-export function shortArgv(argv) {
-  const text = Array.isArray(argv) ? argv.join(' ') : '';
-  if (text.length <= SHORT_ARGV) return text;
-  return `${text.slice(0, SHORT_ARGV - 1)}…`;
+function basename(path) {
+  const parts = String(path).split('/');
+  return parts[parts.length - 1] || String(path);
 }
 
-function ageSeconds(row, nowMs) {
-  const t = row?.started_at ?? row?.created_at;
-  if (t == null || t === '') return null;
-  let thenMs;
-  if (typeof t === 'number') thenMs = t < 1e12 ? t * 1000 : t;
-  else thenMs = Date.parse(t);
-  if (!Number.isFinite(thenMs)) return null;
-  return Math.max(0, Math.round((nowMs - thenMs) / 1000));
+/**
+ * The row's title: its label when the ledger carries one, else a readable queue key, else the
+ * command with argv[0] cut to its basename. Never truncated here; the view's ellipsis is the
+ * only cut.
+ */
+export function rowTitle(row) {
+  if (typeof row?.label === 'string' && row.label.trim() !== '') return row.label;
+  const key = row?.idem_key;
+  if (typeof key === 'string' && key !== '' && !OPAQUE_KEY.test(key)) return key;
+  const argv = Array.isArray(row?.argv) ? row.argv : [];
+  if (!argv.length) return `#${row?.id ?? ''}`;
+  return [basename(argv[0]), ...argv.slice(1)].join(' ');
 }
 
-export function ageText(row, nowMs) {
-  const seconds = ageSeconds(row, nowMs);
-  if (seconds == null) return '';
+// The full command, for the expanded row.
+export function commandText(argv) {
+  return Array.isArray(argv) ? argv.join(' ') : '';
+}
+
+function spanText(seconds) {
   if (seconds < 60) return `${seconds}s`;
   if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
   return `${Math.floor(seconds / 3600)}h`;
+}
+
+function toMs(t) {
+  if (t == null || t === '') return null;
+  const ms = typeof t === 'number' ? (t < 1e12 ? t * 1000 : t) : Date.parse(t);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * The row's second line: `#id · class · key`, then why it ended or when it retries, the way
+ * `otto-queue status` prints it. The key is left out when it is already the title.
+ */
+export function rowMeta(row, nowMs) {
+  const parts = [`#${row.id}`];
+  if (row.entry_class) parts.push(row.entry_class);
+  const key = row.idem_key;
+  if (key && rowTitle(row) !== key) parts.push(OPAQUE_KEY.test(key) ? 'review' : key);
+  if (row.exit_status != null && row.exit_status !== 0) parts.push(`exit ${row.exit_status}`);
+  const at = toMs(row.not_before);
+  if (row.state === 'queued' && at != null && at > nowMs) {
+    parts.push(`retry in ${spanText(Math.round((at - nowMs) / 1000))}`, `attempt ${(row.attempts ?? 0) + 1}`);
+  }
+  return parts.join(' · ');
+}
+
+// When the entry was made, started and finished, as clock times; absent ones are left out.
+export function timesText(row) {
+  const out = [];
+  for (const [name, t] of [['created', row.created_at], ['started', row.started_at], ['finished', row.finished_at]]) {
+    const ms = toMs(t);
+    if (ms != null) out.push(`${name} ${new Date(ms).toLocaleTimeString()}`);
+  }
+  return out.join(' · ');
+}
+
+export function logTailArgv(path, n = 80) {
+  return ['tail', '-n', String(n), path];
+}
+
+// The last lines of an entry's log on its machine; {ok:true, text} or {ok:false, error}.
+export async function loadLog(exec, ctx, path) {
+  const argv = logTailArgv(path);
+  const ran = await invoke(exec, ctx, argv[0], argv.slice(1));
+  return ran.ok ? { ok: true, text: ran.stdout } : ran;
+}
+
+export function ageText(row, nowMs) {
+  const thenMs = toMs(row?.started_at ?? row?.created_at);
+  if (thenMs == null) return '';
+  return spanText(Math.max(0, Math.round((nowMs - thenMs) / 1000)));
 }
 
 function rowOf(raw) {
@@ -82,6 +139,7 @@ function rowOf(raw) {
     kind: raw.kind ?? null,
     entry_class: raw.entry_class ?? null,
     idem_key: raw.idem_key ?? null,
+    label: raw.label ?? null,
     argv: Array.isArray(raw.argv) ? raw.argv.map(String) : [],
     cwd: raw.cwd ?? null,
     env_allow: Array.isArray(raw.env_allow) ? raw.env_allow : [],

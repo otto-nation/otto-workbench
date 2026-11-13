@@ -369,10 +369,10 @@ def test_one_group_goes_to_the_single_agent_review(tmp_path, monkeypatch):
     monkeypatch.setattr(review.pipeline, "_resolve_recovery", lambda j, groups: SimpleNamespace(
         already_complete=False, cost_so_far=0.0, skip_groups=set(), state=None,
         resume_at_gate=False))
-    monkeypatch.setattr(review.pipeline, "_single_group_goes_single", lambda *a: True)
+    monkeypatch.setattr(review.pipeline, "_single_group_prompt", lambda *a: "p")
     seen = []
     monkeypatch.setattr(review.pipeline, "run_single_agent",
-                        lambda j, disprove=None: seen.append(disprove))
+                        lambda j, disprove=None, prompt=None: seen.append(disprove))
     monkeypatch.setattr(review.pipeline, "_run_group_phase",
                         lambda *a: pytest.fail("a lone group ran as a group"))
     review.pipeline.run_multi_phase(job, max_parallel=1, disprove=True)
@@ -385,8 +385,9 @@ def test_one_group_handoff_records_the_single_pipeline(tmp_path, monkeypatch):
     monkeypatch.setattr(review.pipeline, "_resolve_recovery", lambda j, groups: SimpleNamespace(
         already_complete=False, cost_so_far=0.0, skip_groups=set(), state=None,
         resume_at_gate=False))
-    monkeypatch.setattr(review.pipeline, "_single_group_goes_single", lambda *a: True)
-    monkeypatch.setattr(review.pipeline, "run_single_agent", lambda j, disprove=None: None)
+    monkeypatch.setattr(review.pipeline, "_single_group_prompt", lambda *a: "p")
+    monkeypatch.setattr(review.pipeline, "run_single_agent",
+                        lambda j, disprove=None, prompt=None: None)
     monkeypatch.setattr(review.pipeline, "_run_group_phase",
                         lambda *a: pytest.fail("a lone group ran as a group"))
     review.pipeline.run_multi_phase(job, max_parallel=1)
@@ -413,7 +414,9 @@ def test_only_a_fresh_single_group_goes_single(
     monkeypatch.setattr(review.pipeline, "build_prompt", lambda *a, **k: "p")
     monkeypatch.setattr(review.pipeline, "PhaseRunner",
                         lambda j, p: SimpleNamespace(max_turns=1))
-    assert review.pipeline._single_group_goes_single(job, groups, incremental) is expected
+    assert (
+        review.pipeline._single_group_prompt(job, groups, incremental) is not None
+    ) is expected
 
 
 def test_a_single_prompt_that_does_not_fit_keeps_the_multi_path(tmp_path, monkeypatch):
@@ -425,7 +428,7 @@ def test_a_single_prompt_that_does_not_fit_keeps_the_multi_path(tmp_path, monkey
     monkeypatch.setattr(review.pipeline, "build_prompt", too_big)
     monkeypatch.setattr(review.pipeline, "PhaseRunner",
                         lambda j, p: SimpleNamespace(max_turns=1))
-    assert review.pipeline._single_group_goes_single(job, 1, False) is False
+    assert review.pipeline._single_group_prompt(job, 1, False) is None
 
 
 def test_nothing_new_skips_synthesis_and_states_a_verdict(tmp_path, monkeypatch):
@@ -494,7 +497,7 @@ def test_run_multi_phase_hands_settled_to_synthesis_and_the_gate(
     job = review_job(tmp_path, tmp_path / "r", head_sha="h" * 40, files=["a.py"])
     seen = {}
     monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
-    monkeypatch.setattr(review.pipeline, "_single_group_goes_single", lambda *a: False)
+    monkeypatch.setattr(review.pipeline, "_single_group_prompt", lambda *a: None)
     monkeypatch.setattr(review.pipeline, "_resolve_recovery", lambda j, groups: SimpleNamespace(
         already_complete=False, cost_so_far=0.0, skip_groups=set(), state=None,
         resume_at_gate=False))
@@ -537,7 +540,7 @@ def test_phase_one_focus_reaches_the_groups(tmp_path, monkeypatch):
 
     monkeypatch.setattr(review.phases, "run_agent", fake_agent)
     monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
-    monkeypatch.setattr(review.pipeline, "_single_group_goes_single", lambda *a: False)
+    monkeypatch.setattr(review.pipeline, "_single_group_prompt", lambda *a: None)
     monkeypatch.setattr(review.pipeline, "_resolve_recovery", lambda j, groups: SimpleNamespace(
         already_complete=False, cost_so_far=0.0, skip_groups=set(), state=None,
         resume_at_gate=False))

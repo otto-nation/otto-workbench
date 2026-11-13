@@ -468,9 +468,9 @@ class TestOneGroupHandoffReportsThePipelineRun:
                 state=None, resume_at_gate=False),
         )
         monkeypatch.setattr(
-            review.pipeline, "_single_group_goes_single", lambda *a: True)
+            review.pipeline, "_single_group_prompt", lambda *a: "p")
 
-        def _single(j, disprove=None):
+        def _single(j, disprove=None, prompt=None):
             Path(j.review_file).write_text(synthetic_review())
 
         monkeypatch.setattr(review.pipeline, "run_single_agent", _single)

@@ -95,9 +95,9 @@ class TestHandoffPersistsPhases:
                 state=None, resume_at_gate=False),
         )
         monkeypatch.setattr(
-            review.pipeline, "_single_group_goes_single", lambda *a: True)
+            review.pipeline, "_single_group_prompt", lambda *a: "p")
 
-        def _single(j, disprove=None):
+        def _single(j, disprove=None, prompt=None):
             store_record(
                 j.review_file, record(summary="s"),
                 ReviewMeta(head_sha=j.pr.head_sha),
@@ -123,7 +123,7 @@ def _by_phase(job):
 
 def _stub_multi_tail(monkeypatch):
     monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
-    monkeypatch.setattr(review.pipeline, "_single_group_goes_single", lambda *a: False)
+    monkeypatch.setattr(review.pipeline, "_single_group_prompt", lambda *a: None)
     monkeypatch.setattr(review.pipeline, "_write_pipeline_state", lambda *a: None)
     monkeypatch.setattr(review.pipeline, "_run_holistic_phase", lambda *a: PhaseResult())
     monkeypatch.setattr(

@@ -18,7 +18,7 @@ read as a clean review of nothing. ``review.outcome`` and ``review.verdict``
 word that header; this module is the path that takes it.
 
 A first-round PR that groups into one group runs the single-agent review
-instead (`_single_group_goes_single`): a lone group has no scan before it and,
+instead (`_single_group_prompt`): a lone group has no scan before it and,
 when clean, no synthesis or disprove after it, so it would be one pass with none
 of the checks the single path always runs. With two or more groups the
 whole-PR scan always runs, and a clean group result still reaches synthesis when
@@ -160,19 +160,26 @@ def hold_group_workers(
 # ── Review pipelines ──────────────────────────────────────────────────────────
 
 
-def run_single_agent(job: ReviewJob, disprove: bool | None = None):
+def run_single_agent(
+    job: ReviewJob, disprove: bool | None = None, *, prompt: str | None = None,
+):
     runner = PhaseRunner(job, Phase.SINGLE)
     max_turns = runner.max_turns
-    try:
-        prompt = build_prompt(Phase.SINGLE, job, max_turns=max_turns)
-    except PromptTooLarge as exc:
-        # The single-agent run is the whole review — there is no second phase to
-        # fall back on and nothing written yet to salvage, so this exits rather
-        # than degrading. A PR this size wants the multi-phase path, which splits
-        # it into groups small enough to prompt.
-        core.log.error(f"Review cannot be prompted: {exc}")
-        core.log.dim("Re-run at an effort level that reviews this PR in groups.")
-        sys.exit(1)
+    # Both this path and `_single_group_prompt` compute
+    # `PhaseRunner(job, Phase.SINGLE).max_turns` the same way, because the
+    # prompt embeds the turn count.
+    if prompt is None:
+        try:
+            prompt = build_prompt(Phase.SINGLE, job, max_turns=max_turns)
+        except PromptTooLarge as exc:
+            # The single-agent run is the whole review — there is no second phase
+            # to fall back on and nothing written yet to salvage, so this exits
+            # rather than degrading. A PR this size wants the multi-phase path,
+            # which splits it into groups small enough to prompt.
+            core.log.error(f"Review cannot be prompted: {exc}")
+            core.log.dim(
+                "Re-run at an effort level that reviews this PR in groups.")
+            sys.exit(1)
     label = f"branch {job.pr.head}" if job.mode == Mode.SELF else f"PR #{job.pr_number} ({job.pr.title})"
     core.log.info(f"Running review agent on {label}...")
     core.log.blank()
@@ -332,8 +339,10 @@ def _group_merge_cap(job: ReviewJob) -> int:
     return max(MIN_DIFF_BYTES, ladder_target_bytes(model, selected_backend(), cwd=job.wt_path) - fixed)
 
 
-def _single_group_goes_single(job: ReviewJob, group_count: int, incremental: bool) -> bool:
-    """Whether one group is better reviewed by the single-agent pipeline.
+def _single_group_prompt(
+    job: ReviewJob, group_count: int, incremental: bool,
+) -> str | None:
+    """The run's one SINGLE prompt, or None when this run does not qualify.
 
     A lone group has no scan before it and, when clean, no synthesis or disprove
     after it: one agent's pass would be the whole review with none of the checks
@@ -342,15 +351,16 @@ def _single_group_goes_single(job: ReviewJob, group_count: int, incremental: boo
     only when the single prompt fits — `run_single_agent` exits on an over-budget
     prompt, where the group path would have degraded instead. `--no-group` keeps
     the multi path, which is what reports the skipped phase.
+
+    This is the run's one SINGLE build; `run_single_agent` sends it as is.
     """
     if group_count != 1 or incremental or Phase.GROUP in job.skipped:
-        return False
+        return None
     try:
-        build_prompt(
+        return build_prompt(
             Phase.SINGLE, job, max_turns=PhaseRunner(job, Phase.SINGLE).max_turns)
     except PromptTooLarge:
-        return False
-    return True
+        return None
 
 
 def run_multi_phase(
@@ -413,12 +423,16 @@ def run_multi_phase(
 
     # A prior multi-phase attempt (recovery.state) finishes as the multi-phase
     # run it was; only a fresh run is redirected.
-    if recovery.state is None and _single_group_goes_single(job, group_count, incremental):
+    prompt = (
+        _single_group_prompt(job, group_count, incremental)
+        if recovery.state is None else None
+    )
+    if prompt is not None:
         core.log.info(
             "One group covers the whole PR — running the single-agent review "
             "(claims check and disprove) instead of a lone group pass")
         review.phase_runs.handed_to_single(job)
-        run_single_agent(job, disprove=disprove)
+        run_single_agent(job, disprove=disprove, prompt=prompt)
         return
 
     cost_so_far = recovery.cost_so_far

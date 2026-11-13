@@ -154,6 +154,7 @@ class CommandContract:
     remote_effects: tuple[RemoteEffect, ...] = ()
     json_output: JsonOutput | None = None
     notes: tuple[str, ...] = ()
+    reference: str = REFERENCE_ANCHOR
 
     def outcome(self, code: int) -> ExitOutcome | None:
         """The declared outcome for *code*, or None when the contract is silent."""
@@ -230,7 +231,7 @@ def render_help(contract: CommandContract) -> str:
     out.append("")
     out.append("Exit codes:")
     for o in contract.exits:
-        out.append(f"  {int(o.code):<3}{o.code.name.lower()} — {o.meaning}")
+        out.append(f"  {int(o.code):<4}{o.code.name.lower()} — {o.meaning}")
         for step in o.next_steps:
             label = f"Next ({step.when})" if step.when else "Next"
             out.append(f"       {label}: " + " → ".join(step.lines))
@@ -242,7 +243,7 @@ def render_help(contract: CommandContract) -> str:
         out += _json_help(contract.json_output)
     if contract.notes:
         out += ["", "Notes:"] + [f"  {n}" for n in contract.notes]
-    out += ["", f"Full reference: {REFERENCE_ANCHOR}"]
+    out += ["", f"Full reference: {contract.reference}"]
     return "\n".join(out)
 
 

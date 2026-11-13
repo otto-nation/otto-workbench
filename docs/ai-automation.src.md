@@ -718,6 +718,14 @@ for one finished outside `pr`, add `--expect <full SHA>` as its `Next:` block sa
 
 <!-- include: bin/local/generate-cli-reference --tool pr --emit contract -->
 
+### otto-queue contract
+
+What `otto-queue` writes (nothing remotely), what each exit means, and the next
+step after one, rendered from `cli.otto_queue.CONTRACT` (`otto-queue --help`
+prints the same text).
+
+<!-- include: bin/local/generate-cli-reference --tool otto-queue --emit contract -->
+
 ### Running a branch's own libraries
 
 The Python entry points take their own pin, since `~/.local/bin/pr` is a symlink into

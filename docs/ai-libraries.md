@@ -6018,7 +6018,7 @@ Not: what the operator should set (each error's own message says that).
 
 ### core/exit_codes.py
 
-The exit codes every `pr` command shares, and what each means in general.
+The exit codes contracted CLIs declare, and what each means in general.
 
 One owner for the numbers. Before this module the same seven values were
 spelled in eight places — `EXIT_USAGE` twice, 75 as both `EXIT_BUSY` and
@@ -8794,11 +8794,9 @@ answers no question anyone asks of it.
 `otto-queue`: run a command through this machine's queue, see what it holds, cancel an entry.
 
 The library is `otto_queue`; this module is the parser, the output and the exit
-codes. `run` exits with the command's own status: 75 when the command, or the
-wait for a slot, found its resource busy, and 130 when the entry was cancelled
-before it ran. `status` exits 0. `cancel` exits 0, or 1 when it names no live
-entry. Admission is `batch.admission.QueuePolicy` under the machine-wide config
-(`batch.*`), never a repo's, because the budget belongs to the machine.
+codes. Flags, exit codes and examples are `CONTRACT` below. Admission is
+`batch.admission.QueuePolicy` under the machine-wide config (`batch.*`), never a
+repo's, because the budget belongs to the machine.
 
 ### cli/owners_check.py
 

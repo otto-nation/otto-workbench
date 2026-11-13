@@ -69,7 +69,7 @@ def test_print_next_is_silent_without_steps(capsys):
 def test_help_carries_every_section():
     text = core.command_contract.render_help(_contract())
     for needle in ("Writes remotely:", "--go", "git push", "Exit codes:",
-                   "  3  conflicts", "Examples:", "pr thing --go", "JSON on stdout:",
+                   "  3   conflicts", "Examples:", "pr thing --go", "JSON on stdout:",
                    "kind", "a  first", "A note.", core.command_contract.REFERENCE_ANCHOR):
         assert needle in text, needle
 

@@ -1,4 +1,4 @@
-"""The exit codes every `pr` command shares, and what each means in general.
+"""The exit codes contracted CLIs declare, and what each means in general.
 
 One owner for the numbers. Before this module the same seven values were
 spelled in eight places — `EXIT_USAGE` twice, 75 as both `EXIT_BUSY` and
@@ -20,9 +20,11 @@ from __future__ import annotations
 
 from enum import IntEnum
 
+import core.proc
+
 
 class ExitCode(IntEnum):
-    """A process exit status a `pr` command may return."""
+    """A process exit status a contracted command may return."""
 
     OK = 0
     FAILURE = 1
@@ -31,6 +33,9 @@ class ExitCode(IntEnum):
     REFUSED = 4
     # sysexits.h EX_TEMPFAIL: retry later — a live lock holder, a spent quota.
     TEMPFAIL = 75
+    # 128 + SIGINT: cancelled before the work finished, or Ctrl-C. core.proc owns
+    # the shell convention, and validate-magic-values reads it there.
+    CANCELLED = core.proc.INTERRUPT_RETURNCODE
 
     @property
     def summary(self) -> str:
@@ -45,4 +50,5 @@ _SUMMARIES = {
     ExitCode.CONFLICTS: "Conflicts a person must look at; a JSON report is on stdout",
     ExitCode.REFUSED: "Refused on purpose before changing anything; JSON names the override",
     ExitCode.TEMPFAIL: "Temporary: retry later (a live lock holder, a spent GitHub quota)",
+    ExitCode.CANCELLED: "Cancelled: interrupted or the work was stopped before it finished",
 }

@@ -35,7 +35,7 @@ tools:
     when_to_use: "Tracing what an AI script did (recent, query, show, list), seeing what AI calls cost across scripts, tasks, models, and days (stats), or reclaiming the trail root ahead of its retention horizon (prune). One user command spans several processes; show takes any of their invocation IDs and renders the whole command"
 
   - name: otto-queue
-    parser: cli.otto_queue:build_parser
+    parser: cli.otto_queue:reference_shape
     permission: true
     visibility: brief
     description: "Machine-wide queue for background work — admits a command against the heavy/light budget, de-duplicates it by key, and records it in a per-machine ledger"

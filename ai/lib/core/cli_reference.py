@@ -92,11 +92,14 @@ class CLIShape:
     `globals` holds the flags accepted before (or, for a two-pass parser like
     `pr`, anywhere around) the command; `None` when there are none. A CLI with
     no subcommands has an empty `commands` and its options in `globals`.
+    `contract` is the CLI-wide promise when the program has one contract for
+    every subcommand (`otto-queue`); per-command contracts stay on `Command`.
     """
 
     prog: str
     globals: argparse.ArgumentParser | None = None
     commands: tuple[Command, ...] = field(default_factory=tuple)
+    contract: "core.command_contract.CommandContract | None" = None
 
 
 def shape_of(parser: argparse.ArgumentParser, prog: str) -> CLIShape:
@@ -346,6 +349,8 @@ def tables(shape: CLIShape) -> str:
         if table:
             label = "Global flags" if shape.commands else "Flags"
             out.append(f"**{label}**\n\n{table}")
+    if shape.contract is not None:
+        out.append(_contract_pointer(shape.prog, shape.contract))
     by_name = {c.name: c for c in shape.commands}
     for command in _flattened(shape.commands):
         head = f"**`{shape.prog} {command.name}`**"
@@ -360,26 +365,34 @@ def tables(shape: CLIShape) -> str:
     return "\n\n".join(out)
 
 
-def _contract_line(prog: str, command: Command) -> str:
-    """One line under a contracted command's table: its exits and where its contract is."""
-    c = command.contract
-    assert c is not None
-    exits = " · ".join(f"`{int(o.code)}` {o.code.name.lower()}" for o in c.exits)
-    writes = "writes remotely" if c.remote_effects else "writes nothing remotely"
-    link = core.command_contract.anchor(f"{prog} {command.name}")
+def _contract_pointer(heading: str, contract: core.command_contract.CommandContract) -> str:
+    """One line: exits and where the contract for *heading* lives."""
+    exits = " · ".join(f"`{int(o.code)}` {o.code.name.lower()}" for o in contract.exits)
+    writes = "writes remotely" if contract.remote_effects else "writes nothing remotely"
+    link = core.command_contract.anchor(heading)
     return f"Exit codes: {exits} — {writes}; [contract](ai-automation.md#{link})"
 
 
+def _contract_line(prog: str, command: Command) -> str:
+    """One line under a contracted command's table: its exits and where its contract is."""
+    assert command.contract is not None
+    return _contract_pointer(f"{prog} {command.name}", command.contract)
+
+
 def contracts(shape: CLIShape) -> str:
-    """Every contracted command's docs block, in declaration order.
+    """Every contract's docs block: the CLI-wide one, then each command's.
 
     Raises rather than printing nothing: an include that rendered empty would
     read as a CLI that promises nothing.
     """
-    blocks = [core.command_contract.render_markdown(f"{shape.prog} {c.name}", c.contract)
-              for c in shape.commands if c.contract is not None]
+    blocks = []
+    if shape.contract is not None:
+        blocks.append(core.command_contract.render_markdown(shape.prog, shape.contract))
+    blocks.extend(
+        core.command_contract.render_markdown(f"{shape.prog} {c.name}", c.contract)
+        for c in shape.commands if c.contract is not None)
     if not blocks:
-        raise ValueError(f"{shape.prog}: no command declares a contract")
+        raise ValueError(f"{shape.prog}: no contract")
     return "\n\n".join(blocks)
 
 

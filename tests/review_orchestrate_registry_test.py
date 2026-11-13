@@ -328,7 +328,8 @@ class TestBuildPromptPreflight:
         )
         result = ro.build_prompt(ro.Phase.SINGLE, job, max_turns=15)
         assert "NOT in the PR" not in result
-        assert "must be read directly" in result
+        assert "are at this path" in result
+        assert "must be read directly" not in result
         assert "Read source files directly" not in result
 
     def test_env_section_no_preflight(self, ro):
@@ -348,6 +349,7 @@ class TestBuildPromptPreflight:
         )
         result = ro.build_prompt(ro.Phase.SINGLE, job, max_turns=15)
         assert "NOT in the PR" not in result
+        assert "are at this path" not in result
         assert "must be read directly" not in result
         assert "Read source files directly" in result
 

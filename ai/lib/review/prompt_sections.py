@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
+from enum import Enum
 
 import git.client
 from agent.types import EFFORT_PRESETS
@@ -262,7 +263,7 @@ def _build_env_section(
         return f"""
 ## Environment
 PR branch checked out at: {wt_path}
-Diffs are pre-collected; file contents are not. Read every file listed under "Files not pre-collected" directly from this path."""
+Diffs are pre-collected; file contents are not. Files listed under "Files not pre-collected" are at this path."""
     has_omissions = bool(preflight and preflight.omitted_files) or bool(files and files.omitted)
     if preflight and not has_omissions:
         return f"""
@@ -273,41 +274,75 @@ File contents and diffs are in the Pre-collected data section. Use Read/Bash onl
         return f"""
 ## Environment
 PR branch checked out at: {wt_path}
-Diffs and some file contents are pre-collected. Files listed under "Files not pre-collected" must be read directly from this path."""
+Diffs and some file contents are pre-collected. Files listed under "Files not pre-collected" are at this path."""
     return f"""
 ## Environment
 PR branch checked out at: {wt_path}
 Read source files directly from this path. Do NOT fetch files via the GitHub API."""
 
 
+class OmittedReads(Enum):
+    """How a phase treats files the prompt did not pre-collect.
+
+    Code-only: never persisted. REVIEW is the PR-mode single review and the
+    group review; SELF is a self-review; SURVEY is holistic and scout.
+    """
+
+    REVIEW = "review"
+    SELF = "self"
+    SURVEY = "survey"
+
+
+_REVIEW_READ = (
+    " Then, as your first investigation, read every file listed under"
+    ' "Files not pre-collected" in one parallel batch, and rewrite each'
+    " one's File Triage entry with what you read of it."
+)
+_SELF_READ = (
+    " Then, as your first investigation, read every file listed under"
+    ' "Files not pre-collected" in one parallel batch.'
+)
+_SURVEY_READ = (
+    ' Of the files listed under "Files not pre-collected", read only those'
+    " your assessment depends on."
+)
+_REVIEW_SKIP = (
+    ' The files listed under "Files not pre-collected" are not reviewed'
+    " at this effort level — do not read them; give each a one-line File"
+    " Triage entry saying so."
+)
+
+
 def _build_omitted_guidance(
     preflight: "PreflightData | None", skip_omitted: bool = False,
     files: FileFit | None = None,
+    *, reads: OmittedReads = OmittedReads.REVIEW,
 ) -> str:
-    """The sentence that sends the agent to read what the prompt left out.
+    """Every instruction about files listed under "Files not pre-collected".
 
-    ``files`` is the budget's fit, if one ran; a fit that dropped any file
-    adds those paths to the "Files not pre-collected" list, so the batch read
-    is owed even when ``preflight.omitted_files`` is empty. ``skip_omitted`` is
-    the opposite case and suppresses the read, but only while the budget kept
-    every file it fit: at an effort level that does not review the large
-    files, naming them invites work the run has declined — whereas a file the
-    *budget* took out is one the phase does review and now has nowhere else to
-    get.
+    This is the only place that tells the agent what to do with those files.
+    ``reads`` is which phase is asking: REVIEW triages them, SELF reads them
+    without triage, SURVEY reads only those the pass depends on. ``files`` is
+    the budget's fit, if one ran; a fit that dropped any file adds those
+    paths to the list, so the batch read is owed even when
+    ``preflight.omitted_files`` is empty. ``skip_omitted`` suppresses the
+    read only while the budget kept every file it fit: at an effort that
+    does not review the large files, naming them invites work the run has
+    declined — whereas a file the *budget* took out is one the phase does
+    review and now has nowhere else to get.
     """
     dropped_any = bool(files and files.omitted)
     if not preflight or not (preflight.omitted_files or dropped_any):
         return ""
     if skip_omitted and not dropped_any:
-        return (
-            " Some large files were excluded — they are not reviewed at this effort level."
-            " Still give each a one-line File Triage entry saying so."
-        )
-    return (
-        ' First, read all files listed under "Files not pre-collected"'
-        " in a single parallel batch and give each of them a File Triage"
-        " entry saying what you read of it."
-    )
+        if reads is OmittedReads.REVIEW:
+            return _REVIEW_SKIP
+        return ""
+    if reads is OmittedReads.REVIEW:
+        return _REVIEW_READ
+    if reads is OmittedReads.SELF:
+        return _SELF_READ
+    return _SURVEY_READ
 
 
 def _build_state_context_section(job: ReviewJob) -> str:

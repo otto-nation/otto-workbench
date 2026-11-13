@@ -716,6 +716,8 @@ trail already sweeps as it opens).
 What the ledger records, and what each stats column means, is on `agent/usage.py`
 in docs/ai-libraries.md.
 
+Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [contract](ai-automation.md#otto-log-contract)
+
 **`otto-log recent`** — Recent events (default: last 1h)
 
 | Flag | Description |

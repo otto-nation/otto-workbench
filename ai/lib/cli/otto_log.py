@@ -23,9 +23,76 @@ import argparse
 import sys
 
 import agent.usage_stats
+import core.cli_reference
+import core.command_contract
 import core.log
 import core.trail
 import core.trail_view
+from core.exit_codes import ExitCode
+
+CONTRACT = core.command_contract.CommandContract(
+    summary="Query the unified trail root and AI usage across otto-workbench "
+            "scripts.",
+    groups=(
+        core.command_contract.FlagGroup(
+            "recent", ("--since", "--repo", "--json")),
+        core.command_contract.FlagGroup(
+            "query", ("--script", "--level", "--event-type",
+                       "--invocation", "--root", "--pr")),
+        core.command_contract.FlagGroup(
+            "show", ("invocation", "--only")),
+        core.command_contract.FlagGroup("list", ()),
+        core.command_contract.FlagGroup(
+            "record", ("--action", "--detail", "--data")),
+        core.command_contract.FlagGroup("prune", ("--keep",)),
+        core.command_contract.FlagGroup("stats", ("--by",)),
+    ),
+    exits=(
+        core.command_contract.ExitOutcome(
+            ExitCode.OK,
+            "recent, query, show, list or stats printed; record wrote an "
+            "event; prune dropped expired months"),
+        core.command_contract.ExitOutcome(
+            ExitCode.FAILURE,
+            "the trail files or the usage ledger could not be opened"),
+        core.command_contract.ExitOutcome(
+            ExitCode.USAGE,
+            "no subcommand, unknown flags, a missing required flag, or "
+            "--data without key=value"),
+    ),
+    examples=(
+        core.command_contract.Example(
+            "otto-log recent", "events from the last hour"),
+        core.command_contract.Example(
+            "otto-log recent --since 2h --json", "the last two hours as JSONL"),
+        core.command_contract.Example(
+            "otto-log query --script pr --since 1d",
+            "pr events from the last day"),
+        core.command_contract.Example(
+            "otto-log show abc123",
+            "the whole command that invocation belongs to"),
+        core.command_contract.Example(
+            "otto-log list --repo otto-nation/otto-workbench",
+            "commands that touched that repo"),
+        core.command_contract.Example(
+            "otto-log record --script dream --action consolidate",
+            "write one event to the trail"),
+        core.command_contract.Example(
+            "otto-log prune --keep 6", "drop trail months older than six"),
+        core.command_contract.Example(
+            "otto-log stats --by model --since 24h",
+            "AI cost for the last day, grouped by model"),
+    ),
+    remote_effects=(),
+    notes=(
+        "record and prune write the trail under the state root "
+        "(WORKBENCH_STATE_DIR, default ~/.local/state/workbench); nothing "
+        "is written remotely.",
+        "stats reads the usage ledger, a separate monthly store under the "
+        "same state root.",
+    ),
+    reference="docs/ai-automation.md#otto-log-contract",
+)
 
 
 def _positive_int(value: str) -> int:
@@ -53,7 +120,7 @@ def _record_data(pairs: list[str]) -> dict:
         key, sep, value = pair.partition("=")
         if not sep or not key:
             core.log.error(f"--data expects key=value, got: {pair!r}")
-            sys.exit(2)
+            sys.exit(ExitCode.USAGE)
         data[key] = _coerce(value)
     return data
 
@@ -146,7 +213,20 @@ def build_parser() -> argparse.ArgumentParser:
     p_stats.add_argument(
         "--json", action="store_true", help="Output one JSON object per group",
     )
+    core.command_contract.attach_help(parser, CONTRACT)
+    # Subcommand flags live on the subparsers; regrouping would leave empty
+    # titled sections on the top-level help.
+    parser._action_groups[:] = [g for g in parser._action_groups if g._group_actions]
     return parser
+
+
+def reference_shape() -> core.cli_reference.CLIShape:
+    """Everything otto-log accepts, with CONTRACT on the CLI as a whole."""
+    shape = core.cli_reference.shape_of(build_parser(), "otto-log")
+    return core.cli_reference.CLIShape(
+        prog=shape.prog, globals=shape.globals, commands=shape.commands,
+        contract=CONTRACT,
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -154,7 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.command:
         parser.print_help()
-        return 1
+        return ExitCode.USAGE
     if args.command == "recent":
         core.trail_view.recent(args.since, repo=args.repo, as_json=args.json)
     elif args.command == "query":
@@ -179,4 +259,4 @@ def main(argv: list[str] | None = None) -> int:
         core.trail_view.prune(args.keep)
     elif args.command == "stats":
         agent.usage_stats.stats(args.since, args.by, as_json=args.json)
-    return 0
+    return ExitCode.OK

@@ -1452,6 +1452,40 @@ Mechanical operations over a compiled knowledge base: locate it, report on it, a
 > Writes stay on this machine: the knowledge base tree (init, ingest, archive, index), wiki.root via set_value when init --vault adopts a vault, the vault folder, backup snapshots, and the browsing symlink that link and init --vault may create.
 > lint and index --check exit 1 when they have findings, not only when the write failed.
 
+### otto-log contract
+
+What `otto-log` writes (nothing remotely; `record` and `prune` write the trail
+under the state root), what each exit means, and the next step after one,
+rendered from `cli.otto_log.CONTRACT` (`otto-log --help` prints the same text).
+
+#### otto-log contract
+
+Query the unified trail root and AI usage across otto-workbench scripts.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | recent, query, show, list or stats printed; record wrote an event; prune dropped expired months |  |
+| `1` | the trail files or the usage ledger could not be opened |  |
+| `2` | no subcommand, unknown flags, a missing required flag, or --data without key=value |  |
+
+**Examples**
+
+- `otto-log recent` — events from the last hour
+- `otto-log recent --since 2h --json` — the last two hours as JSONL
+- `otto-log query --script pr --since 1d` — pr events from the last day
+- `otto-log show abc123` — the whole command that invocation belongs to
+- `otto-log list --repo otto-nation/otto-workbench` — commands that touched that repo
+- `otto-log record --script dream --action consolidate` — write one event to the trail
+- `otto-log prune --keep 6` — drop trail months older than six
+- `otto-log stats --by model --since 24h` — AI cost for the last day, grouped by model
+
+> record and prune write the trail under the state root (WORKBENCH_STATE_DIR, default ~/.local/state/workbench); nothing is written remotely.
+> stats reads the usage ledger, a separate monthly store under the same state root.
+
 ### Running a branch's own libraries
 
 The Python entry points take their own pin, since `~/.local/bin/pr` is a symlink into

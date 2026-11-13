@@ -915,6 +915,10 @@ def run_settle(
         )
         if probe is None:
             return 1
+        # Adopting marks the checkpoint ADOPTED; a bad --commit must fail
+        # first so --fix can still resume.
+        if settled_commits(wt_path, probe.picked, kind, commit) is None:
+            return 1
         try:
             state = pr.fix_checkpoint.adopt_partial(
                 ctx, state, answers=answers,
@@ -922,10 +926,10 @@ def run_settle(
         except pr.fix_checkpoint.CheckpointAdoptError as exc:
             core.log.error(str(exc))
             return 1
-        missing = state is None or not state.fix.fix.items
-        if missing:
+        empty = state is None or not state.fix.fix.items
+        if empty:
             state = _state_from_open_threads(ctx, wt_path, targets, threads)
-        if missing and state is None:
+        if empty and state is None:
             return _refuse_no_snapshot()
 
     result = settle_targets(state.fix.fix, targets, threads=threads)

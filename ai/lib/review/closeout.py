@@ -43,6 +43,7 @@ from git.land import CommitStatus
 import gh.owner_hooks
 import gh.owners
 import fix.batches
+import fix.resume
 import fix.tracking
 import pr.attribution
 import pr.comments
@@ -138,6 +139,7 @@ def finish_deferred_work(
     except pr.fix_checkpoint.CheckpointAdoptError as exc:
         core.log.error(str(exc))
         return False
+    fix.resume.clear_if_adopted(ctx.target_dir)
     if state is None:
         return True
     threads_by_id = {t.id: t for t in report.threads}

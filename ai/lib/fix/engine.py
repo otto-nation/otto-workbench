@@ -790,7 +790,7 @@ def run(
     try:
         return _run_pass(adapter, start)
     except (KeyboardInterrupt, SystemExit):
-        _interrupted(adapter, dirty_before, head_before, trail)
+        fix.resume.record_stop(adapter, dirty_before, head_before, trail)
         raise
 
 
@@ -836,7 +836,7 @@ def _resume(
         backed_up=tuple(progress.backed_up),
         resume_phase=adapter.resume_phase, prior=progress,
     )
-    # ceiling: KeyboardInterrupt/SystemExit take `_interrupted`. SIGKILL,
+    # ceiling: KeyboardInterrupt/SystemExit take `fix.resume.record_stop`. SIGKILL,
     # double-signal (GNU timeout without --foreground), and standalone
     # `ai/bin/review-threads` (no handler) skip it. Upgrade trigger: once a
     # comments --fix pass dies to SIGKILL or a double TERM with uncommitted
@@ -844,7 +844,7 @@ def _resume(
     try:
         return _run_pass(adapter, start)
     except (KeyboardInterrupt, SystemExit):
-        _interrupted(adapter, dirty_before, head_before, trail)
+        fix.resume.record_stop(adapter, dirty_before, head_before, trail)
         raise
 
 
@@ -908,7 +908,8 @@ def _run_agent(adapter: FixAdapter, start: _PassStart) -> _AgentRun:
         )
         results.append(agent_batch)
         collected.extend(fix.pass_resume.answered(agent_batch.outcomes))
-        blobs = (fix.pass_resume.agent_files(adapter.workdir, dirty_before, base=start.head_before) if _records(adapter) else None)
+        blobs = fix.pass_resume.recorded_agent_files(
+            adapter.workdir, dirty_before, start.head_before, _records(adapter))
         start = _note(
             adapter, start, CheckpointPhase.AGENT_RUNNING,
             answers=collected, blobs=blobs,
@@ -944,7 +945,8 @@ def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
         start = agent_run.start
         settled = settle(adapter, list(agent_run.results), by_id, trail)
         record_unevidenced(settled.outcomes, trail)
-        blobs = (fix.pass_resume.agent_files(adapter.workdir, dirty_before, base=start.head_before) if _records(adapter) else None)
+        blobs = fix.pass_resume.recorded_agent_files(
+            adapter.workdir, dirty_before, start.head_before, _records(adapter))
         prior_now = start.prior or EngineProgress()
         start = _note(
             adapter, start, CheckpointPhase.AGENT_DONE,
@@ -1090,31 +1092,3 @@ def _land(
     )
 
 
-def _interrupted(
-    adapter: FixAdapter, dirty_before: set[str], head_before: str, trail: Trail | None,
-) -> None:
-    """Say what a stopped pass left uncommitted, and let the domain record it.
-
-    Nothing here may mask the stop: a failure to record is reported and the
-    stop still propagates, which is the one outcome the operator asked for.
-    """
-    try:
-        changed = fix.scope.agent_changed(adapter.workdir, dirty_before)
-        leftovers = frozenset(changed or ())
-        if changed is None:
-            detail = "fix pass stopped with scope unknown"
-            paths = None
-        else:
-            detail = (
-                f"fix pass stopped with {len(leftovers)} edited file(s) uncommitted"
-            )
-            paths = sorted(leftovers)
-        twarn(trail, "fix_interrupted", detail,
-              data={"paths": paths, "head_before": head_before,
-                    "workdir": str(adapter.workdir)})
-        adapter.interrupted(leftovers, head_before)
-        if adapter.resumes_interrupted:
-            fix.resume.record(
-                adapter.artifacts, adapter.workdir, head_before, leftovers)
-    except Exception as exc:  # noqa: BLE001 - recording must not replace the stop
-        core.log.warn(f"could not record the interrupted fix pass: {exc}")

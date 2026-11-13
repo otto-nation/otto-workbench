@@ -327,4 +327,5 @@ def test_run_checks_hands_the_baseline_the_time_left(tmp_path):
             adapter, config, None, base="HEAD", baseline_ref="abc", paths={"a.py"})
     assert run.call_args.args[2] == 900
     assert seen["timeout_s"] == 1
+    assert seen["progress_s"] == config.fix.verify_progress_interval
     assert out is result

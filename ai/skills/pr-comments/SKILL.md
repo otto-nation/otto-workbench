@@ -119,8 +119,10 @@ pr comments --fix --pr <NUMBER>
 An interrupted `--fix` is resumed by re-running `pr comments --fix` on the same
 HEAD. Checkpoint resume skips finished phases. `--no-resume` discards the
 checkpoint and starts over. `--resume` requires a resumable pass and exits 1
-when there is none. When no checkpoint exists, leftover-adoption (below) still
-applies.
+when there is none. Leftover-adoption (`interrupted-pass.json`, written
+whenever a comments pass is interrupted) applies unless the pass resumes from
+a fix-checkpoint at `AGENT_RUNNING` or later (`--no-resume`, HEAD moved, new
+feedback, or a checkpoint before `AGENT_RUNNING`).
 
 Run synchronously — do **not** background this command.
 
@@ -231,12 +233,12 @@ uncommitted, or `git commit` exiting with no output). Do not run
 until a commit the remote holds exists. Inspect `git status`, repair whatever
 the hook refused, restage, and commit. An empty SHA is not a hand-landing.
 
-When no checkpoint exists, a comments pass stopped mid-agent records leftovers.
+A comments pass stopped mid-agent records leftovers (`interrupted-pass.json`).
 The next comments `--fix` at the same HEAD resumes matching blobs so they can
-be committed. A checkpoint resume skips this adoption and clears the leftover
-record. Files that were already dirty when the pass started are never committed;
-commit or stash those, or re-run so the interrupted edits resume. An empty round
-will not commit leftovers.
+be committed, unless that pass resumes from a fix-checkpoint at
+`AGENT_RUNNING` or later. Files that were already dirty when the pass started
+are never committed; commit or stash those, or re-run so the interrupted edits
+resume. An empty round will not commit those leftovers.
 
 A dirty or unpushed worktree demotes `already_addressed` and `invalid` triage
 verdicts to `needs_human` until the tree is on the remote. Push first, then

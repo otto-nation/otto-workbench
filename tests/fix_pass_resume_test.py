@@ -18,6 +18,13 @@ from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.fix_checkpoint import EngineProgress  # noqa: E402
 
 
+def test_recorded_agent_files_skips_when_the_pass_does_not_record(tmp_path):
+    with patch.object(fix.pass_resume, "agent_files") as files:
+        assert fix.pass_resume.recorded_agent_files(
+            tmp_path, set(), "HEAD", False) is None
+    files.assert_not_called()
+
+
 def test_edited_since_detects_a_restored_deletion(tmp_path):
     recorded = {"gone.py": fix.pass_resume.DELETED}
     live = {}  # restored to match HEAD: not in the agent-files map

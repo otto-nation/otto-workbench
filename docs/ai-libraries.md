@@ -856,7 +856,7 @@ the tree.
 
 ### fix/pass_resume.py
 
-Checkpoint helpers for a resumable fix-engine pass (`fix.pass_resume`).
+Checkpoint helpers for a resumable fix-engine pass.
 
 The engine checkpoints after each batch and after the gate, the suite, and
 the landing. A later run reads those records back through these helpers —

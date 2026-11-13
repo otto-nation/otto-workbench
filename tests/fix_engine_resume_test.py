@@ -31,7 +31,7 @@ from fix_engine_support import (  # noqa: E402
 
 
 class _Killed(BaseException):
-    """Simulates SIGKILL: not KeyboardInterrupt/SystemExit, so `_interrupted` is skipped."""
+    """Simulates SIGKILL: not KeyboardInterrupt/SystemExit, so record_stop is skipped."""
 
 
 class _Ckpt(StubAdapter):

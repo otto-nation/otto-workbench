@@ -22,8 +22,11 @@ from pathlib import Path
 
 import core.log
 import core.serde
+import fix.scope
 import git.client
-from core.trail import Trail, tinfo
+import pr.comments
+import pr.fix_checkpoint
+from core.trail import Trail, tinfo, twarn
 
 _FILENAME = "interrupted-pass.json"
 
@@ -113,3 +116,49 @@ def clear(artifacts: str | Path) -> None:
     interruption were still pending.
     """
     _path(artifacts).unlink(missing_ok=True)
+
+
+def clear_if_adopted(target_dir: str | Path) -> None:
+    """Drop leftover-adoption once a comments checkpoint was adopted.
+
+    ``pr.fix_checkpoint.adopt_partial`` cannot import this module (pr is
+    layer 4, fix is 5). Callers above layer 4 invoke this after adopt.
+    """
+    ckpt = pr.fix_checkpoint.load(target_dir)
+    if ckpt is not None and ckpt.phase is pr.fix_checkpoint.CheckpointPhase.ADOPTED:
+        clear(pr.comments.artifacts_dir(target_dir))
+
+
+def record_stop(adapter, dirty_before: set[str], head_before: str, trail: Trail | None) -> None:
+    """Say what a stopped pass left uncommitted, and let the domain record it.
+
+    Nothing here may mask the stop: a failure to record is reported and the
+    stop still propagates. Each step has its own try so a domain hook that
+    raises cannot skip writing ``interrupted-pass.json``.
+    """
+    leftovers: frozenset[str] = frozenset()
+    try:
+        changed = fix.scope.agent_changed(adapter.workdir, dirty_before)
+        leftovers = frozenset(changed or ())
+        twarn(
+            trail, "fix_interrupted",
+            "fix pass stopped with scope unknown" if changed is None
+            else (
+                f"fix pass stopped with {len(leftovers)} edited file(s) "
+                "uncommitted"
+            ),
+            data={"paths": None if changed is None else sorted(leftovers),
+                  "head_before": head_before,
+                  "workdir": str(adapter.workdir)},
+        )
+    except Exception as exc:  # noqa: BLE001 - recording must not replace the stop
+        core.log.warn(f"could not record the interrupted fix pass: {exc}")
+    try:
+        adapter.interrupted(leftovers, head_before)
+    except Exception as exc:  # noqa: BLE001 - recording must not replace the stop
+        core.log.warn(f"could not record the interrupted fix pass: {exc}")
+    try:
+        if adapter.resumes_interrupted:
+            record(adapter.artifacts, adapter.workdir, head_before, leftovers)
+    except Exception as exc:  # noqa: BLE001 - recording must not replace the stop
+        core.log.warn(f"could not record the interrupted fix pass: {exc}")

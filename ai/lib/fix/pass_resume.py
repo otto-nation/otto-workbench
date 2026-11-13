@@ -1,4 +1,4 @@
-"""Checkpoint helpers for a resumable fix-engine pass (`fix.pass_resume`).
+"""Checkpoint helpers for a resumable fix-engine pass.
 
 The engine checkpoints after each batch and after the gate, the suite, and
 the landing. A later run reads those records back through these helpers —
@@ -91,6 +91,18 @@ def agent_files(
             continue
         out[path] = rec.sha if rec is not None else DELETED
     return out
+
+
+def recorded_agent_files(
+    workdir: Path | str,
+    dirty_before: set[str] | frozenset[str],
+    head_before: str,
+    records: bool,
+) -> dict[str, str] | None:
+    """``agent_files`` when the pass records checkpoints, else ``None``."""
+    if not records:
+        return None
+    return agent_files(workdir, dirty_before, base=head_before)
 
 
 def edited_since(

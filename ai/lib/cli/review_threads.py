@@ -47,6 +47,7 @@ import core.log
 import core.publishing
 from core.trail import Trail, add_trail_args
 import gh.pr_data
+import fix.resume
 import pr.comments_fix
 import pr.context
 import pr.fix_checkpoint
@@ -156,7 +157,7 @@ def _github_only(
         )
     ckpt = pr.fix_checkpoint.load(ctx.target_dir)
     phase = ckpt.phase if ckpt else None
-    return pr.settlement.run_settle(
+    status = pr.settlement.run_settle(
         ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
         answers=review.closeout.tracking_answers(ctx.target_dir, phase=phase),
         fetch_threads=lambda: {
@@ -166,6 +167,8 @@ def _github_only(
             ).threads
         },
     )
+    fix.resume.clear_if_adopted(ctx.target_dir)
+    return status
 
 
 def _run_locked(trail, args, ctx, route, body: str | None = None) -> int:

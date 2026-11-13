@@ -1,5 +1,6 @@
 """pr.fix_checkpoint: schema, partial summary, settle/finish from a snapshot."""
 
+import argparse
 import json
 import sys
 from dataclasses import replace
@@ -15,6 +16,7 @@ if str(LIB_DIR) not in sys.path:
 
 from review_threads_support import _fix, _make_state, _no_published_summary  # noqa: F401
 from conftest import make_ctx
+import cli.review_threads
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from git.land import CommitStatus
 import fix.batches
@@ -356,6 +358,53 @@ class TestSettleAndFinishFromPartial:
         assert "to continue one" not in err
         assert "instead of" not in err
 
+    def test_finish_clears_leftover_record_when_adopting(self, worktree):
+        ctx = make_ctx(
+            branch="b", worktree_root=worktree, head_sha="abc1234",
+            target_dir=worktree / "target",
+        )
+        _write(ctx, _filled(
+            ctx,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
+            triage=TriageResult(threads=[_fixable()]),
+        ))
+        leftover = pr.comments.artifacts_dir(ctx.target_dir) / "interrupted-pass.json"
+        leftover.parent.mkdir(parents=True, exist_ok=True)
+        leftover.write_text("{}")
+        with patch.object(review.closeout, "post_pending_fix_replies"), \
+                patch.object(review.deferred_issue, "finalize_deferred",
+                             return_value=True), \
+                patch.object(review.deferred_issue, "report_unfiled_deferrals"), \
+                patch.object(pr.summary_publish, "render_deferred_summary",
+                             return_value=_SUMMARY_NOT_REFUSED):
+            assert review.closeout.finish_deferred_work(ctx, PRReport()) is True
+        assert pr.fix_checkpoint.load(ctx.target_dir).phase is (
+            pr.fix_checkpoint.CheckpointPhase.ADOPTED)
+        assert not leftover.is_file()
+
+    def test_settle_via_cli_clears_leftover_on_adopt(self, tmp_path):
+        ctx = make_ctx(
+            branch="feature", worktree_root=tmp_path / "wt",
+            head_sha="abc1234", target_dir=tmp_path / "target",
+        )
+        (tmp_path / "wt").mkdir()
+        _write(ctx, _filled(
+            ctx,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
+            triage=TriageResult(threads=[_fixable()]),
+        ))
+        leftover = pr.comments.artifacts_dir(ctx.target_dir) / "interrupted-pass.json"
+        leftover.parent.mkdir(parents=True, exist_ok=True)
+        leftover.write_text("{}")
+        args = argparse.Namespace(
+            reply=None, settle=["t1"], settle_as="dismissed",
+            reason="not our layer", commit="",
+        )
+        assert cli.review_threads._github_only(ctx, args, None, None) == 0
+        assert pr.fix_checkpoint.load(ctx.target_dir).phase is (
+            pr.fix_checkpoint.CheckpointPhase.ADOPTED)
+        assert not leftover.is_file()
+
     def test_ticked_answer_with_no_checkpointed_outcome_from_tracking(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
         _write(ctx, _filled(
@@ -377,6 +426,24 @@ class TestSettleAndFinishFromPartial:
         item = next(o for o in state.fix.fix.items if o.id == "t1")
         assert item.outcome is FixOutcome.NEEDS_HUMAN
         assert item.reason == "wants a design call"
+
+    def test_bad_commit_does_not_adopt(self, tmp_path):
+        ctx = make_ctx(
+            branch="feature", worktree_root=tmp_path / "wt",
+            head_sha="abc1234", target_dir=tmp_path / "target",
+        )
+        (tmp_path / "wt").mkdir()
+        _write(ctx, _filled(
+            ctx,
+            phase=pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING,
+            triage=TriageResult(threads=[_fixable()]),
+        ))
+        assert pr.settlement.run_settle(
+            ctx, ["t1"], "fixed", "", "nosuchref",
+        ) == 1
+        loaded = pr.fix_checkpoint.load(ctx.target_dir)
+        assert loaded is not None
+        assert loaded.phase is pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING
 
     def test_unknown_settle_id_does_not_adopt(self, tmp_path):
         ctx = make_ctx(

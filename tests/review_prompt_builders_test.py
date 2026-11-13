@@ -290,7 +290,8 @@ class TestDroppedContentsAreDeclared:
         dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
         skipped = _build_omitted_guidance(pf, skip_omitted=True)
         assert "not reviewed at this effort level" in skipped
-        assert "File Triage" not in skipped
+        assert "one-line File Triage entry" in skipped
+        assert "Files not pre-collected" not in skipped
         assert "Files not pre-collected" in _build_omitted_guidance(
             pf, skip_omitted=True, files=dropped_all,
         )

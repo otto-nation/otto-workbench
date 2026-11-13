@@ -92,4 +92,7 @@ CONTRACT = core.command_contract.CommandContract(
         "the write failed.",
     ),
     reference="docs/ai-automation.md#wiki-contract",
+    # MCP's flag-only mapping cannot express a required positional:
+    #   archive — required slug (`--slug` is unrecognized)
+    mcp_exclude=("archive",),
 )

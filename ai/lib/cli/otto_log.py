@@ -92,6 +92,11 @@ CONTRACT = core.command_contract.CommandContract(
         "same state root.",
     ),
     reference="docs/ai-automation.md#otto-log-contract",
+    # MCP's flag-only mapping cannot express a required positional or
+    # action=append:
+    #   show — required positional invocation (`--invocation` is unrecognized)
+    #   record — --data is action=append (a list becomes one string)
+    mcp_exclude=("show", "record"),
 )
 
 

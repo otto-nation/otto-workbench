@@ -85,6 +85,12 @@ CONTRACT = core.command_contract.CommandContract(
         "typescript, py → python, sh/shell → bash, yml → yaml.",
     ),
     reference="docs/ai-automation.md#workbench-rules-contract",
+    # MCP's flag-only mapping cannot express positionals or nested
+    # subcommands:
+    #   add — domain and rule are positionals (`--domain`/`--rule` unrecognized)
+    #   open — domain is a positional (`--domain` unrecognized); launches $EDITOR
+    #   project — nested add|show, not a flag
+    mcp_exclude=("add", "open", "project"),
 )
 
 

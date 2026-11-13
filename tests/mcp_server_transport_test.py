@@ -52,7 +52,7 @@ uv_required = pytest.mark.skipif(
 )
 
 
-# Production `_tool_schema` only answers for a script named `pr`. The transport
+# Production `_tool_schema` answers for a contracted registry parser. The transport
 # cases need several tools with different schema shapes (output_schema vs not,
 # a contract broken on purpose), so the fake checkout patches `_tool_schema` to
 # read a sidecar JSON next to each script. That is a fixture seam, not a second
@@ -146,7 +146,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import server  # noqa: E402
 
 
-def _tool_schema(script: Path) -> dict | None:
+def _tool_schema(script: Path, entry=None) -> dict | None:
     sidecar = Path(str(script) + ".schema.json")
     if not sidecar.is_file():
         return None

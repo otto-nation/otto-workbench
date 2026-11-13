@@ -2,11 +2,11 @@ import { div } from "gpui-kit";
 import { h_flex, TextView } from "gpui-base";
 import { theme } from "herdr";
 import { historyRows } from "./_lib/history.js";
-import { tailLines } from "./_lib/output.js";
+import { outputModel } from "./_lib/run_output.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import { prPresentation } from "./_lib/pr_status.js";
 import {
-  segment, segmented, button, inset, card, placeholder, caption,
+  segment, segmented, button, ghostButton, inset, card, placeholder, caption,
   paneBar, pinned, selectableCode, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
   badgeRow, statsRow, tag,
 } from "./_ui/ui.js";
@@ -62,20 +62,59 @@ export function detailOf(pr, { item = null } = {}) {
   };
 }
 
-// The run's text, read-only, inside the pane. The terminal itself can open as a tab for anything
-// interactive.
-export function renderOutput(output, { onHide, onTab, maxH }) {
-  const lines = tailLines(output.text ?? "", 80);
+function landedRow(r, onViewReview) {
+  return inset({ scroll: false }).gap(SP.xs)
+    .child(h_flex().gap(SP.sm).items_center()
+      .child(text("body", r.verdict || "review"))
+      .child(caption(r.when))
+      .child(type(div(), "code").child(r.shortSha))
+      .child(div().flex_1())
+      .child(ghostButton("out-review", "View review", () => onViewReview(r.key))))
+    .child(text("body", r.findingsText))
+    .child(h_flex().gap(SP.sm).items_center()
+      .child(statusText(r.post.status, r.post.label))
+      .when(Boolean(r.costText), (e) => e.child(caption(r.costText))));
+}
+
+// Status, elapsed and the last meaningful line; the raw tail stays behind Show output.
+export function renderOutput(output, { onHide, onTab, onToggleTail, onViewReview, maxH }) {
+  const t = theme();
+  const rec = output.rec ?? {};
+  const nowMs = output.nowMs ?? Date.now();
+  const model = outputModel({
+    action: rec.action,
+    terminal: {
+      state: output.live ? "live" : "finished",
+      exitCode: rec.exitCode ?? null,
+    },
+    startedMs: rec.startedMs,
+    endedMs: rec.endedMs,
+    nowMs,
+    text: output.text,
+    runs: output.runs,
+  });
+  const lines = model.lines;
+  const tailOpen = Boolean(output.tailOpen);
+  const row = model.landed ? historyRows([model.landed], nowMs)[0] : null;
   return paneBar()
     .child(h_flex().gap(SP.sm).items_center().justify_between()
-      .child(caption(output.live ? "Run output · live" : "Run output"))
+      .child(h_flex().gap(SP.sm).items_center().min_w(0)
+        .child(statusText(model.status, model.title))
+        .when(Boolean(model.elapsed), (e) => e.child(caption(model.elapsed)))
+        .when(model.status === "fail" && rec.exitCode != null, (e) =>
+          e.child(caption(`exit ${rec.exitCode}`, t.ansi1))))
       .child(h_flex().gap(SP.sm)
-        .child(button("out-tab", "Open as tab", onTab))
-        .child(button("out-hide", "Hide", onHide))))
-    .child(type(inset({ maxH, scroll: false }).flex().flex_col(), "code")
-      .when(output.text == null, (e) => e.child(placeholder("Loading…")))
-      .when(output.text != null && !lines.length, (e) => e.child(placeholder("No output yet")))
-      .when(lines.length > 0, (e) => e.child(selectableCode("output", lines, maxH))));
+        .child(ghostButton("out-tab", "Open as tab", onTab))
+        .child(ghostButton("out-hide", "Hide", onHide))))
+    .when(Boolean(row), (e) => e.child(landedRow(row, onViewReview)))
+    .when(output.live && Boolean(model.summary), (e) => e.child(text("body", model.summary)))
+    .when(output.text == null, (e) => e.child(placeholder("Loading…")))
+    .when(output.text != null, (e) => e
+      .child(ghostButton("out-tail", tailOpen ? "Hide output" : "Show output", onToggleTail))
+      .when(tailOpen && !lines.length, (x) => x.child(placeholder(output.live ? "No output yet" : "No output")))
+      .when(tailOpen && lines.length > 0, (x) => x.child(
+        type(inset({ maxH, scroll: false }).flex().flex_col(), "code")
+          .child(selectableCode("output", lines, maxH)))));
 }
 
 export function prUrl(d) {

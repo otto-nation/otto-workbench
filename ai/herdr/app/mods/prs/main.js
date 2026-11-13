@@ -31,6 +31,7 @@ export default class PrsBoard extends Board {
     // Terminals being followed to their end, whichever PR is open, and the action each ran.
     this.watching = new Set();
     this.actionOf = new Map();
+    this.tailOpen = new Set();
     this.reviews = new Map();
     this.tab = "history";
     this.filesByPr = new Map();
@@ -141,7 +142,11 @@ export default class PrsBoard extends Board {
       } else {
         // The run is followed to its end even if another PR was opened meanwhile; only the
         // open PR's own controls track it.
-        this.actionOf.set(res.terminal, action.id);
+        this.actionOf.set(res.terminal, {
+          action: action.id, startedMs: Date.now(), exitCode: null, endedMs: null,
+        });
+        this.output = { terminal: res.terminal, text: null };
+        this.readOutput(res.terminal);
         if (this.detail?.repo === d.repo && this.detail?.number === d.number) {
           this.live = res.terminal;
           this.finishedId = null;
@@ -222,7 +227,12 @@ export default class PrsBoard extends Board {
   }
 
   finish(id, entry, d, cx) {
-    const outcome = outcomeText(this.actionOf.get(id), entry?.exitCode ?? null);
+    const rec = this.actionOf.get(id);
+    if (rec) {
+      rec.exitCode = entry?.exitCode ?? null;
+      rec.endedMs = Date.now();
+    }
+    const outcome = outcomeText(rec?.action, rec?.exitCode ?? null);
     this.watching.delete(id);
     if (this.live === id) {
       this.finishedId = id;
@@ -362,9 +372,27 @@ export default class PrsBoard extends Board {
         onCancel: () => { this.confirm = null; this.acx.notify(); },
         trailing: this.models.render(),
       }),
-      outputPanel: this.output && renderOutput({ ...this.output, live: this.live === this.output.terminal }, {
+      outputPanel: this.output && renderOutput({
+        ...this.output,
+        live: this.live === this.output.terminal,
+        rec: this.actionOf.get(this.output.terminal) ?? {},
+        runs: this.detail.runs,
+        nowMs: Date.now(),
+        tailOpen: this.tailOpen.has(this.output.terminal),
+      }, {
         onHide: () => { this.output = null; this.acx.notify(); },
         onTab: () => run("terminal.keep", { terminal: this.output.terminal }),
+        onToggleTail: () => {
+          const id = this.output.terminal;
+          if (this.tailOpen.has(id)) this.tailOpen.delete(id);
+          else this.tailOpen.add(id);
+          this.acx.notify();
+        },
+        onViewReview: (key) => {
+          this.tab = "history";
+          if (this.openKey !== key) this.onToggle(key);
+          else this.acx.notify();
+        },
         // The run output grows with the window: 40% of its height, never under the fixed token.
         maxH: Math.max(LAYOUT.bodyMaxH, Math.round((this.size?.height ?? 0) * 0.4)),
       }),

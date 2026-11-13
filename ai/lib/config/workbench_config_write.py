@@ -521,7 +521,7 @@ def _replace_atomically(path: Path, text: str) -> None:
     tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
     try:
         tmp.write_text(text)
-        os.replace(tmp, path)
+        core.serde.replace_file(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
 
@@ -562,7 +562,7 @@ def unset_value(key: str, path: Path) -> bool:
         result = config.workbench_config.run_yq(["-i", expr, str(tmp)])
         if result.returncode != 0:
             raise ConfigError(f"could not remove {key} from {path}: {result.stderr.strip()}")
-        os.replace(tmp, path)
+        core.serde.replace_file(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
     return True

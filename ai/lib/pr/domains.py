@@ -686,12 +686,7 @@ class RebaseSummary(Domain):
             desc += ", force-pushed"
         lines = [f"**Rebase**: {desc}"]
         if self.files_stale:
-            if self.status == RebaseStatus.CONFLICTS.value:
-                reason = (
-                    "will rebuild on resume once remaining conflicts resolve"
-                )
-            else:
-                reason = "content is the incoming side, unmerged"
+            reason = "content is the incoming side, unmerged"
             lines.append(
                 f"**Rebase**: not regenerated: {', '.join(self.files_stale)} — "
                 + reason

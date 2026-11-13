@@ -284,7 +284,8 @@ def resumed_tally(cwd: str, ctx: pr.context.ResolvedContext) -> ResolutionTally:
         # Queued regenerations skipped while a hand-written file was still
         # unresolved. Regenerators are re-derived on resume; see
         # regen_dispatch.rebuild_stale.
-        tally.stale = list(getattr(prior, "files_stale", None) or [])
+        tally.stale = list(prior.files_stale)
+        tally.deferred = list(prior.files_stale)
     return tally
 
 
@@ -610,9 +611,14 @@ def step_advance(
 ) -> int | None:
     """Advance rebase when there are no conflicts. Returns exit code to stop, or None to continue."""
     tally = tally if tally is not None else ResolutionTally()
-    regen_dispatch.rebuild_stale(
-        cwd, tally, trail=trail, conventional=mode.resolves_conflicts,
-    )
+    if tally.deferred:
+        regen_dispatch.rebuild_stale(
+            cwd, tally, trail=trail, conventional=mode.resolves_conflicts,
+            paths=list(tally.deferred),
+        )
+        # Retried once; kept only while a hand-written file blocked the attempt.
+        if not regen_dispatch._hand_written_unmerged(cwd):
+            tally.deferred = []
     # A step with nothing unmerged can still be concluding a conflict: one
     # resolved by hand, and staged, before this run picked the rebase up.
     # Asked before the empty-patch test, not after it: a whole-file

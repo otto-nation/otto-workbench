@@ -152,13 +152,7 @@ CONTRACT = core.command_contract.CommandContract(
     ),
     notes=("`--force` is a deprecated alias of `--force-landed`.",),
     json_output=core.command_contract.JsonOutput(
-        "exit 0/1: the outcome (status, commits_replayed, conflicts_resolved, "
-        "files_resolved, files_stale, force_pushed, fork_point, squashed_commits); "
-        "exit 3: ConflictReport (status, files, tree, classes, remaining_commits, "
-        "pre_rebase_head); exit 4: RefusalReport (branch, signal, detail, status, override, "
-        "commits_ahead — a count on the git signals, null on pr_merged, which is asked "
-        "before checkout; pr_number — set on pr_merged only).",
-        (
+        enums=(
             core.command_contract.EnumDoc("classes", tuple(
                 core.command_contract.EnumValue(s.value, f"{s.doc.what}. Without --fix: {s.doc.without_fix}. "
                                       f"With --fix: {s.doc.with_fix}.")
@@ -171,6 +165,18 @@ CONTRACT = core.command_contract.CommandContract(
             core.command_contract.EnumDoc("signal", tuple(
                 core.command_contract.EnumValue(s.value, f"status {s.doc.status}: {s.doc.found}")
                 for s in rebase.types.RefusalSignal)),
+        ),
+        reports=(
+            core.command_contract.JsonReport("exit 0/1", rebase.types.RebaseOutcome),
+            core.command_contract.JsonReport("exit 3", rebase.types.ConflictReport),
+            core.command_contract.JsonReport(
+                "exit 4", rebase.types.RefusalReport,
+                {
+                    "commits_ahead": "a count on the git signals, null on pr_merged, "
+                                     "which is asked before checkout",
+                    "pr_number": "set on pr_merged only",
+                },
+            ),
         ),
     ),
 )

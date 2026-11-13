@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Style guards for the herdr-app mods: the brand DESIGN.md rules a grep can see.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/*.js ai/herdr/app/mods/queue/*.js ai/herdr/app/mods/_lib/*.js
+# select-on: ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/*.js ai/herdr/app/mods/queue/*.js ai/herdr/app/mods/queue-button/*.js ai/herdr/app/mods/_lib/*.js
 
 setup() {
   load 'test_helper'
@@ -15,7 +15,7 @@ teardown() {
 
 @test "no hover callback changes a border colour (single-line match only)" {
   run grep -nE '\.hover\([^)]*\)[^;]*border_color|\.hover\(\(s\) => s[^;]*border_color' \
-    "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/queue/*.js
+    "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/queue/*.js "$MODS"/_lib/panel_button.js
   [ "$status" -eq 1 ]
 }
 

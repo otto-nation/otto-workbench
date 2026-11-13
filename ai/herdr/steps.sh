@@ -211,7 +211,7 @@ step_herdr_app_layouts() {
   local name
   for name in "${HERDR_APP_LAYOUTS_NEWLY_INSTALLED[@]}"; do
     [[ "$name" == workbench ]] || continue
-    info 'herdr-app: show the workbench layout (a PRs toggle beside Files/Changes opens the board) with: herdr-app do layout.switch --name workbench'
+    info 'herdr-app: show the workbench layout (PRs and Queue toggles beside Files/Changes open those panels) with: herdr-app do layout.switch --name workbench'
     break
   done
   [[ -d "$HERDR_UNTRUSTED_APP_DIR" ]] \

@@ -34,6 +34,7 @@ import review.listing
 from batch.model import Step
 from board.github import POOL_WORKERS
 from board.model import (
+    FEATURES,
     SCHEMA_VERSIONS,
     Phase,
     PrState,
@@ -122,6 +123,7 @@ def build(
         "columns": [core.serde.to_dict(col) for col in board.columns.columns()],
         "repos": [core.serde.to_dict(repo) for repo in repos],
         "rows": rows,
+        "features": list(FEATURES),
     }
     current = stamp(doc)
     if pre is not None:

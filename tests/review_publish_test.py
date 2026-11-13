@@ -13,6 +13,7 @@ without reporting would drop it.
 """
 
 import inspect
+import json
 import sys
 from pathlib import Path
 
@@ -24,8 +25,13 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 from conftest import FAKE_REPO  # noqa: E402
+from core.proc import CmdResult  # noqa: E402
+from core.serde import load_file, to_dict  # noqa: E402
+from gh.pr_data import PRData  # noqa: E402
+from pr.state import PostedAs, PostEvent, PostTracking  # noqa: E402
 import review.publish  # noqa: E402
 from review.paths import FILENAME_POST_SESSION  # noqa: E402
+from review.posting import ReviewEvent  # noqa: E402
 import core.prompt
 import core.publishing
 
@@ -45,16 +51,16 @@ def review_file(tmp_path):
 
 @pytest.fixture
 def posts(monkeypatch):
-    """Record every post and submit instead of spawning review-post."""
+    """Record every post and publish instead of spawning review-post."""
     calls = []
 
-    def _submit_pending(*a, **kw):
-        calls.append(("submit", a, kw))
-        return True
+    def _publish_draft(*a, **kw):
+        calls.append(("publish", a, kw))
+        return review.publish.DraftPublish.PUBLISHED
 
     monkeypatch.setattr(review.publish, "post",
                         lambda *a, **kw: calls.append(("post", a, kw)))
-    monkeypatch.setattr(review.publish, "submit_pending", _submit_pending)
+    monkeypatch.setattr(review.publish, "publish_draft", _publish_draft)
     return calls
 
 
@@ -67,7 +73,7 @@ def _answers(monkeypatch, *responses):
 
 
 def _resolve(review_file, **overrides):
-    kwargs = dict(no_post=False, auto_post=False, auto_submit=False,
+    kwargs = dict(no_post=False, auto_post=False,
                   bin_dir=Path("/bin"))
     kwargs.update(overrides)
     return review.publish.resolve(FAKE_REPO, "42", review_file, **kwargs)
@@ -93,13 +99,13 @@ def test_auto_post_posts_without_asking(review_file, posts):
     assert result.hints == (), "an unattended post has nothing to advise"
 
 
-def test_auto_submit_rides_along_with_auto_post(review_file, posts):
-    """--submit is passed to review-post rather than submitted separately."""
-    result = _resolve(review_file, auto_post=True, auto_submit=True)
+def test_auto_post_posts_a_draft(review_file, posts):
+    """A full-run auto-post is always a draft; --submit is gone."""
+    result = _resolve(review_file, auto_post=True)
 
     bound = _POST_SIGNATURE.bind(*posts[0][1], **posts[0][2])
-    assert bound.arguments["submit"] is True, "the submit flag reaches review-post"
-    assert result.submitted is True
+    assert "submit" not in bound.arguments
+    assert result.published is False
 
 
 def test_auto_post_passes_branch_to_review_post(review_file, posts):
@@ -183,15 +189,18 @@ def test_a_path_that_does_not_post_reports_no_post_log(
     assert result.post_session_log == ""
 
 
-def test_accepting_both_prompts_posts_and_submits(review_file, posts, monkeypatch):
-    """The full interactive path: satisfied, post, submit."""
+def test_accepting_both_prompts_posts_and_publishes_as_comment(
+    review_file, posts, monkeypatch,
+):
+    """The full interactive path: satisfied, post, publish as a comment."""
     _answers(monkeypatch, True, True, True)
 
     result = _resolve(review_file)
 
-    assert [c[0] for c in posts] == ["post", "submit"]
+    assert [c[0] for c in posts] == ["post", "publish"]
+    assert posts[1][1][3] is review.publish.ReviewEvent.COMMENT
     assert result.posted is True
-    assert result.submitted is True
+    assert result.published is True
     assert result.post_session_log == str(review_file.parent / FILENAME_POST_SESSION)
 
 
@@ -205,7 +214,7 @@ def test_posting_without_submitting_still_reports_the_post_log(
 
     assert [c[0] for c in posts] == ["post"]
     assert result.posted is True
-    assert result.submitted is False
+    assert result.published is False
     assert result.post_session_log == str(review_file.parent / FILENAME_POST_SESSION)
 
 
@@ -234,29 +243,261 @@ def test_every_path_returns_rather_than_exiting(
     assert isinstance(result, review.publish.PostResult)
 
 
+def _write_tracking(review_dir, **fields):
+    data = dict(
+        posted_as=PostedAs.REVIEW.value,
+        status=PostEvent.PENDING.value,
+        review_id=7,
+        submitted=False,
+        head_sha_at_post="aaa1111bbb2222",
+        commit_id="aaa1111bbb2222",
+    )
+    data.update(fields)
+    tracking = PostTracking(**data)
+    (review_dir / FILENAME_POST_SESSION).write_text(
+        json.dumps(to_dict(tracking)) + "\n")
+    return tracking
+
+
+def _pending_pr_data(head_sha="aaa1111bbb2222", review_id=7):
+    reviews = []
+    if review_id is not None:
+        reviews = [{"state": "PENDING", "databaseId": review_id}]
+    return PRData(
+        viewer_login="bot", head_sha=head_sha,
+        head_ref="feat", base_ref="main", reviews=reviews,
+    )
+
+
+def _publish(review_dir, monkeypatch, *, event=ReviewEvent.COMMENT,
+             pr_data=None, api=None):
+    monkeypatch.setattr(
+        review.publish, "fetch_pr_data",
+        lambda *a, **k: pr_data or _pending_pr_data(),
+    )
+    calls = []
+
+    def _api(endpoint, **kw):
+        calls.append((endpoint, kw))
+        if api is not None:
+            return api(endpoint, **kw)
+        return CmdResult(0, "{}")
+
+    monkeypatch.setattr(review.publish.gh.client, "api", _api)
+    outcome = review.publish.publish_draft(
+        "owner/repo", "1", str(review_dir / "review.md"), event,
+    )
+    return outcome, calls
+
+
 @pytest.mark.parametrize(
     "content",
     [b"[]", b"{", b"\xff\xfe\x00bad"],
     ids=["non-dict", "truncated-json", "bad-encoding"],
 )
-def test_submit_pending_survives_an_unreadable_post_tracking_file(
-    tmp_path, capsys, content,
+def test_unreadable_tracking_is_no_draft_and_calls_no_api(
+    tmp_path, monkeypatch, content,
 ):
-    """Every way the file can be unusable falls through to "no tracking".
-
-    This reads through `serde.load_file` rather than its own read/parse/except
-    precisely so the three cases cannot drift apart: a bare `[]` from a killed
-    write, truncated JSON, and a byte sequence that is not valid UTF-8 (which
-    `read_text` raises `UnicodeDecodeError` for) all have to degrade the same
-    way, not just the ones a hand-listed exception tuple happened to name.
-    """
     review_dir = tmp_path / "review"
     review_dir.mkdir()
     (review_dir / FILENAME_POST_SESSION).write_bytes(content)
+    called = []
+    monkeypatch.setattr(
+        review.publish, "fetch_pr_data",
+        lambda *a, **k: called.append("fetch") or _pending_pr_data(),
+    )
+    monkeypatch.setattr(
+        review.publish.gh.client, "api",
+        lambda *a, **k: called.append("api") or CmdResult(0, "{}"),
+    )
 
-    review.publish.submit_pending("owner/repo", "1", str(review_dir / "review.md"))
+    outcome = review.publish.publish_draft(
+        "owner/repo", "1", str(review_dir / "review.md"), ReviewEvent.COMMENT,
+    )
 
-    assert "Could not read review_id" in capsys.readouterr().err
+    assert outcome is review.publish.DraftPublish.NO_DRAFT
+    assert called == []
+
+
+def test_missing_tracking_is_no_draft(tmp_path, monkeypatch):
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    called = []
+    monkeypatch.setattr(
+        review.publish.gh.client, "api",
+        lambda *a, **k: called.append("api") or CmdResult(0, "{}"),
+    )
+
+    outcome = review.publish.publish_draft(
+        "owner/repo", "1", str(review_dir / "review.md"), ReviewEvent.COMMENT,
+    )
+
+    assert outcome is review.publish.DraftPublish.NO_DRAFT
+    assert called == []
+
+
+def test_already_published_tracking_is_no_draft(tmp_path, monkeypatch):
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    _write_tracking(
+        review_dir, status=PostEvent.COMMENT.value, submitted=True,
+    )
+    called = []
+    monkeypatch.setattr(
+        review.publish, "fetch_pr_data",
+        lambda *a, **k: called.append("fetch") or _pending_pr_data(),
+    )
+
+    outcome = review.publish.publish_draft(
+        "owner/repo", "1", str(review_dir / "review.md"), ReviewEvent.COMMENT,
+    )
+
+    assert outcome is review.publish.DraftPublish.NO_DRAFT
+    assert called == []
+
+
+def test_publish_draft_records_approve(tmp_path, monkeypatch):
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    _write_tracking(review_dir)
+
+    outcome, calls = _publish(
+        review_dir, monkeypatch, event=ReviewEvent.APPROVE,
+    )
+
+    assert outcome is review.publish.DraftPublish.PUBLISHED
+    assert outcome.ok
+    endpoint, kw = calls[0]
+    assert endpoint.endswith("/reviews/7/events")
+    assert json.loads(kw["input_text"]) == {"event": "APPROVE"}
+    assert kw["retry"] is False
+    loaded = load_file(PostTracking, review_dir / FILENAME_POST_SESSION)
+    assert loaded.status == "approve"
+    assert loaded.submitted is True
+
+
+def test_fetch_failure_is_failed(tmp_path, monkeypatch):
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    _write_tracking(review_dir)
+    monkeypatch.setattr(
+        review.publish, "fetch_pr_data",
+        lambda *a, **k: (_ for _ in ()).throw(SystemExit(1)),
+    )
+    called = []
+    monkeypatch.setattr(
+        review.publish.gh.client, "api",
+        lambda *a, **k: called.append("api") or CmdResult(0, "{}"),
+    )
+
+    outcome = review.publish.publish_draft(
+        "owner/repo", "1", str(review_dir / "review.md"), ReviewEvent.COMMENT,
+    )
+
+    assert outcome is review.publish.DraftPublish.FAILED
+    assert called == []
+
+
+def test_events_post_failure_is_failed(tmp_path, monkeypatch):
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    _write_tracking(review_dir)
+
+    outcome, _ = _publish(
+        review_dir, monkeypatch,
+        api=lambda *a, **k: CmdResult(1, "", "gh: Unprocessable (HTTP 422)"),
+    )
+
+    assert outcome is review.publish.DraftPublish.FAILED
+    loaded = load_file(PostTracking, review_dir / FILENAME_POST_SESSION)
+    assert loaded.status == PostEvent.PENDING.value
+    assert loaded.submitted is False
+
+
+def test_mismatched_pending_id_is_not_pending(tmp_path, monkeypatch):
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    _write_tracking(review_dir)
+
+    outcome, calls = _publish(
+        review_dir, monkeypatch,
+        pr_data=_pending_pr_data(review_id=99),
+        api=lambda *a, **k: CmdResult(0, json.dumps({"state": "PENDING"})),
+    )
+
+    assert outcome is review.publish.DraftPublish.NOT_PENDING
+    assert calls[0][0].endswith("/reviews/7")
+    loaded = load_file(PostTracking, review_dir / FILENAME_POST_SESSION)
+    assert loaded.status == PostEvent.PENDING.value
+
+
+def test_not_pending_records_a_submitted_github_state(tmp_path, monkeypatch):
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    _write_tracking(review_dir)
+
+    outcome, _ = _publish(
+        review_dir, monkeypatch,
+        pr_data=_pending_pr_data(review_id=None),
+        api=lambda *a, **k: CmdResult(0, json.dumps({"state": "APPROVED"})),
+    )
+
+    assert outcome is review.publish.DraftPublish.NOT_PENDING
+    loaded = load_file(PostTracking, review_dir / FILENAME_POST_SESSION)
+    assert loaded.status == "approve"
+    assert loaded.submitted is True
+
+
+def test_not_pending_404_leaves_the_record(tmp_path, monkeypatch):
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    _write_tracking(review_dir)
+
+    outcome, _ = _publish(
+        review_dir, monkeypatch,
+        pr_data=_pending_pr_data(review_id=None),
+        api=lambda *a, **k: CmdResult(
+            1, '{"message": "Not Found"}', "gh: Not Found (HTTP 404)",
+        ),
+    )
+
+    assert outcome is review.publish.DraftPublish.NOT_PENDING
+    loaded = load_file(PostTracking, review_dir / FILENAME_POST_SESSION)
+    assert loaded.status == PostEvent.PENDING.value
+    assert loaded.submitted is False
+
+
+def test_head_moved_since_the_draft_was_posted(tmp_path, monkeypatch):
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    _write_tracking(review_dir, review_sha="")
+
+    outcome, calls = _publish(
+        review_dir, monkeypatch,
+        pr_data=_pending_pr_data(head_sha="ccc3333ddd4444"),
+    )
+
+    assert outcome is review.publish.DraftPublish.HEAD_MOVED
+    assert calls == []
+
+
+def test_approve_on_review_sha_drift_is_head_moved(tmp_path, monkeypatch):
+    review_dir = tmp_path / "review"
+    review_dir.mkdir()
+    _write_tracking(
+        review_dir,
+        head_sha_at_post="ccc3333ddd4444",
+        commit_id="ccc3333ddd4444",
+        review_sha="aaa1111bbb2222",
+    )
+
+    outcome, calls = _publish(
+        review_dir, monkeypatch, event=ReviewEvent.APPROVE,
+        pr_data=_pending_pr_data(head_sha="ccc3333ddd4444"),
+    )
+
+    assert outcome is review.publish.DraftPublish.HEAD_MOVED
+    assert calls == []
 
 
 # ── the argv post() actually builds ─────────────────────────────────────────
@@ -276,7 +517,7 @@ def _post_argv(monkeypatch, tmp_path, **kw):
         return 0
 
     monkeypatch.setattr(core.publishing, "call_entry_point", _call)
-    review.publish.post("42", str(tmp_path / "review.md"), False,
+    review.publish.post("42", str(tmp_path / "review.md"),
                         bin_dir=tmp_path, **kw)
     assert seen["handler"] == "cli.review_post:main"
     return seen["argv"]

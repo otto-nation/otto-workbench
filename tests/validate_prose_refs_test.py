@@ -55,7 +55,9 @@ def test_an_unknown_command_fails(tmp_path, tools, names):
 
 
 def test_pr_review_mode_flags_resolve_but_not_on_the_bare_review_binary(tmp_path, tools, names):
-    assert _reasons(tmp_path, "`pr review --post --submit`\n", tools, names) == []
+    assert _reasons(tmp_path, "`pr review --post --publish comment`\n", tools, names) == []
+    assert _reasons(tmp_path, "`pr review --post --submit`\n", tools, names) == [
+        "`pr review`: no such flag --submit"]
     assert _reasons(tmp_path, "`review --summary`\n", tools, names) == [
         "`review`: no such flag --summary"]
 

@@ -34,9 +34,27 @@ from gh.pr_reads import (
     _get_diff,
 )
 from review.posting import (
-    ReviewEvent, _post_and_track, _print_dry_run, event_of,
+    ReviewEvent, _post_and_track, _print_dry_run, publish_event,
 )
 from review.store import read_review
+
+
+def head_moved(recorded_sha: str | None, head_sha: str) -> bool:
+    """Whether *head_sha* is a different commit than the one recorded."""
+    return bool(recorded_sha) and not covers(recorded_sha, head_sha)
+
+
+def event_refusal(
+    event: ReviewEvent | None, review_sha: str | None, head_sha: str,
+) -> str | None:
+    """Error text when a non-comment event would speak for unread commits."""
+    if event is None or event is ReviewEvent.COMMENT or not head_moved(review_sha, head_sha):
+        return None
+    return (
+        f"Refusing --publish {event.value}: the review was written against "
+        f"{git.client.abbrev(review_sha)} and the PR is now at "
+        f"{git.client.abbrev(head_sha)}. Re-run the review, or post it as a comment."
+    )
 
 
 def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
@@ -102,7 +120,7 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
         head_sha = head_sha or review_sha or "dry-run"
 
     # review_sha may be None; covers() cannot take it, so guard first.
-    sha_drifted = bool(review_sha) and not covers(review_sha, head_sha)
+    sha_drifted = head_moved(review_sha, head_sha)
     if sha_drifted:
         core.log.warn(
             f"Review was written against {git.client.abbrev(review_sha)}, "
@@ -117,14 +135,12 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
 
     # Approving or requesting changes speaks for commits the review never read.
     # A comment still posts on drift, re-placed against the current diff.
-    event = event_of(args)
-    if sha_drifted and event is not ReviewEvent.COMMENT and not args.dry_run:
-        core.log.error(
-            f"Refusing --event {event.value}: the review was written against "
-            f"{git.client.abbrev(review_sha)} and the PR is now at "
-            f"{git.client.abbrev(head_sha)}. Re-run the review, or post it as a comment.")
+    event = publish_event(args)
+    refusal = None if args.dry_run else event_refusal(event, review_sha, head_sha)
+    if refusal:
+        core.log.error(refusal)
         trail.decision("post_mode", "refused", reason="event on a drifted review",
-                       data={"event": event.value})
+                       data={"event": None if event is None else event.value})
         return 1
 
     if args.dry_run:
@@ -195,11 +211,10 @@ def run_post(trail, args, repo, sidecar: ReviewMeta, review_path) -> int:
     trail.decision("post_mode", "posting to GitHub",
                    reason="not dry-run",
                    data={"inline_count": len(inline_comments), "has_body": bool(body_text)})
-    _post_and_track(
+    return _post_and_track(
         args, inline_comments, body_text,
         inline, body_findings, duplicates,
         commit_id, head_sha, chunk_size, severity_filter, pr_data,
         review_sha=review_sha or head_sha, sha_drifted=sha_drifted,
         record=stored.record, meta=stored.meta,
     )
-    return 0

@@ -105,6 +105,7 @@ export function mergeStates(states) {
       prs.push({
         ...pr, repoSlug: st.repo.slug, host: st.repo.host, viewer: st.me,
         on: st.repo.on ?? null, cwd: st.repo.cwd ?? null,
+        features: st.features ?? [],
       });
     }
   }

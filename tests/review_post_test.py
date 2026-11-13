@@ -560,6 +560,7 @@ class TestACleanReviewStillPosts:
         _, _, post_file = self._post(rp, tmp_path, self.CLEAN)
         tracking = serde_from_dict(PostTracking, json.loads(post_file.read_text()))
         assert tracking.review_id == 42
+        assert tracking.status == "pending"
         assert tracking.submitted is False
 
     def test_the_body_carries_the_models_meta_json_records(self, rp, tmp_path):

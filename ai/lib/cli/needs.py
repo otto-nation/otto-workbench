@@ -154,12 +154,17 @@ class ReviewMode:
     * ``schema_versions`` — the row-schema versions this mode can serve, empty
       for a mode with no versioned document to hand a caller.
     * ``help`` — one-line description of the mode, for generated CLI reference.
+    * ``choices`` — non-empty when the mode takes a value.
+    * ``modifies`` — a mode flag this one modifies when both are given, so it
+      is dropped from the mode list and forwarded as an argument instead.
     """
 
     handler: Callable[..., int] | None = None
     need: Need = REVIEW_MODE_NEED
     schema_versions: tuple[int, ...] = ()
     help: str = ""
+    choices: tuple[str, ...] = ()
+    modifies: str = ""
 
 
 def review_modes(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> list[str]:
@@ -169,17 +174,75 @@ def review_modes(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> list[s
     routing, the need resolver, and the error that quotes the invocation back
     all agree about what was asked for.
 
-    `--post` is a mode on its own — publish the review already on disk — and a
-    modifier beside `--fix` or `--track`, where it opens the publishing gate
-    for what this run produces. Those are different requests, and only the
-    first is a mode. Reading `--track --post` as one would route to the poster
-    and never file the findings.
+    Tokens are read as ``token.split("=", 1)[0]`` up to ``--``, so
+    ``--publish=approve`` is seen as ``--publish``.
+
+    `--post` is a mode on its own — post the review already on disk as a
+    draft — and a modifier beside `--fix` or `--track`, where it opens the
+    publishing gate for what this run produces. Those are different requests,
+    and only the first is a mode. Reading `--track --post` as one would route
+    to the poster and never file the findings.
+
+    A mode whose ``modifies`` flag is also present is dropped, so
+    ``--post --publish E`` is the post mode with a modifier, not two modes.
     """
-    given = set(argv)
+    names: list[str] = []
+    for token in argv:
+        if token == "--":
+            break
+        names.append(token.split("=", 1)[0])
+    given = set(names)
     found = [flag for flag in modes if flag in given]
+    found = [
+        flag for flag in found
+        if not (modes[flag].modifies and modes[flag].modifies in given)
+    ]
     if has_flag(argv, "--fix") or has_flag(argv, "--track"):
         return [flag for flag in found if flag != "--post"]
     return found
+
+
+def argv_without_mode(
+    argv: Sequence[str], flag: str, mode: ReviewMode,
+) -> list[str]:
+    """argv as the mode handler receives it: the mode token stripped.
+
+    A boolean mode drops every exact ``flag`` token. A valued mode keeps
+    ``--flag VALUE`` and ``--flag=VALUE`` so the handler can parse the value;
+    only a bare ``--flag`` with no value is removed.
+    """
+    if not mode.choices:
+        return [a for a in argv if a != flag]
+    out: list[str] = []
+    tokens = list(argv)
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token == "--":
+            out.extend(tokens[i:])
+            break
+        if token.startswith(f"{flag}="):
+            out.append(token)
+            i += 1
+            continue
+        if token == flag:
+            i = _keep_valued_mode_flag(tokens, i, flag, out)
+            continue
+        out.append(token)
+        i += 1
+    return out
+
+
+def _keep_valued_mode_flag(
+    tokens: list[str], i: int, flag: str, out: list[str],
+) -> int:
+    """Keep ``--flag VALUE``; drop a bare ``--flag``. Returns the next index."""
+    nxt = tokens[i + 1] if i + 1 < len(tokens) else None
+    if nxt is not None and nxt != "--" and not nxt.startswith("-"):
+        out.append(flag)
+        out.append(nxt)
+        return i + 2
+    return i + 1
 
 
 def has_flag(argv: Sequence[str], flag: str) -> bool:

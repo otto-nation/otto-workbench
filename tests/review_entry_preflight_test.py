@@ -51,7 +51,7 @@ def _self_review_args(**overrides):
         force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
         model=None, repo_dir="", fix=True, effort="medium", max_groups=None,
         generated=False, recover=False, debug=False, base="",
-        post=False, push=False, no_post=False, submit=False,
+        post=False, push=False, no_post=False,
     )
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -171,7 +171,7 @@ def test_self_review_on_a_branch_locks_the_worktree_it_switches_to(
         force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
         model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
         generated=False, recover=False, debug=False, base="",
-        post=False, push=False, no_post=False, submit=False,
+        post=False, push=False, no_post=False,
     ), ["--self", "feat/x"], "test 1.0")
 
     # The entry claim holds what `review --self` declares: the target and the
@@ -221,7 +221,7 @@ def test_self_review_on_a_branch_already_checked_out_still_locks_it(
         force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
         model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
         generated=False, recover=False, debug=False, base="",
-        post=False, push=False, no_post=False, submit=False,
+        post=False, push=False, no_post=False,
     ), ["--self", "feat/x"], "test 1.0")
 
     # The late lock still fires after the no-op switch, naming the tree that

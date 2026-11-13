@@ -92,6 +92,24 @@ const docRow = (name) => ({ presentation: fx.cases.find((c) => c.name === name).
   [ "$output" = '[{"kind":"status","status":"none","text":"CI unknown"}]' ]
 }
 
+@test "view: toSnapshot keeps post.event and post.submitted on a run" {
+  _web "const s = await import(W + '/lib/snapshot.js');
+        const post = { event: 'pending', submitted: false };
+        const snap = s.toSnapshot({ prs: [{ number: 1, repoSlug: 'o/n', cwd: '/w', reviewRuns: [{ postedEvent: 'pending', run: { stamp: 's', post } }] }] }, { name: 'n', version: '1' });
+        const run = snap.prs[0].reviewRuns[0].run;
+        out({ event: run.post.event, submitted: run.post.submitted, hasCwd: 'cwd' in snap.prs[0] });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"event":"pending","submitted":false,"hasCwd":false}' ]
+}
+
+@test "view: a pending run shows the draft-on-GitHub history label" {
+  _web "const { historyRows } = await import(L + '/history.js');
+        const rows = historyRows([{ stamp: 's', reviewed_at: '2026-08-18T13:00:00Z', post: { event: 'pending' } }], Date.parse('2026-08-18T14:00:00Z'));
+        out(rows[0].post);"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"label":"draft on GitHub — only you can see it","status":"warn"}' ]
+}
+
 @test "view: toSnapshot whitelists repoStates and stringifies error" {
   _web "const s = await import(W + '/lib/snapshot.js');
         const cols = [{ board: 'team', key: 'open', label: 'Open', order: 0 }];

@@ -2,12 +2,20 @@
 
 Parses a markdown review file (produced by `review`), validates
 finding positions against the PR diff, and creates a PENDING review via
-the GitHub API using each finding's record ID. Pass --submit to submit
-the review immediately.
+the GitHub API using each finding's record ID. Pass --publish EVENT to
+publish it instead of leaving a draft.
+
+`--post` alone posts a draft (a PENDING review only you can see) and is
+refused when the review needs more than one GitHub chunk, since GitHub holds
+one draft per reviewer. `--post --publish E` posts the review already
+published as E, and `--publish E` alone publishes the draft recorded in
+`post.jsonl`. approve and request_changes are refused when the PR head moved
+since the review was written; `--publish` alone is also refused when nothing
+is pending or the draft is no longer pending on GitHub.
 
 Usage:
   review-post --pr NUMBER --review-file PATH
-              [--severity M,S,N] [--dry-run] [--submit] [--event EVENT]
+              [--severity M,S,N] [--dry-run] [--publish EVENT]
 """
 
 # doc-group: cli
@@ -61,10 +69,10 @@ from review.dedup import (
 )
 from review.posting import (
     DEFAULT_CHUNK_SIZE, _CHUNK_PATTERN,
-    ReviewEvent, event_of,
+    ReviewEvent,
     _post_and_track, _print_dry_run,
-    _chunk_comments, _post_chunked_review, post_review,
-    _submit_review, write_post_tracking, _format_submit_command,
+    _chunk_comments, _post_chunked_review,
+    write_post_tracking,
     _reclassify_and_retry,
 )
 
@@ -93,12 +101,10 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"Severity levels to post (comma-separated, default: {all_sevs})")
     parser.add_argument("--dry-run", action="store_true",
                         help="Parse and classify without posting")
-    parser.add_argument("--submit", action="store_true",
-                        help="Submit the review after posting (default: leave PENDING)")
-    parser.add_argument("--event", choices=[e.value for e in review.posting.ReviewEvent],
-                        default=review.posting.ReviewEvent.COMMENT.value,
-                        help="What the review says on GitHub (default: comment). "
-                             "approve and request_changes submit the review")
+    parser.add_argument(
+        "--publish", choices=[e.value for e in review.posting.ReviewEvent],
+        help="Publish the review as EVENT (default: post it as a draft — "
+             "a PENDING review only you can see)")
     parser.add_argument("--expect-ref",
                         help="Refuse the review unless its sidecar names this "
                              "branch as the one it was written for. Opt-in: "
@@ -108,11 +114,6 @@ def main(argv: list[str] | None = None) -> int:
                         help=f"Max inline comments per review chunk (default: {DEFAULT_CHUNK_SIZE})")
     add_trail_args(parser)
     args = parser.parse_args(argv)
-
-    # A pending review has no event yet; approving or requesting changes is
-    # submitting, so either one implies --submit.
-    if args.event != review.posting.ReviewEvent.COMMENT.value:
-        args.submit = True
 
     review_path = Path(args.review_file)
     if not review_path.exists():

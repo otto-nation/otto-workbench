@@ -1,7 +1,7 @@
 """SHA-drift re-verification when posting a review.
 
 `run_post` re-places findings against the current diff when the PR head moved,
-and refuses a non-comment `--event` on that drift.
+and refuses a non-comment `--publish` on that drift.
 """
 
 import json
@@ -16,6 +16,8 @@ if str(LIB_DIR) not in sys.path:
 from pr.state import PostedAs, PostEvent, PostTracking
 from core.serde import from_dict as serde_from_dict
 import review.dedup
+from review.post_file import event_refusal, head_moved
+from review.posting import ReviewEvent
 from review.types import ReviewMeta
 from review_record_support import finding, record, store_record
 
@@ -48,7 +50,6 @@ class TestShaDriftReverify:
         args.pr = pr
         args.review_file = str(review_file)
         args.dry_run = False
-        args.submit = False
         args.chunk_size = 30
         args.severity = "M,S,N,I"
         args.debug = False
@@ -202,8 +203,7 @@ class TestShaDriftReverify:
         """Approving commits the review never read is the one post that must
         not go out on drift; a comment still can, as it does today."""
         args, review_file = self._make_args(tmp_path)
-        args.event = "approve"
-        args.submit = True
+        args.publish = "approve"
         pr_data = rp.PRData(viewer_login="bot", head_sha="ccc3333ddd4444",
                             head_ref="feat", base_ref="main", reviews=[])
         with (
@@ -218,7 +218,31 @@ class TestShaDriftReverify:
 
     def test_an_approval_records_its_event_in_post_tracking(self, rp, tmp_path):
         args, review_file = self._make_args(tmp_path)
-        args.event = "approve"
-        args.submit = True
+        args.publish = "approve"
         tracking = self._run_with_args(rp, args, review_file, head_sha="aaa1111bbb2222")
         assert tracking.status == PostEvent.APPROVE.value
+
+
+class TestHeadMovedAndEventRefusal:
+    def test_head_moved_is_false_when_nothing_was_recorded(self):
+        assert head_moved("", "abc") is False
+        assert head_moved(None, "abc") is False
+
+    def test_head_moved_accepts_an_abbreviation(self):
+        assert head_moved("aaa1111", "aaa1111bbb2222") is False
+        assert head_moved("aaa1111bbb2222", "ccc3333ddd4444") is True
+
+    def test_event_refusal_is_none_for_a_comment(self):
+        assert event_refusal(
+            ReviewEvent.COMMENT, "aaa1111bbb2222", "ccc3333ddd4444",
+        ) is None
+        assert event_refusal(None, "aaa1111bbb2222", "ccc3333ddd4444") is None
+
+    def test_event_refusal_names_the_event_on_drift(self):
+        msg = event_refusal(
+            ReviewEvent.APPROVE, "aaa1111bbb2222", "ccc3333ddd4444",
+        )
+        assert msg is not None
+        assert "--publish approve" in msg
+        assert "aaa1111" in msg
+        assert "ccc3333" in msg

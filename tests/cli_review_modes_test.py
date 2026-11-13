@@ -7,9 +7,12 @@ no binary in the way.
 """
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from unittest import mock
+
+import pytest
 
 from conftest import make_ctx
 from review_record_support import seed_record
@@ -65,9 +68,11 @@ def test_every_mode_declares_the_need_it_was_given():
     trail for an invocation that touches no repo.
     """
     assert set(cli.review_modes.MODES) == {
-        "--post", "--repair", "--summary", "--dismiss", "--recover", "--list",
+        "--post", "--publish", "--repair", "--summary", "--dismiss", "--recover",
+        "--list",
     }
-    for flag in ("--post", "--repair", "--summary", "--dismiss", "--recover"):
+    for flag in ("--post", "--publish", "--repair", "--summary", "--dismiss",
+                 "--recover"):
         assert cli.review_modes.MODES[flag].need == REVIEW_MODE_NEED, flag
     listing_need = cli.review_modes.MODES["--list"].need
     assert listing_need == Need(NONE, update=False, locks=NO_LOCK)
@@ -79,6 +84,7 @@ def test_the_exclusivity_prose_names_every_mode():
     prose = cli.review_modes.flags_prose()
     for flag in cli.review_modes.MODES:
         assert flag in prose
+    assert "; --publish also modifies --post" in prose
 
 
 def test_the_exclusivity_prose_drops_the_leading_comma_for_a_single_flag():
@@ -164,6 +170,18 @@ def test_post_names_the_branch_it_is_publishing_for(tmp_path):
     assert cmd[cmd.index("--expect-ref") + 1] == "feat/x"
 
 
+def test_dismiss_refuses_a_pending_draft(reviews_dir, capsys):
+    review = seed_record(reviews_dir, name="owner-repo-42") / "review.md"
+    (review.parent / "post.jsonl").write_text(json.dumps({
+        "posted_as": "review", "status": "pending", "review_id": 9,
+        "submitted": False, "head_sha_at_post": "abc",
+    }) + "\n")
+    with mock.patch("cli.review_modes.find_review_file", return_value=review):
+        rc = cli.review_modes.dismiss([], make_ctx())
+    assert rc == 1
+    assert "A draft of this run is on GitHub" in capsys.readouterr().err
+
+
 def test_reference_parser_lists_each_mode_once_without_mutating_base():
     """The generated `pr review` reference lists each mode flag once."""
     import cli.review_entry
@@ -184,3 +202,41 @@ def test_reference_parser_lists_each_mode_once_without_mutating_base():
         assert action.help, flag
         # Under `pr review` each is a mode, whatever the binary's parser says.
         assert action.help.startswith(cli.review_modes.MODES[flag].help), flag
+
+
+# ── publish handler ──────────────────────────────────────────────────────
+
+
+def test_publish_maps_ok_to_zero(tmp_path):
+    from review.publish import DraftPublish
+    with mock.patch("cli.review_modes.find_review_file",
+                    return_value=tmp_path / "review.md"), \
+         mock.patch("review.publish.publish_draft",
+                    return_value=DraftPublish.PUBLISHED) as call:
+        rc = cli.review_modes.publish(
+            ["--publish", "comment"], make_ctx(), bin_dir=tmp_path,
+        )
+    assert rc == 0
+    call.assert_called_once()
+
+
+@pytest.mark.parametrize("outcome", [
+    "NO_DRAFT", "NOT_PENDING", "HEAD_MOVED", "FAILED",
+])
+def test_publish_maps_a_refusal_to_one(tmp_path, outcome):
+    from review.publish import DraftPublish
+    with mock.patch("cli.review_modes.find_review_file",
+                    return_value=tmp_path / "review.md"), \
+         mock.patch("review.publish.publish_draft",
+                    return_value=getattr(DraftPublish, outcome)):
+        rc = cli.review_modes.publish(
+            ["--publish", "approve"], make_ctx(), bin_dir=tmp_path,
+        )
+    assert rc == 1
+
+
+def test_publish_without_a_review_file_exits_one():
+    with mock.patch("cli.review_modes.find_review_file", return_value=None):
+        assert cli.review_modes.publish(
+            ["--publish", "comment"], make_ctx(), bin_dir=BIN_DIR,
+        ) == 1

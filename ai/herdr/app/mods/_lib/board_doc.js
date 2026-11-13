@@ -63,6 +63,7 @@ export function docToState(doc, ctx, prev = null) {
     columns: doc.columns?.length ? doc.columns : prev?.columns,
     reviewsRoot: doc.reviews_root || prev?.reviewsRoot || '',
     partial: Boolean(repo.partial),
+    features: Array.isArray(doc.features) ? doc.features : (prev?.features ?? []),
   };
   if (repo.phase === 'failed' || repo.error) {
     state.error = { kind: repo.error?.kind ?? 'failed', message: repo.error?.message ?? '' };

@@ -932,7 +932,6 @@ Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remot
 | Flag | Description |
 |------|-------------|
 | `--no-post` | Do not post to GitHub and do not prompt (a plain run prompts before posting and before replacing a pending review). |
-| `--submit` | Submit the GitHub review after posting, as a COMMENT review (default: leave PENDING). |
 | `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
 | `--fix` | Apply findings after the review (requires --self). |
 | `--track` `<finding-id>` | File this open finding from the branch's existing self-review (repeatable). Requires --self; does not run a review. Cannot combine with --fix, --force, or --recover. |
@@ -959,13 +958,13 @@ Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remot
 | `--generated` | Include tier3-generated files (skipped by default). |
 | `-V`, `--version` | Print version and exit. |
 | `[<pr\|branch> ...]` | PR number, URL, or branch name. |
-| `--post` | Post an EXISTING review to GitHub (under pr review this flag is a mode, not the review binary's post-after-run flag) — a mode; excludes the other mode flags. |
+| `--post` | Post the existing review to GitHub as a draft (a PENDING review only you can see); with --publish, post it published — a mode; excludes the other mode flags. |
+| `--publish` `<event>` | Publish on GitHub as EVENT: with --post, post the existing review published; alone, publish the draft recorded for the latest review (refused when none is pending or the PR head moved since it was posted) — a mode, or a modifier of --post; excludes the other mode flags. |
 | `--repair` | Repair broken review artifacts via summary or rebuild — a mode; excludes the other mode flags. |
 | `--summary` | Print a JSON summary of an existing review — a mode; excludes the other mode flags. |
 | `--dismiss` | Record the latest review as dismissed, posting nothing — a mode; excludes the other mode flags. |
 | `--recover` | Finish a review whose agents failed, at the commit it started from — a mode; excludes the other mode flags. |
 | `--list` | List every review in the user's state root — a mode; excludes the other mode flags. |
-| `--event` `<comment\|approve\|request_changes>` | With --post: what the review says on GitHub (default: comment). |
 | `--if-changed` `<stamp>` | With --list --schema-version: answer {"unchanged": true} when no review changed since the document carrying this stamp. |
 
 Exit codes: `0` ok · `1` failure · `2` usage · `4` refused · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-review-contract)
@@ -1249,8 +1248,7 @@ resolution, model selection, and Vertex quota preflight are in
 | Flag | Description |
 |------|-------------|
 | `--no-post` | Do not post to GitHub and do not prompt (a plain run prompts before posting and before replacing a pending review). |
-| `--post` | Post the review to GitHub when it finishes. |
-| `--submit` | Submit the GitHub review after posting, as a COMMENT review (default: leave PENDING). |
+| `--post` | Post the review to GitHub as a draft when it finishes. |
 | `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
 | `--fix` | Apply findings after the review (requires --self). |
 | `--track` `<finding-id>` | File this open finding from the branch's existing self-review (repeatable). Requires --self; does not run a review. Cannot combine with --fix, --force, or --recover. |

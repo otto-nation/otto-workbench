@@ -74,6 +74,17 @@ _js() {
   [ "$output" = '["loaded",4,null,"auth",4,""]' ]
 }
 
+@test "docToState: features from the doc, kept when absent, empty when neither has them" {
+  _js '
+    const withFeat = d.docToState({ ...doc, features: ["review-publish"] }, { cwd: "/w", on: null });
+    const kept = d.docToState({ ...doc, features: undefined }, { cwd: "/w", on: null }, withFeat);
+    const none = d.docToState({ ...doc, features: undefined }, { cwd: "/w", on: null });
+    process.stdout.write(JSON.stringify([withFeat.features, kept.features, none.features]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["review-publish"],["review-publish"],[]]' ]
+}
+
 @test "withRunning marks the PRs a live review terminal is running for" {
   _js '
     const prs = d.withRunning(doc.rows.map(d.rowToPr), new Map([[7, { terminal: "t9" }]]));

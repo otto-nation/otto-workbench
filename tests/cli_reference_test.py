@@ -259,7 +259,7 @@ class TestPrShape:
         review = next(c for c in shape.commands if c.name == "review")
         synopsis = core.cli_reference.synopsis(review.parser)
         for flag in cli.review_modes.MODES:
-            assert f"[{flag}]" in synopsis, flag
+            assert f"[{flag}]" in synopsis or f"[{flag} <" in synopsis, flag
 
     def test_the_global_flags_are_the_ones_the_first_pass_consumes(self, shape):
         import cli.pr

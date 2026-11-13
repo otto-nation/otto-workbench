@@ -30,7 +30,7 @@ def _row(**kwargs) -> Row:
     return Row(**kwargs)
 
 
-# 14 Python team-lane cases: 13 on team_lane, reviewing as team_reviewing.
+# 15 Python team-lane cases: 14 on team_lane, reviewing as team_reviewing.
 TEAM_LANE_CASES = [
     ("merged -> landed", dict(state=PrState.MERGED), TeamLane.LANDED),
     ("inMergeQueue -> landed", dict(in_merge_queue=True), TeamLane.LANDED),
@@ -80,6 +80,11 @@ TEAM_LANE_CASES = [
     (
         "only unposted run (never posted) -> review-ready",
         dict(review_runs=(ReviewRunRef(posted_event=None),)),
+        TeamLane.REVIEW_READY,
+    ),
+    (
+        "pending latest run -> review-ready",
+        dict(review_runs=(ReviewRunRef(posted_event="pending"),)),
         TeamLane.REVIEW_READY,
     ),
     (

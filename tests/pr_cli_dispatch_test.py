@@ -489,6 +489,7 @@ _DECLARED_LOCKS = {
     ("review", ("--self", "--track", "M1", "--post")): _T,
     ("review", ("--fix", "--post")): _T,
     ("review", ("--post",)): _T,
+    ("review", ("--publish", "comment")): _T,
     ("review", ("--repair",)): _T,
     ("review", ("--summary",)): _T,
     ("review", ("--dismiss",)): _T,

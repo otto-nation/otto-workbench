@@ -365,6 +365,34 @@ def test_a_posted_review_reports_its_event(reviews_dir):
     assert (row.post.event, row.post.review_id) == ("approve", 77)
 
 
+def test_a_pending_draft_reports_pending_unsubmitted(reviews_dir):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42)
+    _post(d, status="pending", submitted=False, head_sha_at_post="abc")
+    row, = review.listing.rows()
+    assert (row.post.event, row.post.submitted) == ("pending", False)
+
+
+def test_a_legacy_draft_reports_pending(reviews_dir):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42)
+    _post(d, status="comment", submitted=False, head_sha_at_post="abc")
+    row, = review.listing.rows()
+    assert (row.post.event, row.post.submitted) == ("pending", False)
+
+
+def test_a_legacy_dedup_record_reports_published_comment(reviews_dir):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42)
+    _post(d, status="comment", submitted=False)
+    row, = review.listing.rows()
+    assert (row.post.event, row.post.submitted) == ("comment", True)
+
+
+def test_a_submitted_post_reports_its_event(reviews_dir):
+    d = _review(reviews_dir, repo="acme/widget", pr_number=42)
+    _post(d, status="approve", submitted=True)
+    row, = review.listing.rows()
+    assert (row.post.event, row.post.submitted) == ("approve", True)
+
+
 def test_history_lists_archived_runs_newest_first(reviews_dir):
     d = _review(reviews_dir, repo="acme/widget", pr_number=42, head_sha="old1")
     _archive_current(d, "20260101-120000")

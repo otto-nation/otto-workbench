@@ -26,14 +26,15 @@ from review.record import ReviewRecord
 
 import core.log
 from gh.client import LineResolutionError
-from pr.state import PostedAs, PostEvent, PostTracking
+from pr.state import PostedAs, PostEvent, PostTracking, post_event_for_github_state
 from gh.pr_data import PRData
 from review.types import Finding, ReviewMeta
-from core.serde import to_dict as serde_to_dict
+from core.serde import load_file as serde_load_file, to_dict as serde_to_dict, write_json as serde_write_json
+from review.paths import FILENAME_POST_SESSION
 
 
 class ReviewEvent(StrEnum):
-    """What a posted review says on GitHub, as `pr review --post --event` spells it."""
+    """What a posted review says on GitHub, as `--publish` spells it."""
 
     COMMENT = "comment"
     APPROVE = "approve"
@@ -54,9 +55,15 @@ class ReviewEvent(StrEnum):
         }[self]
 
 
-def event_of(args) -> ReviewEvent:
-    """The event a `review-post` invocation asked for; a namespace built without one comments."""
-    return ReviewEvent(getattr(args, "event", ReviewEvent.COMMENT.value))
+def publish_event(args) -> ReviewEvent | None:
+    """The event `review-post` should publish as, or None to leave a draft.
+
+    A namespace without the attribute, or with it empty, is a draft.
+    """
+    value = getattr(args, "publish", None)
+    if not value:
+        return None
+    return ReviewEvent(value)
 
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -97,15 +104,17 @@ def _handle_chunk_failure(
 def _post_chunked_review(
     repo: str, pr: str, commit_id: str,
     body_text: str, inline_comments: list[dict],
-    chunk_size: int, submit: bool,
+    chunk_size: int,
     pr_data: PRData | None = None,
-    event: ReviewEvent = ReviewEvent.COMMENT,
+    *,
+    publish: ReviewEvent | None = None,
 ) -> list[dict]:
     """Post a review, chunking if the comment count exceeds chunk_size.
 
-    Chunked reviews are submitted immediately because GitHub only allows one
+    Chunked reviews are published immediately because GitHub only allows one
     PENDING review per user at a time. Every chunk but the last is a comment;
-    the last carries *event*.
+    the last carries *publish*, or COMMENT when chunking a draft-less post.
+    The event is sent only when publishing, or on chunks.
     """
     chunks = _chunk_comments(inline_comments, chunk_size)
     is_chunked = len(chunks) > 1
@@ -138,10 +147,11 @@ def _post_chunked_review(
         if chunk:
             payload["comments"] = chunk
 
-        if is_chunked or submit:
+        if is_chunked or publish is not None:
             # GitHub reports a reviewer's latest review as their state, so only
             # the chunk posted last carries the event; the rest are comments.
             last = i == len(chunks) - 1
+            event = publish or ReviewEvent.COMMENT
             payload["event"] = event.github if last else ReviewEvent.COMMENT.github
 
         if is_chunked:
@@ -170,48 +180,13 @@ def _post_chunked_review(
     return results
 
 
-def post_review(repo: str, pr: str, payload: dict, submit: bool = False,
-                event: ReviewEvent = ReviewEvent.COMMENT) -> dict | None:
-    """Post a review to GitHub, optionally submitting it.
-
-    Legacy single-review interface. Delegates to _post_chunked_review
-    with no chunking.
-    """
-    comments = payload.get("comments", [])
-    body_text = payload.get("body", "")
-    commit_id = payload["commit_id"]
-
-    results = _post_chunked_review(
-        repo, pr, commit_id, body_text, comments,
-        chunk_size=len(comments) + 1,
-        submit=submit,
-        event=event,
-    )
-    return results[0] if results else None
-
-
-def _submit_review(repo: str, pr: str, review_id: int) -> bool:
-    """Submit a PENDING review with event=COMMENT. Returns True on success."""
-    result = gh.client.api_json(
-        f"repos/{repo}/pulls/{pr}/reviews/{review_id}/events",
-        method="POST",
-        input_text=json.dumps({"event": "COMMENT"}),
-    )
-    if result is None:
-        core.log.warn(f"Failed to submit review #{review_id}")
-        return False
-    return True
-
-
 # ── Post tracking ───────────────────────────────────────────────────────────
 
 def write_post_tracking(review_file: str, entry: PostTracking):
     """Write a post tracking entry alongside the review file."""
-    post_file = str(Path(review_file).parent / "post.jsonl")
+    post_file = Path(review_file).parent / "post.jsonl"
     try:
-        with open(post_file, "w") as f:
-            json.dump(serde_to_dict(entry), f)
-            f.write("\n")
+        serde_write_json(post_file, serde_to_dict(entry))
     except OSError as e:
         core.log.warn(f"Failed to write post tracking ({post_file}): {e}")
 
@@ -222,9 +197,9 @@ def _reclassify_and_retry(
     args: argparse.Namespace,
     inline: list[Finding], body_findings: list[Finding],
     commit_id: str, chunk_size: int, severity_filter: set[str],
-    submit: bool,
     pr_data: PRData | None = None,
-    *, record: ReviewRecord, meta: ReviewMeta, event: ReviewEvent = ReviewEvent.COMMENT,
+    *, record: ReviewRecord, meta: ReviewMeta,
+    publish: ReviewEvent | None = None,
 ) -> tuple[list[dict], list[Finding], list[Finding], str, list[dict]]:
     """Re-fetch diff and reclassify findings after a LineResolutionError.
 
@@ -257,8 +232,7 @@ def _reclassify_and_retry(
             results = _post_chunked_review(
                 args.repo, args.pr, commit_id,
                 new_body_text, new_inline_comments,
-                chunk_size, submit,
-                event=event,
+                chunk_size, publish=publish,
             )
             return new_inline_comments, new_inline, new_body, new_body_text, results
         except LineResolutionError:
@@ -272,8 +246,7 @@ def _reclassify_and_retry(
     results = _post_chunked_review(
         args.repo, args.pr, commit_id,
         new_body_text, [],
-        chunk_size, submit,
-        event=event,
+        chunk_size, publish=publish,
     )
     return [], [], new_body, new_body_text, results
 
@@ -348,9 +321,39 @@ def _post_and_track(
     pr_data: PRData | None = None,
     review_sha: str = "", sha_drifted: bool = False,
     *, record: ReviewRecord, meta: ReviewMeta,
-):
-    submit = getattr(args, "submit", False)
-    event = event_of(args)
+) -> int:
+    publish = publish_event(args)
+
+    n_parts = len(_chunk_comments(inline_comments, chunk_size))
+    if publish is None and n_parts > 1:
+        core.log.error(
+            f"This review needs {n_parts} parts; GitHub holds one draft "
+            f"per reviewer, so it cannot be posted as a draft. Publish it: "
+            f"pr review --post --publish comment"
+        )
+        return 1
+
+    tracking = serde_load_file(
+        PostTracking, Path(args.review_file).parent / FILENAME_POST_SESSION,
+    )
+    if tracking and tracking.pending and tracking.review_id:
+        pending = gh.pr_reads._check_existing_pending(
+            args.repo, args.pr, pr_data,
+        )
+        if pending.review_id == tracking.review_id and publish is None:
+            core.log.info(
+                f"This review is already a draft on GitHub "
+                f"(#{tracking.review_id}). Publish it: "
+                f"pr review --publish comment"
+            )
+            return 0
+        if pending.review_id == tracking.review_id:
+            core.log.error(
+                f"This review is already a draft on GitHub "
+                f"(#{tracking.review_id}) — publish it with: "
+                f"pr review --publish {publish.value}"
+            )
+            return 1
 
     # Fetch bot reviews once for both dedup and orphan detection
     bot_reviews = review.dedup.fetch_bot_reviews(args.repo, args.pr, pr_data)
@@ -366,14 +369,24 @@ def _post_and_track(
         bot_reviews.reviews, body_text)
     if existing_ids:
         core.log.warn(f"Review already posted (review IDs: {existing_ids})")
-        if event is not ReviewEvent.COMMENT:
-            core.log.warn(f"Not applying --event {event.value}: the review was already posted")
+        if publish is not None:
+            core.log.warn(
+                f"Not applying --publish {publish.value}: "
+                f"the review was already posted"
+            )
+        matched_ids = set(existing_ids)
+        matched = [r for r in bot_reviews.reviews if r.get("id") in matched_ids]
+        newest = matched[-1] if matched else {}
+        status_event = (
+            post_event_for_github_state(newest.get("state", "")) or PostEvent.COMMENT
+        )
         write_post_tracking(args.review_file, PostTracking(
-            posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
+            posted_as=PostedAs.REVIEW.value, status=status_event.value,
             review_ids=list(existing_ids), commit_id=commit_id,
-            submitted=submit, chunk_count=len(existing_ids),
+            submitted=True, chunk_count=len(existing_ids),
+            review_sha=review_sha or head_sha, head_sha_at_post=head_sha,
         ))
-        return
+        return 0
 
     orphaned_ids = _find_orphaned_chunks(bot_reviews.reviews)
     if orphaned_ids:
@@ -383,40 +396,43 @@ def _post_and_track(
         results = _post_chunked_review(
             args.repo, args.pr, commit_id,
             body_text, inline_comments,
-            chunk_size, submit, pr_data,
-            event=event,
+            chunk_size, pr_data, publish=publish,
         )
     except LineResolutionError:
         inline_comments, inline, body_findings, body_text, results = _reclassify_and_retry(
             args, inline, body_findings,
-            commit_id, chunk_size, severity_filter, submit, pr_data,
-            record=record, meta=meta, event=event,
+            commit_id, chunk_size, severity_filter, pr_data,
+            record=record, meta=meta, publish=publish,
         )
 
     if not results:
-        return
+        return 0
 
     is_chunked = len(results) > 1
     review_ids = [r.get("id", 0) for r in results]
+    submitted = publish is not None or is_chunked
+    status_event = publish or ReviewEvent.COMMENT
+    status = status_event.post_event.value if submitted else PostEvent.PENDING.value
 
     if is_chunked:
         core.log.info(f"All {len(results)} chunks posted (review IDs: {review_ids})")
-    elif submit:
-        core.log.info(f"Review submitted: #{review_ids[0]}")
+    elif publish is not None:
+        core.log.info(f"Review published: #{review_ids[0]}")
     else:
         core.log.info(f"Review created: #{review_ids[0]} (PENDING)")
         print()
-        print(f"  Submit: {_format_submit_command(args.repo, args.pr, review_ids[0])}")
+        print("  Publish it:  pr review --publish comment")
 
     write_post_tracking(args.review_file, PostTracking(
-        posted_as=PostedAs.REVIEW.value, status=event.post_event.value,
+        posted_as=PostedAs.REVIEW.value, status=status,
         review_ids=review_ids, commit_id=commit_id,
         inline_count=len(inline_comments),
         body_count=len(body_findings), skipped_count=len(duplicates),
-        submitted=submit or is_chunked, chunk_count=len(results),
+        submitted=submitted, chunk_count=len(results),
         review_sha=review_sha or head_sha, head_sha_at_post=head_sha,
         sha_drifted=sha_drifted,
     ))
+    return 0
 
 
 # ── Dry-run display ─────────────────────────────────────────────────────────
@@ -442,7 +458,3 @@ def _print_dry_run(
     # as such, because "Skipped" read as a finding that would never be posted.
     for f in body_only:
         core.log.info(f"Body-only {f.id}: {f.skip_reason} ({f.path})")
-
-
-def _format_submit_command(repo: str, pr: str, review_id: int) -> str:
-    return f"gh api repos/{repo}/pulls/{pr}/reviews/{review_id}/events --method POST -f event=COMMENT"

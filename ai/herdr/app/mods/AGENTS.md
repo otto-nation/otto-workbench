@@ -28,6 +28,13 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `_lib`, `_ui
 - `REVIEW_PHASES` / `BATCH_PHASES` must name phases `pr` knows; `tests/herdr_app_mods_lib_model_overrides.bats` checks them against the registry. Only Review, Re-run, Recover and Batch carry the flags: posting and dismissing run no agent
 - A batch resumed with `pr batch resume` does not replay its overrides
 
+## Posting
+
+- Post actions create a draft or publish: Post draft, Post comment, Approve, Request changes, Publish draft. Same-label pairs are never enabled together; the bar draws only enabled actions
+- A pending draft shows "draft on GitHub — only you can see it" and offers Publish draft / Approve / Request changes
+- Posting needs `review-publish` in that machine's `pr board` `features`; otherwise the buttons say to update `pr` (`Update pr on this machine to post (otto-workbench sync)`)
+- Owners: `_lib/actions.js` `POSTS`, `_lib/history.js` `postOf`
+
 ## Full screen
 
 - Only the panel copy (mounted with `props.placement === "panel"`) offers it. The layout owns "is full screen": `main` hidden (`_lib/fullscreen.js` `fullscreenState` reads it from `layout()`; a shown node's `hidden` is absent, not `false`). Enter hides `main` and sets the panel to weight 1; exit shows `main` and restores the width saved in `shared("prs.panelPx")`. `_lib/fullscreen_run.js` owns that sequence; the board button and `prs-button` both call it

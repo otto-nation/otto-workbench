@@ -96,7 +96,10 @@ export function parseRunReply({ code, stdout, stderr }) {
 
 const DONE = {
   review: 'Review', rerun: 'Review', recover: 'Recovery',
-  'post-comment': 'Post', 'post-approve': 'Approval', 'post-request-changes': 'Request for changes',
+  'post-draft': 'Draft post', 'post-comment': 'Post', 'post-approve': 'Approval',
+  'post-request-changes': 'Request for changes',
+  'publish-comment': 'Publish', 'publish-approve': 'Approval',
+  'publish-request-changes': 'Request for changes',
   dismiss: 'Dismissal',
   'batch-fix': 'Fix',
 };

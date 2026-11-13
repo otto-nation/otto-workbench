@@ -67,9 +67,9 @@ _REMOVED = {
 _PR_POST_HOW = (
     "review.publish.resolve prompts unless --no-post (or the review "
     "binary's --post, which pr review does not reach); then "
-    "review.publish.post -> cli.review_post -> review.posting.post_review, "
-    "a PENDING review with inline comments. --submit then "
-    "review.publish.submit_pending as a COMMENT review. A self-review "
+    "review.publish.post -> cli.review_post -> "
+    "review.posting._post_and_track; the second prompt -> "
+    "review.publish.publish_draft(COMMENT). A self-review "
     "files no GitHub review (review.run.run_self_review)."
 )
 _PR_POST_REFUSED = (
@@ -87,12 +87,21 @@ _FIX_PUSH_REFUSED = (
 )
 _MODE_POST_HOW = (
     "cli.review_modes.post -> core.publishing.call_entry_point("
-    "cli.review_post:main). --event picks comment/approve/"
-    "request_changes; approve and request_changes imply --submit."
+    "cli.review_post:main). --publish EVENT posts it published; "
+    "without --publish it is a draft."
 )
 _MODE_POST_REFUSED = (
-    "no PR number or no review file: exit 1, GitHub unchanged; a "
-    "failed post is not rolled back"
+    "no PR number or review file, a review too large for one draft, "
+    "or an approve/request_changes on a drifted review: exit 1, "
+    "GitHub unchanged; a failed chunked post is not rolled back"
+)
+_MODE_PUBLISH_HOW = (
+    "cli.review_modes.publish -> review.publish.publish_draft -> "
+    "POST pulls/{n}/reviews/{id}/events"
+)
+_MODE_PUBLISH_REFUSED = (
+    "no draft recorded, the draft no longer pending on GitHub, or "
+    "the PR head moved since it was posted: exit 1, GitHub unchanged"
 )
 _TRACK_HOW = (
     "review.file_tracked.run -> review.finding_issue.file_and_link -> "
@@ -108,14 +117,15 @@ _TRACK_REFUSED = (
 
 CONTRACT = core.command_contract.CommandContract(
     summary="Run the configured review agent on a PR, or handle a mode "
-            "(--post an existing review, --repair, --summary, --dismiss, "
-            "--recover, --list). A plain PR run prompts before posting.",
+            "(--post an existing review as a draft, --publish it, --repair, "
+            "--summary, --dismiss, --recover, --list). A plain PR run prompts "
+            "before posting.",
     groups=(
         core.command_contract.FlagGroup(
             "Target",
             ("args", "--base", "--self", "--skip-user-verification")),
         core.command_contract.FlagGroup(
-            "Publish", ("--no-post", "--submit", "--force")),
+            "Publish", ("--no-post", "--force")),
         core.command_contract.FlagGroup(
             "Overrides", ("--force-superseded",)),
         core.command_contract.FlagGroup(
@@ -134,14 +144,14 @@ CONTRACT = core.command_contract.CommandContract(
             "Output", ("--json-summary", "-V")),
         core.command_contract.FlagGroup(
             "Modes",
-            ("--post", "--repair", "--summary", "--dismiss",
-             "--recover", "--list", "--event", "--if-changed")),
+            ("--post", "--publish", "--repair", "--summary", "--dismiss",
+             "--recover", "--list", "--if-changed")),
     ),
     remote_effects=(
         core.command_contract.RemoteEffect(
             "",
-            "a PENDING review with inline comments; --submit submits it "
-            "as a COMMENT review",
+            "a draft review (PENDING, only you can see it) with inline "
+            "comments; a second prompt publishes it as a comment",
             "GitHub", _PR_POST_HOW, _PR_POST_REFUSED),
         core.command_contract.RemoteEffect(
             "--self --fix --push",
@@ -149,9 +159,13 @@ CONTRACT = core.command_contract.CommandContract(
             "origin", _FIX_PUSH_HOW, _FIX_PUSH_REFUSED),
         core.command_contract.RemoteEffect(
             "--post",
-            "posts an existing review; --event picks "
-            "comment/approve/request_changes",
+            "posts an existing review as a draft; with --publish EVENT, "
+            "posted published (comment/approve/request_changes)",
             "GitHub", _MODE_POST_HOW, _MODE_POST_REFUSED),
+        core.command_contract.RemoteEffect(
+            "--publish",
+            "publishes the draft recorded for the latest review as EVENT",
+            "GitHub", _MODE_PUBLISH_HOW, _MODE_PUBLISH_REFUSED),
         core.command_contract.RemoteEffect(
             "--track",
             "files the finding on the tracker (GitHub or Linear issue)",
@@ -168,8 +182,10 @@ CONTRACT = core.command_contract.CommandContract(
             "--fix, --recover with --force, --no-post with --post, "
             "--track with a mode or without --self); no target; a "
             "removed subcommand; bad --focus; unresolvable --base; "
-            "every agent failed; no PR/review file for a mode; --fix "
-            "on a drifted recover; owner boundary"),
+            "every agent failed; no PR/review file for a mode; --publish "
+            "with no pending draft or a moved head; --post of a too-large "
+            "draft; a mode with --fix; --fix on a drifted recover; owner "
+            "boundary"),
         core.command_contract.ExitOutcome(
             ExitCode.USAGE,
             "bad flags; --if-changed without --schema-version"),
@@ -196,8 +212,14 @@ CONTRACT = core.command_contract.CommandContract(
             "pr review --self --fix --push",
             "self-review, apply findings, push the fix commit"),
         core.command_contract.Example(
-            "pr review --post --event comment",
-            "post an existing review as a COMMENT review"),
+            "pr review --post",
+            "post an existing review as a draft only you can see"),
+        core.command_contract.Example(
+            "pr review --post --publish comment",
+            "post an existing review published as a comment"),
+        core.command_contract.Example(
+            "pr review --publish approve",
+            "approve with the draft already on GitHub"),
         core.command_contract.Example(
             "pr review --json-summary 42",
             "review PR 42; stdout is one REVIEW_SUMMARY:{json} line"),
@@ -207,8 +229,8 @@ CONTRACT = core.command_contract.CommandContract(
         "Under `pr review`, `--post` names a mode that posts an "
         "existing review; the `review` binary's own `--post` (post "
         "after running) is not reachable through `pr`.",
-        "A plain PR run prompts before posting and before replacing a "
-        "pending review; --no-post skips both. --force skips the "
+        "A plain PR run prompts before posting a draft and again before "
+        "publishing it as a comment; --no-post skips both. --force skips the "
         "stale/pending prompts, not the post prompts. `--force` still "
         "overrides supersession; prefer `--force-superseded`.",
         "A self-review files no GitHub review.",
@@ -227,10 +249,7 @@ def build_parser() -> argparse.ArgumentParser:
                              "run prompts before posting and before replacing "
                              "a pending review)")
     parser.add_argument("--post", action="store_true",
-                        help="Post the review to GitHub when it finishes")
-    parser.add_argument("--submit", action="store_true",
-                        help="Submit the GitHub review after posting, as a COMMENT review "
-                             "(default: leave PENDING)")
+                        help="Post the review to GitHub as a draft when it finishes")
     parser.add_argument("--self", action="store_true", dest="self_review",
                         help="Review a local checkout of the current branch, or of "
                              "the branch or PR ref given")
@@ -330,7 +349,6 @@ def _flags(args, argv: list[str], generator_version: str) -> review.run.ReviewFl
         may_publish=args.post or args.push,
         no_post=args.no_post,
         auto_post=args.post,
-        auto_submit=args.submit,
         repo_dir=args.repo_dir or "",
     )
 

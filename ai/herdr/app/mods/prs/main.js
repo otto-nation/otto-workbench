@@ -89,7 +89,7 @@ export default class PrsBoard extends Board {
     return actionsFor({
       repo: d.repo, number: d.number, repoDir: d.cwd, run: (d.runs ?? [])[0] ?? null,
       headMoved: d.headMoved, batchBusy: d.batchBusy || this.launching, live: this.launching ? null : (this.live ?? d.live),
-      finished: this.finishedId,
+      finished: this.finishedId, features: d.features,
     });
   }
 

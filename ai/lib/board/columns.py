@@ -23,6 +23,7 @@ from board.model import (
     StatusKind,
     TeamLane,
 )
+from board.reviews import published_event
 
 
 def _col(board: Board, key: str, label: str, order: int) -> Column:
@@ -59,14 +60,14 @@ def team_lane(row: Row) -> TeamLane:
     runs = row.review_runs
     if runs:
         latest_posted_idx = next(
-            (i for i, run in enumerate(runs) if run.posted_event is not None),
+            (i for i, run in enumerate(runs) if published_event(run)),
             -1,
         )
         if latest_posted_idx == -1:
-            has_newer_unposted = any(run.posted_event is None for run in runs)
+            has_newer_unposted = any(not published_event(run) for run in runs)
         else:
             has_newer_unposted = any(
-                run.posted_event is None for run in runs[:latest_posted_idx]
+                not published_event(run) for run in runs[:latest_posted_idx]
             )
         if has_newer_unposted:
             return TeamLane.REVIEW_READY

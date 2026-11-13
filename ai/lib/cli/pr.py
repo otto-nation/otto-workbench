@@ -128,7 +128,7 @@ def _review_argv(argv: list[str], ctx: pr.context.ResolvedContext,
         return list(argv)
     # Any positional is a target, PR or branch. Read with the same value-taking
     # options `pr review` itself accepts, so the value of `--focus "retry
-    # handling"` (or `--event approve`) is not one; asked only here, after the
+    # handling"` (or `--publish approve`) is not one; asked only here, after the
     # context has had its say, so a named PR costs no parser build.
     value_flags = _accepted_value_flags(COMMANDS["review"])
     if cli.dispatch.positionals(argv, value_flags):
@@ -156,10 +156,18 @@ def cmd_review(argv: list[str], ctx: pr.context.ResolvedContext, *,
 
     if given:
         flag = given[0]
-        handler = cli.review_modes.MODES[flag].handler
+        mode = cli.review_modes.MODES[flag]
+        handler = mode.handler
+        if handler and cli.needs.has_flag(argv, "--fix"):
+            core.log.error(
+                f"--fix runs a review and cannot run with {flag}"
+            )
+            return 1
         if handler:
-            return handler([a for a in argv if a != flag], ctx,
-                           bin_dir=bin_dir, schema_version=schema_version)
+            return handler(
+                cli.needs.argv_without_mode(argv, flag, mode), ctx,
+                bin_dir=bin_dir, schema_version=schema_version,
+            )
 
     return core.publishing.call_entry_point(
         "cli.review_entry:main",
@@ -395,7 +403,7 @@ def _accepted_value_flags(spec: CommandSpec) -> frozenset[str]:
     """Which options `pr <command>` reads a following value for.
 
     Its reference parser's, not the delegate's: `pr review` routes flags of its
-    own (`--post --event approve`), and reading the delegate alone would take
+    own (`--post --publish approve`), and reading the delegate alone would take
     the value of one of those for a PR or branch target.
     """
     if not cli.dispatch.has_parser_factory(spec.name):

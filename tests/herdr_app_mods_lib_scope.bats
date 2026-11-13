@@ -81,6 +81,12 @@ _js() {
   jq -e '.me=="bob"' <<<"$output"
 }
 
+@test "mergeStates: cards carry features from the state, empty when absent" {
+  _js '({a:mergeStates([{repo:{slug:"a/b",host:"github.com"},prs:[{number:1}],features:["review-publish"]}]).prs[0].features,b:mergeStates([{repo:{slug:"a/b",host:"github.com"},prs:[{number:1}]}]).prs[0].features})'
+  [ "$status" -eq 0 ]
+  jq -e '.a==["review-publish"] and .b==[]' <<<"$output"
+}
+
 @test "mergeStates: does not mutate input PRs" {
   _js '(() => { const s={repo:{slug:"o/r"},prs:[{number:1}]}; mergeStates([s]); return s.prs[0].repoSlug === undefined; })()'
   [ "$status" -eq 0 ]

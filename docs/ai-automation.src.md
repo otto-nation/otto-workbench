@@ -175,7 +175,7 @@ All resolved through `PATH` (except `hc` → `PR_BOARD_HC`), run as the agent:
 | `hc` / `herdr-core` | `ls --json` (repo discovery, 1), `ls --json --label otto.app=pr` + `get <t> --json` (busy, 1), `run --bg --json …` (2, 3, 4), `get <t> --json` (run follow-up, 2), `read <t> --lines 80` (2, 4), `kill <t>` (2), `exec --json --on …` (remote targets only) |
 | `gh` | `api …/files`, patch pages (1); `pr board` runs its own `gh` calls as its children; via `wt` (3) |
 | `git` | `check-attr -z linguist-generated` (1) |
-| `pr` | `pr board --schema-version 1 --checkout DIR --phase listing\|status\|owed [--offline] [--if-changed STAMP]` (app and web: one per target per pull, serialized per machine; `owed` only while a page shows Mine, at most once a minute per repo) (1); `pr review` inside launched terminals (2); `pr batch status --list --schema-version 2`, `pr batch status RUN --full --offline --schema-version 2`, `pr batch cancel --kill RUN --schema-version 2` (4); `pr batch run --checkout DIR --prs KEYS --steps STEPS --with-review --with-ai STEPS --auto-publish ff --select SEL` inside launched terminals (4) |
+| `pr` | `pr board --schema-version 1 --checkout DIR --phase listing\|status\|owed [--offline] [--if-changed STAMP]` (app and web: one per target per pull, serialized per machine; `owed` only while a page shows Mine, at most once a minute per repo) (1); `pr review` inside launched terminals (2; post actions need `review-publish` in that machine's board `features`); `pr batch status --list --schema-version 2`, `pr batch status RUN --full --offline --schema-version 2`, `pr batch cancel --kill RUN --schema-version 2` (4); `pr batch run --checkout DIR --prs KEYS --steps STEPS --with-review --with-ai STEPS --auto-publish ff --select SEL` inside launched terminals (4) |
 | `tail` | `tail -n 200 <step log path>` (4; path from `pr batch status`) |
 | `wt` | `switch pr:<n> --no-cd --format json` (3) |
 | `sh` | `sh -c 'command -v pr; command -v gh; command -v wt; true'` (1) |
@@ -338,9 +338,9 @@ next write overwrites the edit; nothing reads it back.
 - **A review directory with no `review.json`** is stale. The next `pr review` regenerates it from scratch; a re-review of it runs full rather than incremental.
 - **A schema-1 `review.json`/`prior.json`** is upgraded on load, keeping posted stable IDs, so re-review stays incremental with prior findings and declines. For that round a finding whose location the old parser never placed is a whole-PR finding. Any other unknown schema is stale. A run interrupted before the upgrade restarts from scratch on resume.
 - `pr review --repair` re-syncs when `review.json` already loads. It rebuilds from `group-N.json` only when there is no readable `review.json`, skipping a group file that no longer loads; a directory holding only pre-upgrade `group-N.md` files cannot be rebuilt — re-run the review.
-- `pr review --post --event approve` / `request_changes` submits the review as
-  an approval or a change request (implies `--submit`). Refused when the PR
-  head moved since the review was written; post as a comment, or re-run.
+- `pr review --post` posts a draft; `--post --publish E` or `--publish E` alone
+  (comment, approve, request_changes) publishes. Semantics and refusals:
+  `cli.review_post` in [ai-libraries](ai-libraries.md).
 - `pr review --dismiss` records the latest run as dismissed, with no GitHub
   call. Refused for a run already posted.
 - `pr review --list --schema-version 1` rows carry `post` and `history`, and
@@ -461,7 +461,7 @@ cannot disagree.
 An objection to the approach is a must-fix finding about the PR as a whole;
 there is no Disapprove.
 
-Posting still uses the event the operator chose (`--event`); nothing maps the
+Posting still uses the event the operator chose (`--publish`); nothing maps the
 verdict to an approval. Readiness blocks on open must-fix counts, not on the
 verdict.
 

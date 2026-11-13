@@ -986,6 +986,27 @@ Create a pull request for the current branch, or preview it with --dry-run. Push
 
 > --dry-run takes no lock, pushes nothing and never calls gh.
 
+#### pr status contract
+
+Prints the cached dashboard (CI, review, comments, rebase, push), refreshing push from local git; with --schema-version a PRState document instead.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | dashboard printed; JSON on stdout when there is state |  |
+| `1` | the checkout or state could not be read |  |
+| `2` | bad pr-level flags |  |
+
+**Examples**
+
+- `pr status` — dashboard on stderr, state dump on stdout
+- `pr --schema-version 1 status` — the same, wrapped in a versioned PRState envelope
+
+> Writes nothing remotely. --schema-version is a global flag; any value wraps the dump in {schema_version, state_file, state} (state null when the branch has none). Without it, stdout is the dump itself or empty.
+
 #### pr ci contract
 
 Report CI failures for the branch. --fix diagnoses and applies fixes; --post pushes them. Without --fix, exit 0 even when CI failed — read the JSON.
@@ -1226,6 +1247,25 @@ Revise a PR description against the repo's PR template. Without --post the edit 
 
 > Without --post the edit is drafted to stderr; the bare invocation writes nothing on GitHub.
 > --dry-run prints the revision and records nothing, even with --post.
+
+#### pr gc contract
+
+Deletes stale review and PR-state artifacts on this machine. Reads GitHub (gh pr list/view) whether each PR ended; never writes to GitHub. Deletes local artifacts only.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | sweep finished; cleaned N items, or nothing to clean |  |
+| `1` | a local sweep error other than budget |  |
+| `2` | bad pr-level flags |  |
+| `75` | the GitHub API budget ran out mid-sweep; what was not asked about is left in place — retry after the reset the warning names | `the GitHub API budget ran out mid-sweep; what was not asked about is left in place — retry after the reset the warning names` |
+
+**Examples**
+
+- `pr gc` — sweep this machine's stale PR artifacts
 
 ### Running a branch's own libraries
 

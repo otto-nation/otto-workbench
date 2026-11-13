@@ -134,7 +134,8 @@ _SPECS: tuple[CommandSpec, ...] = (
                 contract="cli.pr_create:CONTRACT"),
     CommandSpec("status",   "Show CI, review, and comment status dashboard",
                 Need(LOCAL,  update=False, locks=NO_LOCK),
-                handler="cli.pr_commands:cmd_status"),
+                handler="cli.pr_commands:cmd_status",
+                contract="cli.pr_commands:STATUS_CONTRACT"),
     CommandSpec("ci",       "Check CI failures",
                 ci_need,  script="ci-check",
                 handler="cli.ci_check:main",
@@ -196,7 +197,8 @@ _SPECS: tuple[CommandSpec, ...] = (
                 parser="cli.pr_batch:build_parser"),
     CommandSpec("gc",       "Clean up stale PR artifacts",
                 Need(REMOTE, update=False, locks=TARGET_ONLY),
-                handler="cli.pr_commands:cmd_gc"),
+                handler="cli.pr_commands:cmd_gc",
+                contract="cli.pr_commands:GC_CONTRACT"),
 )
 
 COMMANDS: dict[str, CommandSpec] = {s.name: s for s in _SPECS}

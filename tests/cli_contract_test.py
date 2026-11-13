@@ -21,7 +21,7 @@ import core.command_contract  # noqa: E402
 from core.exit_codes import ExitCode  # noqa: E402
 from core.tool_parser import ToolParser  # noqa: E402
 
-UNMIGRATED = frozenset({"status", "stack", "board", "batch", "gc"})
+UNMIGRATED = frozenset({"stack", "board", "batch"})
 # (command, trigger) pairs known to write outside the machine. A pinned list on
 # purpose: which flags touch the remote cannot be read off a parser.
 KNOWN_REMOTE = {

@@ -902,6 +902,8 @@ Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remot
 
 Takes no flags.
 
+Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [contract](ai-automation.md#pr-status-contract)
+
 **`pr ci`** — Check CI failures
 
 | Flag | Description |
@@ -1115,6 +1117,8 @@ Takes no flags.
 **`pr gc`** — Clean up stale PR artifacts
 
 Takes no flags.
+
+Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes nothing remotely; [contract](ai-automation.md#pr-gc-contract)
 
 ### `promote-scan`
 

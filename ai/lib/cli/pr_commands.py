@@ -67,6 +67,61 @@ import review.gc
 # object; the maintenance script cannot import it and compares against 75.
 EXIT_BUDGET_EXHAUSTED = ExitCode.TEMPFAIL
 
+_GC_BUDGET = (
+    "the GitHub API budget ran out mid-sweep; what was not asked about is "
+    "left in place — retry after the reset the warning names"
+)
+
+STATUS_CONTRACT = core.command_contract.CommandContract(
+    summary="Prints the cached dashboard (CI, review, comments, rebase, push), "
+            "refreshing push from local git; with --schema-version a PRState "
+            "document instead.",
+    groups=(),
+    remote_effects=(),
+    exits=(
+        core.command_contract.ExitOutcome(
+            ExitCode.OK, "dashboard printed; JSON on stdout when there is state"),
+        core.command_contract.ExitOutcome(
+            ExitCode.FAILURE, "the checkout or state could not be read"),
+        core.command_contract.ExitOutcome(
+            ExitCode.USAGE, "bad pr-level flags"),
+    ),
+    examples=(
+        core.command_contract.Example("pr status", "dashboard on stderr, state dump on stdout"),
+        core.command_contract.Example(
+            "pr --schema-version 1 status",
+            "the same, wrapped in a versioned PRState envelope"),
+    ),
+    notes=(
+        "Writes nothing remotely. --schema-version is a global flag; any value "
+        "wraps the dump in {schema_version, state_file, state} (state null when "
+        "the branch has none). Without it, stdout is the dump itself or empty.",
+    ),
+)
+
+GC_CONTRACT = core.command_contract.CommandContract(
+    summary="Deletes stale review and PR-state artifacts on this machine. Reads "
+            "GitHub (gh pr list/view) whether each PR ended; never writes to "
+            "GitHub. Deletes local artifacts only.",
+    groups=(),
+    remote_effects=(),
+    exits=(
+        core.command_contract.ExitOutcome(
+            ExitCode.OK, "sweep finished; cleaned N items, or nothing to clean"),
+        core.command_contract.ExitOutcome(
+            ExitCode.FAILURE, "a local sweep error other than budget"),
+        core.command_contract.ExitOutcome(
+            ExitCode.USAGE, "bad pr-level flags"),
+        core.command_contract.ExitOutcome(
+            ExitCode.TEMPFAIL, _GC_BUDGET,
+            (core.command_contract.NextStep("", (_GC_BUDGET,)),),
+        ),
+    ),
+    examples=(
+        core.command_contract.Example("pr gc", "sweep this machine's stale PR artifacts"),
+    ),
+)
+
 
 def _run_pass(command: str, argv: list[str], ctx: pr.context.ResolvedContext, *,
               original_pr: str | None = None,
@@ -110,6 +165,8 @@ def cmd_status(argv: list[str], ctx: pr.context.ResolvedContext, *,
     (`schema_version`, `state_file`, `state`) so a consumer polling a branch
     with no state yet reads null rather than an empty stream. The dashboard
     still goes to stderr. Without the flag, stdout is the dump itself.
+
+    Exit codes and examples are `STATUS_CONTRACT`.
     """
     state = pr.state.load_state(ctx.target_dir)
 
@@ -435,6 +492,8 @@ def cmd_gc(argv: list[str], ctx: pr.context.ResolvedContext, *, trail: Trail, **
     the only thing that will look again. Reporting that as success is what let
     a maintenance run log "complete" for a cycle in which every question was
     refused.
+
+    Exit codes, remote writes and examples are `GC_CONTRACT`.
     """
     # All user-scoped, so this works from a bare repo. Our own target is
     # skipped: we are holding its lock right now.
@@ -458,6 +517,7 @@ def cmd_gc(argv: list[str], ctx: pr.context.ResolvedContext, *, trail: Trail, **
             f"budget exhausted after cleaning {total} item(s)",
             data={"cleaned": total, "reset": (latch.reset if latch else None)},
         )
+        core.command_contract.print_next(GC_CONTRACT, EXIT_BUDGET_EXHAUSTED)
         return EXIT_BUDGET_EXHAUSTED
 
     if total > 0:

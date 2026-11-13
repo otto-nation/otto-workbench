@@ -6596,6 +6596,23 @@ that contract is the same everywhere: one JSON object (indented by default),
 or a stream of them a reader can tell apart. Neither is domain vocabulary, so
 it lives here rather than being spelled out again in each binary that reports.
 
+### core/run_events.py
+
+The append-only history of one run: `<run-dir>/events.jsonl`.
+
+The only Python that opens the file. Each line is one JSON object; its caller
+builds the envelope (`schema_version`, `kind`, `at`, `run`, then the event's own
+fields), and `append` requires only a string `kind`. A history is a record of
+what happened, never state: nothing reads it to decide what a run does next.
+
+`append` writes the whole line with one `O_APPEND` write, so a run's driver and
+a `pr batch note` appending beside it never interleave inside a line. It never
+creates the run directory, so an append racing a reap fails instead of
+resurrecting a deleted run. `read` returns the parsed events in file order and
+counts what it skipped: a torn line, a line that is not a JSON object, or one
+with no string `kind`. An unknown `kind` is returned like any other, so a
+history written by a newer build still reads.
+
 ### core/run_lock.py
 
 Advisory whole-run lock, scoped to what a run targets and, when it writes

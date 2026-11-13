@@ -62,6 +62,11 @@ stays the single definition of green and the task is a name for it. There is no
 flag to skip the slow half: a gate with one is a gate people run with it. When you
 want only a part, run the part — `task test`, `task test:pytest`, `task lint` —
 rather than a gate that reports on less than it says.
+Captured validator steps honour `WORKBENCH_PREPUSH_STEP_TIMEOUT` (default 1800
+seconds; 0 = unbounded): a step still running after that is killed and the push
+is refused. They print a "still running" line every `TEST_HEARTBEAT_SECS`
+seconds (default 60; 0 disables), the same variable the test runner uses for
+suite progress.
 
 Assembling the sequence by hand is what this replaces, and it fails in ways that
 read as a pass: `bin/local/run-tests | tail -40` reports `tail`'s exit status and

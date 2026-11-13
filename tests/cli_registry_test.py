@@ -522,13 +522,15 @@ def test_pr_help_imports_no_delegate():
     # four internal handlers, `cli.dispatch` the seam that calls one,
     # `cli.locks` the dispatcher's declared-lock helper, `cli.schema` the
     # document `--tool-schema` serves, and `cli.boundary` the owner-boundary
-    # mapper on `main`. None is a delegate. A delegate showing up here
+    # mapper on `main`, and `cli.contract_notes` the prose constants contracts
+    # share (no imports of its own). None is a delegate. A delegate showing up here
     # (`cli.ci_check`, `cli.review_entry`, …) is the regression: those are
     # what `handler` keeps as a string so that dispatch, not import, pays
     # for them.
     assert loaded <= {"cli.pr", "cli.needs", "cli.registry", "cli.review_modes",
                       "cli.pr_commands", "cli.pr_batch", "cli.dispatch",
-                      "cli.locks", "cli.schema", "cli.boundary"}, loaded
+                      "cli.locks", "cli.schema", "cli.boundary",
+                      "cli.contract_notes"}, loaded
 
 
 # ── process-level state belongs to the process ────────────────────────────

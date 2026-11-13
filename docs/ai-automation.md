@@ -1011,6 +1011,7 @@ Create a pull request for the current branch, or preview it with --dry-run. Push
 - `pr create --draft --dry-run` — print title and body; push nothing, create nothing
 - `pr create --draft --skip-review "user asked to skip"` — skip the self-review gate; the reason is recorded on the trail
 
+> Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > --dry-run takes no lock, pushes nothing and never calls gh.
 
 #### pr status contract
@@ -1061,6 +1062,7 @@ Report CI failures for the branch. --fix diagnoses and applies fixes; --post pus
 - `pr ci --fix --post` — rebase if behind, fix, and push the fix commit
 - `pr ci --fix --no-rebase --post` — fix and push without rebasing first
 
+> Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > --no-verify here skips the verify gate (an agent exercising each fix), not git's pre-push hook.
 > --fix without --post still rebases locally when behind and commits; both pushes are drafted.
 > --fix may gh run rerun --failed once when every remaining failure is transient rate-limit infra (not gated by --post).
@@ -1095,6 +1097,7 @@ Run the configured review agent on a PR, or handle a mode (--post an existing re
 - `pr review --post --event comment` — post an existing review as a COMMENT review
 - `pr review --json-summary 42` — review PR 42; stdout is one REVIEW_SUMMARY:{json} line
 
+> Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > Under `pr review`, `--post` names a mode that posts an existing review; the `review` binary's own `--post` (post after running) is not reachable through `pr`.
 > A plain PR run prompts before posting and before replacing a pending review; --no-post skips both. --force skips the stale/pending prompts, not the post prompts. `--force` still overrides supersession; prefer `--force-superseded`.
 > A self-review files no GitHub review.
@@ -1127,6 +1130,7 @@ Fetch and manage PR review threads. Phase flags pick the work; --post publishes 
 - `pr comments --finish --post` — push a held fix commit, then replies, resolutions, summary
 - `pr comments --reply <id> --body-file reply.md --post` — post one thread reply
 
+> Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > Without --post, GitHub writes and the held-commit push are drafted.
 > --settle writes local state only and refuses --post.
 > --no-verify skips the verify gate after --fix, not git's pre-push hook.
@@ -1140,7 +1144,7 @@ Run the review and CI fix passes from cached state, then revise the PR descripti
 
 | Trigger | Writes | Where | How | If refused |
 |---|---|---|---|---|
-| `--post` | the review fix commit, the CI fix, then the PR description | origin and GitHub | forwards --post to the review binary as --self --fix --post (not the pr review --post mode; same land as --self --fix --push in docs/ai-automation.md#pr-review-contract): git.land.land(gated=True) -> git.push.push, plain. Then pr ci --fix --post (docs/ai-automation.md#pr-ci-contract). Then pr describe --post (docs/ai-automation.md#pr-describe-contract). The comments pass is never run; a hint says to run pr comments --fix. | a refused or held push leaves that pass's commit local; a failed describe leaves earlier writes in place. Review exit 4 (superseded) stops before CI and describe. |
+| `--post` | the review and CI fix commits pushed to refs/heads/<branch>, then the PR description | origin and GitHub | forwards --post to the review binary as --self --fix --post (not the pr review --post mode; same land as --self --fix --push in docs/ai-automation.md#pr-review-contract): git.land.land(gated=True) -> git.push.push, plain. Then pr ci --fix --post (docs/ai-automation.md#pr-ci-contract). Then pr describe --post (docs/ai-automation.md#pr-describe-contract). The comments pass is never run; a hint says to run pr comments --fix. | a refused or held push leaves that pass's commit local; a failed describe leaves earlier writes in place. Review exit 4 (superseded) stops before CI and describe. |
 
 **Exit codes**
 
@@ -1160,6 +1164,7 @@ Run the review and CI fix passes from cached state, then revise the PR descripti
 > --post is forwarded to the review binary and to ci, not through cmd_review, so it is the binary's publish flag (may_publish), not the pr review --post mode.
 > A self-review files no GitHub review. argv other than --post is not forwarded to describe.
 > `--force` still overrides supersession; prefer `--force-superseded`.
+> Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 
 #### pr rebase contract
 
@@ -1225,6 +1230,7 @@ Rebase the branch onto its base, handle conflicts, and force-push the result und
 | `tracker_refused` | status tracker_unread: GitHub was not asked whether the PR merged (budget latch), so landing could not be ruled out |
 
 > `--force` is a deprecated alias of `--force-landed`.
+> Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 
 #### pr push contract
 
@@ -1250,6 +1256,8 @@ Push HEAD to origin under a lease on the remote tip you planned from. Never reba
 
 - `pr push --expect 0123456789abcdef0123456789abcdef01234567` — push HEAD if origin still holds that commit, or an ancestor of it
 - `pr push --expect <sha> --no-verify` — the same, skipping the pre-push hook
+
+> Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 
 #### pr describe contract
 
@@ -1347,6 +1355,7 @@ Rebase, CI, comments and (opt-in) self-review across my open PRs. A default run 
 - `pr batch run --checkout DIR --auto-publish ff` — the same, fast-forwarding a clean close
 - `pr batch resume` — continue this checkout's covering run
 
+> Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > Batch declares NO_LOCK; 75 is not an exit. LockBusy on an item is exit 1 (fail), not TEMPFAIL. A default run never opens a decision.
 
 #### pr gc contract

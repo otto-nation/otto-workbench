@@ -35,6 +35,7 @@ import argparse
 import sys
 
 import cli.boundary
+import cli.contract_notes
 import cli.locks
 import cli.needs
 import core.command_contract
@@ -166,6 +167,7 @@ CONTRACT = core.command_contract.CommandContract(
             "post one thread reply"),
     ),
     notes=(
+        cli.contract_notes.PUSH_WAIT,
         "Without --post, GitHub writes and the held-commit push are "
         "drafted.",
         "--settle writes local state only and refuses --post.",

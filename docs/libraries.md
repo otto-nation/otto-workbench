@@ -985,6 +985,30 @@ The `20260814-unify-trail-root` migration carried the pre-cutover review trails
 into `trail/legacy.jsonl`. `otto-log` always reads a file whose stem does not
 name a month, which is what keeps it visible under `--since`.
 
+### run_bounded.sh
+
+Run a captured command with a progress heartbeat and a hard time bound.
+
+One owner for "run this where nobody can see it, and do not let it hang".
+The pre-push hook captures its validators' output (so a pass prints one line)
+and asks gh a question that must not delay a push; both used to hand-roll the
+same process-group poll loop, and only one had a heartbeat. `timeout` is GNU,
+and this is a BSD userland, so the deadline is kept by polling.
+
+The child runs in a process group of its own (`set -m`), so the deadline
+reaches everything it spawned rather than reparenting its descendants to init.
+A step killed this way had nothing in flight on the network — it is a local
+check — which is what makes a hard bound safe here and not on `git push`.
+
+Return 124 on timeout is also what a command that itself exits 124 produces.
+A caller who needs to tell the two apart checks OUT.timeout, which this
+writes only when the deadline fires.
+
+| Function | Purpose |
+|----------|---------|
+| `bounded_seconds NAME DEFAULT` | whole seconds from env var NAME: unset or empty is DEFAULT, a decimal is truncated (a positive fraction under one becomes 1), and anything else warns on stderr and is DEFAULT, so a typo never removes a bound. |
+| `run_bounded DEADLINE HEARTBEAT LABEL OUT ERR CMD...` | run CMD with a heartbeat and a hard bound; 124 on timeout. Writes OUT.timeout when the deadline fires so a caller can tell that from a command that itself exits 124. |
+
 ### setup.sh
 
 Install workflow helpers: step registration, requirement checks, cask and

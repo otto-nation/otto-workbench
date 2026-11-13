@@ -27,6 +27,7 @@ from dataclasses import replace
 from pathlib import Path
 from agent.registry import add_phase_skip_flags, phase_skips
 import cli.boundary
+import cli.contract_notes
 import cli.locks
 import core.command_contract
 import core.log
@@ -202,6 +203,7 @@ CONTRACT = core.command_contract.CommandContract(
             "review PR 42; stdout is one REVIEW_SUMMARY:{json} line"),
     ),
     notes=(
+        cli.contract_notes.PUSH_WAIT,
         "Under `pr review`, `--post` names a mode that posts an "
         "existing review; the `review` binary's own `--post` (post "
         "after running) is not reachable through `pr`.",

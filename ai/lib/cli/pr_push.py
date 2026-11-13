@@ -17,6 +17,7 @@ Exit codes, remote writes and examples are `CONTRACT` below, rendered into
 from __future__ import annotations
 
 import cli.boundary
+import cli.contract_notes
 import core.command_contract
 import core.publishing
 from core.exit_codes import ExitCode
@@ -69,6 +70,7 @@ CONTRACT = core.command_contract.CommandContract(
                    "push HEAD if origin still holds that commit, or an ancestor of it"),
         core.command_contract.Example("pr push --expect <sha> --no-verify", "the same, skipping the pre-push hook"),
     ),
+    notes=(cli.contract_notes.PUSH_WAIT,),
 )
 
 

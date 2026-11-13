@@ -2,6 +2,11 @@
 # Pre-push hook for otto-workbench: validation, linting, and tests before push.
 # Dispatched from .git/hooks/pre-push via `task dev:setup`.
 # Called via delegation from the global pre-push hook (~/.git-hooks/pre-push).
+#
+# Environment:
+#   WORKBENCH_PREPUSH_STEP_TIMEOUT  Seconds a captured step may run before it is killed
+#                                   and the push refused (default 1800; 0 = unbounded).
+#   TEST_HEARTBEAT_SECS             Seconds between "still running" lines (default 60; 0 off).
 
 set -euo pipefail
 
@@ -15,6 +20,13 @@ WORKBENCH_DIR="$REPO_ROOT"
 . "$WORKBENCH_DIR/lib/ui.sh"
 # shellcheck source=../../lib/git_remote.sh
 . "$WORKBENCH_DIR/lib/git_remote.sh"
+# shellcheck source=../../lib/run_bounded.sh
+. "$WORKBENCH_DIR/lib/run_bounded.sh"
+
+# Temp files the captured runners write. Registered at creation so `_fail`'s
+# `exit 1` still removes them; a RETURN trap would not run on that path.
+_TMP_FILES=()
+trap 'rm -f "${_TMP_FILES[@]}"' EXIT
 
 # Directories every `find` sweep below skips. Kept in one place because a
 # missed exclusion here means the hook walks vendored trees that no linter in
@@ -43,27 +55,34 @@ _fail() {
   exit 1
 }
 
-# _run_step LABEL COMMAND [ARGS...] — runs a command silently; prints compact pass/fail.
-# On success, extracts a parenthesized detail from stdout (e.g. "(16 files)") for display.
+# _run_step LABEL COMMAND [ARGS...] — runs a command captured, with a heartbeat and a
+# hard bound; prints compact pass/fail. On success, extracts a parenthesized detail
+# from its output (e.g. "(16 files)") for display.
 _run_step() {
   local label="$1"; shift
+  local deadline beat
+  deadline="$(bounded_seconds WORKBENCH_PREPUSH_STEP_TIMEOUT 1800)"
+  beat="$(bounded_seconds TEST_HEARTBEAT_SECS 60)"
+  local out status=0 output
   _step "$label"
-  local output
-  if output=$("$@" 2>&1); then
-    # Extract detail from success output for compact display.
-    # Matches "(N files)" or "N checks passed" patterns.
-    local detail=""
-    local _paren_re='\(([^)]+)\)'
-    local _checks_re='([0-9]+ checks)'
-    if [[ "$output" =~ $_paren_re ]]; then
-      detail="${BASH_REMATCH[1]}"
-    elif [[ "$output" =~ $_checks_re ]]; then
-      detail="${BASH_REMATCH[1]}"
-    fi
-    _pass "$detail"
-  else
+  out="$(mktemp)"
+  _TMP_FILES+=("$out" "$out.timeout")
+  run_bounded "$deadline" "$beat" "$label" "$out" "$out" "$@" || status=$?
+  output="$(cat "$out")"
+  if (( status == 124 )) && [[ -f "$out.timeout" ]]; then
+    _fail "$label did not finish within ${deadline}s (WORKBENCH_PREPUSH_STEP_TIMEOUT) and was killed.
+A step that prints nothing for that long is hung, not slow; output so far:
+$output"
+  elif (( status != 0 )); then
     _fail "$output"
   fi
+  local detail="" _paren_re='\(([^)]+)\)' _checks_re='([0-9]+ checks)'
+  if [[ "$output" =~ $_paren_re ]]; then
+    detail="${BASH_REMATCH[1]}"
+  elif [[ "$output" =~ $_checks_re ]]; then
+    detail="${BASH_REMATCH[1]}"
+  fi
+  _pass "$detail"
 }
 
 # ── Tree self-invalidation ───────────────────────────────────────────────────
@@ -207,45 +226,24 @@ _run_step "Checking surface compatibility" "$REPO_ROOT/bin/local/check-surface-c
 # will be read.
 # _run_briefly SECONDS CMD... — CMD's stdout, or nothing if it outlives SECONDS.
 #
-# `timeout` is GNU and this is a BSD userland, so the deadline is kept by hand:
-# run the command writing to a temp file, poll for it to finish, kill it if it
-# does not. Only worth it for a call whose whole contract is that it cannot
-# delay the push — a hung TLS handshake is not a network error `gh` returns
-# from promptly, it is one it waits on.
+# Deadline, process-group kill, and capture live in `run_bounded`. This wrapper
+# keeps the notice's contract: stderr discarded, 1 (not 124) on timeout or a
+# failed command, stdout only on success. Only worth it for a call whose whole
+# contract is that it cannot delay the push — a hung TLS handshake is not a
+# network error `gh` returns from promptly, it is one it waits on.
 _run_briefly() {
   local deadline="$1"
   shift
-  local out pid waited=0
+  local out status=0
   out="$(mktemp)" || return 1
 
-  # `set -m` puts the child in a process group of its own, so the deadline can
-  # signal the group and reach anything it spawned. Signalling the pid alone
-  # reaps the direct child and leaves its descendants running, reparented to
-  # init — which is the stall this helper exists to prevent, just invisible.
-  set -m
-  "$@" > "$out" 2> /dev/null &
-  pid=$!
-  set +m
-
-  while kill -0 "$pid" 2> /dev/null; do
-    if [[ "$waited" -ge "$deadline" ]]; then
-      # Negative pid is the process group. Falls back to the bare pid on the
-      # off chance the group is already gone.
-      kill -TERM -- -"$pid" 2> /dev/null || kill -TERM "$pid" 2> /dev/null
-      wait "$pid" 2> /dev/null
-      rm -f "$out"
-      return 1
-    fi
-    sleep 1
-    waited=$((waited + 1))
-  done
-
-  wait "$pid" 2> /dev/null || {
-    rm -f "$out"
+  run_bounded "$deadline" 0 "" "$out" /dev/null "$@" || status=$?
+  if (( status != 0 )); then
+    rm -f "$out" "$out.timeout"
     return 1
-  }
+  fi
   cat "$out"
-  rm -f "$out"
+  rm -f "$out" "$out.timeout"
   return 0
 }
 

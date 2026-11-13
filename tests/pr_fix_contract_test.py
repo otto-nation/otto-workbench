@@ -31,6 +31,5 @@ def test_post_effect_names_review_ci_and_description():
     effects = {e.trigger: e for e in cli.pr_commands.FIX_CONTRACT.remote_effects}
     effect = effects["--post"]
     text = " ".join((effect.writes, effect.how, effect.on_refusal))
-    assert "review fix commit" in text
-    assert "CI fix" in text
+    assert "review and CI fix commits pushed to refs/heads/<branch>" in text
     assert "PR description" in text

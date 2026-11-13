@@ -55,7 +55,8 @@ prints for minutes is visible, not captured into silence until git exits — and
 the same bytes are kept for classification and the failure artifact. Before git
 runs, `plan_line` says what the push will do. A trail records it as a `push`
 span (the wait) plus whether `--no-verify` skipped the hooks. There is no timeout
-that would kill a legitimate long hook. Because the output has already been on
+that would kill a legitimate long hook. A heartbeat (`WORKBENCH_PUSH_HEARTBEAT_SECS`,
+default 60, 0 off) says the push is still waiting. Because the output has already been on
 screen once, `report` labels its excerpt of it as a replay rather than printing
 the hook's failure a second time unannounced.
 
@@ -106,12 +107,15 @@ from __future__ import annotations
 
 import dataclasses
 import sys
+import threading
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
 import git.client
+import core.heartbeat
 import core.log
 import core.proc
 import core.publishing
@@ -517,18 +521,81 @@ def _hooks_skipped(args: Sequence[str]) -> bool:
     return "--no-verify" in args
 
 
+PUSH_HEARTBEAT_ENV = "WORKBENCH_PUSH_HEARTBEAT_SECS"
+_PUSH_HEARTBEAT_DEFAULT = 60.0
+
+
+class _Heartbeat:
+    """A line on stderr every interval while git push waits. Never kills anything.
+
+    git push stays unbounded on purpose (`git.client._UNBOUNDED`): a killed push
+    leaves the remote's state in doubt. This only makes the wait visible, so a
+    slow hook reads as slow rather than hung.
+    """
+
+    def __init__(self, branch: str, *, hooks_skipped: bool) -> None:
+        try:
+            self.interval = core.heartbeat.interval_from_env(PUSH_HEARTBEAT_ENV,
+                                                             _PUSH_HEARTBEAT_DEFAULT)
+        except ValueError as exc:
+            # Advisory feature: a bad value must not abort (or follow) a push.
+            print(f"warning: {exc}; using {_PUSH_HEARTBEAT_DEFAULT:g}s", file=sys.stderr)
+            self.interval = _PUSH_HEARTBEAT_DEFAULT
+        self.what = "the transfer" if hooks_skipped else "the pre-push hook or the transfer"
+        self.branch = branch
+        self.beats = 0
+        self.elapsed = 0.0
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._started = 0.0
+
+    def __enter__(self) -> "_Heartbeat":
+        self._started = time.monotonic()
+        if self.interval > 0:
+            self._thread = threading.Thread(target=self._beat, daemon=True)
+            self._thread.start()
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join()
+        self.elapsed = time.monotonic() - self._started
+
+    def _beat(self) -> None:
+        while not self._stop.wait(self.interval):
+            self.beats += 1
+            minutes, seconds = divmod(int(time.monotonic() - self._started), 60)
+            # Dropped rather than raised: this thread must never take the push down.
+            try:
+                print(f"⏱ still pushing {self.branch}: waiting on {self.what}, "
+                      f"{minutes}m{seconds:02d}s — git push is never killed; Ctrl-C stops it",
+                      file=sys.stderr, flush=True)
+            except (OSError, ValueError):
+                return
+
+
 def _run_push(
     wt_path: str | Path,
     args: Sequence[str],
     trail: Trail | None,
+    *,
+    branch: str,
 ) -> core.proc.CmdResult:
     """`git push` with hook output on stderr live, and a timed trail span."""
     argv = tuple(args)
     skipped = _hooks_skipped(argv)
     with tspan(trail, "push"):
-        result = git.client.run(
-            "push", *argv, cwd=wt_path, relay=sys.stderr,
-        )
+        with _Heartbeat(branch, hooks_skipped=skipped) as beat:
+            result = git.client.run(
+                "push", *argv, cwd=wt_path, relay=sys.stderr,
+            )
+        if trail and beat.beats:
+            trail.info(
+                "push",
+                f"push waited {int(beat.elapsed)}s",
+                data={"elapsed_s": int(beat.elapsed), "heartbeats": beat.beats},
+            )
         if trail:
             trail.info(
                 "push",
@@ -560,7 +627,7 @@ def _retry_lost(
                    data={"sha": lost.sha, "branch": lost.branch})
     core.log.warn("push did not land — retrying once without the gates")
 
-    r = _run_push(wt_path, ("--no-verify", *args), trail)
+    r = _run_push(wt_path, ("--no-verify", *args), trail, branch=lost.branch)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
         artifact = trail.failure(
@@ -627,7 +694,7 @@ def push(
         wt_path, sha=sha, branch=branch, remote=remote, args=argv, base_ref=base_ref,
     ))
 
-    r = _run_push(wt_path, argv, trail)
+    r = _run_push(wt_path, argv, trail, branch=branch)
     output = _push_output(r)
     if not r.ok and not _dropped(r):
         artifact = trail.failure(

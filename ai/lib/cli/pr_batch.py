@@ -40,6 +40,7 @@ import batch.scheduler
 import batch.store
 import batch.targets
 import config.workbench_config
+import cli.contract_notes
 import core.command_contract
 import core.log
 import core.run_lock
@@ -125,6 +126,7 @@ CONTRACT = core.command_contract.CommandContract(
             "pr batch resume", "continue this checkout's covering run"),
     ),
     notes=(
+        cli.contract_notes.PUSH_WAIT,
         "Batch declares NO_LOCK; 75 is not an exit. LockBusy on an item is "
         "exit 1 (fail), not TEMPFAIL. A default run never opens a decision.",
     ),

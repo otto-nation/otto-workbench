@@ -200,9 +200,11 @@ EOF
 
 @test "_systemd_install leaves the installed timer alone when the interval cannot be rendered" {
   printf '[Timer]\nOnCalendar=*-*-* 00/6:00:00\n' > "$TIMER"
+  printf '[Service]\nExecStart=/old/place\n' > "$SERVICE"
   _lib _systemd_install 5400
   [ "$status" -eq 1 ]
   [ "$(cat "$TIMER")" = $'[Timer]\nOnCalendar=*-*-* 00/6:00:00' ]
+  [ "$(cat "$SERVICE")" = $'[Service]\nExecStart=/old/place' ]
 }
 
 @test "_systemd_installed_interval reads a legacy OnUnitActiveSec timer" {

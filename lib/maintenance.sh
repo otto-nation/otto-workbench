@@ -138,14 +138,15 @@ _systemd_install() {
   local interval="${1:-$_MAINTENANCE_DEFAULT_INTERVAL}"
   local svc_template="$MAINTENANCE_SRC_DIR/systemd/${_SYSTEMD_UNIT}.service.template"
 
+  # Rendered before anything is written: a failed render must leave both
+  # installed units as they were, not truncate the timer or half-apply the pair.
+  local rendered
+  rendered=$(_systemd_render_timer "$interval") || return 1
+
   mkdir -p "$_SYSTEMD_USER_DIR"
 
   sed -e "s|__WORKBENCH_DIR__|$(_maintenance_run_dir)|g" \
     "$svc_template" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.service"
-
-  # Rendered before the write: a failed render must not truncate the installed timer.
-  local rendered
-  rendered=$(_systemd_render_timer "$interval") || return 1
   printf '%s\n' "$rendered" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer"
 
   systemctl --user daemon-reload

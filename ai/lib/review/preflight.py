@@ -13,9 +13,9 @@ repo; each of these fires before the first agent call.
   delete it so a new post does not collide.
 
 ``--force`` skips the last two. The supersession refusal has its own override
-(``supersession_override``) because ``--post``/``--no-post`` also set the
-``force`` local that suppresses confirmation prompts, and an unattended run is
-the one the refusal most has to survive.
+(``--force-superseded``; ``--force`` still works) because ``--post``/``--no-post``
+also set the ``force`` local that suppresses confirmation prompts, and an
+unattended run is the one the refusal most has to survive.
 
 A fourth gate, ``refuse_unresolvable_base``, stops a run whose operator ``--base``
 names a branch that exists in neither ``origin/`` nor locally. Every range would
@@ -159,20 +159,24 @@ def refuse_unresolvable_base(wt_path: str, override: str, *, trail: Trail) -> No
     sys.exit(1)
 
 
-def supersession_override(user_force: bool, recover: bool) -> bool:
+def supersession_override(
+    user_force: bool, recover: bool, force_superseded: bool = False,
+) -> bool:
     """Whether this run is exempt from the supersession refusal, and why.
 
-    `user_force` is the raw `--force` flag, deliberately not the `force` local
-    the confirmation prompts use. That one also absorbs `--post` and
-    `--no-post` as "nobody is here to answer a prompt", and an unattended run
-    is the one this refusal most has to survive: there is no operator to notice
-    that the findings describe deleted code before they are posted to the PR.
+    `force_superseded` is `--force-superseded`, the named override.
+    `user_force` is the raw `--force` flag, kept as a deprecated path,
+    deliberately not the `force` local the confirmation prompts use. That one
+    also absorbs `--post` and `--no-post` as "nobody is here to answer a
+    prompt", and an unattended run is the one this refusal most has to survive:
+    there is no operator to notice that the findings describe deleted code
+    before they are posted to the PR.
 
     `--recover` is exempt, on both entry points. It finishes a run whose spend
     has already been made, so refusing it saves nothing and strands the
     artifacts of the run it was asked to complete.
     """
-    return bool(user_force or recover)
+    return bool(user_force or force_superseded or recover)
 
 
 def refuse_if_superseded(

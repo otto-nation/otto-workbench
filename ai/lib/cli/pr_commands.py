@@ -305,6 +305,7 @@ FIX_CONTRACT = core.command_contract.CommandContract(
             "produce. The comments pass is never run, only hinted.",
     groups=(
         core.command_contract.FlagGroup("Publish", ("--post",)),
+        core.command_contract.FlagGroup("Overrides", ("--force-superseded",)),
         core.command_contract.FlagGroup("Forwarded", ("pass_flags",)),
     ),
     remote_effects=(
@@ -336,7 +337,7 @@ FIX_CONTRACT = core.command_contract.CommandContract(
             "remaining passes did not run",
             (
                 core.command_contract.NextStep("", (
-                    "re-run with --force to override",
+                    "re-run with --force-superseded to override",
                 )),
             ),
         ),
@@ -359,6 +360,7 @@ FIX_CONTRACT = core.command_contract.CommandContract(
         "not the pr review --post mode.",
         "A self-review files no GitHub review. argv other than --post is "
         "not forwarded to describe.",
+        "`--force` still overrides supersession; prefer `--force-superseded`.",
     ),
 )
 

@@ -316,6 +316,9 @@ def _fix_reference_parser() -> argparse.ArgumentParser:
                         help="Publish what the passes produce, the revised PR "
                              "description included (default: print drafts and "
                              "post nothing)")
+    parser.add_argument("--force-superseded", action="store_true",
+                        help="Forwarded to the review pass: review even when "
+                             "the branch looks superseded")
     parser.add_argument("pass_flags", nargs="*", metavar="review-or-ci-flag",
                         help="Any other flag is forwarded to the review pass and "
                              "the CI pass; see `pr review` and `pr ci`")

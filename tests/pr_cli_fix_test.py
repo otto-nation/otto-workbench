@@ -51,6 +51,19 @@ def test_cmd_fix_dispatches_review_when_findings(mock_load, mock_call):
 
 @patch("core.publishing.call_entry_point", return_value=0)
 @patch("pr.state.load_state")
+def test_cmd_fix_forwards_force_superseded_to_review(mock_load, mock_call):
+    state = pr.state.new_state("repo", "branch", pr_number=1, head_sha="a", worktree_root="/wt")
+    pr.state.apply(state, pr.domains.ReviewSummary(
+        finding_counts={"M": 1}, verdict=pr.domains.ReviewVerdict.CHANGES_REQUESTED.value, updated_at="t",
+    ))
+    mock_load.return_value = state
+    _cmd_fix(["--force-superseded"], make_ctx())
+    cmd = _first_call_containing(mock_call, "review")
+    assert "--force-superseded" in cmd
+
+
+@patch("core.publishing.call_entry_point", return_value=0)
+@patch("pr.state.load_state")
 def test_cmd_fix_names_the_target_its_parent_locked(mock_load, mock_call):
     """The review pass is told which target to resolve, not left to guess.
 

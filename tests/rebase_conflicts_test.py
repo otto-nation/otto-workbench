@@ -150,10 +150,17 @@ class TestTheSeparatorIsNotEvidenceOnItsOwn:
 # ── should_chunk ─────────────────────────────────────────────────────────
 
 class TestShouldChunk:
-    def test_small_file_returns_false(self):
+    def test_small_file_small_conflict(self):
         content = "line\n" * 50
         block = rebase.types.ConflictBlock(
             index=1, start=10, end=15, conflict="x", context_before="", context_after="",
+        )
+        assert rebase.conflicts.should_chunk(content, [block]) is True
+
+    def test_small_file_mostly_conflicts(self):
+        content = "line\n" * 50
+        block = rebase.types.ConflictBlock(
+            index=1, start=0, end=40, conflict="x", context_before="", context_after="",
         )
         assert rebase.conflicts.should_chunk(content, [block]) is False
 

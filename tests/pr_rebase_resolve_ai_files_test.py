@@ -428,6 +428,78 @@ def test_resolve_file_conflicts_handles_delete_conflict():
         )
 
 
+def test_resolve_file_conflicts_skips_regen_when_a_file_is_unresolved():
+    """Generators import the tree; conflict markers in another file crash them."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        (Path(tmpdir) / "bad.go").write_text(
+            "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n",
+        )
+        (Path(tmpdir) / "go.sum").write_text(
+            "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n",
+        )
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="", stderr="",
+            )
+
+        trail = mock.MagicMock()
+        trail.span.return_value = contextlib.nullcontext()
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(
+                 rebase.resolve_ai, "resolve_single_file", return_value=None,
+             ), \
+             mock.patch.object(
+                 rebase.resolve_ai.regen_dispatch, "run_deferred_regenerations",
+             ) as mock_regen, \
+             mock.patch.object(core.log, "warn") as mock_warn:
+            result = rebase.resolve_ai.resolve_file_conflicts(
+                ["go.sum", "bad.go"], tmpdir, "abc123", "feat: deps",
+                target_ref=_TARGET, trail=trail,
+            )
+
+        mock_regen.assert_not_called()
+        assert result.files == ["go.sum"]
+        assert result.failed == ["bad.go"]
+        assert result.stale == ["go.sum"]
+        warning = mock_warn.call_args[0][0]
+        assert warning == (
+            "not regenerated: go.sum — other conflicts are unresolved"
+        )
+        assert trail.error.call_args_list == []
+        trail.warn.assert_called_once()
+        assert "go.sum" in trail.warn.call_args[0][1]
+        assert "regeneration failed" not in str(trail.warn.call_args)
+
+
+def test_resolve_file_conflicts_runs_regen_when_every_file_resolves():
+    """A clean step still rebuilds queued generated files."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        (Path(tmpdir) / "go.sum").write_text(
+            "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc\n",
+        )
+
+        def fake_run(cmd, **kwargs):
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=0, stdout="", stderr="",
+            )
+
+        with mock.patch("subprocess.run", side_effect=fake_run), \
+             mock.patch.object(
+                 rebase.resolve_ai.regen_dispatch, "run_deferred_regenerations",
+                 return_value=[],
+             ) as mock_regen:
+            result = rebase.resolve_ai.resolve_file_conflicts(
+                ["go.sum"], tmpdir, "abc123", "feat: deps",
+                target_ref=_TARGET,
+            )
+
+        mock_regen.assert_called_once()
+        assert result.files == ["go.sum"]
+        assert result.failed == []
+        assert result.stale == []
+
+
 def test_resolve_file_conflicts_regen_failure_warns():
     """Regeneration failure warns, marks the file stale, and doesn't abort."""
     with tempfile.TemporaryDirectory() as tmpdir:

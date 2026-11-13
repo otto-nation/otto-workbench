@@ -518,7 +518,7 @@ def test_extract_conflict_blocks_at_file_end():
 
 def test_should_chunk_small_file():
     content = "x\n" * 100
-    assert rebase.conflicts.should_chunk(content, [_block(start=10, end=15)]) is False
+    assert rebase.conflicts.should_chunk(content, [_block(start=10, end=15)]) is True
 
 
 def test_should_chunk_large_file_small_conflict():

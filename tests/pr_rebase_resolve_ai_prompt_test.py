@@ -227,7 +227,7 @@ def test_build_chunked_prompt_structure():
 def test_build_chunked_prompt_instructs_base_side_names():
     """Chunked prompts carry the rename guard the full-file prompt has.
 
-    Any file over _CHUNKED_MIN_LINES with a small conflict takes this path, so
+    Any file whose conflict ratio is under the chunked limit takes this path, so
     dropping the instruction here disarmed it for the common case.
     """
     prompt = rebase.resolve_ai.build_chunked_prompt(
@@ -270,6 +270,28 @@ def test_resolve_single_file_uses_chunked_for_large_file(tmp_path):
     written = f.read_text()
     assert "merged" in written
     assert "<<<<<<< " not in written
+
+
+def test_resolve_single_file_chunks_a_small_file_with_one_block(tmp_path):
+    """A short file with one small conflict must splice, not rewrite."""
+    body = "".join(f"kept {i}\n" for i in range(40))
+    conflict = "<<<<<<< HEAD\nold\n=======\nnew\n>>>>>>> abc123\n"
+    f = tmp_path / "small.go"
+    f.write_text(body + conflict + "tail\n")
+
+    with mock.patch.object(
+        rebase.resolve_ai, "resolve_chunked", return_value="small.go",
+    ) as chunked, mock.patch.object(
+        rebase.resolve_ai, "resolve_full_file",
+    ) as full:
+        result = rebase.resolve_ai.resolve_single_file(
+            "small.go", f, "abc123", "feat: update", str(tmp_path),
+            target_ref=_TARGET,
+        )
+
+    assert result == "small.go"
+    chunked.assert_called_once()
+    full.assert_not_called()
 
 
 def test_resolve_single_file_uses_full_for_small_file(tmp_path):

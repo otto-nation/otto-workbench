@@ -53,7 +53,6 @@ _CONFLICT_MARKER_PREFIXES = ("<<<<<<< ", "||||||| ", ">>>>>>> ")
 GENERATED_HEADER_PATTERNS = ("DO NOT EDIT", "@generated", "Code generated")
 
 CONFLICT_CONTEXT_LINES = 30
-CHUNKED_MIN_LINES = 200
 CHUNKED_MAX_CONFLICT_RATIO = 0.5
 
 # Lines that carry no evidence of an echo when they match. A run of blank lines
@@ -311,10 +310,17 @@ def extract_conflict_blocks(
 
 
 def should_chunk(content: str, blocks: list[ConflictBlock]) -> bool:
-    """Decide whether to use chunked resolution based on file size and conflict ratio."""
-    total = content.count("\n") + 1
-    if total <= CHUNKED_MIN_LINES:
+    """Chunk whenever the file has conflict blocks and they are not most of it.
+
+    Whole-file resolution rewrites every line, so it can drop a change git had
+    already merged. The chunked path splices answers into the conflict blocks
+    alone. File size is not a reason to take the rewrite: a 130-line file with
+    one hunk is the case chunking exists to protect. Heavily conflicted files
+    (ratio at or above ``CHUNKED_MAX_CONFLICT_RATIO``) still go whole-file.
+    """
+    if not blocks:
         return False
+    total = content.count("\n") + 1
     conflict_lines = sum(b.line_count for b in blocks)
     return conflict_lines / total < CHUNKED_MAX_CONFLICT_RATIO
 

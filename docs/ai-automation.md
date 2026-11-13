@@ -1330,7 +1330,7 @@ The PR board document (JSON). Requires the global --schema-version (the versions
 - `pr --schema-version 1 board --checkout ~/git/o/r/main --phase listing` — print the listing document
 - `pr --schema-version 1 board --checkout ~/git/o/r/main --phase status --prs 12,15` — status for named PRs
 
-> Writes nothing remotely. --schema-version is a global flag. complete is false for status --prs and owed (clients merge by (repo, number)). Clients hide a row whose effective team lane is landed. The full document carries features (this build's pr capabilities a board consumer drives; currently review-publish).
+> Writes nothing remotely. --schema-version is a global flag. complete is false for status --prs and owed (clients merge by (repo, number)). Clients hide a row whose effective team lane is landed. The full document carries features (this build's pr capabilities a board consumer drives; currently review-publish and batch-session).
 
 #### pr models contract
 

@@ -5,7 +5,6 @@ import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -13,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import cli.pr_rebase  # noqa: E402
+import config.workbench_config  # noqa: E402
 import core.run_lock  # noqa: E402
 import fix.ci  # noqa: E402
 import fix.comments  # noqa: E402
@@ -99,7 +99,7 @@ def _config_subparser_params():
 
 
 def _registry_config_leaders() -> set[str]:
-    data = yaml.safe_load((REPO_ROOT / "bin" / "registry.yml").read_text())
+    data = config.workbench_config.read_yaml(REPO_ROOT / "bin" / "registry.yml")
     tool = next(t for t in data["tools"] if t["name"] == "otto-workbench")
     leaders = set()
     for cmd in tool["commands"]:

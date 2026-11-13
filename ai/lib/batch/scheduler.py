@@ -89,7 +89,8 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
             no_verify: bool = False, focus: Sequence[str] = (),
             with_ai: list[Step] | None = None,
             auto_publish_ff: bool = False,
-            rebase_when: RebaseWhen = RebaseWhen.CONFLICTS) -> Run:
+            rebase_when: RebaseWhen = RebaseWhen.CONFLICTS,
+            checkouts: Sequence[str] = ()) -> Run:
     now = now or datetime.now(timezone.utc)
     items = []
     explicit = selected is not None
@@ -124,7 +125,7 @@ def new_run(rows: list[PlanRow], *, steps: list[Step], selected: dict[str, list[
                ref_namespace=ref_namespace, ref_dirs=list(ref_dirs or []),
                no_verify=no_verify, focus=list(focus), with_ai=with_ai,
                schema_version=2, auto_publish_ff=auto_publish_ff,
-               rebase_when=rebase_when)
+               rebase_when=rebase_when, checkouts=list(checkouts))
 
 
 def row_for(item: Item, local_head: str = "", ref_namespace: str = "") -> PlanRow:

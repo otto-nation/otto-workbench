@@ -30,6 +30,7 @@ from . import land as rebase_land
 from . import lease as rebase_lease
 from . import pr_snapshot as rebase_pr_snapshot
 from . import refusals
+from . import regen_dispatch
 from . import replay_audit
 from . import resolve_ai as rebase_resolve
 from . import squash as rebase_squash
@@ -280,6 +281,10 @@ def resumed_tally(cwd: str, ctx: pr.context.ResolvedContext) -> ResolutionTally:
         # Summary stores "no squash" as 0 so older files load; the live
         # tally uses None, which emit reports as null rather than 0.
         tally.squashed_commits = prior.squashed_commits or None
+        # Queued regenerations skipped while a hand-written file was still
+        # unresolved. Regenerators are re-derived on resume; see
+        # regen_dispatch.rebuild_stale.
+        tally.stale = list(getattr(prior, "files_stale", None) or [])
     return tally
 
 
@@ -541,6 +546,10 @@ def step_conflicts(
     pause_on_conflict: bool = False,
 ) -> int | None:
     """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
+    # Captured before this step absorbs new stale paths: only regenerations
+    # deferred by a prior stop are retried here, not a failure this call
+    # just recorded.
+    pending = list(tally.stale)
     if not mode.resolves_conflicts:
         rc = _default_mode_conflicts(
             cwd, ctx, conflicts, tally, target_ref=target_ref,
@@ -553,6 +562,11 @@ def step_conflicts(
         )
     if rc is not None:
         return rc
+
+    regen_dispatch.rebuild_stale(
+        cwd, tally, trail=trail, conventional=mode.resolves_conflicts,
+        paths=pending,
+    )
 
     # Stage any remaining unstaged changes from post-resolution fixups (e.g. go mod tidy)
     if git.client.lines("diff", "--name-only", cwd=cwd):
@@ -596,6 +610,9 @@ def step_advance(
 ) -> int | None:
     """Advance rebase when there are no conflicts. Returns exit code to stop, or None to continue."""
     tally = tally if tally is not None else ResolutionTally()
+    regen_dispatch.rebuild_stale(
+        cwd, tally, trail=trail, conventional=mode.resolves_conflicts,
+    )
     # A step with nothing unmerged can still be concluding a conflict: one
     # resolved by hand, and staged, before this run picked the rebase up.
     # Asked before the empty-patch test, not after it: a whole-file

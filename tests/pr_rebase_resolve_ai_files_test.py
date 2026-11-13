@@ -464,10 +464,12 @@ def test_resolve_file_conflicts_skips_regen_when_a_file_is_unresolved():
         assert result.stale == ["go.sum"]
         warning = mock_warn.call_args[0][0]
         assert warning == (
-            "not regenerated: go.sum — other conflicts are unresolved"
+            "not regenerated: go.sum — other conflicts are unresolved; "
+            "will rebuild on resume"
         )
         assert trail.error.call_args_list == []
         trail.warn.assert_called_once()
+        assert trail.warn.call_args[0][0] == "regenerate_deferred"
         assert "go.sum" in trail.warn.call_args[0][1]
         assert "regeneration failed" not in str(trail.warn.call_args)
 

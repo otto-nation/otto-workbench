@@ -69,14 +69,17 @@ class SubmitRequest:
     force: bool = False
     reuse: bool = True
     run_here: bool = True
+    label: str | None = None
 
     def entry(self) -> NewEntry:
         return NewEntry(argv=self.argv, cwd=self.cwd, kind=EntryKind.JOB,
-                        entry_class=self.entry_class, idem_key=self.idem_key)
+                        entry_class=self.entry_class, idem_key=self.idem_key,
+                        label=self.label)
 
     def ticket(self) -> otto_queue.ticket.TicketRequest:
         return otto_queue.ticket.TicketRequest(argv=self.argv, cwd=self.cwd, entry_class=self.entry_class,
-                                               idem_key=self.idem_key, force=self.force, reuse=self.reuse)
+                                               idem_key=self.idem_key, force=self.force, reuse=self.reuse,
+                                               label=self.label)
 
 
 @dataclass(frozen=True)

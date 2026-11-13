@@ -92,15 +92,17 @@ class TicketRequest:
     force: bool = False
     reuse: bool = True
     wait_s: float = DEFAULT_WAIT_S
+    label: str | None = None
 
     def entry(self) -> NewEntry:
         return NewEntry(argv=self.argv, cwd=self.cwd, entry_class=self.entry_class,
-                        idem_key=self.idem_key)
+                        idem_key=self.idem_key, label=self.label)
 
 
 def claimed_request(entry: Entry, request: TicketRequest) -> TicketRequest:
     """*request* running the claimed *entry*'s own command, so the ledger and the run agree."""
-    return replace(request, argv=entry.argv, cwd=entry.cwd, entry_class=entry.entry_class)
+    return replace(request, argv=entry.argv, cwd=entry.cwd, entry_class=entry.entry_class,
+                   label=entry.label)
 
 
 @dataclass(frozen=True)

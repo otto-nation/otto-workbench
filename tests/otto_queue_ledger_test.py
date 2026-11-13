@@ -21,7 +21,7 @@ import core.workbench_paths  # noqa: E402
 import otto_queue.ledger  # noqa: E402
 import otto_queue.paths  # noqa: E402
 from otto_queue.ledger import Ledger, LedgerBusy, LedgerError  # noqa: E402
-from otto_queue.model import EntryState  # noqa: E402
+from otto_queue.model import EntryState, NewEntry  # noqa: E402
 from otto_queue_support import set_columns # noqa: E402
 
 ADDITIVE = re.compile(r"^(CREATE (TABLE|INDEX) IF NOT EXISTS|ALTER TABLE \w+ ADD COLUMN) ")
@@ -128,6 +128,31 @@ def test_a_write_after_open_raises_ledger_busy(tmp_path, monkeypatch):
             ledger.fail(entry_id)
     finally:
         holder.close()
+
+
+def test_a_label_is_recorded_and_read_back(tmp_path):
+    ledger = Ledger.open(tmp_path)
+    labelled = ledger.resolve(NewEntry(argv=("true",), cwd="/", label="x"), force=False, pid=None)
+    plain = ledger.resolve(NewEntry(argv=("true",), cwd="/"), force=False, pid=None)
+    try:
+        assert ledger.get(labelled.entry.id).label == "x"
+        assert ledger.get(plain.entry.id).label is None
+    finally:
+        if labelled.lease is not None:
+            labelled.lease.release()
+        if plain.lease is not None:
+            plain.lease.release()
+
+
+def test_a_ledger_from_before_labels_gains_the_column(tmp_path, monkeypatch):
+    current = otto_queue.ledger.MIGRATIONS
+    monkeypatch.setattr(otto_queue.ledger, "MIGRATIONS", current[:2])
+    Ledger.open(tmp_path)
+    entry_id = _row(tmp_path)
+    monkeypatch.setattr(otto_queue.ledger, "MIGRATIONS", current)
+    ledger = Ledger.open(tmp_path)
+    assert ledger.schema_version() == 3
+    assert ledger.get(entry_id).label is None
 
 
 def test_every_migration_statement_is_additive():

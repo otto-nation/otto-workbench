@@ -828,6 +828,7 @@ Exit codes: `0` ok · `1` failure · `2` usage · `69` unavailable · `75` tempf
 |------|-------------|
 | `--ticket` | Run the command in this process and terminal once admitted. Required. |
 | `--class` `<heavy\|light>` | heavy: counted and memory-checked (default); light: counted only. |
+| `--label` `<label>` | What `status` and the Herdr queue view show for this entry. |
 | `--key` `<key>` | Join a live entry with this key, or return a done one's status. |
 | `--force` | Run even when --key matches an entry. |
 | `--no-reuse` | With --key, run again when only a finished entry matches; a live one is still joined. |
@@ -839,6 +840,7 @@ Exit codes: `0` ok · `1` failure · `2` usage · `69` unavailable · `75` tempf
 | Flag | Description |
 |------|-------------|
 | `--class` `<heavy\|light>` | heavy: counted and memory-checked (default); light: counted only. |
+| `--label` `<label>` | What `status` and the Herdr queue view show for this entry. |
 | `--key` `<key>` | Join a live entry with this key, or return a done one's status. |
 | `--force` | Run even when --key matches an entry. |
 | `--no-reuse` | With --key, run again when only a finished entry matches; a live one is still joined. |

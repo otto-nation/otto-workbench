@@ -335,3 +335,20 @@ def test_without_reuse_a_done_key_runs_again(tmp_path):
     second = _run(touch_argv(tmp_path / "again"), idem_key="k", reuse=False)
     assert (second.outcome, (tmp_path / "again").exists()) == (TicketOutcome.RAN, True)
     assert second.entry_id != first.entry_id
+
+
+def test_a_tickets_label_is_on_its_entry():
+    result = _run(exit_argv(0), label="nightly")
+    assert Ledger.open().get(result.entry_id).label == "nightly"
+
+
+def test_claimed_request_keeps_the_entrys_label():
+    held = Ledger.open().resolve(NewEntry(argv=("true",), cwd="/", label="L"),
+                                 force=False, pid=os.getpid())
+    try:
+        claimed = otto_queue.ticket.claimed_request(
+            held.entry, TicketRequest(argv=("other",), cwd="/tmp"))
+        assert claimed.label == "L"
+        assert claimed.argv == ("true",)
+    finally:
+        held.lease.release()

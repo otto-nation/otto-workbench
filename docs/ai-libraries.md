@@ -4840,7 +4840,8 @@ long: the joiner reaps it and resolves again. An orphaned ticket becomes
 `failed` with no exit status, and an orphaned running job goes back to
 `queued` for the worker, until it has run `MAX_JOB_ATTEMPTS` times, when it is
 `failed`. A job that exits 75 is put back by `requeue` with `not_before` set;
-`next_job` does not offer it before then.
+`next_job` does not offer it before then. `label` is an optional display
+string stored beside `not_before`; it is never used to match entries.
 `resolve(reuse=False)` joins a live entry but never answers from a `done` one.
 `claim_as_ticket` converts a still-queued job into a ticket for the process
 that runs it.
@@ -4857,6 +4858,8 @@ The queue's vocabulary: what an entry is, which class it runs in, and the states
 Every value here is persisted in the ledger, so the enums' string values are
 stable. A machine mid-sync runs old and new code against one file, so a value
 is added, never renamed or removed — the rule the schema follows too.
+A `label` is display-only: `status` shows it in place of the command; it is
+never used to match entries.
 
 | State | Meaning |
 |---|---|

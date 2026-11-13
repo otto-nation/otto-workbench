@@ -1429,6 +1429,7 @@ Run background work through this machine's queue, so it waits for room instead o
 **Examples**
 
 - `otto-queue run --ticket --class light -- pytest tests/foo_test.py` — wait for a light slot, then run pytest here
+- `otto-queue run --ticket --label nightly-build -- make` — show a label instead of the command in status
 - `otto-queue run --ticket --key review:main -- pr review --self` — join a live review with that key, or reuse a done one's status
 - `otto-queue submit --key nightly -- pr gc` — queue pr gc for the worker and return; runs here if no worker starts
 - `otto-queue status` — list live entries and recent finished ones

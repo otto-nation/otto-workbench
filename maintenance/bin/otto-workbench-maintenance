@@ -57,7 +57,7 @@ if [[ -z "${OTTO_QUEUE_ENTRY:-}" && -z "${_WB_MAINTENANCE_QUEUED:-}" && -x "$OTT
   fi
   export _WB_MAINTENANCE_QUEUED=1
   exec "$OTTO_QUEUE_BIN" "${queue_command[@]}" --class heavy --key maintenance --no-reuse \
-    -- "$WORKBENCH_DIR/maintenance/bin/otto-workbench-maintenance"
+    --label maintenance -- "$WORKBENCH_DIR/maintenance/bin/otto-workbench-maintenance"
 fi
 
 # _batch_running — true when `pr batch status --list` reports an active run.

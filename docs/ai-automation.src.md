@@ -736,6 +736,14 @@ prints the same text).
 
 <!-- include: bin/local/generate-cli-reference --tool wiki --emit contract -->
 
+### otto-log contract
+
+What `otto-log` writes (nothing remotely; `record` and `prune` write the trail
+under the state root), what each exit means, and the next step after one,
+rendered from `cli.otto_log.CONTRACT` (`otto-log --help` prints the same text).
+
+<!-- include: bin/local/generate-cli-reference --tool otto-log --emit contract -->
+
 ### Running a branch's own libraries
 
 The Python entry points take their own pin, since `~/.local/bin/pr` is a symlink into

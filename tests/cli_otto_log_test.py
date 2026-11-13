@@ -22,8 +22,8 @@ def _state(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
 
 
-def test_no_subcommand_prints_help_and_returns_1(capsys):
-    assert cli.otto_log.main([]) == 1
+def test_no_subcommand_prints_help_and_returns_2(capsys):
+    assert cli.otto_log.main([]) == 2
     assert "usage:" in capsys.readouterr().out
 
 

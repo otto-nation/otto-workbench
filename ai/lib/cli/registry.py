@@ -185,6 +185,10 @@ _SPECS: tuple[CommandSpec, ...] = (
                 Need(NONE, update=False, locks=NO_LOCK), takes_target=False,
                 handler="cli.pr_board:cmd_board",
                 contract="cli.pr_board:CONTRACT"),
+    CommandSpec("models",   "Models a phase can be set to (JSON)",
+                Need(NONE, update=False, locks=NO_LOCK), takes_target=False,
+                handler="cli.pr_models:cmd_models",
+                contract="cli.pr_models:CONTRACT"),
     # Orchestrates other commands across many PRs, so it resolves no target of
     # its own and declares no lock. `run` and `resume` hold every item's TARGET
     # and worktree CHECKOUT themselves, since only planning can name them;

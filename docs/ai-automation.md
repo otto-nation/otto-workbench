@@ -1332,6 +1332,29 @@ The PR board document (JSON). Requires the global --schema-version (the versions
 
 > Writes nothing remotely. --schema-version is a global flag. complete is false for status --prs and owed (clients merge by (repo, number)). Clients hide a row whose effective team lane is landed. The full document carries features (this build's pr capabilities a board consumer drives; currently review-publish).
 
+#### pr models contract
+
+The models a phase can be set to (JSON). Requires --json; without it exits 2. --repo-dir is the global flag.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | a document printed; an unreadable catalogue is ok:false, not a failure |  |
+| `1` | a config file could not be read |  |
+| `2` | no --json |  |
+
+**Examples**
+
+- `pr models --json` — print the choices for this machine's global config
+- `pr models --json --repo-dir ~/git/o/r/main` — print the choices with that checkout's project tiers
+
+**JSON on stdout:** schema 1: phases, tiers, enabled, catalogue
+
+> Writes nothing remotely. --repo-dir is a global flag. stdout is {schema, phases, tiers, enabled, catalogue}. A catalogue that cannot be read is catalogue.ok false with the reason.
+
 #### pr batch contract
 
 Rebase, CI, comments and (opt-in) self-review across my open PRs. A default run never opens a decision.

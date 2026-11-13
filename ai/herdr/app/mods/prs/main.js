@@ -12,7 +12,7 @@ import { patchRows, summarize } from "./_lib/diff.js";
 import { switchArgv, parseSwitch, openForReviewState, spaceFor } from "./_lib/worktree.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
 import { REVIEW_PHASES, RUNS_MODELS, withPhaseModels } from "./_lib/model_overrides.js";
-import { ModelPicker } from "./model_picker.js";
+import { ModelPicker, fetchChoices } from "./model_picker.js";
 import { actionLabel, writesGitHub } from "./_lib/batch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
 import { statsText } from "./_lib/pr_status.js";
@@ -41,7 +41,9 @@ export default class PrsBoard extends Board {
     this.opening = false;
     super.init(p, cx);
     // Per-run model overrides for a review launched from the detail; session-only, not saved.
-    this.models = new ModelPicker(this.acx, REVIEW_PHASES, "review-models");
+    this.models = new ModelPicker(this.acx, REVIEW_PHASES, "review-models", () => (
+      fetchChoices(exec, { on: this.detail?.on ?? null, cwd: this.detail?.cwd })
+    ));
     this.workflows.onRun = (cmd) => this.runBatchCommand(cmd);
     this.workflows.onTerminal = () => this.openTerminal();
   }

@@ -101,6 +101,18 @@ def is_light_model(model_id: str) -> bool:
     return "haiku" in model_id.lower()
 
 
+def clears_review_floor(ref_id: str, tier: Tier | None = None) -> bool:
+    """Whether *ref_id* at *tier* is allowed on a review-domain phase.
+
+    False for the light tier or a Haiku id. *tier* is the named tier a value
+    borrowed (``light``), not the phase's own tier. A catalogue row passes
+    *tier* as None and is judged on the id alone.
+    """
+    if tier is Tier.LIGHT:
+        return False
+    return not is_light_model(ref_id)
+
+
 def _refuse_light_review(phase: Phase, resolved: ResolvedModel, allow_light: bool) -> None:
     """Raise `ReviewModelTooLight` when a review-domain phase resolved to a light model.
 
@@ -110,7 +122,7 @@ def _refuse_light_review(phase: Phase, resolved: ResolvedModel, allow_light: boo
     """
     if allow_light or PHASES[phase].domain is not PhaseDomain.REVIEW:
         return
-    if resolved.tier is Tier.LIGHT or is_light_model(resolved.ref.id):
+    if not clears_review_floor(resolved.ref.id, resolved.tier):
         raise ReviewModelTooLight(phase, resolved.key, resolved.ref.id)
 
 

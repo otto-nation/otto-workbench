@@ -604,23 +604,13 @@ next write overwrites the edit; nothing reads it back.
 - **A review directory with no `review.json`** is stale. The next `pr review` regenerates it from scratch; a re-review of it runs full rather than incremental.
 - **A schema-1 `review.json`/`prior.json`** is upgraded on load, keeping posted stable IDs, so re-review stays incremental with prior findings and declines. For that round a finding whose location the old parser never placed is a whole-PR finding. Any other unknown schema is stale. A run interrupted before the upgrade restarts from scratch on resume.
 - `pr review --repair` re-syncs when `review.json` already loads. It rebuilds from `group-N.json` only when there is no readable `review.json`, skipping a group file that no longer loads; a directory holding only pre-upgrade `group-N.md` files cannot be rebuilt — re-run the review.
-- `pr review --post` posts an existing review as a draft (a PENDING review
-  only you can see). Refused when the review needs more than one GitHub chunk
-  (GitHub holds one draft per reviewer); publish it with
-  `pr review --post --publish comment`.
-- `pr review --post --publish comment` / `approve` / `request_changes` posts
-  the existing review already published as that event. Refused when the PR
-  head moved since the review was written (approve/request_changes); post as
-  a comment, or re-run.
-- `pr review --publish comment` / `approve` / `request_changes` publishes the
-  draft recorded in `post.jsonl` as that event. Refused when nothing is
-  pending, the draft is no longer pending on GitHub, or the PR head moved
-  since it was posted.
+- `pr review --post` posts a draft; `--post --publish E` or `--publish E` alone
+  (comment, approve, request_changes) publishes. Semantics and refusals:
+  `cli.review_post` in [ai-libraries](ai-libraries.md).
 - `pr review --dismiss` records the latest run as dismissed, with no GitHub
   call. Refused for a run already posted.
 - `pr review --list --schema-version 1` rows carry `post` and `history`, and
-  the document carries `reviews_root` and `stamp`. A run's `post.event` may be
-  `pending` (a draft still on GitHub) and carries `submitted`. `--if-changed STAMP` answers
+  the document carries `reviews_root` and `stamp`. `--if-changed STAMP` answers
   `{"unchanged": true}` with no `reviews` when nothing under the reviews root
   changed since the document that carried that stamp. `review.archive_keep`
   (default 3) is how many earlier runs `history` keeps.
@@ -1621,8 +1611,7 @@ Health is `up-to-date`, `needs-rebase`, `has-conflicts`, `base-closed`, or
 See the [`pr board` contract](#pr-board-contract). Python owns every fact, lane,
 badge, presentation slot and column; no draft CI exemption.
 `--if-changed` matching the stamp returns `{schema_version, phase, stamp,
-unchanged: true}`. The document carries `features` (this build's `pr`
-capabilities a board consumer drives; currently `review-publish`).
+unchanged: true}`.
 
 ### The Pi package the sync declares, and who gets it
 

@@ -5,6 +5,14 @@ finding positions against the PR diff, and creates a PENDING review via
 the GitHub API using each finding's record ID. Pass --publish EVENT to
 publish it instead of leaving a draft.
 
+`--post` alone posts a draft (a PENDING review only you can see) and is
+refused when the review needs more than one GitHub chunk, since GitHub holds
+one draft per reviewer. `--post --publish E` posts the review already
+published as E, and `--publish E` alone publishes the draft recorded in
+`post.jsonl`. approve and request_changes are refused when the PR head moved
+since the review was written; `--publish` alone is also refused when nothing
+is pending or the draft is no longer pending on GitHub.
+
 Usage:
   review-post --pr NUMBER --review-file PATH
               [--severity M,S,N] [--dry-run] [--publish EVENT]

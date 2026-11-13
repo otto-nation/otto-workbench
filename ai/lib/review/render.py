@@ -20,6 +20,7 @@ from review.record import (
     AgentFailure, Disposition, FocusArea, FocusSource, LedgerLine, ProseSection,
     Question, RecordFinding, ReviewRecord, TriageEntry, VerifiedNote,
 )
+from review.phase_runs import phases_line
 from review.types import SEVERITIES, Finding, ReviewMeta, severity_by_key
 from review.verdict import verdict_line
 
@@ -261,7 +262,8 @@ def comment_body(record: ReviewRecord, findings: list[Finding], *,
 
     `findings` are the ones `review.format` placed in the body, tagged with
     their record IDs. A declined finding is stated in a block of its own.
-    `meta` supplies the verdict line's mode and status and the `Models:` line.
+    `meta` supplies the verdict line's mode and status and the `Models:` and
+    `Phases:` lines.
     """
     labels = ", ".join(s.label for s in SEVERITIES if s.key in severity_filter)
     lines = _comment_prose(record, verdict_line(record, meta))
@@ -274,7 +276,17 @@ def comment_body(record: ReviewRecord, findings: list[Finding], *,
         + _verified_comment(record) + _comment_tail(record),
     ).rstrip("\n")
     # Only beside something else: a self-review with nothing to post still posts nothing.
-    return f"{body}\n\n<sub>{_models_line(meta.models)}</sub>" if body and meta.models else body
+    if not body:
+        return body
+    tails: list[str] = []
+    if meta.models:
+        tails.append(f"<sub>{_models_line(meta.models)}</sub>")
+    phases = phases_line(meta.phases)
+    if phases:
+        tails.append(f"<sub>{phases}</sub>")
+    if not tails:
+        return body
+    return f"{body}\n\n" + "\n".join(tails)
 
 
 def _severity_sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSection]:
@@ -353,13 +365,16 @@ def render_review(record: ReviewRecord, meta: ReviewMeta, *, sids: bool = False,
                   omit: frozenset[str] = frozenset(), banner: bool = True) -> str:
     """The whole review.md: title and header from `meta`, banner, then the body.
 
-    Prompt text passes `banner=False` and gets no banner, no `Models:` line and
-    no verdict line. Agents write JSON, so nothing parses review.md; the banner
-    tells a human the file is generated and that editing it is lost.
+    Prompt text passes `banner=False` and gets no banner, no `Models:` line, no
+    `Phases:` line and no verdict line. Agents write JSON, so nothing parses
+    review.md; the banner tells a human the file is generated and that editing
+    it is lost.
     """
     header = ReviewHeader.from_meta(meta).render()
     mark = f"{BANNER}\n" if banner else ""
-    # Prompt text leaves it out: which models ran is not a prior reviewer's claim.
+    # Prompt text leaves them out: which models and phases ran is not a prior
+    # reviewer's claim.
     models = f"{_models_line(meta.models)}\n\n" if banner and meta.models else ""
+    phases = f"{phases_line(meta.phases)}\n\n" if banner and meta.phases else ""
     line = verdict_line(record, meta) if banner else ""
-    return f"{review_title(meta)}\n\n{header}{mark}\n{models}{render_body(record, sids=sids, omit=omit, verdict=line)}"
+    return f"{review_title(meta)}\n\n{header}{mark}\n{models}{phases}{render_body(record, sids=sids, omit=omit, verdict=line)}"

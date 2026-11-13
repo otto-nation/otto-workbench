@@ -277,3 +277,34 @@ class TestDisproveGateRecordsPhases:
         assert gate.ran is False
         assert gate.reason == "gate off"
 
+
+class TestPhasesLine:
+    def test_no_runs_renders_nothing(self):
+        assert review.phase_runs.phases_line(()) == ""
+        assert review.phase_runs.phases_line([]) == ""
+
+    def test_a_one_group_handoff_with_no_findings(self):
+        reason = "one group covers the PR"
+        line = review.phase_runs.phases_line((
+            PhaseRun("scout", False, reason),
+            PhaseRun("holistic", False, reason),
+            PhaseRun("group", False, reason),
+            PhaseRun("synthesis", False, reason),
+            PhaseRun("single", True),
+            PhaseRun("disprove", False, "no must-fix or should-fix finding"),
+        ))
+        assert line == (
+            "Phases: single agent (one group covers the PR) · "
+            "scan, groups, synthesis not run · "
+            "disprove not run (no must-fix or should-fix finding)"
+        )
+
+    def test_ran_phases_then_skips_grouped_by_reason(self):
+        line = review.phase_runs.phases_line((
+            PhaseRun("holistic", True),
+            PhaseRun("group", True),
+            PhaseRun("synthesis", False, "settled"),
+            PhaseRun("disprove", False, "settled"),
+        ))
+        assert line == "Phases: scan, groups · synthesis, disprove not run (settled)"
+

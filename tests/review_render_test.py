@@ -23,7 +23,7 @@ from review.render import (
 )
 from core.phases import Mode
 from pr.domains import ReviewStatus
-from review.types import PriorDisposition, ReviewMeta
+from review.types import PhaseRun, PriorDisposition, ReviewMeta
 
 from review.claim_types import ClaimVerdict
 from review_behaviours_support import behaviour
@@ -74,6 +74,44 @@ def test_the_models_line_follows_the_banner():
 def test_prompt_text_omits_the_models_line():
     meta = ReviewMeta(repo="a/b", pr_number=1, models="single m (low)")
     assert "Models:" not in render_review(record(summary="x"), meta, banner=False)
+
+
+_HANDOFF_REASON = "one group covers the PR"
+_HANDOFF_PHASES = (
+    PhaseRun("scout", False, _HANDOFF_REASON),
+    PhaseRun("holistic", False, _HANDOFF_REASON),
+    PhaseRun("group", False, _HANDOFF_REASON),
+    PhaseRun("synthesis", False, _HANDOFF_REASON),
+    PhaseRun("single", True),
+    PhaseRun("disprove", False, "no must-fix or should-fix finding"),
+)
+_HANDOFF_PHASES_LINE = (
+    "Phases: single agent (one group covers the PR) · "
+    "scan, groups, synthesis not run · "
+    "disprove not run (no must-fix or should-fix finding)"
+)
+
+
+def test_the_phases_line_follows_the_models_line():
+    meta = ReviewMeta(
+        repo="a/b", pr_number=1, models="single m (low)", phases=_HANDOFF_PHASES,
+    )
+    rendered = render_review(record(summary="x"), meta)
+    assert f"{BANNER}\n\nModels: single m (low)\n\n{_HANDOFF_PHASES_LINE}\n\n## Summary" in rendered
+
+
+def test_prompt_text_omits_the_phases_line():
+    meta = ReviewMeta(
+        repo="a/b", pr_number=1, models="single m (low)", phases=_HANDOFF_PHASES,
+    )
+    assert "Phases:" not in render_review(record(summary="x"), meta, banner=False)
+
+
+def test_empty_phases_renders_no_phases_line():
+    meta = ReviewMeta(repo="a/b", pr_number=1, models="single m (low)")
+    rendered = render_review(record(summary="x"), meta)
+    assert "Phases:" not in rendered
+    assert f"{BANNER}\n\nModels: single m (low)\n\n## Summary" in rendered
 
 
 def test_the_verdict_line_closes_the_summary():

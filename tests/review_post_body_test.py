@@ -20,7 +20,7 @@ from core.phases import Mode  # noqa: E402
 from pr.domains import ReviewStatus, ReviewVerdict  # noqa: E402
 from review.record import ProseSection, Question, VerifiedNote  # noqa: E402
 from review.store import read_review, update_review  # noqa: E402
-from review.types import ReviewMeta  # noqa: E402
+from review.types import PhaseRun, ReviewMeta  # noqa: E402
 from review.verdict import resolve_review_verdict  # noqa: E402
 from review_focus_support import user_area  # noqa: E402
 from review_record_support import (  # noqa: E402
@@ -284,6 +284,28 @@ class TestCommentBody:
         assert "<sub>Models: single m nightly</sub>" in body
         inner = body[body.rfind("<sub>"):body.rfind("</sub>")]
         assert "\n" not in inner
+
+    def test_the_comment_ends_with_the_phases_sub_line(self):
+        reason = "one group covers the PR"
+        phases = (
+            PhaseRun("scout", False, reason),
+            PhaseRun("holistic", False, reason),
+            PhaseRun("group", False, reason),
+            PhaseRun("synthesis", False, reason),
+            PhaseRun("single", True),
+            PhaseRun("disprove", False, "no must-fix or should-fix finding"),
+        )
+        rec = record(summary="Clean.", extra=(ProseSection("Review gaps", "- group 2"),))
+        body = review.render.comment_body(
+            rec, [], has_inline=False, severity_filter={"M"},
+            meta=ReviewMeta(models="single m (low)", phases=phases),
+        )
+        assert body.endswith(
+            "<sub>Models: single m (low)</sub>\n"
+            "<sub>Phases: single agent (one group covers the PR) · "
+            "scan, groups, synthesis not run · "
+            "disprove not run (no must-fix or should-fix finding)</sub>"
+        )
 
     def test_the_comment_asks_its_questions_under_the_summary(self):
         result = _comment(

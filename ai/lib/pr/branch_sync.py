@@ -134,12 +134,13 @@ def _push(
     message: str,
     log: Callable[[str], None],
     trail: Trail | None,
+    base_ref: str = "",
 ) -> SyncResult:
     if message:
         log(message)
     result = git.push.push(
         wt, gated=False, owner_check=gh.owner_hooks.refuse_outgoing,
-        branch=branch, remote=remote, args=args, trail=trail,
+        branch=branch, remote=remote, args=args, trail=trail, base_ref=base_ref,
     )
     if result.status in _FAILED:
         return SyncResult(SyncOutcome.FAILED, result.output or message, result)
@@ -156,6 +157,7 @@ def sync_branch(
     remote: str = GIT_REMOTE,
     log: Callable[[str], None] | None = None,
     trail: Trail | None = None,
+    base_ref: str = "",
 ) -> SyncResult:
     """Push *branch* from *wt* when local is ahead or the ref is new.
 
@@ -179,6 +181,7 @@ def sync_branch(
             wt, branch, remote=remote,
             args=("--set-upstream", remote, branch, *nv),
             outcome=SyncOutcome.PUSHED_NEW, message=MSG_NEW, log=emit, trail=trail,
+            base_ref=base_ref,
         )
 
     fetched = git.client.run("fetch", remote, branch, "--quiet", cwd=wt)
@@ -191,6 +194,7 @@ def sync_branch(
             wt, branch, remote=remote,
             args=(*nv, remote, branch),
             outcome=SyncOutcome.PUSHED, message="", log=emit, trail=trail,
+            base_ref=base_ref,
         )
 
     # Read through `run`, not `out`: `out` answers "" on failure, so two failed
@@ -213,5 +217,6 @@ def sync_branch(
             wt, branch, remote=remote,
             args=(*nv, remote, branch),
             outcome=SyncOutcome.PUSHED, message=MSG_AHEAD, log=emit, trail=trail,
+            base_ref=base_ref,
         )
     return SyncResult(SyncOutcome.DIVERGED, MSG_DIVERGED, None)

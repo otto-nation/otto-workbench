@@ -357,18 +357,35 @@ def help_parser(name: str) -> argparse.ArgumentParser:
     and the schema render from.
     """
     parser = _reference_parser(name, core.tool_parser.subparsers(_build_parser()))
-    contract = contract_for(COMMANDS[name])
-    if contract is not None:
-        core.command_contract.attach_help(parser, contract)
+    core.command_contract.attach_help(parser, contract_for(COMMANDS[name]))
     return parser
 
 
 def documented_flag_keys(name: str) -> list[str]:
-    """The flag keys `pr <name>`'s contract must group: documented, globals excluded."""
+    """The flag keys `pr <name>`'s contract must group: documented, globals excluded.
+
+    A command with subparsers (batch) prefixes each key with the subcommand
+    so groups can name ``run --auto-publish`` rather than a flag the parent
+    does not declare.
+    """
     hidden = frozenset(s for a in core.cli_reference.documented(build_global_parser())
                        for s in a.option_strings)
-    return [core.command_contract.flag_key(a)
-            for a in core.cli_reference.documented(help_parser(name), hidden)]
+    parser = help_parser(name)
+    nested = core.tool_parser.subparsers(parser)
+    if not nested:
+        return [core.command_contract.flag_key(a)
+                for a in core.cli_reference.documented(parser, hidden)]
+    keys: list[str] = []
+    seen: set[int] = set()
+    for sub, subparser in nested.items():
+        if id(subparser) in seen:
+            continue
+        seen.add(id(subparser))
+        keys.extend(
+            f"{sub} {core.command_contract.flag_key(a)}"
+            for a in core.cli_reference.documented(subparser, hidden)
+        )
+    return keys
 
 
 def _accepted_value_flags(spec: CommandSpec) -> frozenset[str]:
@@ -473,6 +490,24 @@ def _reject_a_target_that_resolves_to_nothing(
     sys.exit(EXIT_USAGE)
 
 
+def checked_exit(spec: CommandSpec, code: int) -> int:
+    """Return *code* if *spec*'s contract declared it.
+
+    An undeclared code is an AssertionError under pytest, else a stderr
+    warning and the same code. No contract means no check.
+    """
+    if not spec.contract:
+        return code
+    contract = contract_for(spec)
+    if contract is None or contract.outcome(code) is not None:
+        return code
+    message = f"pr {spec.name} returned undeclared exit {code}"
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        raise AssertionError(message)
+    print(message, file=sys.stderr)
+    return code
+
+
 def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_args, *,
               need: Need,
               bin_dir: Path,
@@ -486,6 +521,7 @@ def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_ar
         debug=getattr(global_args, "debug", False),
         record=need.records_a_trail,
     )
+    spec = COMMANDS[args.command]
     try:
         trail.decision(
             "dispatch",
@@ -496,30 +532,31 @@ def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_ar
 
         local = _CUSTOM.get(args.command)
         if local:
-            return local(extra, ctx,
+            code = local(extra, ctx,
                          trail=trail,
                          bin_dir=bin_dir,
                          original_pr=original_pr,
                          original_branch=original_branch,
                          original_repo_dir=original_repo_dir,
                          schema_version=global_args.schema_version)
-        spec = COMMANDS[args.command]
-        assert spec.handler, \
-            (f"pr: command {args.command!r} has no handler and no wrapper — "
-             f"register it in _CUSTOM or give its CommandSpec a handler")
-        return core.publishing.call_entry_point(
-            spec.handler,
-            cli.dispatch.delegate_argv(spec, extra, ctx,
-                                   original_pr=original_pr,
-                                   original_branch=original_branch,
-                                   original_repo_dir=original_repo_dir),
-            # `pr` installed the identical handler at its own entry point, and
-            # `signal.signal` neither chains nor restores — a second install
-            # would replace the one that reports the interrupt for the whole
-            # invocation with one that reports it for the delegate alone.
-            **({"install_signal_handler": False}
-               if spec.handler == "cli.ci_check:main" else {}),
-        )
+        else:
+            assert spec.handler, \
+                (f"pr: command {args.command!r} has no handler and no wrapper — "
+                 f"register it in _CUSTOM or give its CommandSpec a handler")
+            code = core.publishing.call_entry_point(
+                spec.handler,
+                cli.dispatch.delegate_argv(spec, extra, ctx,
+                                       original_pr=original_pr,
+                                       original_branch=original_branch,
+                                       original_repo_dir=original_repo_dir),
+                # `pr` installed the identical handler at its own entry point, and
+                # `signal.signal` neither chains nor restores — a second install
+                # would replace the one that reports the interrupt for the whole
+                # invocation with one that reports it for the delegate alone.
+                **({"install_signal_handler": False}
+                   if spec.handler == "cli.ci_check:main" else {}),
+            )
+        return checked_exit(spec, code)
     except Exception as exc:
         cli.boundary.reraise(trail, exc)
     finally:

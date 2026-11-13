@@ -473,7 +473,8 @@ def test_the_check_runs_at_this_module_s_import(tmp_path):
         "COMMANDS: dict[str, CommandSpec] = {s.name: s for s in _SPECS}",
         "COMMANDS: dict[str, CommandSpec] = dict(\n"
         "    {s.name: s for s in _SPECS},\n"
-        "    listing=CommandSpec('listing', 'list reviews', need=None),\n"
+        "    listing=CommandSpec('listing', 'list reviews', need=None, "
+        "contract='cli.pr_commands:STATUS_CONTRACT'),\n"
         ")",
     )
     assert broken != source, "the registry no longer keys _SPECS as expected"

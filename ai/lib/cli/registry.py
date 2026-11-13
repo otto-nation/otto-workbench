@@ -98,19 +98,19 @@ class CommandSpec:
     * ``contract`` — ``"<module>:<attr>"`` naming the command's
       `core.command_contract.CommandContract`, kept in the module that owns
       its flags. A string for the reason ``handler`` is one: `pr --help`
-      imports no delegate. `tests/cli_contract_test.py` fails for a spec
-      without one unless it is listed as not yet migrated.
+      imports no delegate. No default: a command that promises nothing fails
+      construction.
     """
 
     name: str
     help: str
     need: Need | Callable[[Sequence[str]], Need]
+    contract: str
     script: str | None = None
     takes_target: bool = True
     handler: str | None = None
     parses_own_argv: bool = False
     parser: str | None = None
-    contract: str | None = None
 
 
 # `ci_need`, `comments_need` and `rebase_need` live in `cli.needs` because the
@@ -134,7 +134,8 @@ _SPECS: tuple[CommandSpec, ...] = (
                 contract="cli.pr_create:CONTRACT"),
     CommandSpec("status",   "Show CI, review, and comment status dashboard",
                 Need(LOCAL,  update=False, locks=NO_LOCK),
-                handler="cli.pr_commands:cmd_status"),
+                handler="cli.pr_commands:cmd_status",
+                contract="cli.pr_commands:STATUS_CONTRACT"),
     CommandSpec("ci",       "Check CI failures",
                 ci_need,  script="ci-check",
                 handler="cli.ci_check:main",
@@ -178,10 +179,12 @@ _SPECS: tuple[CommandSpec, ...] = (
     # A read of GitHub and the local refs; no lock, no fetch of its own.
     CommandSpec("stack",    "Show the repo's PR stack graph (JSON)",
                 Need(LOCAL,  update=False, locks=NO_LOCK),
-                handler="cli.pr_stack:main"),
+                handler="cli.pr_stack:main",
+                contract="cli.pr_stack:CONTRACT"),
     CommandSpec("board",    "PR board document: facts, lanes, badges (JSON)",
                 Need(NONE, update=False, locks=NO_LOCK), takes_target=False,
-                handler="cli.pr_board:cmd_board"),
+                handler="cli.pr_board:cmd_board",
+                contract="cli.pr_board:CONTRACT"),
     # Orchestrates other commands across many PRs, so it resolves no target of
     # its own and declares no lock. `run` and `resume` hold every item's TARGET
     # and worktree CHECKOUT themselves, since only planning can name them;
@@ -193,10 +196,12 @@ _SPECS: tuple[CommandSpec, ...] = (
     CommandSpec("batch",    "Run rebase, CI fixes, comments and self-review across my open PRs",
                 Need(NONE, update=False, locks=NO_LOCK), takes_target=False,
                 handler="cli.pr_batch:cmd_batch", parses_own_argv=True,
-                parser="cli.pr_batch:build_parser"),
+                parser="cli.pr_batch:build_parser",
+                contract="cli.pr_batch:CONTRACT"),
     CommandSpec("gc",       "Clean up stale PR artifacts",
                 Need(REMOTE, update=False, locks=TARGET_ONLY),
-                handler="cli.pr_commands:cmd_gc"),
+                handler="cli.pr_commands:cmd_gc",
+                contract="cli.pr_commands:GC_CONTRACT"),
 )
 
 COMMANDS: dict[str, CommandSpec] = {s.name: s for s in _SPECS}
@@ -212,10 +217,8 @@ def need_for(spec: CommandSpec, argv: Sequence[str]) -> Need:
     return spec.need(argv) if callable(spec.need) else spec.need
 
 
-def contract_for(spec: CommandSpec) -> "CommandContract | None":
-    """The contract *spec* names, imported now; None for a command not yet migrated."""
-    if spec.contract is None:
-        return None
+def contract_for(spec: CommandSpec) -> "CommandContract":
+    """The contract *spec* names, imported now."""
     module, _, attr = spec.contract.partition(":")
     return getattr(importlib.import_module(module), attr)
 

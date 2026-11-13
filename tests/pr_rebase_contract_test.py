@@ -1,6 +1,7 @@
 """`pr rebase`'s contract and the vocabulary it renders."""
 
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -11,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
 
 import cli.pr_rebase  # noqa: E402
 import cli.pr_push  # noqa: E402
+import core.command_contract  # noqa: E402
 import git.regenerate  # noqa: E402
 import pr.domains  # noqa: E402
 import rebase.lease  # noqa: E402
@@ -99,3 +101,31 @@ def test_push_never_creates_a_branch_and_says_so():
 
 def test_push_exit_codes():
     assert [int(o.code) for o in cli.pr_push.CONTRACT.exits] == [0, 1, 2, 75]
+
+
+def _contract_json_names(cls: type) -> list[str]:
+    report = next(r for r in cli.pr_rebase.CONTRACT.json_output.reports if r.cls is cls)
+    return list(core.command_contract._json_field_names(report.cls))
+
+
+def _emit_keys(report, capsys) -> list[str]:
+    report.emit()
+    return list(json.loads(capsys.readouterr().out))
+
+
+def test_rebase_outcome_contract_names_match_emit(capsys):
+    outcome = rebase.types.RebaseOutcome(force_pushed=True, target_base="origin/main")
+    assert _contract_json_names(rebase.types.RebaseOutcome) == _emit_keys(outcome, capsys)
+
+
+def test_conflict_report_contract_names_match_emit(capsys):
+    report = rebase.types.ConflictReport(
+        status="conflicts", files=[], rebase_head="",
+        rebase_head_subject="", remaining_commits=0,
+    )
+    assert _contract_json_names(rebase.types.ConflictReport) == _emit_keys(report, capsys)
+
+
+def test_refusal_report_contract_names_match_emit(capsys):
+    report = rebase.types.RefusalReport("b", "pr_merged", "d")
+    assert _contract_json_names(rebase.types.RefusalReport) == _emit_keys(report, capsys)

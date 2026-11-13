@@ -10,17 +10,18 @@ the `--help` epilog (`render_help`/`attach_help`), the docs block
 
 `coverage_problems` is what keeps the declaration honest against the parser:
 every documented flag sits in exactly one `FlagGroup`, every `RemoteEffect`
-trigger names declared flags, and every contract says what exits 0, 1 and 2
-mean. Which flags *touch the remote* cannot be read off a parser, so it is
-asserted by the enforcement suite (`tests/cli_contract_test.py`) rather than
-here.
+trigger names declared flags, every contract says what exits 0, 1 and 2
+mean, and every JSON-report note names a key that report emits. Which flags
+*touch the remote* cannot be read off a parser, so it is asserted by the
+enforcement suite (`tests/cli_contract_test.py`) rather than here.
 
 Flag keys are the first option string (`--onto`, not `--base`) or, for a
 positional, its `dest`. A trigger is `""` for the bare invocation or a
 space-separated set of flag keys that together cause the write.
 
-Layer 1: the dataclasses hold strings and `ExitCode`s only, so `cli` declares
-contracts and `core.cli_reference` renders them without importing `cli`.
+Layer 1: the dataclasses hold strings, `ExitCode`s, and (for JSON reports) a
+dataclass type `cli` passes in, so `core.cli_reference` renders them without
+importing `cli`.
 """
 
 # doc-group: platform
@@ -30,8 +31,8 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field, fields
 
 from core.exit_codes import ExitCode
 
@@ -115,11 +116,31 @@ class EnumDoc:
 
 
 @dataclass(frozen=True)
-class JsonOutput:
-    """What goes to stdout: which object on which exit, and the enum vocabularies."""
+class JsonReport:
+    """One JSON object a command prints, described from a dataclass.
 
-    shape: str
+    ``when`` — which exit (or condition) prints it. ``cls`` — the dataclass
+    whose emitted keys are the object's keys (``cls.EMITTED`` when that
+    tuple is set, otherwise ``dataclasses.fields``). ``notes`` — extra prose
+    for a key, keyed by that name.
+    """
+
+    when: str
+    cls: type
+    notes: Mapping[str, str] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class JsonOutput:
+    """What goes to stdout: which object on which exit, and the enum vocabularies.
+
+    ``shape`` is free text for output that is not a dataclass. When ``reports``
+    is non-empty, rendering uses those instead.
+    """
+
+    shape: str = ""
     enums: tuple[EnumDoc, ...] = ()
+    reports: tuple[JsonReport, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -162,6 +183,39 @@ def _trigger(trigger: str) -> str:
     return trigger or "(bare invocation)"
 
 
+def _json_field_names(cls: type) -> tuple[str, ...]:
+    emitted = getattr(cls, "EMITTED", None)
+    if emitted is not None:
+        return tuple(emitted)
+    return tuple(f.name for f in fields(cls))
+
+
+def _json_report_line(report: JsonReport) -> str:
+    parts: list[str] = []
+    for name in _json_field_names(report.cls):
+        note = report.notes.get(name)
+        parts.append(f"{name} — {note}" if note else name)
+    return f"{report.when}: {report.cls.__name__} ({', '.join(parts)})"
+
+
+def _json_enum_help(json_output: JsonOutput) -> list[str]:
+    out: list[str] = []
+    for doc in json_output.enums:
+        out.append(f"  {doc.field}:")
+        vw = max((len(v.value) for v in doc.values), default=0)
+        out += [f"    {v.value:<{vw}}  {v.meaning}" for v in doc.values]
+    return out
+
+
+def _json_help(json_output: JsonOutput) -> list[str]:
+    out = ["", "JSON on stdout:"]
+    if json_output.reports:
+        out.extend(f"  {_json_report_line(r)}" for r in json_output.reports)
+    elif json_output.shape:
+        out.append(f"  {json_output.shape}")
+    return out + _json_enum_help(json_output)
+
+
 def render_help(contract: CommandContract) -> str:
     """The `--help` epilog: remote writes, exits with next steps, examples, JSON."""
     out: list[str] = []
@@ -185,11 +239,7 @@ def render_help(contract: CommandContract) -> str:
     width = max((len(x.command) for x in contract.examples), default=0)
     out += [f"  {x.command:<{width}}  # {x.does}" for x in contract.examples]
     if contract.json_output is not None:
-        out += ["", "JSON on stdout:", f"  {contract.json_output.shape}"]
-        for doc in contract.json_output.enums:
-            out.append(f"  {doc.field}:")
-            vw = max((len(v.value) for v in doc.values), default=0)
-            out += [f"    {v.value:<{vw}}  {v.meaning}" for v in doc.values]
+        out += _json_help(contract.json_output)
     if contract.notes:
         out += ["", "Notes:"] + [f"  {n}" for n in contract.notes]
     out += ["", f"Full reference: {REFERENCE_ANCHOR}"]
@@ -228,16 +278,36 @@ def _regroup(parser: argparse.ArgumentParser, groups: Sequence[FlagGroup]) -> No
 
 
 def attach_help(parser: argparse.ArgumentParser, contract: CommandContract) -> None:
-    """Make *parser*'s help show *contract*: grouped flags, then the epilog verbatim."""
+    """Make *parser*'s help show *contract*: grouped flags, then the epilog verbatim.
+
+    An epilog the parser already carries (the rest of `pr batch`'s docstring)
+    stays above the contract so the command keeps its own prose.
+    """
     _regroup(parser, contract.groups)
     if not parser.description:
         parser.description = contract.summary
-    parser.epilog = render_help(contract)
+    rendered = render_help(contract)
+    if parser.epilog:
+        parser.epilog = parser.epilog.rstrip() + "\n\n" + rendered
+    else:
+        parser.epilog = rendered
     parser.formatter_class = argparse.RawDescriptionHelpFormatter
 
 
 def _cell(text: str) -> str:
     return " ".join(text.split()).replace("|", "\\|")
+
+
+def _json_markdown(json_output: JsonOutput) -> list[str]:
+    if json_output.reports:
+        out = ["", "**JSON on stdout:**"]
+        out.extend(f"- {_json_report_line(r)}" for r in json_output.reports)
+    else:
+        out = ["", f"**JSON on stdout:** {json_output.shape}"]
+    for doc in json_output.enums:
+        out += ["", f"| `{doc.field}` | Meaning |", "|---|---|"]
+        out += [f"| `{v.value}` | {_cell(v.meaning)} |" for v in doc.values]
+    return out
 
 
 def render_markdown(invocation: str, contract: CommandContract) -> str:
@@ -259,10 +329,7 @@ def render_markdown(invocation: str, contract: CommandContract) -> str:
         out.append(f"| `{int(o.code)}` | {_cell(o.meaning)} | {steps} |")
     out += ["", "**Examples**", ""] + [f"- `{x.command}` — {x.does}" for x in contract.examples]
     if contract.json_output is not None:
-        out += ["", f"**JSON on stdout:** {contract.json_output.shape}"]
-        for doc in contract.json_output.enums:
-            out += ["", f"| `{doc.field}` | Meaning |", "|---|---|"]
-            out += [f"| `{v.value}` | {_cell(v.meaning)} |" for v in doc.values]
+        out += _json_markdown(contract.json_output)
     if contract.notes:
         out += [""] + [f"> {n}" for n in contract.notes]
     return "\n".join(out)
@@ -294,11 +361,10 @@ def print_next(contract: CommandContract, code: int, *, when: str = "", **fields
 
 
 def _undeclared_trigger_keys(trigger: str, declared: set[str]) -> list[str]:
-    problems: list[str] = []
-    for key in trigger.split():
-        if key not in declared:
-            problems.append(f"remote effect trigger {key} is not a declared flag")
-    return problems
+    if not trigger or trigger in declared:
+        return []
+    return [f"remote effect trigger {key} is not a declared flag"
+            for key in trigger.split() if key not in declared]
 
 
 def _undeclared_triggers(
@@ -307,6 +373,19 @@ def _undeclared_triggers(
     problems: list[str] = []
     for effect in effects:
         problems.extend(_undeclared_trigger_keys(effect.trigger, declared))
+    return problems
+
+
+def _json_report_problems(json_output: JsonOutput | None) -> list[str]:
+    if json_output is None:
+        return []
+    problems: list[str] = []
+    for report in json_output.reports:
+        names = set(_json_field_names(report.cls))
+        problems.extend(
+            f"JSON report {report.cls.__name__} note {key!r} is not an emitted field"
+            for key in report.notes if key not in names
+        )
     return problems
 
 
@@ -324,6 +403,7 @@ def coverage_problems(contract: CommandContract, documented: Sequence[str]) -> l
         if key not in declared:
             problems.append(f"{key} is grouped but not declared by the parser")
     problems.extend(_undeclared_triggers(contract.remote_effects, declared))
+    problems.extend(_json_report_problems(contract.json_output))
     codes = [int(o.code) for o in contract.exits]
     for code in _REQUIRED_EXITS:
         if int(code) not in codes:

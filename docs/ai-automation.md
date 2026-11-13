@@ -1008,6 +1008,27 @@ Create a pull request for the current branch, or preview it with --dry-run. Push
 
 > --dry-run takes no lock, pushes nothing and never calls gh.
 
+#### pr status contract
+
+Prints the cached dashboard (CI, review, comments, rebase, push), refreshing push from local git; with --schema-version a PRState document instead.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | dashboard printed; JSON on stdout when there is state |  |
+| `1` | the checkout or state could not be read |  |
+| `2` | bad pr-level flags |  |
+
+**Examples**
+
+- `pr status` — dashboard on stderr, state dump on stdout
+- `pr --schema-version 1 status` — the same, wrapped in a versioned PRState envelope
+
+> Writes nothing remotely. --schema-version is a global flag; any value wraps the dump in {schema_version, state_file, state} (state null when the branch has none). Without it, stdout is the dump itself or empty.
+
 #### pr ci contract
 
 Report CI failures for the branch. --fix diagnoses and applies fixes; --post pushes them. Without --fix, exit 0 even when CI failed — read the JSON.
@@ -1169,7 +1190,10 @@ Rebase the branch onto its base, handle conflicts, and force-push the result und
 - `pr rebase --onto origin/release/1.2` — rebase onto a ref, used verbatim
 - `pr rebase --force-landed --fix` — rebase even though the work landed
 
-**JSON on stdout:** exit 0/1: the outcome (status, commits_replayed, conflicts_resolved, files_resolved, files_stale, force_pushed, fork_point, squashed_commits); exit 3: ConflictReport (status, files, tree, classes, remaining_commits, pre_rebase_head); exit 4: RefusalReport (branch, signal, detail, status, override, commits_ahead — a count on the git signals, null on pr_merged, which is asked before checkout; pr_number — set on pr_merged only).
+**JSON on stdout:**
+- exit 0/1: RebaseOutcome (status, commits_replayed, conflicts_resolved, files_resolved, files_stale, files_one_sided, one_sided_regions, pre_rebase_head, resolution, fork_point, squashed_commits, force_pushed — only when the push ran)
+- exit 3: ConflictReport (status, files, rebase_head, rebase_head_subject, remaining_commits, aborted, tree, classes, files_stale, pre_rebase_head)
+- exit 4: RefusalReport (branch, signal, detail, commits_ahead — a count on the git signals, null on pr_merged, which is asked before checkout, pr_number — set on pr_merged only, status, override)
 
 | `classes` | Meaning |
 |---|---|
@@ -1249,6 +1273,95 @@ Revise a PR description against the repo's PR template. Without --post the edit 
 > Without --post the edit is drafted to stderr; the bare invocation writes nothing on GitHub.
 > --dry-run prints the revision and records nothing, even with --post.
 
+#### pr stack contract
+
+The repo's PR stack graph (JSON)
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | the graph (or one PR's ladder) printed |  |
+| `1` | no checkout, or the graph could not be loaded |  |
+| `2` | bad pr-level flags |  |
+
+**Examples**
+
+- `pr stack` — the whole repo's graph
+- `pr stack --pr 42` — PR 42's ladder, bottom first
+
+> Writes nothing remotely. --repo-dir/--branch/--pr are global flags. stdout is {schema_version, trunk, nodes, cycles}.
+
+#### pr board contract
+
+The PR board document (JSON). Requires the global --schema-version (the versions in board.model.SCHEMA_VERSIONS: 1); without it exits 2.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | a document printed; per-repo failures live in repos[].error |  |
+| `1` | a checkout could not be read |  |
+| `2` | no --schema-version; --prs without --phase status; --offline without --phase listing |  |
+
+**Examples**
+
+- `pr --schema-version 1 board --checkout ~/git/o/r/main --phase listing` — print the listing document
+- `pr --schema-version 1 board --checkout ~/git/o/r/main --phase status --prs 12,15` — status for named PRs
+
+> Writes nothing remotely. --schema-version is a global flag. complete is false for status --prs and owed (clients merge by (repo, number)). Clients hide a row whose effective team lane is landed.
+
+#### pr batch contract
+
+Rebase, CI, comments and (opt-in) self-review across my open PRs. A default run never opens a decision.
+
+**Writes remotely**
+
+| Trigger | Writes | Where | How | If refused |
+|---|---|---|---|---|
+| `(bare invocation)` | nothing | nowhere | every step runs drafted — nothing is pushed or posted | n/a |
+| `run --auto-publish` | a clean fast-forward of refs/heads/<branch> when an item closes with no findings | origin | pr push --expect <remote_sha> (docs/ai-automation.md#pr-push-contract). Never a force push, never a closeout. | a refused push leaves the item unpushed; the run continues |
+| `run --no-verify` | nothing extra: changes how those publish pushes run | origin | skips the pre-push hook on every publish push; persisted so resume honours it | as for the push |
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | the run is done or cancelled |  |
+| `1` | it stopped without settling | `pr batch resume` |
+| `2` | bad flags, missing --checkout/--plan, or resume --steps that widen |  |
+
+**Examples**
+
+- `pr batch run --checkout DIR` — rebase, ci, comments; drafted; no AI, no review
+- `pr batch run --checkout DIR --auto-publish ff` — the same, fast-forwarding a clean close
+- `pr batch resume` — continue this checkout's covering run
+
+> Batch declares NO_LOCK; 75 is not an exit. LockBusy on an item is exit 1 (fail), not TEMPFAIL. A default run never opens a decision.
+
+#### pr gc contract
+
+Deletes stale review and PR-state artifacts on this machine. Reads GitHub (gh pr list/view) whether each PR ended; never writes to GitHub. Deletes local artifacts only.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | sweep finished; cleaned N items, or nothing to clean |  |
+| `1` | a local sweep error other than budget |  |
+| `2` | bad pr-level flags |  |
+| `75` | the GitHub API budget ran out mid-sweep; what was not asked about is left in place — retry after the reset the warning names | `pr gc` |
+
+**Examples**
+
+- `pr gc` — sweep this machine's stale PR artifacts
+
 ### Running a branch's own libraries
 
 The Python entry points take their own pin, since `~/.local/bin/pr` is a symlink into
@@ -1283,82 +1396,58 @@ command as taking no target, or give it a delegate to read.
 
 ### pr batch
 
-`pr batch` rebases, checks CI and notes comments on your open PRs. AI and
-review are opt-in. Every step is a child `pr` (CI: `ci-check`) in a new
-session with stdin closed, and runs drafted. Nothing is pushed unless `--auto-publish ff`.
-
-```bash
-pr batch plan --checkout DIR …           # which PRs need which steps (JSON)
-pr batch run --checkout DIR … [--with-ai=rebase,ci,comments] [--with-review] [--auto-publish ff] [--rebase behind]
-pr batch run --plan FILE …               # start from a saved plan
-pr batch resume [RUN_ID] [--steps S]     # continue; --steps may only narrow the run's steps
-pr batch report [RUN_ID] [--offline] [--format json|md]  # per-PR session commands; files under the run dir
-pr batch status [RUN_ID]                 # the run report (JSON); --offline skips GitHub
-pr batch status [RUN_ID] --full          # the raw run state plus `run_dir`
-pr batch status --list                   # this machine's runs, newest first (JSON)
-pr batch cancel [RUN_ID] [--kill]        # final; JSON `queued` when a holder applies it; `release RUN PR [--kill]` frees one PR
-```
-
-`--focus` is forwarded to every review step and replayed by `resume` (`--steps` only narrows).
-
-Default steps are `rebase`, `ci`, `comments` (`review` needs `--with-review`),
-each only where needed (`run` plans for itself; `run --help` has recipes). `run --prs` reads the named PRs by
+Flags, remote writes and exits: [`pr batch` contract](#pr-batch-contract).
+Every step is a child `pr` (CI: `ci-check`) in a new session with stdin closed.
+`run` plans for itself. Default steps are `rebase`, `ci`, `comments` (`review`
+needs `--with-review`), each only where needed. `run --prs` reads named PRs by
 number, ten to a request; without it the plan searches every open PR of yours,
-ten to a page, since GitHub fails a request that runs past about ten seconds. A PR that needs no
-step is still planned into the run when its saved `pr` state owes a closeout,
-but only when `comments` is one of the run's steps and there is no `--select`. It is queued and gets a worktree like any other item. `rebase` is needed
-only when the branch conflicts with its PR's base: `git merge-tree` over fetched
-objects (a run keeps them in `refs/pr-batch/`), falling back to GitHub's merge
-state, where only `DIRTY` counts. A branch that is behind but merges cleanly is
-left alone. `--rebase behind` takes every branch behind its base instead
-(fallback: `BEHIND`, `DIRTY` and `UNKNOWN` count); the run records the choice,
-so `resume` keeps it. `comments` is needed when `pr comments` would find something to answer (`pr.owed_feedback`): threads, review bodies or PR comments.
-`ci` runs `ci-check --no-rebase --head-sha <planned remote head>` (not `pr ci`)
-when the rollup failed, with `--wait` if still running; `--fix` and the rate-limit
-rerun only under `--with-ai=ci`. Fork heads skip both. A stacked PR records
-`stack_wait_base` and is not rebased in the run. One fetching rebase or CI step per repo at a time per run;
-several runs may share a repo (see troubleshooting). No start in a dirty worktree except restoring generated files.
+ten to a page. A PR that needs no step is still planned when its saved `pr`
+state owes a closeout, but only when `comments` is one of the run's steps and
+there is no `--select`. `rebase` is needed only when the branch conflicts with
+its PR's base: `git merge-tree` over fetched objects (a run keeps them in
+`refs/pr-batch/`), falling back to GitHub's merge state, where only `DIRTY`
+counts. `--rebase behind` takes every branch behind its base instead (fallback:
+`BEHIND`, `DIRTY` and `UNKNOWN`); the run records the choice so `resume` keeps
+it. `comments` is needed when `pr comments` would find something to answer
+(`pr.owed_feedback`). `ci` runs `ci-check --no-rebase --head-sha <planned remote
+head>` (not `pr ci`) when the rollup failed, with `--wait` if still running;
+`--fix` and the rate-limit rerun only under `--with-ai=ci`. Fork heads skip
+both. A stacked PR records `stack_wait_base` and is not rebased. One fetching
+rebase or CI step per repo at a time per run; several runs may share a repo.
+No start in a dirty worktree except restoring generated files.
 
-A default run never opens a decision; items end `done` or `needs_session` with
-`findings` (`batch/findings.py`), shown by `pr batch report`. A stored waiting
-v1 run converts on `resume` (one-way). `--auto-publish ff` pushes a clean
-fast-forward (`pr push --expect`) when an item closes with no findings; never a
-force push, closeout post or issue filing. `--no-verify` skips the pre-push hook
-on those publishes.
-
-`pr batch status` prints one compact report. `--full` is the raw run state plus `run_dir`.
-Keys: `run` (`id`, `status`, `active`, `exit_hint`, `hint`, `pending_requests`,
-`failed_requests`), `counts` (items by status), `items` (non-terminal only),
-`github`, `sessions` (`pr batch report` only). `exit_hint` is 0 once finished,
-1 when it stopped without settling, null while a driver holds the run.
-`run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`
-(`run`, `item`, `reason`, `step`). Exit 0 or 1; widening `resume --steps` is 2.
-
-`pr batch status` and `pr batch report` carry `github` unless `--offline`. Keys and checkout rules are in
-[`batch/live.py`](ai-libraries.md#batchlivepy).
-
-Step stdout and stderr stay in the run's `logs/`; `run --verbose` and `resume --verbose`
-also stream stderr as `step_log` events. `resume` continues an interrupted run; a
-recorded cancel is final and resume refuses it.
-
-Admission counts every batch driver on the machine: a step starts when free memory, less other
-drivers' pending steps and `batch.mem_reserve`, covers its observed peak and pressure stays under
-`batch.cpu_pressure_max` / `batch.mem_pressure_max`. Drivers that queued first start first, and with
-nothing running anywhere the queue's head starts one step regardless ([`batch/machine.py`](ai-libraries.md#batchmachinepy)). `--pool` and `batch.pool_max` (default 2)
-cap a run; with no pressure metrics (macOS) `batch.pool_default` (1) caps steps machine-wide. State lives under
-`~/.local/state/workbench/batch/<run-id>/` (`state.json` is authoritative; `requests/` is the inbox); `pr gc` removes finished runs and orphaned `refs/pr-batch/` namespaces that have no live claim and no run ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
+Items end `done` or `needs_session` with `findings` (`batch/findings.py`). A
+stored waiting v1 run converts on `resume` (one-way). Report keys: `run` (`id`,
+`status`, `active`, `exit_hint`, `hint`, `pending_requests`, `failed_requests`),
+`counts`, `items` (non-terminal), `github`, `sessions` (`pr batch report` only).
+`resume` replays `--focus`. `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`.
+`github` is omitted under `--offline`; keys and checkout rules are in
+[`batch/live.py`](ai-libraries.md#batchlivepy). Step output stays in the run's
+`logs/`. Admission is [`batch/machine.py`](ai-libraries.md#batchmachinepy): `batch.pool_max`
+(2) caps concurrency, `batch.pool_default` (1) applies without host metrics, and
+`batch.mem_reserve`, `batch.cpu_pressure_max`, `batch.mem_pressure_max` gate on pressure.
+State lives under `~/.local/state/workbench/batch/<run-id>/`; `pr gc` removes
+finished runs and orphaned `refs/pr-batch/` namespaces
+([`batch/gc.py`](ai-libraries.md#batchgcpy)).
 
 ### pr status
 
-Without `--schema-version`, stdout is the state dump (or empty when there is none) and the dashboard is on stderr. `pr --schema-version 1 status` wraps it in `{schema_version, state_file, state}` with `state` null when the branch has no state yet.
+See the [`pr status` contract](#pr-status-contract).
 
 ### pr stack
 
-`pr stack` prints the repo's open PRs as a stack graph (`{schema_version, trunk, nodes, cycles}`). Parent authority, in order: an open native GitHub stack (closed stacks do not count), the PR's base branch when another open PR owns it, `git.topology.stack_parent`, else the trunk. Health is `up-to-date`, `needs-rebase`, `has-conflicts`, `base-closed`, or `unknown`. `--pr N` prints that PR's ladder, bottom first.
+See the [`pr stack` contract](#pr-stack-contract). Parent authority, in order:
+an open native GitHub stack (closed stacks do not count), the PR's base branch
+when another open PR owns it, `git.topology.stack_parent`, else the trunk.
+Health is `up-to-date`, `needs-rebase`, `has-conflicts`, `base-closed`, or
+`unknown`.
 
 ### pr board
 
-`pr board --schema-version 1 --checkout DIR [--checkout DIR ...] --phase listing|status|owed [--prs N,N] [--if-changed STAMP] [--offline]` prints the board document (facts, lanes, badges, per-row `presentation` slots, columns as JSON, `reviews_root`). Missing `--schema-version` exits 2. `--prs` only with `--phase status` (else exit 2); `--offline` only with `--phase listing`. Exit 0 whenever a document prints; per-repo failures live in `repos[].error`. `--if-changed` matching the stamp returns `{schema_version, phase, stamp, unchanged: true}`. Python owns every fact, lane, badge, presentation slot and column; no draft CI exemption; clients hide a row whose effective team lane is `landed`. `complete` is false for `status --prs` and `owed` (clients merge by `(repo, number)`).
+See the [`pr board` contract](#pr-board-contract). Python owns every fact, lane,
+badge, presentation slot and column; no draft CI exemption.
+`--if-changed` matching the stamp returns `{schema_version, phase, stamp,
+unchanged: true}`.
 
 ### The Pi package the sync declares, and who gets it
 

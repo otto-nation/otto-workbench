@@ -44,6 +44,68 @@
       ],
       "type": "object",
       "x-contracts": {
+        "batch": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the run is done or cancelled",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "it stopped without settling",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "bad flags, missing --checkout/--plan, or resume --steps that widen",
+              "name": "usage"
+            }
+          ],
+          "remote_effects": [
+            {
+              "how": "every step runs drafted \u2014 nothing is pushed or posted",
+              "on_refusal": "n/a",
+              "trigger": "",
+              "where": "nowhere",
+              "writes": "nothing"
+            },
+            {
+              "how": "pr push --expect <remote_sha> (docs/ai-automation.md#pr-push-contract). Never a force push, never a closeout.",
+              "on_refusal": "a refused push leaves the item unpushed; the run continues",
+              "trigger": "run --auto-publish",
+              "where": "origin",
+              "writes": "a clean fast-forward of refs/heads/<branch> when an item closes with no findings"
+            },
+            {
+              "how": "skips the pre-push hook on every publish push; persisted so resume honours it",
+              "on_refusal": "as for the push",
+              "trigger": "run --no-verify",
+              "where": "origin",
+              "writes": "nothing extra: changes how those publish pushes run"
+            }
+          ]
+        },
+        "board": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "a document printed; per-repo failures live in repos[].error",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "a checkout could not be read",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no --schema-version; --prs without --phase status; --offline without --phase listing",
+              "name": "usage"
+            }
+          ],
+          "remote_effects": []
+        },
         "ci": {
           "exit_codes": [
             {
@@ -242,6 +304,31 @@
             }
           ]
         },
+        "gc": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "sweep finished; cleaned N items, or nothing to clean",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "a local sweep error other than budget",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "bad pr-level flags",
+              "name": "usage"
+            },
+            {
+              "code": 75,
+              "meaning": "the GitHub API budget ran out mid-sweep; what was not asked about is left in place \u2014 retry after the reset the warning names",
+              "name": "tempfail"
+            }
+          ],
+          "remote_effects": []
+        },
         "push": {
           "exit_codes": [
             {
@@ -411,6 +498,46 @@
               "writes": "files the finding on the tracker (GitHub or Linear issue)"
             }
           ]
+        },
+        "stack": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the graph (or one PR's ladder) printed",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "no checkout, or the graph could not be loaded",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "bad pr-level flags",
+              "name": "usage"
+            }
+          ],
+          "remote_effects": []
+        },
+        "status": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "dashboard printed; JSON on stdout when there is state",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "the checkout or state could not be read",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "bad pr-level flags",
+              "name": "usage"
+            }
+          ],
+          "remote_effects": []
         }
       }
     },

@@ -83,14 +83,14 @@ def _mid_rebase(cwd: str, trail: Trail | None) -> bool:
 
 
 def _land(cwd: str, args: tuple[str, ...], *, verify: bool,
-          trail: Trail | None, regen: str) -> bool:
+          trail: Trail | None, regen: str, base_ref: str = "") -> bool:
     """Push HEAD with *args*; True when it landed.
 
     Shared by `push_head` (rebase force-push, lease on *expect*) and
     `cmd_push_head` (`pr push`, lease from :func:`rebase.lease.for_push`).
     """
     landed = rebase.land.land_rebased(
-        cwd, args=args, verify=verify, trail=trail, regen=regen,
+        cwd, args=args, verify=verify, trail=trail, regen=regen, base_ref=base_ref,
     )
     if not landed.ok:
         core.trail.terr(trail, "push", "push failed",
@@ -100,7 +100,7 @@ def _land(cwd: str, args: tuple[str, ...], *, verify: bool,
 
 def push_head(cwd: str, branch: str, *, expect: str, verify: bool = True,
               trail: Trail | None = None,
-              regen: str = rebase.land.REGEN_MESSAGE) -> bool:
+              regen: str = rebase.land.REGEN_MESSAGE, base_ref: str = "") -> bool:
     """Push HEAD to origin's *branch* with a lease on *expect*; True when it landed.
 
     The push `pr rebase`'s force-push (`cmd_push`) makes. `pr push`
@@ -109,7 +109,8 @@ def push_head(cwd: str, branch: str, *, expect: str, verify: bool = True,
     publishing gate's answer: the entry point opens it.
     """
     lease = rebase.lease.PushLease(branch=branch, expect=expect)
-    return _land(cwd, lease.args, verify=verify, trail=trail, regen=regen)
+    return _land(cwd, lease.args, verify=verify, trail=trail, regen=regen,
+                 base_ref=base_ref)
 
 
 def cmd_push(
@@ -163,7 +164,8 @@ def cmd_push(
 
     rebase.pr_snapshot.name_the_open_pr(snapshot, trail=trail)
     core.log.info("Force-pushing...")
-    if not push_head(cwd, ctx.branch, expect=lease.expect, verify=verify, trail=trail):
+    if not push_head(cwd, ctx.branch, expect=lease.expect, verify=verify, trail=trail,
+                     base_ref=target_ref):
         return 1
 
     rebase.types.RebaseOutcome(
@@ -222,7 +224,8 @@ def cmd_push_head(
     lease_on = git.client.abbrev(plan.remote_sha or expect)
     core.log.info(f"Pushing {ctx.branch} (lease on {lease_on})...")
     if not _land(cwd, plan.args, verify=verify, trail=trail,
-                 regen=rebase.types.PUSH_REGEN_MESSAGE):
+                 regen=rebase.types.PUSH_REGEN_MESSAGE,
+                 base_ref=f"origin/{ctx.base}" if ctx.base else ""):
         return 1
     state = rebase.types.load_or_init(ctx)
     pr.state.apply(state, pr.domains.PushDomain.observed(

@@ -4,6 +4,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import {
   STEP_ORDER, durationText, laneOf, shortKey, runStatus, stepStatus, words, actionLabel,
+  trailArgv,
 } from "./_lib/batch.js";
 import { summaryLine } from "./_lib/run_output.js";
 import { relativeTime } from "./_lib/history.js";
@@ -47,7 +48,18 @@ export function renderRunPanel(state, expanded) {
         .when(Boolean(r.error), (e) => e.child(errorLine(r.error)))
         .child(div().flex_1())
         .child(badge(runStatus(r.status)));
-      return open && expanded ? [row, expanded(r)] : [row];
+      if (!open) return [row];
+      const trail = trailArgv({
+        ...r,
+        trailRoot: state.doc?.run?.trailRoot ?? r.trailRoot,
+        cwd: r.cwd ?? r.runDir,
+      });
+      const actions = trail == null ? null : h_flex().pl(SP.xl).py(SP.xxs).gap(SP.sm).items_center()
+        .child(ghostButton("open-trail", "Open trail", () => state.onOpenTrail?.(r)))
+        .when(Boolean(state.trailError), (e) => e.child(errorLine(state.trailError)));
+      return actions && expanded ? [row, actions, expanded(r)]
+        : actions ? [row, actions]
+        : expanded ? [row, expanded(r)] : [row];
     }));
 }
 

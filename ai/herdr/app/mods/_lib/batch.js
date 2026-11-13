@@ -8,6 +8,8 @@
  * No run: CLI prints "pr batch: no batch runs yet" (not JSON).
  */
 
+import { hcBatchArgv } from './launch.js';
+
 // ItemStatus values a batch is still working a PR in (ai/lib/batch/model.py).
 export const BUSY_STATES = ['queued', 'waiting_admission', 'running'];
 
@@ -40,6 +42,20 @@ export function reportArgv(runId) {
 
 export function logTailArgv(path, n = 200) {
   return ['tail', '-n', String(n), path];
+}
+
+// `otto-log show` argv for a herdr terminal on the run's machine, or null when
+// there is no trail id. trailRoot is an invocation id, not a path.
+export function trailArgv(run) {
+  const id = String(run?.trailRoot ?? '').trim();
+  if (!id) return null;
+  const repo = run.repo || (Array.isArray(run.repos) && run.repos[0]) || '';
+  return hcBatchArgv({
+    repo,
+    cwd: run.cwd || run.runDir || '.',
+    on: run.on,
+    argv: ['otto-log', 'show', id],
+  });
 }
 
 function isObj(v) {

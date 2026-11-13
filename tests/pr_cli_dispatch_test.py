@@ -516,6 +516,8 @@ _DECLARED_LOCKS = {
     ("batch", ("release", "r", "o/r#1")): _NO,
     ("batch", ("status",)): _NO,
     ("batch", ("report",)): _NO,
+    ("batch", ("session", "r")): _NO,
+    ("batch", ("note", "r", "o/r#1", "--finding", "f:s", "--verdict", "fixed", "--reason", "x")): _NO,
     ("batch", ("plan", "--checkout", "/r")): _NO,
     ("gc", ()): _T,
 }

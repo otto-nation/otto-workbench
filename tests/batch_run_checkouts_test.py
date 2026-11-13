@@ -59,3 +59,8 @@ def test_run_records_the_absolute_checkout(tmp_path, monkeypatch):
     monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
     assert _main(["batch", "run", "--checkout", "r"]) == 0
     assert seen["checkouts"] == [expected]
+
+
+def test_checkouts_fall_back_to_the_plans_repo_dirs_when_every_row_is_filtered_out():
+    import cli.pr_batch
+    assert cli.pr_batch._checkouts([], [], ["/r/../r"]) == ["/r"]

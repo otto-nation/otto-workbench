@@ -513,6 +513,16 @@ def _warn_focus_without_review(run: Run) -> None:
         + ", ".join(keys) + " — add --select KEY=review to review them")
 
 
+def _checkouts(checkout: list[str] | None, rows: list[batch.plan.PlanRow],
+               ref_dirs: list[str]) -> list[str]:
+    """The absolute checkouts a run is recorded over: `--checkout` wins, else the
+    surviving rows' repos, else the plan's own repo dirs when every row was filtered out."""
+    if checkout:
+        return sorted({os.path.abspath(d) for d in checkout})
+    return (sorted({r.repo_dir for r in rows})
+            or sorted({os.path.abspath(d) for d in ref_dirs}))
+
+
 def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox, *, focus) -> _Started:
     """Mint the run from *plan*, open it with `batch.store.create` on *held*, hold its items, commit.
 
@@ -528,9 +538,7 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox,
         rows = _skip_held(rows)
         selected = {s.key: s.steps for s in args.select} if args.select else None
         dirs = sorted({r.repo_dir for r in rows}) or (args.checkout or [])
-        checkouts = (sorted({os.path.abspath(d) for d in args.checkout}) if args.checkout
-                     else sorted({r.repo_dir for r in rows})
-                     or sorted({os.path.abspath(d) for d in plan.ref_dirs}))
+        checkouts = _checkouts(args.checkout, rows, plan.ref_dirs)
         cfg = _cfg(dirs)
         run = batch.scheduler.new_run(rows, steps=args.steps, selected=selected,
                                       pool=batch.admission.ceiling(args.pool, cfg),

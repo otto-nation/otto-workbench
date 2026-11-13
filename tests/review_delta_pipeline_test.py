@@ -30,10 +30,8 @@ from conftest import synthetic_review
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
-from agent.types import EFFORT_PRESETS
 import cli.review_orchestrate
-from core.phases import Effort, Mode
-from gh.types import PRContext, PRMetadata
+from core.phases import Mode
 from pr.domains import ReviewVerdict
 from review.document import ReviewDocument
 from review.paths import FILENAME_RECORD
@@ -41,68 +39,14 @@ from review.store import read_review, update_review
 from review.verdict import resolve_review_verdict
 import review.claims
 import review.pipeline
-from review.types import DeltaAttribution, Pipeline, PreflightData, ReviewJob
+from review.types import DeltaAttribution, Pipeline, PreflightData
+from review_pipeline_support import BIG_PR, PRESET, Trail, orchestrate_args, pipeline_job
 from review_record_support import finding, record
 
-# Derived from the preset the jobs here run at, so a changed threshold moves
-# these with it rather than leaving a suite that passes for the wrong reason.
-_PRESET = EFFORT_PRESETS[Effort.MEDIUM]
-_BIG_PR = {
-    "additions": _PRESET.multi_phase_line_threshold * 8,
-    "deletions": _PRESET.multi_phase_line_threshold * 4,
-    "changed_files": _PRESET.multi_phase_file_threshold * 12,
-}
 _PRIOR = record(
     finding("M1", "a bug nobody has fixed"),
     summary="Synthesized.",
 )
-
-
-class _Trail:
-    """Records the decisions a run reports, which is where the basis shows up."""
-
-    def __init__(self):
-        self.decisions: list[tuple[str, str, dict]] = []
-
-    def decision(self, name, detail, reason="", data=None):
-        self.decisions.append((name, reason, data or {}))
-
-    def info(self, *_args, **_kwargs):
-        pass
-
-    def span(self, *_args, **_kwargs):
-        from contextlib import nullcontext
-        return nullcontext()
-
-    def named(self, name: str) -> dict:
-        return next(d for n, _, d in self.decisions if n == name)
-
-    def has(self, name: str) -> bool:
-        return any(n == name for n, _, _ in self.decisions)
-
-
-def _job(tmp_path, *, prior_review=None, **pr_overrides) -> ReviewJob:
-    pr_fields = {
-        "title": "t", "body": "", "head": "feat", "base": "main",
-        "head_sha": "newc0de", "additions": 10, "deletions": 0,
-        "changed_files": 1, "files": [{"path": "a.py", "additions": 10, "deletions": 0}],
-    }
-    pr_fields.update(pr_overrides)
-    job = ReviewJob(
-        repo="org/repo", pr_number="42", pr=PRMetadata(**pr_fields),
-        ctx=PRContext(), wt_path=str(tmp_path),
-        review_file=str(tmp_path / "review.md"),
-        session_log=str(tmp_path / "session.jsonl"),
-        generator_version="1.0.0", effort=Effort.MEDIUM,
-    )
-    if prior_review is not None:
-        from review.store import StoredReview
-        from review.types import ReviewMeta
-        job.prior = StoredReview(
-            prior_review,
-            ReviewMeta(date="2026-01-01", head_sha="0ldc0de"),
-        )
-    return job
 
 
 def _preflight(**overrides) -> PreflightData:
@@ -112,20 +56,6 @@ def _preflight(**overrides) -> PreflightData:
     }
     fields.update(overrides)
     return PreflightData(**fields)
-
-
-def _args(**overrides) -> SimpleNamespace:
-    # `effort` is `--effort`, which argparse defaults to None when unpassed.
-    # Present here because `_run_phases` reads it for the pipeline decision: a
-    # namespace missing a field the real parser always supplies is a double
-    # that has drifted from its subject, and the run fails on the attribute
-    # rather than on anything the test is about.
-    defaults = {
-        "max_parallel": 2, "max_cost": 20.0, "max_groups": None,
-        "disprove": None, "fix": False, "effort": None,
-    }
-    defaults.update(overrides)
-    return SimpleNamespace(**defaults)
 
 
 @pytest.fixture
@@ -150,10 +80,10 @@ def run_phases(monkeypatch):
     monkeypatch.setattr(cli.review_orchestrate, "run_single_agent", _single)
     monkeypatch.setattr(cli.review_orchestrate, "run_static_analysis", lambda *a, **k: [])
 
-    def _run(job) -> tuple[_Trail, list[str], Pipeline]:
-        trail = _Trail()
+    def _run(job) -> tuple[Trail, list[str], Pipeline]:
+        trail = Trail()
         with redirect_stdout(io.StringIO()):
-            pipeline = cli.review_orchestrate._run_phases(trail, _args(), job).pipeline
+            pipeline = cli.review_orchestrate._run_phases(trail, orchestrate_args(), job).pipeline
         return trail, called, pipeline
 
     return _run
@@ -179,13 +109,13 @@ class TestPipelineSizingWeightsDeletions:
     def test_a_deletion_takes_the_path_an_addition_of_the_same_size_does_not(
         self, tmp_path, run_phases,
     ):
-        size = _PRESET.multi_phase_line_threshold * 2
+        size = PRESET.multi_phase_line_threshold * 2
 
-        adding = _job(tmp_path, **self._pr(size, deleting=False))
+        adding = pipeline_job(tmp_path, **self._pr(size, deleting=False))
         adding.preflight = _preflight()
         _, _, adding_pipeline = run_phases(adding)
 
-        deleting = _job(tmp_path, **self._pr(size, deleting=True))
+        deleting = pipeline_job(tmp_path, **self._pr(size, deleting=True))
         deleting.preflight = _preflight()
         _, _, deleting_pipeline = run_phases(deleting)
 
@@ -197,8 +127,8 @@ class TestPipelineSizingWeightsDeletions:
     # passes-at-base: pins the half of the contract this change preserves, that a big enough deletion still fans out
     def test_a_large_enough_deletion_still_fans_out(self, tmp_path, run_phases):
         # The weight lowers the price of a deletion; it does not exempt one.
-        size = _PRESET.multi_phase_line_threshold * 8
-        job = _job(tmp_path, **self._pr(size, deleting=True))
+        size = PRESET.multi_phase_line_threshold * 8
+        job = pipeline_job(tmp_path, **self._pr(size, deleting=True))
         job.preflight = _preflight()
 
         _, _, pipeline = run_phases(job)
@@ -208,8 +138,8 @@ class TestPipelineSizingWeightsDeletions:
     def test_the_trail_reports_the_real_line_count_and_the_weighted_one(
         self, tmp_path, run_phases,
     ):
-        size = _PRESET.multi_phase_line_threshold * 2
-        job = _job(tmp_path, **self._pr(size, deleting=True))
+        size = PRESET.multi_phase_line_threshold * 2
+        job = pipeline_job(tmp_path, **self._pr(size, deleting=True))
         job.preflight = _preflight()
 
         trail, _, _ = run_phases(job)
@@ -223,7 +153,7 @@ class TestPipelineSizingUsesTheDelta:
     def test_a_large_pr_with_a_small_delta_takes_the_single_agent_path(
         self, tmp_path, run_phases,
     ):
-        job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
+        job = pipeline_job(tmp_path, prior_review=_PRIOR, **BIG_PR)
         job.preflight = _preflight(
             delta_files=["a.py"], delta_weighted_lines=2, prior_head_sha="0ldc0de",
             delta_attribution=DeltaAttribution.ATTRIBUTED,
@@ -235,12 +165,12 @@ class TestPipelineSizingUsesTheDelta:
         assert pipeline == Pipeline.SINGLE
 
     def test_a_large_pr_with_a_large_delta_still_fans_out(self, tmp_path, run_phases):
-        job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
+        job = pipeline_job(tmp_path, prior_review=_PRIOR, **BIG_PR)
         job.preflight = _preflight(
             delta_files=[
-                f"f{i}.py" for i in range(_PRESET.multi_phase_file_threshold * 4)
+                f"f{i}.py" for i in range(PRESET.multi_phase_file_threshold * 4)
             ],
-            delta_weighted_lines=_PRESET.multi_phase_line_threshold * 6,
+            delta_weighted_lines=PRESET.multi_phase_line_threshold * 6,
             prior_head_sha="0ldc0de", delta_attribution=DeltaAttribution.ATTRIBUTED,
         )
 
@@ -253,7 +183,7 @@ class TestPipelineSizingUsesTheDelta:
         self, tmp_path, run_phases,
     ):
         """No prior review means no delta, and the PR is the only measure."""
-        job = _job(tmp_path, **_BIG_PR)
+        job = pipeline_job(tmp_path, **BIG_PR)
         job.preflight = _preflight()
 
         trail, called, _ = run_phases(job)
@@ -264,7 +194,7 @@ class TestPipelineSizingUsesTheDelta:
     def test_the_run_reports_which_count_it_sized_itself_by(
         self, tmp_path, run_phases,
     ):
-        job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
+        job = pipeline_job(tmp_path, prior_review=_PRIOR, **BIG_PR)
         job.preflight = _preflight(
             delta_files=["a.py"], delta_weighted_lines=2, delta_raw_lines=5,
             prior_head_sha="0ldc0de",
@@ -287,7 +217,7 @@ class TestTheEmptyDeltaFastPath:
     @staticmethod
     def _merge_only(tmp_path) -> ReviewJob:
         """A re-review whose HEAD moved by a merge the author did not write."""
-        job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
+        job = pipeline_job(tmp_path, prior_review=_PRIOR, **BIG_PR)
         job.preflight = _preflight(
             delta_files=[], delta_weighted_lines=0, delta_attribution=DeltaAttribution.ATTRIBUTED,
             prior_head_sha="0ldc0de",
@@ -438,7 +368,7 @@ class TestTheFastPathStaysShut:
         An unresolvable base ref and a failed git walk both leave the file list
         empty without establishing that nothing changed.
         """
-        job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
+        job = pipeline_job(tmp_path, prior_review=_PRIOR, **BIG_PR)
         job.preflight = _preflight(
             delta_files=[], delta_weighted_lines=0, delta_attribution=DeltaAttribution.UNATTRIBUTED,
             prior_head_sha="0ldc0de",
@@ -450,7 +380,7 @@ class TestTheFastPathStaysShut:
 
     def test_a_first_pass_review_is_never_the_fast_path(self, tmp_path, run_phases):
         """`proven_empty` cannot be set without a prior SHA, but not by luck."""
-        job = _job(tmp_path, **_BIG_PR)
+        job = pipeline_job(tmp_path, **BIG_PR)
         job.preflight = _preflight(delta_attribution=DeltaAttribution.ATTRIBUTED)
 
         _, called, _ = run_phases(job)
@@ -467,7 +397,7 @@ class TestTheFastPathStaysShut:
         output is the prior review's findings: reaching it without them would
         ship an empty document and advance the marker past the range.
         """
-        job = _job(tmp_path, **_BIG_PR)
+        job = pipeline_job(tmp_path, **BIG_PR)
         job.preflight = _preflight(
             delta_files=[], delta_attribution=DeltaAttribution.ATTRIBUTED,
             prior_head_sha="0ldc0de",
@@ -481,7 +411,7 @@ class TestTheFastPathStaysShut:
         self, tmp_path, run_phases,
     ):
         """Stale prior.md is not enough: the no-op path needs job.prior."""
-        job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
+        job = pipeline_job(tmp_path, prior_review=_PRIOR, **BIG_PR)
         job.prior = None
         job.preflight = _preflight(
             delta_files=[], delta_weighted_lines=0,
@@ -494,7 +424,7 @@ class TestTheFastPathStaysShut:
         assert called, "a stale prior.md must not take the no-op shortcut"
 
     def test_author_work_beside_a_merge_is_reviewed(self, tmp_path, run_phases):
-        job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
+        job = pipeline_job(tmp_path, prior_review=_PRIOR, **BIG_PR)
         job.preflight = _preflight(
             delta_files=["a.py"], delta_weighted_lines=1, prior_head_sha="0ldc0de",
             delta_attribution=DeltaAttribution.ATTRIBUTED,
@@ -513,7 +443,7 @@ class TestSelfReviewIsUnaffected:
         Asserted here rather than left to `review.collect` because this is the
         caller that would act on it.
         """
-        job = _job(tmp_path, prior_review=_PRIOR, **_BIG_PR)
+        job = pipeline_job(tmp_path, prior_review=_PRIOR, **BIG_PR)
         job.mode = Mode.SELF
         job.preflight = _preflight(
             delta_files=[], delta_weighted_lines=0, prior_head_sha="0ldc0de",
@@ -528,7 +458,7 @@ class TestOneGroupHandoffReportsThePipelineRun:
     def test_a_one_group_handoff_records_the_pipeline_that_ran(
         self, tmp_path, monkeypatch,
     ):
-        job = _job(tmp_path, **_BIG_PR)
+        job = pipeline_job(tmp_path, **BIG_PR)
         job.preflight = _preflight()
         monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
         monkeypatch.setattr(
@@ -547,9 +477,9 @@ class TestOneGroupHandoffReportsThePipelineRun:
         monkeypatch.setattr(
             cli.review_orchestrate, "run_static_analysis", lambda *a, **k: [])
 
-        trail = _Trail()
+        trail = Trail()
         with redirect_stdout(io.StringIO()):
-            result = cli.review_orchestrate._run_phases(trail, _args(), job)
+            result = cli.review_orchestrate._run_phases(trail, orchestrate_args(), job)
         assert trail.has("pipeline_handoff")
         assert trail.named("pipeline_handoff")["ran"] == "single"
         assert result.pipeline is Pipeline.SINGLE

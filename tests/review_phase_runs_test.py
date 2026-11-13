@@ -11,10 +11,8 @@ LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from agent.types import EFFORT_PRESETS
 import cli.review_orchestrate
-from core.phases import Effort, Phase
-from gh.types import PRContext, PRMetadata
+from core.phases import Phase
 import review.phase_runs
 import review.phases
 import review.pipeline
@@ -23,56 +21,12 @@ from review.paths import phase_output_path, read_review_meta
 from review.phases import PhaseResult
 from review.state import PipelineState
 from review.types import (
-    GroupSkip, PhaseRun, Pipeline, PreflightData, ReviewJob, ReviewMeta,
+    GroupSkip, PhaseRun, Pipeline, PreflightData, ReviewMeta,
     review_meta_from_dict,
 )
 from review_focus_support import DERIVED_FOCUS
+from review_pipeline_support import BIG_PR, Trail, orchestrate_args, pipeline_job
 from review_record_support import record, store_record
-
-_PRESET = EFFORT_PRESETS[Effort.MEDIUM]
-_BIG_PR = {
-    "additions": _PRESET.multi_phase_line_threshold * 8,
-    "deletions": _PRESET.multi_phase_line_threshold * 4,
-    "changed_files": _PRESET.multi_phase_file_threshold * 12,
-}
-
-
-class _Trail:
-    def __init__(self):
-        self.decisions: list[tuple[str, str, dict]] = []
-
-    def decision(self, name, detail, reason="", data=None):
-        self.decisions.append((name, reason, data or {}))
-
-    def info(self, *_args, **_kwargs):
-        pass
-
-    def span(self, *_args, **_kwargs):
-        from contextlib import nullcontext
-        return nullcontext()
-
-
-def _job(tmp_path, **pr_overrides) -> ReviewJob:
-    pr_fields = {
-        "title": "t", "body": "", "head": "feat", "base": "main",
-        "head_sha": "abc", "additions": 10, "deletions": 0,
-        "changed_files": 1, "files": [{"path": "a.py", "additions": 10, "deletions": 0}],
-    }
-    pr_fields.update(pr_overrides)
-    return ReviewJob(
-        repo="org/repo", pr_number="42", pr=PRMetadata(**pr_fields),
-        ctx=PRContext(), wt_path=str(tmp_path),
-        review_file=str(tmp_path / "review.md"),
-        session_log=str(tmp_path / "session.jsonl"),
-        effort=Effort.MEDIUM,
-    )
-
-
-def _args() -> SimpleNamespace:
-    return SimpleNamespace(
-        max_parallel=2, max_cost=20.0, max_groups=None,
-        disprove=None, fix=False, effort=None,
-    )
 
 
 class TestSidecarLoadsPhases:
@@ -99,7 +53,7 @@ class TestSingleAgentRecordsPhases:
     def test_a_clean_record_skips_disprove_with_the_zero_count_reason(
         self, tmp_path, monkeypatch,
     ):
-        job = _job(tmp_path)
+        job = pipeline_job(tmp_path)
 
         def _agent(inv, *_args, **_kwargs) -> int:
             Path(inv.output_path).write_text(json.dumps({
@@ -128,7 +82,7 @@ class TestHandoffPersistsPhases:
     def test_orchestrate_writes_the_handoff_phases_to_meta(
         self, tmp_path, monkeypatch,
     ):
-        job = _job(tmp_path, **_BIG_PR)
+        job = pipeline_job(tmp_path, **BIG_PR)
         job.preflight = PreflightData(
             diff="", commit_log="", file_contents={}, file_permissions={},
             instructions_md="", architecture_md="",
@@ -153,9 +107,9 @@ class TestHandoffPersistsPhases:
         monkeypatch.setattr(
             cli.review_orchestrate, "run_static_analysis", lambda *a, **k: [])
 
-        trail = _Trail()
+        trail = Trail()
         with redirect_stdout(io.StringIO()):
-            cli.review_orchestrate._run_phases(trail, _args(), job)
+            cli.review_orchestrate._run_phases(trail, orchestrate_args(), job)
         phases = {r.phase: r for r in read_review_meta(Path(job.artifact_dir)).phases}
         assert {Phase.GROUP.value, Phase.SYNTHESIS.value} <= phases.keys()
         assert phases[Phase.GROUP.value].ran is False
@@ -187,7 +141,7 @@ def _stub_multi_tail(monkeypatch):
 
 class TestScanRecordsPhases:
     def test_an_incremental_scan_records_the_skip_reason(self, tmp_path, monkeypatch):
-        job = _job(tmp_path)
+        job = pipeline_job(tmp_path)
         monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
         state = PipelineState(head_sha="abc", group_names=["g"])
         review.steps._run_holistic_phase(job, 4, state, incremental=True)
@@ -196,7 +150,7 @@ class TestScanRecordsPhases:
         assert scan.reason == "incremental review"
 
     def test_a_reused_scan_records_exists(self, tmp_path, monkeypatch):
-        job = _job(tmp_path)
+        job = pipeline_job(tmp_path)
         monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
         monkeypatch.setattr(review.steps, "reuse_scan", lambda *a: PhaseResult())
         Path(phase_output_path(job.review_file, Phase.SCOUT)).write_text("{}")
@@ -210,7 +164,7 @@ class TestScanRecordsPhases:
 
 class TestGroupRecordsPhases:
     def test_no_group_records_the_skip(self, tmp_path, monkeypatch):
-        job = _job(tmp_path, **_BIG_PR)
+        job = pipeline_job(tmp_path, **BIG_PR)
         job.skip_phases = frozenset({Phase.GROUP})
         job.preflight = PreflightData(
             diff="", commit_log="", file_contents={}, file_permissions={},
@@ -232,7 +186,7 @@ class TestGroupRecordsPhases:
         assert group.reason == "--no-group"
 
     def test_recovery_groups_record_resumed(self, tmp_path, monkeypatch):
-        job = _job(tmp_path, **_BIG_PR)
+        job = pipeline_job(tmp_path, **BIG_PR)
         job.preflight = PreflightData(
             diff="", commit_log="", file_contents={}, file_permissions={},
             instructions_md="", architecture_md="",
@@ -267,7 +221,7 @@ class TestGroupRecordsPhases:
 
 class TestDisproveGateRecordsPhases:
     def test_gate_off_records_the_reason(self, tmp_path, monkeypatch):
-        job = _job(tmp_path)
+        job = pipeline_job(tmp_path)
         job.skip_phases = frozenset({Phase.DISPROVE})
         state = PipelineState(head_sha="abc", group_names=["g"])
         monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)

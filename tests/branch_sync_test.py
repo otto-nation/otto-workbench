@@ -191,7 +191,7 @@ def test_a_branch_whose_name_is_a_prefix_of_a_remote_ref_is_new(tmp_path, monkey
     captured: dict = {}
 
     def fake_push(wt_path, *, gated, owner_check, sha="", branch="", remote="origin",
-                  args=(), trail=None):
+                  args=(), trail=None, base_ref=""):
         captured["args"] = tuple(args)
         return _pushed(PushStatus.PUSHED, branch)
 
@@ -222,7 +222,7 @@ def test_no_verify_reaches_the_push_args(tmp_path, monkeypatch):
     wt, _ = _repo(tmp_path)
     captured: dict = {}
 
-    def fake_push(wt_path, *, gated, owner_check, sha="", branch="", remote="origin", args=(), trail=None):
+    def fake_push(wt_path, *, gated, owner_check, sha="", branch="", remote="origin", args=(), trail=None, base_ref=""):
         captured["gated"] = gated
         captured["args"] = tuple(args)
         captured["branch"] = branch
@@ -248,7 +248,7 @@ def test_first_push_sets_upstream_in_args(tmp_path, monkeypatch):
     wt, _ = _repo(tmp_path)
     captured: dict = {}
 
-    def fake_push(wt_path, *, gated, owner_check, sha="", branch="", remote="origin", args=(), trail=None):
+    def fake_push(wt_path, *, gated, owner_check, sha="", branch="", remote="origin", args=(), trail=None, base_ref=""):
         captured["args"] = tuple(args)
         captured["gated"] = gated
         return _pushed(PushStatus.PUSHED, branch)
@@ -265,7 +265,7 @@ def test_ahead_push_does_not_set_upstream(tmp_path, monkeypatch):
     _commit(wt, "feat: add more", "more.txt")
     captured: dict = {}
 
-    def fake_push(wt_path, *, gated, owner_check, sha="", branch="", remote="origin", args=(), trail=None):
+    def fake_push(wt_path, *, gated, owner_check, sha="", branch="", remote="origin", args=(), trail=None, base_ref=""):
         captured["args"] = tuple(args)
         return _pushed(PushStatus.PUSHED, branch)
 

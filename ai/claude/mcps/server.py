@@ -458,6 +458,83 @@ def _first_chars(text: str) -> str:
     return text[:ERROR_EXCERPT_CHARS] + "…"
 
 
+@dataclass(frozen=True)
+class _ToolAnswer:
+    """A script run, interpreted for the MCP client."""
+
+    text: str
+    is_error: bool
+    structured: dict | None = None
+
+
+def _ok_codes(schema: dict, arguments: dict) -> set[int]:
+    """Exit codes this call treats as an answer, not a tool error.
+
+    The `pr` tool is one schema with a ``command`` argument; each subcommand's
+    codes live in ``input_schema["x-contracts"]``. A schema without that
+    extension keeps the top-level ``ok_exit_codes`` union.
+    """
+    contracts = (schema.get("input_schema") or {}).get("x-contracts") or {}
+    sub = arguments.get("command")
+    contract = contracts.get(sub) if isinstance(sub, str) else None
+    listed = (contract.get("ok_exit_codes") if contract is not None
+              else schema.get("ok_exit_codes")) or []
+    return {0} | set(listed)
+
+
+def _joined_streams(result: core.proc.CmdResult) -> str:
+    parts = [result.stdout.strip(), result.stderr.strip()]
+    return "\n".join(p for p in parts if p)
+
+
+def _answer_tool_call(
+    name: str, schema: dict, arguments: dict, result: core.proc.CmdResult,
+) -> _ToolAnswer:
+    """Map a script's streams and exit onto MCP content.
+
+    The TIMEOUT check sits ahead of ok_exit_codes, so a schema listing 124
+    among its own codes cannot turn an expired budget into a success.
+    """
+    if result.returncode == core.proc.TIMEOUT_RETURNCODE:
+        return _ToolAnswer(
+            text=f"Tool execution timed out ({TOOL_CALL_BUDGET}s)",
+            is_error=True,
+        )
+
+    if result.returncode not in _ok_codes(schema, arguments):
+        error_text = result.stderr.strip() or f"Exit code {result.returncode}"
+        return _ToolAnswer(text=error_text, is_error=True)
+
+    if result.returncode != 0:
+        return _ToolAnswer(
+            text=_joined_streams(result) or "(no output)", is_error=False)
+
+    extracted = _extract_json(result.stdout)
+    json_output, parsed = extracted if extracted else (None, None)
+
+    if schema.get("output_schema") is not None:
+        # A client validates the answer against the schema tools/list
+        # advertised and raises before the caller sees any of it, so a tool
+        # that declares one has to answer with structured content or with
+        # an error that names itself.
+        if not isinstance(parsed, dict):
+            excerpt = _first_chars(
+                result.stdout.strip() or result.stderr.strip())
+            return _ToolAnswer(
+                text=(f"{name} declares an output schema but printed no JSON "
+                      f"object: {excerpt}"),
+                is_error=True,
+            )
+        return _ToolAnswer(
+            text=json_output, is_error=False, structured=parsed)
+
+    if json_output:
+        return _ToolAnswer(text=json_output, is_error=False)
+
+    output = result.stdout.strip() or result.stderr.strip()
+    return _ToolAnswer(text=output or "(no output)", is_error=False)
+
+
 # ── MCP Server ────────────────────────────────────────────────────────────
 
 
@@ -528,53 +605,15 @@ def create_server() -> RunningServer:
         result = await asyncio.to_thread(
             _run_script, [script] + cli_args, TOOL_CALL_BUDGET,
         )
-
-        # Ahead of ok_exit_codes, so a schema listing 124 among its own codes
-        # cannot turn an expired budget into a success the client acts on.
-        if result.returncode == core.proc.TIMEOUT_RETURNCODE:
-            return CallToolResult(
-                content=[TextContent(type="text", text=(
-                    f"Tool execution timed out ({TOOL_CALL_BUDGET}s)"))],
-                isError=True,
-            )
-
-        ok_codes = {0} | set(schema.get("ok_exit_codes", []))
-        if result.returncode not in ok_codes:
-            error_text = result.stderr.strip() or f"Exit code {result.returncode}"
-            return CallToolResult(
-                content=[TextContent(type="text", text=error_text)],
-                isError=True,
-            )
-
-        extracted = _extract_json(result.stdout)
-        json_output, parsed = extracted if extracted else (None, None)
-
-        if schema.get("output_schema") is not None:
-            # A client validates the answer against the schema tools/list
-            # advertised and raises before the caller sees any of it, so a tool
-            # that declares one has to answer with structured content or with
-            # an error that names itself.
-            if not isinstance(parsed, dict):
-                return CallToolResult(
-                    content=[TextContent(type="text", text=(
-                        f"{name} declares an output schema but printed no JSON object: "
-                        f"{_first_chars(result.stdout.strip() or result.stderr.strip())}"
-                    ))],
-                    isError=True,
-                )
-            return CallToolResult(
-                content=[TextContent(type="text", text=json_output)],
-                structuredContent=parsed,
-            )
-
-        if json_output:
-            return CallToolResult(
-                content=[TextContent(type="text", text=json_output)],
-            )
-
-        output = result.stdout.strip() or result.stderr.strip()
+        answer = _answer_tool_call(name, schema, arguments, result)
+        extra = {}
+        if answer.is_error:
+            extra["isError"] = True
+        if answer.structured is not None:
+            extra["structuredContent"] = answer.structured
         return CallToolResult(
-            content=[TextContent(type="text", text=output or "(no output)")],
+            content=[TextContent(type="text", text=answer.text)],
+            **extra,
         )
 
     server.add_request_handler("tools/list", PaginatedRequestParams, handle_list_tools)

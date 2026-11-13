@@ -98,6 +98,20 @@ def test_schema_carries_exit_codes_and_remote_effects():
     doc = core.command_contract.schema(_contract())
     assert doc["exit_codes"][3] == {"code": 3, "name": "conflicts", "meaning": "conflicts"}
     assert doc["remote_effects"][0]["trigger"] == "--go"
+    assert doc["ok_exit_codes"] == [0, 3]
+
+
+@pytest.mark.parametrize("code, ok", [
+    (ExitCode.OK, True),
+    (ExitCode.CONFLICTS, True),
+    (ExitCode.REFUSED, True),
+    (ExitCode.FAILURE, False),
+    (ExitCode.USAGE, False),
+    (ExitCode.TEMPFAIL, False),
+    (ExitCode.CANCELLED, False),
+])
+def test_ok_marks_a_state_the_caller_acts_on(code, ok):
+    assert core.command_contract.ExitOutcome(code, "x").ok is ok
 
 
 def test_coverage_accepts_an_exact_partition():

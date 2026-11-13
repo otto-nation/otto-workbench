@@ -291,7 +291,7 @@ def test_the_union_schema_still_declares_no_output_contract():
 def test_rebase_carries_the_exit_codes_that_are_not_failures():
     """A refusal and a conflict are answers, and a consumer must not read
     either as the command having broken."""
-    assert cli.schema.subcommand_schema("rebase")["ok_exit_codes"] == [3, 4]
+    assert cli.schema.subcommand_schema("rebase")["ok_exit_codes"] == [0, 3, 4]
 
 
 def test_a_contracted_subcommand_schema_carries_exits_and_remote_effects():
@@ -306,6 +306,7 @@ def test_the_union_schema_carries_contracts_inside_input_schema():
     assert set(contracts) >= {"rebase", "push"}
     assert contracts["push"]["exit_codes"][0] == {"code": 0, "name": "ok",
                                                   "meaning": "pushed, and origin holds HEAD"}
+    assert contracts["rebase"]["ok_exit_codes"] == [0, 3, 4]
 
 
 @pytest.mark.parametrize("command", ["status", "fix", "gc"])

@@ -42,6 +42,10 @@ REFERENCE_ANCHOR = "docs/ai-automation.md#pr-command-contracts"
 # The exits every command can produce: success, a failure, and argparse's own.
 _REQUIRED_EXITS = (ExitCode.OK, ExitCode.FAILURE, ExitCode.USAGE)
 
+# Outcomes that report a state the caller acts on, not a failure. 1, 2 and 75
+# are never in this set.
+_OK_CODES = (ExitCode.OK, ExitCode.CONFLICTS, ExitCode.REFUSED)
+
 
 @dataclass(frozen=True)
 class FlagGroup:
@@ -84,11 +88,21 @@ class NextStep:
 
 @dataclass(frozen=True)
 class ExitOutcome:
-    """What one exit code means for this command, and what to do after it."""
+    """What one exit code means for this command, and what to do after it.
+
+    ``ok`` marks an outcome that reports a state the caller acts on, not a
+    failure. ExitCode.OK is always ok. Every outcome with exit 3 (CONFLICTS)
+    or 4 (REFUSED) is ok. 1, 2 and 75 are not. Derived from ``code`` so the
+    rule has one owner rather than a flag set per outcome.
+    """
 
     code: ExitCode
     meaning: str
     next_steps: tuple[NextStep, ...] = ()
+
+    @property
+    def ok(self) -> bool:
+        return self.code in _OK_CODES
 
 
 @dataclass(frozen=True)
@@ -344,6 +358,7 @@ def schema(contract: CommandContract) -> dict:
         "remote_effects": [{"trigger": e.trigger, "writes": e.writes, "where": e.where,
                             "how": e.how, "on_refusal": e.on_refusal}
                            for e in contract.remote_effects],
+        "ok_exit_codes": sorted({int(o.code) for o in contract.exits if o.ok}),
     }
 
 

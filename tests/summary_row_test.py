@@ -11,7 +11,7 @@ if str(LIB_DIR) not in sys.path:
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
 from review_threads_support import _no_published_summary, _published_summary  # noqa: E402
-from conftest import git_in, git_out
+from conftest import git_in, git_out  # noqa: E402
 import core.markdown
 import pr.attribution
 import pr.summary_model

@@ -109,12 +109,14 @@ export function timesText(row) {
   const out = [];
   for (const [name, t] of [['created', row.created_at], ['started', row.started_at], ['finished', row.finished_at]]) {
     const ms = toMs(t);
-    if (ms != null) out.push(`${name} ${new Date(ms).toLocaleTimeString()}`);
+    if (ms != null) out.push(`${name} ${new Date(ms).toLocaleString()}`);
   }
   return out.join(' · ');
 }
 
-export function logTailArgv(path, n = 80) {
+export const LOG_TAIL_LINES = 80;
+
+export function logTailArgv(path, n = LOG_TAIL_LINES) {
   return ['tail', '-n', String(n), path];
 }
 

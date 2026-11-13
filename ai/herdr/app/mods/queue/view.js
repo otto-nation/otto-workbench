@@ -4,7 +4,7 @@ import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import {
-  liveCounts, isLive, stateKind, ageText, rowTitle, rowMeta, commandText, timesText,
+  liveCounts, isLive, stateKind, ageText, rowTitle, rowMeta, commandText, timesText, LOG_TAIL_LINES,
 } from "./_lib/queue.js";
 import { tailLines } from "./_lib/output.js";
 import { friendlyError } from "./_lib/scope.js";
@@ -53,7 +53,7 @@ function renderLog(row, log, id) {
   if (!row.log_path) return placeholder("No log yet");
   if (log == null) return placeholder("Loading log…");
   if (log.error) return errorLine(log.error);
-  const lines = tailLines(log.text ?? "", 80);
+  const lines = tailLines(log.text ?? "", LOG_TAIL_LINES);
   if (!lines.length) return placeholder(isLive(row.state) ? "No output yet" : "No output");
   return type(inset({ scroll: false }).text_color(theme().foreground), "code")
     .child(selectableCode(`queue-log-${id}`, lines, LAYOUT.bodyMaxH));

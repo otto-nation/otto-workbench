@@ -380,6 +380,12 @@ def write_unchanged_review(job: ReviewJob) -> None:
         _carried_record(job.prior), group_count=0, summary_note=NO_CHANGES_SUMMARY,
         file_count=job.pr.changed_files,
     )
+    # ceiling: the prior sidecar's gaps are carried, not recomputed — an
+    # incremental record keeps no triage for carried groups, so there is
+    # nothing to recompute from. A sidecar written before coverage_gaps existed
+    # carries as gap-free. Upgrade trigger: if a pre-coverage sidecar is still
+    # being re-reviewed once `review.archive_keep` rounds have rotated past it,
+    # mark a missing field as unknown and withhold Approve on it.
     _publish(job, record, coverage=job.prior.meta.coverage_gaps)
 
 

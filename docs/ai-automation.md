@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 895 -->
+<!-- doc-budget: 920 -->
 
 # AI Automation
 
@@ -590,7 +590,12 @@ next write overwrites the edit; nothing reads it back.
   and their dispositions, questions for the author, what the reviewer
   verified sound, file triage, agent failures, static analysis — is the
   record's ([`review/record.py`](ai-libraries.md#reviewrecordpy)).
-- **What the run was** — head SHA, mode, status, dates, generator, and the models its agents ran on (read once from the usage ledger) — is `meta.json`'s; the header at the top of `review.md` is rendered from it, and the posted comment ends with the same `Models:` line when the comment has anything else to say.
+- **What the run was** — head SHA, mode, status, dates, generator, the models
+  its agents ran on (read once from the usage ledger), the phases that ran or
+  were skipped and why, and any coverage gaps — is `meta.json`'s; the header
+  at the top of `review.md` is rendered from it, and the posted comment ends
+  with the same `Models:` line (and a `Phases:` line beside it when phases
+  were recorded) when the comment has anything else to say.
 - **A finding's disposition** — open, fixed, declined, skipped, unreached,
   falsified — replaces the checkbox and annotation ledgers.
   `review-orchestrate --track` files the findings a fix pass left skipped or
@@ -672,6 +677,17 @@ capped at 8 KB, and synthesis sees it.
 
 Module detail: [`review/focus.py`](ai-libraries.md#reviewfocuspy).
 
+### When a re-review is independent of its prior
+
+A non-incremental run with a prior — same HEAD, a different `--focus`, or an
+unreachable prior SHA — is an independent full review. Prior findings are
+listed for continuity only, so IDs, sids and declines carry over; that
+review's checks are not evidence. The prior Summary and Agent Failures are
+never shown to a re-review.
+
+Module detail: [`review/prompt.py`](ai-libraries.md#reviewpromptpy),
+[`review/prompt_prior.py`](ai-libraries.md#reviewprompt_priorpy).
+
 ### How a review's verdict is decided
 
 `ReviewVerdict` owns the three verdicts in both spellings: the word the line
@@ -689,6 +705,12 @@ run ended and its mode:
 - A partial run keeps Request changes / Needs discussion and adds "Review
   incomplete"; where it would approve it states no verdict, because an
   incomplete run cannot vouch that nothing blocks.
+- A PR review whose File Triage misses a reviewed non-generated file, or
+  leaves a requested focus area unassessed, states no verdict where it would
+  approve (`**No verdict.** Approve withheld — incomplete coverage: …`) and
+  names the gaps. A blocking verdict stands with "Coverage incomplete".
+  Self-reviews are unaffected. The harness checks a triage entry exists, not
+  that a file was read; a missing entry gets one repair turn.
 
 Open means not fixed: declined, skipped and unreached findings still count, and
 the line counts declined ones apart. Nits and idioms never count.

@@ -6,6 +6,12 @@ re-review is a no-op, size the review to choose a pipeline, run the phases,
 file open findings, and run the fix pass when asked. `cli.review_orchestrate`
 is the command over this; the phases themselves are `review.pipeline` and
 `review.steps`, and what a phase is lives in `review.phases`.
+
+Stdout is one JSON object: `review_file`, `session_log`, `mode` (the pipeline
+that ran: `multi` or `single`), and `selected_pipeline` (what sizing chose).
+A one-group multi run hands off to the single agent — `mode` is then `single`
+while `selected_pipeline` stays `multi` — and emits a `pipeline_handoff` trail
+event.
 """
 
 # doc-group: pipeline

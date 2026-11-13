@@ -24,7 +24,7 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `queue`, `qu
 
 ## Trying models
 
-- A `Models` popover (`prs/model_picker.js`) sits in the PR detail's action bar and in the Batch form's Options. One text field per phase, blank meaning the configured model; the set values show as text beside the button. Overrides are per run and session-only: `_lib/model_overrides.js` turns them into `pr --phase-model PHASE=MODEL`, which `pr` validates (unknown phase, bad model, a review phase on a light or Haiku model), so a bad value comes back as that run's own error. Saved models are `otto-workbench config model`, not this UI
+- A `Models` popover (`prs/model_picker.js`) sits in the PR detail's action bar and in the Batch form's Options. Choices come from `pr models --json` as an inline searchable list per phase (Configured, Tiers, Enabled in Pi, then by provider); blank / Configured uses the configured model. Free text stays as Custom… and as the fallback when `pr` is older, times out, or returns bad JSON. The set values show as text beside the button. Overrides are per run and session-only: `_lib/model_overrides.js` turns them into `pr --phase-model PHASE=MODEL`, which `pr` validates (unknown phase, bad model, a review phase on a light or Haiku model), so a bad value comes back as that run's own error. Saved models are `otto-workbench config model`, not this UI
 - `REVIEW_PHASES` / `BATCH_PHASES` must name phases `pr` knows; `tests/herdr_app_mods_lib_model_overrides.bats` checks them against the registry. Only Review, Re-run, Recover and Batch carry the flags: posting and dismissing run no agent
 - A batch resumed with `pr batch resume` does not replay its overrides
 

@@ -6,7 +6,7 @@ import { filterOn } from "./_lib/columns.js";
 import { hcBatchArgv, parseRunReply, prKey } from "./_lib/launch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
 import { BATCH_PHASES, phaseModelFlags } from "./_lib/model_overrides.js";
-import { ModelPicker } from "./model_picker.js";
+import { ModelPicker, fetchChoices } from "./model_picker.js";
 
 // How often a launched terminal is looked at until its run starts or the terminal ends, and how
 // much of its output is read: run_started follows one item_queued line per PR, so it stays well
@@ -40,7 +40,10 @@ export class BatchLauncher {
     this.autoPublish = false;
     this.rebaseBehind = false;
     // Per-run model overrides for the phases a batch runs; session-only, not saved.
-    this.models = new ModelPicker(acx, BATCH_PHASES, "batch-models");
+    this.models = new ModelPicker(acx, BATCH_PHASES, "batch-models", () => {
+      const ctx = (this.workflows.machinesOf?.() ?? [])[0] ?? {};
+      return fetchChoices(exec, { on: ctx.on ?? null, cwd: ctx.cwd });
+    });
     this.launching = false;
     this.note = null;
     this.terminals = new Map();

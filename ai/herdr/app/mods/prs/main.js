@@ -11,9 +11,14 @@ import { readReview, loadFilesIncremental, loadPatch } from "./_lib/board_data.j
 import { patchRows, summarize } from "./_lib/diff.js";
 import { switchArgv, parseSwitch, openForReviewState, spaceFor } from "./_lib/worktree.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
+import { REVIEW_PHASES, withPhaseModels } from "./_lib/model_overrides.js";
+import { ModelPicker } from "./model_picker.js";
 import { actionLabel, writesGitHub } from "./_lib/batch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
 import { statsText } from "./_lib/pr_status.js";
+
+// The detail actions that run agents; posting and dismissing only talk to GitHub.
+const RUNS_MODELS = new Set(["review", "rerun", "recover"]);
 
 export default class PrsBoard extends Board {
   init(p, cx) {
@@ -36,6 +41,8 @@ export default class PrsBoard extends Board {
     this.diff = null;
     this.opening = false;
     super.init(p, cx);
+    // Per-run model overrides for a review launched from the detail; session-only, not saved.
+    this.models = new ModelPicker(this.acx, REVIEW_PHASES, "review-models");
     this.workflows.onRun = (cmd) => this.runBatchCommand(cmd);
     this.workflows.onTerminal = () => this.openTerminal();
   }
@@ -120,7 +127,9 @@ export default class PrsBoard extends Board {
       let res;
       try {
         const argv = hcRunArgv({
-          repo: d.repo, number: d.number, action: action.id, cwd, on, argv: action.argv,
+          repo: d.repo, number: d.number, action: action.id, cwd, on,
+          argv: RUNS_MODELS.has(action.id)
+            ? withPhaseModels(action.argv, this.models.values(), REVIEW_PHASES) : action.argv,
         });
         res = parseRunReply(await exec("hc", argv, {}));
       } catch (err) {
@@ -321,6 +330,7 @@ export default class PrsBoard extends Board {
     if (prev && (prev.repo !== this.detail.repo || prev.number !== this.detail.number)) {
       this.openStamp = null; this.confirm = null; this.note = null; this.live = null; this.finishedId = null;
       this.output = null; this.tab = "history"; this.openFile = null; this.diff = null; this.opening = false;
+      this.models.clear();
     }
     if (this.pendingTab) {
       this.tab = this.pendingTab;
@@ -350,6 +360,7 @@ export default class PrsBoard extends Board {
         onAction: (a) => this.onAction(a, cx),
         onConfirm: () => { const a = this.confirm; this.confirm = null; this.launch(a, cx); this.acx.notify(); },
         onCancel: () => { this.confirm = null; this.acx.notify(); },
+        trailing: this.models.render(),
       }),
       outputPanel: this.output && renderOutput({ ...this.output, live: this.live === this.output.terminal }, {
         onHide: () => { this.output = null; this.acx.notify(); },

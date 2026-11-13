@@ -496,7 +496,7 @@ The global `commit-msg` hook is advisory (`git commit --no-verify` / `-n` skips 
 
 ### Which model each phase runs on
 
-`otto-workbench config phases [--json] [DIR]` reports each phase's model and thinking level, and which setting answered. `DIR` names another repo. Example: `otto-workbench config phases --json`. Exit 0 when the config loads (unset tiers are data), 1 when a file cannot be read, 2 on usage. JSON schema and source layers: [`agent/phase_report.py`](ai-libraries.md#agentphase_reportpy). Precedence: [`agent/phases.py`](ai-libraries.md#agentphasespy). Review phases never run on the light tier or a Haiku model; the same page says what stops the run.
+`otto-workbench config phases [--json] [DIR]` reports each phase's model and thinking level, and which setting answered. `DIR` names another repo. Example: `otto-workbench config phases --json`. Exit 0 when the config loads (unset tiers are data), 1 when a file cannot be read, 2 on usage. JSON schema and source layers: [`agent/phase_report.py`](ai-libraries.md#agentphase_reportpy). Precedence: [`agent/phases.py`](ai-libraries.md#agentphasespy). Review phases never run on the light tier or a Haiku model; the same page says what stops the run. To try a model for one run without saving it, pass `pr --phase-model PHASE=MODEL …` (repeatable; the same layer as `WORKBENCH_AI_<PHASE>_MODEL`, so `--model` outranks it). To save one, `otto-workbench config model scout google-vertex/gemini-3.1-pro-preview:medium [--project|--container]` (a phase or a tier; `--unset` clears it; the review floor applies; `--container` suits trying models out).
 
 ### Usage ledger
 

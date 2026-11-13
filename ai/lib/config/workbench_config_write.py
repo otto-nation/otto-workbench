@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -508,4 +509,60 @@ def _set_value_with_pyyaml(
     text = yaml_dump(data)
     if had_header:
         text = f"{CONFIG_HEADER}\n{text}"
-    path.write_text(text)
+    _replace_atomically(path, text)
+
+
+def _replace_atomically(path: Path, text: str) -> None:
+    """Write *text* to a sibling temp file and rename it over *path*.
+
+    A truncating write that dies midway leaves a half-written config, which
+    every repo on the machine then fails to load.
+    """
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        tmp.write_text(text)
+        core.serde.replace_file(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def unset_value(key: str, path: Path) -> bool:
+    """Remove one dotted key from the config file *path*; False when it was not there.
+
+    The inverse of ``set_value``, for undoing an experiment without editing
+    YAML. A key is checked against the schema first, so a typo is refused
+    rather than reported as already absent. A parent mapping the removal empties
+    is pruned too.
+    """
+    check = check_key(key)
+    if not check.ok:
+        raise ConfigKeyError(f"not editing {path}: {check.reason}")
+    if not path.is_file():
+        return False
+    if not shutil.which("yq"):
+        # ceiling: removal needs yq, which keeps the hand-authored file's comments;
+        # add a PyYAML path once an environment without yq must unset keys.
+        raise ConfigError(f"yq is required to remove {key}; edit {path} by hand instead")
+    data = read_yaml(path)
+    chain = [data]
+    parts = key.split(".")
+    for part in parts[:-1]:
+        nxt = chain[-1].get(part)
+        if not isinstance(nxt, dict):
+            return False
+        chain.append(nxt)
+    if parts[-1] not in chain[-1]:
+        return False
+    expr = "del(.{})".format(key)
+    for depth in range(len(parts) - 1, 0, -1):
+        expr += " | del(.{} | select(length == 0))".format(".".join(parts[:depth]))
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        shutil.copyfile(path, tmp)
+        result = config.workbench_config.run_yq(["-i", expr, str(tmp)])
+        if result.returncode != 0:
+            raise ConfigError(f"could not remove {key} from {path}: {result.stderr.strip()}")
+        core.serde.replace_file(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+    return True

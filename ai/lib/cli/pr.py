@@ -35,7 +35,9 @@ import os
 import sys
 from pathlib import Path
 
+import agent.phases
 import cli.boundary
+import config.workbench_config
 import cli.dispatch
 import cli.locks
 import cli.needs
@@ -64,6 +66,7 @@ import pr.sync
 import pr.push_intent
 import core.cli_reference
 import core.command_contract
+import core.errors
 import core.log
 import core.tool_parser
 import core.proc
@@ -240,7 +243,8 @@ def build_global_parser() -> argparse.ArgumentParser:
     from it, so the flags documented as global are the flags the first pass
     consumes — `--worktree` included, which no hand-written usage ever named.
     """
-    parser = argparse.ArgumentParser(prog=SCRIPT, add_help=False)
+    # The global parser scans the whole argv, so an abbreviation would swallow a subcommand's own flag, e.g. `board --phase`.
+    parser = argparse.ArgumentParser(prog=SCRIPT, add_help=False, allow_abbrev=False)
     parser.add_argument("--repo-dir", "--worktree", dest="repo_dir", metavar="path",
                         help="Git worktree to act on; detected from the current "
                              "directory when omitted")
@@ -258,6 +262,12 @@ def build_global_parser() -> argparse.ArgumentParser:
     parser.add_argument("--schema-version", dest="schema_version", metavar="n",
                         help="Serve a versioned JSON document on stdout instead of "
                              "a human table, where the command has a contract")
+    parser.add_argument("--phase-model", dest="phase_model", action="append",
+                        default=[], metavar="PHASE=MODEL",
+                        help="Run one phase on MODEL for this invocation only "
+                             "(repeatable); a tier name works too. Same layer as "
+                             "WORKBENCH_AI_<PHASE>_MODEL, so `--model` outranks it "
+                             "and a review phase still refuses a light model")
     add_trail_args(parser)
     return parser
 
@@ -631,6 +641,13 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     args.repo_dir = global_args.repo_dir
     args.branch = global_args.branch
     args.pr = global_args.pr
+    if global_args.phase_model and not args.help:
+        try:
+            os.environ.update(agent.phases.phase_model_overrides(
+                global_args.phase_model, config.workbench_config.load_config(args.repo_dir)))
+        except (core.errors.OperatorError, config.workbench_config.ConfigError) as exc:
+            print(f"{SCRIPT}: {exc}", file=sys.stderr)
+            return 2
 
     usage = _build_usage()
 

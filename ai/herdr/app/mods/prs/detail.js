@@ -24,7 +24,7 @@ function reviewInset(stamp, body) {
 
 // Enabled actions as buttons; when none is enabled, the first reason says why. A post action
 // asks first (confirm), because it writes to GitHub.
-export function renderActionBar(actions, { confirm, note, onAction, onConfirm, onCancel }) {
+export function renderActionBar(actions, { confirm, note, onAction, onConfirm, onCancel, trailing = null }) {
   const t = theme();
   if (confirm) {
     const c = confirm.confirm;
@@ -43,6 +43,7 @@ export function renderActionBar(actions, { confirm, note, onAction, onConfirm, o
     .border_b_1().border_color(t.border)
     .children(on.map((a) => button(`act-${a.id}`, a.label, () => onAction(a))))
     .when(!on.length && Boolean(why), (e) => e.child(caption(why.reason)))
+    .when(trailing != null, (e) => e.child(trailing))
     .when(Boolean(note), (e) => e.child(caption(note, dangerColor())));
 }
 
@@ -113,6 +114,7 @@ function runCard(r, { openStamp, bodyFor, onToggle }) {
     .child(h_flex().gap(SP.sm).items_center().child(statusText(r.post.status, r.post.label))
       .when(Boolean(r.healthStatus), (e) => e.child(statusText(r.healthStatus, r.health)))
       .when(Boolean(r.costText), (e) => e.child(caption(r.costText))))
+    .when(Boolean(r.modelsText), (e) => e.child(caption(r.modelsText)))
     .when(openStamp === r.stamp, (e) => e.child(reviewInset(r.stamp, bodyFor(r.stamp))));
 }
 

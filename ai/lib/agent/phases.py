@@ -97,7 +97,7 @@ class ReviewModelTooLight(core.errors.OperatorError):
             "google-vertex/gemini-3.1-pro-preview), or a tier other than light.")
 
 
-def _is_light_model(model_id: str) -> bool:
+def is_light_model(model_id: str) -> bool:
     return "haiku" in model_id.lower()
 
 
@@ -110,8 +110,48 @@ def _refuse_light_review(phase: Phase, resolved: ResolvedModel, allow_light: boo
     """
     if allow_light or PHASES[phase].domain is not PhaseDomain.REVIEW:
         return
-    if resolved.tier is Tier.LIGHT or _is_light_model(resolved.ref.id):
+    if resolved.tier is Tier.LIGHT or is_light_model(resolved.ref.id):
         raise ReviewModelTooLight(phase, resolved.key, resolved.ref.id)
+
+
+# ── Per-run overrides ────────────────────────────────────────────────────────
+
+
+class BadPhaseModel(core.errors.OperatorError):
+    """A ``--phase-model`` value that is not ``PHASE=MODEL`` for a real phase."""
+
+
+def phase_model_overrides(
+    specs: list[str], cfg: WorkbenchConfig | None = None, *, source: str = "--phase-model",
+) -> dict[str, str]:
+    """The ``WORKBENCH_AI_<PHASE>_MODEL`` entries *specs* (``PHASE=MODEL``) name.
+
+    Every spec is checked before any is returned: the phase must exist, the
+    model must parse (a tier name must be set), and a review phase must clear
+    the review floor — the same rule a configured model meets, so a per-run
+    override cannot reach what a saved one cannot. Later specs for one phase
+    win. The result is the environment layer, which ``--model`` still outranks.
+    """
+    cfg = _config(cfg)
+    out: dict[str, str] = {}
+    for spec in specs:
+        name, sep, value = spec.partition("=")
+        name, value = name.strip(), value.strip()
+        if not sep or not name or not value:
+            raise BadPhaseModel(f"{source} takes PHASE=MODEL, got '{spec}'")
+        try:
+            phase = Phase(name)
+        except ValueError:
+            known = ", ".join(p.value for p in Phase)
+            raise BadPhaseModel(f"{source} names no phase '{name}'. Phases: {known}") from None
+        where = f"{source} {name}"
+        ref = resolve(value, cfg.models, where=where)
+        if ref is None:
+            raise BadPhaseModel(f"{where}= names no model")
+        _refuse_light_review(
+            phase, ResolvedModel(ref, ModelLayer.PHASE_ENV, key=where, tier=named_tier(value)), False)
+        out[phase.model_env_key] = value
+    return out
 
 
 # ── Environment layers ───────────────────────────────────────────────────────

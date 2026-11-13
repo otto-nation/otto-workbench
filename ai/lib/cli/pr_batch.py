@@ -7,6 +7,7 @@
     pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
     pr batch status [RUN_ID] [--full] [--offline]   the run report (JSON)
     pr batch report [RUN_ID] [--offline] [--format json|md]         per-PR session commands
+    pr batch session RUN_ID [--json]           open the run's pi session (--json prints how)
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/report fall back to the newest run on the machine and say so on stderr.
 
@@ -80,6 +81,8 @@ CONTRACT = core.command_contract.CommandContract(
             "status/report", ("status run_id", "status --full", "status --list",
                                "status --offline", "report run_id",
                                "report --format", "report --offline")),
+        core.command_contract.FlagGroup(
+            "session", ("session run_id", "session --json")),
     ),
     remote_effects=(
         core.command_contract.RemoteEffect(
@@ -124,6 +127,8 @@ CONTRACT = core.command_contract.CommandContract(
             "the same, fast-forwarding a clean close"),
         core.command_contract.Example(
             "pr batch resume", "continue this checkout's covering run"),
+        core.command_contract.Example(
+            "pr batch session RUN_ID", "open the run's pi session in its checkout"),
     ),
     notes=(
         cli.contract_notes.PUSH_WAIT,
@@ -274,6 +279,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--format", choices=("json", "md"), default="",
                    help="Print JSON or markdown (default: one line per PR, then the report path)")
     cli.pr_batch_views.offline(p)
+    import cli.pr_batch_session
+    cli.pr_batch_session.add_session_parser(sub)
     return parser
 
 
@@ -685,6 +692,9 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
             return cli.pr_batch_requests.cmd_release(args, bin_dir)
         if args.command == "report":
             return cli.pr_batch_views.cmd_report(args)
+        if args.command == "session":
+            import cli.pr_batch_session
+            return cli.pr_batch_session.cmd_session(args)
         # status
         return cli.pr_batch_views.cmd_status(args)
     except batch.plan.PlanError as exc:

@@ -1380,6 +1380,7 @@ Rebase, CI, comments and (opt-in) self-review across my open PRs. A default run 
 - `pr batch run --checkout DIR` — rebase, ci, comments; drafted; no AI, no review
 - `pr batch run --checkout DIR --auto-publish ff` — the same, fast-forwarding a clean close
 - `pr batch resume` — continue this checkout's covering run
+- `pr batch session RUN_ID` — open the run's pi session in its checkout
 
 > Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > Batch declares NO_LOCK; 75 is not an exit. LockBusy on an item is exit 1 (fail), not TEMPFAIL. A default run never opens a decision.

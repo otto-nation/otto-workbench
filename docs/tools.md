@@ -1134,6 +1134,13 @@ Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [con
 | `--format` `<json\|md>` | Print JSON or markdown (default: one line per PR, then the report path). |
 | `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. Without it, a read runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), even while a driver holds the run. |
 
+**`pr batch session`** — Open a run's pi session, or print how to (--json)
+
+| Flag | Description |
+|------|-------------|
+| `<run-id>` | Run whose session to open. |
+| `--json` | Print {schema_version, session_id, name, cwd, argv, env} instead of starting pi; UIs open the session from this, never their own argv. |
+
 **`pr gc`** — Clean up stale PR artifacts
 
 Takes no flags.

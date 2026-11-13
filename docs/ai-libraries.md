@@ -9180,6 +9180,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
     pr batch status [RUN_ID] [--full] [--offline]   the run report (JSON)
     pr batch report [RUN_ID] [--offline] [--format json|md]         per-PR session commands
+    pr batch session RUN_ID [--json]           open the run's pi session (--json prints how)
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/report fall back to the newest run on the machine and say so on stderr.
 
@@ -9199,6 +9200,14 @@ A leaf: imported by `cli.pr_batch`, `cli.pr_batch_requests`, and
 Inbox-writing `pr batch` commands: cancel and release.
 
 Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
+
+### cli/pr_batch_session.py
+
+`pr batch session` and `pr batch note`: open a run's pi session, record a verdict in it.
+
+Beside `cli.pr_batch` so the dispatcher stays under the file-size cap. What a
+session is and what a note checks live in `batch.run_session`; this module
+parses, prints and maps exits.
 
 ### cli/pr_batch_views.py
 

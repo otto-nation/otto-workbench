@@ -88,6 +88,7 @@ class Owner:
 _PROC = Owner('core', 'proc', 'proc')
 _TRAIL = Owner('core', 'trail', 'trail')
 _REVIEW_BUDGET = Owner('review', 'budget', 'review.budget')
+_EXIT_CODES = Owner('core', 'exit_codes', 'ExitCode')
 
 # The constants this check holds the monopoly for, as (owner, name) under
 # ai/lib.  Their values are read from the modules themselves rather than
@@ -98,6 +99,12 @@ EXIT_OWNERS = (
     (_PROC, 'INTERRUPT_RETURNCODE'),
     (_PROC, 'MISSING_RETURNCODE'),
 )
+# IntEnum classes whose members are watched the same way.  0, 1 and 2 are
+# argparse's and the shell's; they stay unflagged.  A member whose value is
+# already in EXIT_OWNERS (CANCELLED aliases INTERRUPT_RETURNCODE) keeps the
+# first owner, so 130 still suggests proc.INTERRUPT_RETURNCODE alone.
+EXIT_ENUM_OWNERS = (_EXIT_CODES,)
+UNWATCHED_EXITS = {0, 1, 2}
 CAP_OWNERS = (
     (_PROC, 'DETAIL_LIMIT'),
     (_TRAIL, 'EXCERPT_LIMIT'),
@@ -162,6 +169,48 @@ def resolve_owners(repo_root: str, owners) -> dict[int, list[str]]:
                 f'{RED}✗{NC} {owner.display}.{name} is gone — this check watches '
                 f'a constant that no longer exists; update its owners table')
         by_value.setdefault(constants[name], []).append(f'{owner.display}.{name}')
+    return by_value
+
+
+def _is_int_enum(node: ast.ClassDef) -> bool:
+    for base in node.bases:
+        if isinstance(base, ast.Name) and base.id == 'IntEnum':
+            return True
+        if isinstance(base, ast.Attribute) and base.attr == 'IntEnum':
+            return True
+    return False
+
+
+@functools.cache
+def _enum_int_members(repo_root: str, owner: Owner) -> dict[str, int]:
+    """Integer-literal members of the IntEnum named by *owner.display*."""
+    path = os.path.join(repo_root, LIB_DIR, owner.package, f'{owner.file}.py')
+    with open(path) as f:
+        tree = ast.parse(f.read(), filename=path)
+    found: dict[str, int] = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef) or node.name != owner.display:
+            continue
+        if not _is_int_enum(node):
+            continue
+        for stmt in node.body:
+            found.update(_int_assignment(stmt))
+    return found
+
+
+def resolve_exits(repo_root: str) -> dict[int, list[str]]:
+    """EXIT_OWNERS plus IntEnum members, minus 0/1/2 and already-owned values."""
+    by_value = resolve_owners(repo_root, EXIT_OWNERS)
+    for owner in EXIT_ENUM_OWNERS:
+        members = _enum_int_members(repo_root, owner)
+        if not members:
+            raise SystemExit(
+                f'{RED}✗{NC} {owner.display} is gone — this check watches '
+                f'an IntEnum that no longer exists; update EXIT_ENUM_OWNERS')
+        for name, value in members.items():
+            if value in UNWATCHED_EXITS or value in by_value:
+                continue
+            by_value.setdefault(value, []).append(f'{owner.display}.{name}')
     return by_value
 
 
@@ -374,7 +423,7 @@ def main():
     args = parser.parse_args()
 
     repo_root = _WORKBENCH_DIR
-    exits = resolve_owners(repo_root, EXIT_OWNERS)
+    exits = resolve_exits(repo_root)
     caps = resolve_owners(repo_root, CAP_OWNERS)
 
     # Named files go through the same gate discovery applies, so a non-Python

@@ -34,11 +34,11 @@ bump(sys.argv[1], -1)
 
 
 class Room:
-    def __init__(self, admit=True, raises=None):
-        self._admit, self._raises = admit, raises
+    def __init__(self, admit=True, raises=None, slots=2):
+        self._admit, self._raises, self._slots = admit, raises, slots
 
     def limit(self, entry_class):
-        return 2
+        return self._slots
 
     def verdict(self, entry_class, running):
         if self._raises is not None:

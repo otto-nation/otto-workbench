@@ -105,26 +105,45 @@ def try_admit(root: Path, policy: Policy, entry_class: EntryClass) -> Admission:
         return _admit_locked(root, policy, entry_class)
 
 
-def _admit_locked(root: Path, policy: Policy, entry_class: EntryClass) -> Admission:
-    limit = max(1, policy.limit(entry_class))
-    free: list[Slot] = []
+def _release_all(slots: list[Slot]) -> None:
+    for slot in slots:
+        slot.release()
+
+
+def _collect_free(root: Path, entry_class: EntryClass, limit: int,
+                  free: list[Slot]) -> int:
     running = 0
     for index in range(limit):
         fd = _probe(root, entry_class, index)
         if fd is None:
             running += 1
-        elif free:
+            continue
+        if free:
             os.close(fd)
-        else:
-            free.append(Slot(entry_class, index, fd))
+            continue
+        free.append(Slot(entry_class, index, fd))
+    return running
+
+
+def _choose_slot(root: Path, policy: Policy, entry_class: EntryClass,
+                 limit: int, free: list[Slot]) -> Admission:
+    running = _collect_free(root, entry_class, limit, free)
     if not free:
         return Admission(None, f"all {limit} {entry_class.value} slots are taken")
-    try:
-        verdict = policy.verdict(entry_class, running)
-    except BaseException:
-        free[0].release()
-        raise
+    verdict = policy.verdict(entry_class, running)
     if not verdict.admit:
         free[0].release()
         return Admission(None, verdict.reason)
     return Admission(free[0], verdict.reason)
+
+
+def _admit_locked(root: Path, policy: Policy, entry_class: EntryClass) -> Admission:
+    limit = max(1, policy.limit(entry_class))
+    free: list[Slot] = []
+    # Probed fds sit in `free` before verdict runs. Release every one on any
+    # exception, including a KeyboardInterrupt during a later probe.
+    try:
+        return _choose_slot(root, policy, entry_class, limit, free)
+    except BaseException:
+        _release_all(free)
+        raise

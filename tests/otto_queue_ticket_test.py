@@ -27,7 +27,7 @@ import otto_queue.ticket  # noqa: E402
 import otto_queue.lease  # noqa: E402
 import otto_queue.slots  # noqa: E402
 from otto_queue.ledger import Ledger  # noqa: E402
-from otto_queue.model import LIVE_STATES, EntryKind, EntryState, NewEntry  # noqa: E402
+from otto_queue.model import LIVE_STATES, EntryClass, EntryKind, EntryState, NewEntry  # noqa: E402
 from otto_queue.ticket import TicketOutcome, TicketRequest, TicketResult  # noqa: E402
 from otto_queue_support import PEAK, Room, exit_argv, touch_argv  # noqa: E402
 
@@ -96,6 +96,47 @@ def test_force_runs_even_when_the_key_is_done(tmp_path):
     _run(touch_argv(tmp_path / "first"), idem_key="k")
     forced = _run(touch_argv(tmp_path / "second"), idem_key="k", force=True)
     assert forced.outcome is TicketOutcome.RAN and (tmp_path / "second").exists()
+
+
+def test_interrupt_after_admission_releases_the_slot(tmp_path, monkeypatch):
+    real_wait = otto_queue.ticket._Wait
+
+    def boom(end, slot=None):
+        if slot is not None:
+            raise KeyboardInterrupt
+        return real_wait(end, slot)
+
+    monkeypatch.setattr(otto_queue.ticket, "_Wait", boom)
+    result = _run(touch_argv(tmp_path / "ran"), policy=Room(slots=1))
+    assert result.outcome is TicketOutcome.CANCELLED
+    again = otto_queue.slots.try_admit(
+        otto_queue.paths.queue_root(), Room(slots=1), EntryClass.HEAVY)
+    assert again.admitted
+    again.slot.release()
+
+
+def test_interrupt_in_mark_running_releases_the_slot(tmp_path, monkeypatch):
+    def boom(_self, _entry_id, _pid):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(Ledger, "mark_running", boom)
+    result = _run(touch_argv(tmp_path / "ran"), policy=Room(slots=1))
+    assert result.outcome is TicketOutcome.CANCELLED
+    again = otto_queue.slots.try_admit(
+        otto_queue.paths.queue_root(), Room(slots=1), EntryClass.HEAVY)
+    assert again.admitted
+    again.slot.release()
+
+
+def test_joining_a_live_entry_times_out_without_cancelling_it(tmp_path):
+    ledger = Ledger.open()
+    held = ledger.resolve(NewEntry(argv=("x",), cwd="/", idem_key="k"), force=False, pid=os.getpid())
+    ledger.mark_running(held.entry.id, os.getpid())
+    result = _run(touch_argv(tmp_path / "ran"), idem_key="k", wait_s=0.3)
+    assert result == TicketResult(os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT, held.entry.id)
+    assert ledger.get(held.entry.id).state is EntryState.RUNNING
+    assert not (tmp_path / "ran").exists()
+    held.lease.release()
 
 
 def test_a_live_key_is_joined_and_its_status_returned(tmp_path):

@@ -87,3 +87,26 @@ def test_a_policy_that_raises_gives_the_slot_back(tmp_path):
     else:
         raise AssertionError("expected RuntimeError")
     assert otto_queue.slots.try_admit(tmp_path, policy, HEAVY).admitted
+
+
+def test_interrupt_during_the_second_probe_gives_the_slot_back(tmp_path, monkeypatch):
+    calls = {"n": 0}
+    real = otto_queue.slots._probe
+
+    def probe(root, entry_class, index):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise KeyboardInterrupt
+        return real(root, entry_class, index)
+
+    monkeypatch.setattr(otto_queue.slots, "_probe", probe)
+    try:
+        otto_queue.slots.try_admit(tmp_path, FakePolicy(slots=2), HEAVY)
+    except KeyboardInterrupt:
+        pass
+    else:
+        raise AssertionError("expected KeyboardInterrupt")
+    monkeypatch.setattr(otto_queue.slots, "_probe", real)
+    again = otto_queue.slots.try_admit(tmp_path, FakePolicy(slots=1), HEAVY)
+    assert again.admitted
+    again.slot.release()

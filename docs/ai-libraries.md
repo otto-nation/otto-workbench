@@ -4902,7 +4902,8 @@ the machine's budget, and runs once per idempotency key.
    with the same key or records a new `queued` row holding its lease. A
    matching `done` entry returns its recorded status without running. A
    matching live entry is joined: the ticket waits for it and returns its
-   status. `force` skips the match. A joined entry whose holder died is not a
+   status. Reaching `wait_s` while the holder is still live returns 75 without
+   cancelling it. `force` skips the match. A joined entry whose holder died is not a
    result: the ticket resolves again and, finding nothing live, runs the work
    itself.
 2. **Wait.** Every `POLL_S`, orphans are reaped, and only the oldest waiting

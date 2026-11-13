@@ -330,6 +330,7 @@ export default class PrsBoard extends Board {
     if (prev && (prev.repo !== this.detail.repo || prev.number !== this.detail.number)) {
       this.openStamp = null; this.confirm = null; this.note = null; this.live = null; this.finishedId = null;
       this.output = null; this.tab = "history"; this.openFile = null; this.diff = null; this.opening = false;
+      this.models.clear();
     }
     if (this.pendingTab) {
       this.tab = this.pendingTab;

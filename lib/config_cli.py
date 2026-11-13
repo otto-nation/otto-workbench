@@ -560,9 +560,14 @@ def _model_key(target: str, ref: str | None) -> str:
         raise config.workbench_config.ConfigError(
             f"'{target}' is neither a phase ({phases}) nor a tier ({tiers})") from None
     if ref is not None:
+        if ref in {t.value for t in Tier}:
+            raise config.workbench_config.ConfigError(
+                f"models.{target} takes a model id, not the tier name '{ref}'")
         parsed = agent.models.parse_ref(ref)
         if tier is not Tier.LIGHT and agent.phases.is_light_model(parsed.id):
-            raise agent.phases.ReviewModelTooLight(Phase.SINGLE, f"models.{target}", parsed.id)
+            raise config.workbench_config.ConfigError(
+                f"models.{target} cannot be '{parsed.id}': Haiku is too light, "
+                "and review phases read their model from this tier")
     return f"models.{target}"
 
 
@@ -571,12 +576,14 @@ def _model(args: argparse.Namespace) -> int:
         print(f"{RED}✗{NC} give a model to set, or --unset to clear, not both or neither",
               file=sys.stderr)
         return 2
-    key = _model_key(args.target, args.ref)
+    root = None
     if args.project or args.container:
         root = _project_root()
         if root is None:
             print(f"{RED}✗{NC} --project and --container need a git repo", file=sys.stderr)
             return 1
+    key = _model_key(args.target, args.ref)
+    if root is not None:
         target = (config.workbench_config.container_config_path(root) if args.container
                   else config.workbench_config.project_config_path(root))
         if target is None:

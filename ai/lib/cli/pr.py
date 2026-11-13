@@ -38,7 +38,6 @@ from pathlib import Path
 import agent.phases
 import cli.boundary
 import config.workbench_config
-import core.errors
 import cli.dispatch
 import cli.locks
 import cli.needs
@@ -67,6 +66,7 @@ import pr.sync
 import pr.push_intent
 import core.cli_reference
 import core.command_contract
+import core.errors
 import core.log
 import core.tool_parser
 import core.proc
@@ -641,11 +641,11 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     args.repo_dir = global_args.repo_dir
     args.branch = global_args.branch
     args.pr = global_args.pr
-    if global_args.phase_model:
+    if global_args.phase_model and not args.help:
         try:
             os.environ.update(agent.phases.phase_model_overrides(
                 global_args.phase_model, config.workbench_config.load_config(args.repo_dir)))
-        except core.errors.OperatorError as exc:
+        except (core.errors.OperatorError, config.workbench_config.ConfigError) as exc:
             print(f"{SCRIPT}: {exc}", file=sys.stderr)
             return 2
 

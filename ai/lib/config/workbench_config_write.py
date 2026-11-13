@@ -553,24 +553,16 @@ def unset_value(key: str, path: Path) -> bool:
         chain.append(nxt)
     if parts[-1] not in chain[-1]:
         return False
-    result = config.workbench_config.run_yq(["-i", f"del(.{key})", str(path)])
-    if result.returncode != 0:
-        raise ConfigError(f"could not remove {key} from {path}: {result.stderr.strip()}")
+    expr = "del(.{})".format(key)
     for depth in range(len(parts) - 1, 0, -1):
-        parent = ".".join(parts[:depth])
-        pruned = config.workbench_config.run_yq(
-            ["-i", f"del(.{parent} | select(length == 0))", str(path)])
-        if pruned.returncode != 0:
-            raise ConfigError(f"could not prune {parent} in {path}: {pruned.stderr.strip()}")
-    return True
-    if yaml is None:
-        raise ConfigError("neither yq nor PyYAML is available to write config")
-    del chain[-1][parts[-1]]
-    for depth in range(len(chain) - 1, 0, -1):
-        if chain[depth]:
-            break
-        del chain[depth - 1][parts[depth - 1]]
-    had_header = path.read_text().startswith(CONFIG_HEADER)
-    text = yaml_dump(data)
-    _replace_atomically(path, f"{CONFIG_HEADER}\n{text}" if had_header else text)
+        expr += " | del(.{} | select(length == 0))".format(".".join(parts[:depth]))
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        shutil.copyfile(path, tmp)
+        result = config.workbench_config.run_yq(["-i", expr, str(tmp)])
+        if result.returncode != 0:
+            raise ConfigError(f"could not remove {key} from {path}: {result.stderr.strip()}")
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
     return True

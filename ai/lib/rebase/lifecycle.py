@@ -879,7 +879,7 @@ def rebase_success(
         repairable = list(dict.fromkeys(tally.files))
         landed = rebase_land.land_rebased(
             cwd, resolved_files=repairable or None, args=lease.args,
-            verify=verify, trail=trail,
+            verify=verify, trail=trail, base_ref=target_ref,
         )
         if landed.ok:
             tinfo(trail, "force_push", "force-pushed to remote", data={"sha": landed.sha})

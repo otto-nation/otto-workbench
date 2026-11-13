@@ -164,9 +164,11 @@ def _nesting_gate(wt: Path, base: str) -> bool:
     return False
 
 
-def _sync(wt: Path, branch: str, *, no_verify: bool, trail: Trail | None) -> bool:
+def _sync(wt: Path, branch: str, *, no_verify: bool, trail: Trail | None,
+          base: str = "") -> bool:
     result = pr.branch_sync.sync_branch(
         wt, branch, no_verify=no_verify, log=_say, trail=trail,
+        base_ref=f"{GIT_REMOTE}/{base}" if base else "",
     )
     # A failed push's message is its output, which `git.push.report` prints
     # with the headline and resume command; printing it here too doubled it.
@@ -239,7 +241,7 @@ def _publishable(
         return False
     if not _nesting_gate(wt, base):
         return False
-    return _sync(wt, branch, no_verify=opts.no_verify, trail=trail)
+    return _sync(wt, branch, no_verify=opts.no_verify, trail=trail, base=base)
 
 
 def _gh_create(wt: Path, title: str, body: str, base: str, draft: bool) -> int:

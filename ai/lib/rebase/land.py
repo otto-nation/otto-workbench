@@ -22,6 +22,7 @@ def land_rebased(
     verify: bool = True,
     trail: Trail | None = None,
     regen: str = REGEN_MESSAGE,
+    base_ref: str = "",
 ) -> git.land.LandResult:
     """Force-push the replayed branch, auto-recovering from a hook rejection.
 
@@ -43,7 +44,9 @@ def land_rebased(
     know. A default here would be a bare lease, and a bare lease is satisfied by
     the tool's own fetch — see `rebase.lease`.
 
-    `verify=False` pushes with `--no-verify`, for an operator who has already
+    `base_ref` is the local ref the replay sat on (`target_ref`), so the push
+    plan counts the branch's own commits rather than the base's newly arrived
+    ones. `verify=False` pushes with `--no-verify`, for an operator who has already
     read the hook's failure and judged it a flake or not the branch's doing.
     It also skips the AI repair: with no hook run there is no complaint to
     repair, and a refusal that does come back (a stale lease) is not one an
@@ -53,7 +56,7 @@ def land_rebased(
         args = ("--no-verify", *args)
     landed = git.land.land_head(
         cwd, gated=True, owner_check=gh.owner_hooks.refuse_outgoing,
-        args=tuple(args), trail=trail, regen=regen,
+        args=tuple(args), trail=trail, regen=regen, base_ref=base_ref,
     )
     # Only a refusal leaves something an agent could repair. A held, lost, or
     # unverified push says nothing is wrong with the worktree, and handing one to

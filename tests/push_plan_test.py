@@ -57,3 +57,64 @@ def test_push_prints_the_plan_before_git_runs(pushable, capsys):
     assert result.ok
     err = capsys.readouterr().err
     assert "Will push main to origin" in err
+
+
+def test_a_known_base_counts_only_commits_on_top_of_it(pushable):
+    """When origin is behind the base, the old remote..local count is too large."""
+    wt, _ = pushable
+    remote_tip = git.client.head_sha(cwd=wt)
+    _commit(wt, "base-1")
+    _commit(wt, "base-2")
+    git_in(wt, "update-ref", "refs/heads/base", "HEAD")
+    _commit(wt, "ours-1")
+    _commit(wt, "ours-2")
+    local = git.client.head_sha(cwd=wt)
+    args = (f"--force-with-lease=refs/heads/main:{remote_tip}",)
+    line = git.push.plan_line(
+        wt, sha=local, branch="main", remote="origin", args=args,
+        base_ref="refs/heads/base",
+    )
+    a = git.client.abbrev
+    assert line == (
+        f"Will force-push main to origin: remote {a(remote_tip)} -> local "
+        f"{a(local)}, lease on {a(remote_tip)}, 2 commits on top of "
+        f"refs/heads/base, pre-push hook runs"
+    )
+    without = git.push.plan_line(
+        wt, sha=local, branch="main", remote="origin", args=args,
+    )
+    assert "4 commits," in without
+    assert "on top of" not in without
+
+
+def test_no_base_keeps_the_lease_count(pushable):
+    wt, _ = pushable
+    remote_tip = git.client.head_sha(cwd=wt)
+    _commit(wt, "one")
+    _commit(wt, "two")
+    local = git.client.head_sha(cwd=wt)
+    args = (f"--force-with-lease=refs/heads/main:{remote_tip}",)
+    line = git.push.plan_line(wt, sha=local, branch="main", remote="origin", args=args)
+    a = git.client.abbrev
+    assert line == (f"Will force-push main to origin: remote {a(remote_tip)} -> local "
+                    f"{a(local)}, lease on {a(remote_tip)}, 2 commits, pre-push hook runs")
+    assert "on top of" not in line
+
+
+def test_an_unknown_base_falls_back_to_the_lease_count(pushable):
+    wt, _ = pushable
+    remote_tip = git.client.head_sha(cwd=wt)
+    _commit(wt, "one")
+    _commit(wt, "two")
+    local = git.client.head_sha(cwd=wt)
+    args = (f"--force-with-lease=refs/heads/main:{remote_tip}",)
+    without = git.push.plan_line(
+        wt, sha=local, branch="main", remote="origin", args=args,
+    )
+    missing = git.push.plan_line(
+        wt, sha=local, branch="main", remote="origin", args=args,
+        base_ref="refs/heads/no-such-base",
+    )
+    assert missing == without
+    assert "2 commits," in missing
+    assert "on top of" not in missing

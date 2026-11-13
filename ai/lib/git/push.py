@@ -590,14 +590,18 @@ def push(
     remote: str = "origin",
     args: Sequence[str] = (),
     trail: Trail | None = None,
+    base_ref: str = "",
 ) -> PushResult:
     """Push, then confirm the remote moved. See the module docstring.
 
     `sha` and `branch` default to the worktree's HEAD and current branch. `args`
     is passed through to `git push` — `--force-with-lease` for a rebase, or an
-    explicit remote and refspec for a first push. `gated` consults the
-    publishing gate and is required of every caller, as is `owner_check`, which
-    runs after the gate and raises to refuse a push whose commits may not go.
+    explicit remote and refspec for a first push. `base_ref` is a local ref the
+    branch sits on (the rebase target, the PR base); `plan_line` counts commits
+    on top of it when it resolves, and callers that do not know one omit it.
+    `gated` consults the publishing gate and is required of every caller, as is
+    `owner_check`, which runs after the gate and raises to refuse a push whose
+    commits may not go.
 
     The gate is asked before the two local reads, not after: it answers whether
     anything may happen at all, and a held run should leave the repository
@@ -619,7 +623,9 @@ def push(
     # Said before git runs, so a reader sees what is about to move — which tip,
     # under which lease, with or without the hook — while it can still be stopped.
     # core.log.info always prints to stderr; it is not gated on a quiet flag.
-    core.log.info(plan_line(wt_path, sha=sha, branch=branch, remote=remote, args=argv))
+    core.log.info(plan_line(
+        wt_path, sha=sha, branch=branch, remote=remote, args=argv, base_ref=base_ref,
+    ))
 
     r = _run_push(wt_path, argv, trail)
     output = _push_output(r)
@@ -675,18 +681,35 @@ def _lease_on(args: Sequence[str]) -> str | None:
 
 
 def plan_line(wt_path: str | Path, *, sha: str, branch: str, remote: str,
-              args: Sequence[str]) -> str:
-    """One line saying what the push about to run will do, for a reader to stop on."""
+              args: Sequence[str], base_ref: str = "") -> str:
+    """One line saying what the push about to run will do, for a reader to stop on.
+
+    `base_ref` is counted with local refs only. After a rebase the remote-tracking
+    tip is still the pre-rebase SHA, so counting that..local includes the base's
+    newly arrived commits; when the caller names a base that resolves here, the
+    count is what the branch adds on top of it. An unknown or empty base keeps
+    the lease-or-tracked count.
+    """
     tracked = _tracked(wt_path, remote, branch)
     lease = _lease_on(args)
-    base = lease if lease else tracked
-    if base:
-        count = git.client.out("rev-list", "--count", f"{base}..{sha}", cwd=wt_path)
+    on_top = ""
+    range_base = lease if lease else tracked
+    # Local refs only: a fetch here would be a network round trip on a line that
+    # only needs to say how many commits the push is about to send.
+    if base_ref and git.client.ok(
+        "rev-parse", "--verify", "--quiet", f"{base_ref}^{{commit}}", cwd=wt_path,
+    ):
+        count = git.client.out("rev-list", "--count", f"{base_ref}..{sha}", cwd=wt_path)
+        on_top = base_ref
+    elif range_base:
+        count = git.client.out("rev-list", "--count", f"{range_base}..{sha}", cwd=wt_path)
     else:
         count = git.client.out("rev-list", "--count", sha, "--not",
                                f"--remotes={remote}", cwd=wt_path)
     n = (f"{count} commit{'' if count == '1' else 's'}" if count.isdigit()
          else "commit count unknown (rev-list could not count it; is the lease SHA known locally?)")
+    if count.isdigit() and on_top:
+        n = f"{n} on top of {on_top}"
     verb = "force-push" if _forced(args) else "push"
     remote_at = git.client.abbrev(tracked) or "(none)"
     parts = [f"Will {verb} {branch} to {remote}: remote {remote_at} -> local "

@@ -371,6 +371,7 @@ def _retry_after_regen(
     args: Sequence[str],
     trail: Trail | None,
     dirty_before: set[str],
+    base_ref: str = "",
 ) -> PushResult | None:
     """Commit what a pre-push hook regenerated and push once more, or None.
 
@@ -422,7 +423,10 @@ def _retry_after_regen(
     # Reported whichever way it went: a second push happened, and the operator
     # who watched the first one refused is owed the same line about this one —
     # including the resume command, when it fell short too.
-    result = git.push.push(wt_path, gated=gated, owner_check=owner_check, args=args, trail=trail)
+    result = git.push.push(
+        wt_path, gated=gated, owner_check=owner_check, args=args, trail=trail,
+        base_ref=base_ref,
+    )
     git.push.report(result, wt_path)
     return result
 
@@ -478,6 +482,7 @@ def _recover(
     owner_check: git.push.OwnerCheck | None,
     args: Sequence[str],
     trail: Trail | None,
+    base_ref: str = "",
 ) -> LandResult:
     """Account for a commit made outside the caller's own attempt."""
     sha = _moved_head(wt_path, before)
@@ -488,7 +493,10 @@ def _recover(
         return LandResult(CommitStatus.PUSHED, sha=sha)
 
     core.log.info(f"Recovered {git.client.abbrev(sha)} — committed outside the pass")
-    result = git.push.push(wt_path, gated=gated, owner_check=owner_check, sha=sha, args=args, trail=trail)
+    result = git.push.push(
+        wt_path, gated=gated, owner_check=owner_check, sha=sha, args=args, trail=trail,
+        base_ref=base_ref,
+    )
     git.push.report(result, wt_path)
     return _landed(wt_path, sha, result)
 
@@ -600,6 +608,7 @@ def _push_and_retry(
     args: Sequence[str],
     trail: Trail | None,
     regen: str | None,
+    base_ref: str = "",
 ) -> LandResult:
     """Push *sha*, recovering once from a pre-push hook that rewrote the tree.
 
@@ -617,7 +626,10 @@ def _push_and_retry(
     # no way to tell a file the hook rewrote from one the operator had already
     # edited, and the regeneration commit would carry both.
     dirty_before = _modified(wt_path) if regen is not None else set()
-    result = git.push.push(wt_path, gated=gated, owner_check=owner_check, sha=sha, args=args, trail=trail)
+    result = git.push.push(
+        wt_path, gated=gated, owner_check=owner_check, sha=sha, args=args, trail=trail,
+        base_ref=base_ref,
+    )
     git.push.report(result, wt_path)
     # Only a repairable refusal can be a regenerating hook: a push the remote
     # dropped left nothing behind to commit, and `push` has already asked the
@@ -625,8 +637,10 @@ def _push_and_retry(
     if not result.repairable or regen is None:
         return _landed(wt_path, sha, result)
 
-    retried = _retry_after_regen(wt_path, regen, gated=gated, owner_check=owner_check, args=args,
-                                 trail=trail, dirty_before=dirty_before)
+    retried = _retry_after_regen(
+        wt_path, regen, gated=gated, owner_check=owner_check, args=args,
+        trail=trail, dirty_before=dirty_before, base_ref=base_ref,
+    )
     if retried is not None and (retried.ok or retried.output.strip()):
         return _landed(wt_path, sha, retried)
     return _landed(wt_path, sha, result)
@@ -643,6 +657,7 @@ def land(
     trail: Trail | None = None,
     regen: str | None = None,
     recover_from: str | None = None,
+    base_ref: str = "",
 ) -> LandResult:
     """Commit the work in *wt_path* and push it, and say what became of both.
 
@@ -650,7 +665,8 @@ def land(
     whether the push consults the publishing gate and is required, the same way
     `push.push` requires it, and `owner_check` likewise (see there). `paths` scopes the commit — `None` for the whole
     tree, a list for exactly those files. `args` is passed through to `git push`.
-    `regen` is the commit message for files a pre-push hook rewrote, and asks for
+    `base_ref` is the local ref `push.plan_line` counts on top of, when the caller
+    knows one. `regen` is the commit message for files a pre-push hook rewrote, and asks for
     the retry that recovers from one; `recover_from` is HEAD before the caller's
     work began, and asks for a commit made outside the caller to be accounted
     for. Both are described in the module docstring, and both are off by default.
@@ -663,11 +679,15 @@ def land(
     if made.outcome is not None:
         if recover_from is None:
             return made.outcome
-        return _recover(wt_path, made.outcome, recover_from,
-                        gated=gated, owner_check=owner_check, args=args, trail=trail)
+        return _recover(
+            wt_path, made.outcome, recover_from,
+            gated=gated, owner_check=owner_check, args=args, trail=trail,
+            base_ref=base_ref,
+        )
 
     return _push_and_retry(
-        wt_path, made.sha, gated=gated, owner_check=owner_check, args=args, trail=trail, regen=regen,
+        wt_path, made.sha, gated=gated, owner_check=owner_check, args=args,
+        trail=trail, regen=regen, base_ref=base_ref,
     )
 
 
@@ -679,6 +699,7 @@ def land_head(
     args: Sequence[str] = (),
     trail: Trail | None = None,
     regen: str | None = None,
+    base_ref: str = "",
 ) -> LandResult:
     """Push the commit HEAD already points at, and say what became of it.
 
@@ -694,4 +715,5 @@ def land_head(
     return _push_and_retry(
         wt_path, git.client.head_sha(cwd=wt_path),
         gated=gated, owner_check=owner_check, args=args, trail=trail, regen=regen,
+        base_ref=base_ref,
     )

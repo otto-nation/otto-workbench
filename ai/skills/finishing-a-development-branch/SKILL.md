@@ -103,7 +103,7 @@ pass did, and work through whatever it left open as your human partner directs
 if it is neither, re-run (`self-review.md` § The Review Covers One Commit).
 
 Skip only if your human partner explicitly says to. Then pass their words to
-`pr create --draft --skip-review "<the user's words>"` in step 4; `pr create`
+`pr create --draft --skip-review "<their reason>"` in step 4; `pr create`
 refuses an unreviewed HEAD otherwise.
 
 ## Step 4: Open the PR

@@ -27,7 +27,7 @@ import otto_queue.ledger  # noqa: E402
 import otto_queue.paths  # noqa: E402
 from otto_queue.ledger import Ledger, Outcome  # noqa: E402
 from otto_queue.model import MAX_JOB_ATTEMPTS, EntryClass, EntryKind, EntryState, NewEntry, retry_delay  # noqa: E402
-from otto_queue_support import set_columns
+from otto_queue_support import set_columns  # noqa: E402
 
 # Accepts one entry of argv[3]'s kind, runs it, prints its id, then waits to be killed.
 HOLDER = textwrap.dedent("""

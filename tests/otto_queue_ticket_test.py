@@ -29,7 +29,7 @@ import otto_queue.slots  # noqa: E402
 from otto_queue.ledger import Ledger  # noqa: E402
 from otto_queue.model import LIVE_STATES, EntryKind, EntryState, NewEntry  # noqa: E402
 from otto_queue.ticket import TicketOutcome, TicketRequest, TicketResult  # noqa: E402
-from otto_queue_support import PEAK, Room, exit_argv, touch_argv
+from otto_queue_support import PEAK, Room, exit_argv, touch_argv  # noqa: E402
 
 PY = sys.executable
 

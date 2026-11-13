@@ -13,7 +13,7 @@
 # The interval is read back first so a machine running a non-default one keeps
 # it.
 #
-# Idempotent: a timer that already has the key is left alone, and a machine that
+# Idempotent: a timer that already has OnStartupSec or OnActiveSec is left alone, and a machine that
 # never installed the timer has nothing to re-render.
 
 migration_20261107_maintenance_timer_startup() {
@@ -26,7 +26,7 @@ migration_20261107_maintenance_timer_startup() {
   # template, so a timer installed later already has the key.
   [[ -f "$timer" ]] || return "$MIGRATION_NOOP"
 
-  if grep -q '^OnStartupSec=' "$timer"; then
+  if grep -qE '^(OnStartupSec|OnActiveSec)=' "$timer"; then
     return "$MIGRATION_NOOP"
   fi
 

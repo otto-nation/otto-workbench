@@ -5,8 +5,9 @@ This module owns whether a run has a claim source, the input fingerprint, the
 run-context check composed with focus coverage, turning a writer's reports
 into record entries after the check, the degraded-check warning, and
 `settle`. Renderers take claims off the record and never import it.
-`writer_check` and `check_warning` also cover behaviours: they are checked
-and warned here, but owned by `review/behaviours.py`.
+`writer_check` and `check_warning` also cover behaviours and required-file
+triage: they are checked and warned here, but owned by `review/behaviours.py`
+and `review/coverage.py`.
 
 The record is tri-state. `None` is not assessed — a writer that did not run
 and whose claims could not be carried, or a legacy `review.json`. A check
@@ -118,6 +119,7 @@ from core.phases import Mode
 import review.behaviours
 import review.budget
 import review.convergence
+import review.coverage
 import review.focus
 import review.merge
 import review.verify
@@ -257,12 +259,12 @@ def without_vanished_links(record: ReviewRecord) -> ReviewRecord:
 def writer_check(
     job: ReviewJob,
 ) -> Callable[[ReviewArtifact], tuple[IngestError, ...]]:
-    """The writer's whole run-context `check=`: focus, claims, and behaviours.
+    """The writer's whole run-context `check=`: focus, claims, behaviours, triage.
 
     `job` supplies the requested focus, whether derived areas are required,
-    and whether a claim or behaviour source exists. Caps and cite rules live
-    in `claims_problems` and `behaviours_problems`, so an over-cap list
-    degrades rather than rejects.
+    whether a claim or behaviour source exists, and the required-file set.
+    Caps and cite rules live in `claims_problems` and `behaviours_problems`,
+    so an over-cap list degrades rather than rejects.
     """
     def check(artifact: ReviewArtifact) -> tuple[IngestError, ...]:
         return review.focus.coverage_problems(
@@ -273,6 +275,8 @@ def writer_check(
         ) + review.behaviours.behaviours_problems(
             artifact.behaviours,
             has_behaviour_source=review.behaviours.has_behaviour_source(job),
+        ) + review.coverage.triage_problems(
+            artifact, review.coverage.required_triage(job),
         )
     return check
 
@@ -301,12 +305,13 @@ def claims_of(
 
 
 def check_warning(errors: Sequence[IngestError], job: ReviewJob) -> str:
-    """Warning after a writer's second failed check, with claims and behaviours clauses.
+    """Warning after a writer's second failed check, with claims, behaviours, triage clauses.
 
     `errors` are the ingest errors left after the repair turn. When any is a
     claims kind, the warning adds that prior claims are carried, or that
     claims are published as not assessed when they cannot be. When any is a
     behaviours kind, it adds that behaviours are published as not assessed.
+    When any is missing triage, it adds that those files withhold Approve.
     """
     more = []
     if any(e.kind in CLAIM_KINDS for e in errors):
@@ -318,6 +323,8 @@ def check_warning(errors: Sequence[IngestError], job: ReviewJob) -> str:
         more.append(clause)
     if any(e.kind in review.behaviours.BEHAVIOUR_KINDS for e in errors):
         more.append("behaviours are published as not assessed")
+    if any(e.kind is IngestErrorKind.MISSING_TRIAGE for e in errors):
+        more.append("files with no triage entry withhold Approve")
     return review.focus.check_warning(errors, more=more)
 
 

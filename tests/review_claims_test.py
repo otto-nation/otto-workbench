@@ -165,6 +165,7 @@ def test_input_sha_projects_title_and_body_only():
 
 BAD_CLAIM = IngestError(IngestErrorKind.BAD_CLAIM, 0, "d", at="$.claims")
 MISSING_COVERAGE = IngestError(IngestErrorKind.MISSING_COVERAGE, 0, "d", at="$.focus")
+MISSING_TRIAGE = IngestError(IngestErrorKind.MISSING_TRIAGE, 0, "d", at="$.triage")
 
 
 def test_check_warning():
@@ -179,6 +180,10 @@ def test_check_warning():
     assert "published as not assessed; claims are published as not assessed" in warning
     only_focus = (MISSING_COVERAGE,)
     assert check_warning(only_focus, job) == review.focus.check_warning(only_focus)
+    only_triage = (MISSING_TRIAGE,)
+    assert check_warning(only_triage, job) == (
+        f"{MISSING_TRIAGE.render()} — files with no triage entry withhold Approve"
+    )
     carryable = _job(body="x")
     carryable.prior = SimpleNamespace(
         record=SimpleNamespace(claims=(claim(),)),

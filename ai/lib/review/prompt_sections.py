@@ -302,7 +302,8 @@ def _build_omitted_guidance(
         return " Some large files were excluded — they are not reviewed at this effort level."
     return (
         ' First, read all files listed under "Files not pre-collected"'
-        " in a single parallel batch."
+        " in a single parallel batch and give each of them a File Triage"
+        " entry saying what you read of it."
     )
 
 

@@ -12,6 +12,8 @@ from gh.types import PRContext, PRMetadata
 import review.coverage
 import review.verdict
 import review.outcome
+from review.artifacts import ReviewArtifact
+from review.ingest import IngestErrorKind
 from review.paths import read_review_meta
 from review.record import FocusSource, TriageEntry
 from review.store import StoredReview
@@ -67,6 +69,35 @@ class TestRequiredTriage:
     def test_self_mode_requires_nothing(self, tmp_path):
         job = _job(tmp_path, ["a.py", "b.py"], mode=Mode.SELF)
         assert review.coverage.required_triage(job) == ()
+
+
+class TestTriageProblems:
+    def test_lists_exactly_the_missing_required_paths(self):
+        art = ReviewArtifact(summary="s", triage=(TriageEntry("a.py", "ok"),))
+        errors = review.coverage.triage_problems(
+            art, ("a.py", "b.py", "omitted.go"),
+        )
+        assert len(errors) == 1
+        err = errors[0]
+        assert err.kind is IngestErrorKind.MISSING_TRIAGE
+        assert err.at == "$.triage"
+        assert err.detail == "no triage entry for b.py, omitted.go"
+
+    def test_empty_when_complete(self):
+        art = ReviewArtifact(summary="s", triage=(
+            TriageEntry("a.py", "ok"),
+            TriageEntry("./b.py", "ok"),
+            TriageEntry("`c.py`", "ok"),
+            TriageEntry("extra.py", "ok"),
+        ))
+        assert review.coverage.triage_problems(art, ("a.py", "b.py", "c.py")) == ()
+
+    def test_empty_for_self_mode(self, tmp_path):
+        job = _job(tmp_path, ["a.py"], mode=Mode.SELF)
+        art = ReviewArtifact(summary="s", triage=())
+        assert review.coverage.triage_problems(
+            art, review.coverage.required_triage(job),
+        ) == ()
 
 
 class TestCoverageGaps:

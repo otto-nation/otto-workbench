@@ -6,7 +6,7 @@ One builder: `build` is the whole report.
 |---|---|
 | `run` | `id`, `status`, `active` (a scheduler is driving it), `exit_hint`, `hint`, `pending_requests` (requests waiting in its inbox), `failed_requests` (`name` and `error` of each request a drain rejected) |
 | `counts` | items by status |
-| `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
+| `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses, `wait_reason` |
 | `github` | `pr batch status` only: what GitHub says about the run's repos now (see `batch.live`) |
 | `sessions` | `pr batch report` only: per-PR findings and session commands (`batch.session_report`) |
 
@@ -68,7 +68,7 @@ def _item_view(item: Item) -> dict:
     return {"pr": item.key, "status": item.status.value, "worktree": item.worktree,
             "branch": item.branch, "remote_sha": item.remote_sha,
             "pre_rebase_head": item.pre_rebase_head, "stacked_on": item.stacked_on,
-            "base_ref": item.base_ref,
+            "base_ref": item.base_ref, "wait_reason": item.wait_reason,
             "steps": {r.step.value: r.status.value for r in item.steps}}
 
 

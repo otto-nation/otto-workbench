@@ -15,6 +15,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.steps  # noqa: E402
+import cli.queue_gate  # noqa: E402
 import core.serde  # noqa: E402
 from batch.model import Run, RunStatus, Step  # noqa: E402
 
@@ -34,6 +35,15 @@ def test_no_step_argv_carries_track(step, ai, fork_point, wait):
     argv = batch.steps.step_argv(step, "pr", "/wt", remote_sha="h", wait=wait,
                                  fork_point=fork_point, ai=ai)
     assert "--track" not in argv and "--track-all" not in argv
+
+
+@pytest.mark.parametrize("step", list(Step))
+@pytest.mark.parametrize("ai", [True, False])
+def test_queues_itself_matches_the_cli_registry(step, ai):
+    argv = batch.steps.step_argv(step, "/b/pr", "/wt", ai=ai)
+    command = "ci" if Path(argv[0]).name == "ci-check" else argv[1]
+    queued = cli.queue_gate.class_for(command, argv) is not None
+    assert queued is batch.steps.queues_itself(step, ai)
 
 
 def test_v1_state_without_with_ai_uses_ai_for_every_step():

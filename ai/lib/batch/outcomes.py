@@ -27,12 +27,14 @@ A `failed` finding's `reason` is one of these, or a publish refusal from
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
 import batch.publish
+import core.proc
 import core.quota_throttle
 import gh.owners
 import git.client
@@ -340,6 +342,19 @@ def _commit_refused(lines: Sequence[str]) -> bool:
     return any(COMMIT_FAILED_MARKER in _clean(l).lower() for l in lines)
 
 
+def _wait_ended(exit_code: int, log_tail: Sequence[str]) -> bool:
+    """Whether *exit_code* is a stop or a ticket tempfail, not a step failure.
+
+    A waiting `pr` exits 128+N on SIGINT/SIGTERM/SIGHUP, and 75 when the
+    otto-queue found no room. Neither is a defect in the step's own work.
+    75 that already matches a failure marker (lock busy, quota) stays a failure.
+    """
+    if exit_code - 128 in core.proc.STOP_SIGNALS:
+        return True
+    return (exit_code == os.EX_TEMPFAIL
+            and classify_failure(log_tail).reason is FailureReason.ERROR)
+
+
 def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
              log_tail: list[str], head_before: str = "", log_path: str = "",
              fixing: bool = True) -> StepResult:
@@ -350,11 +365,15 @@ def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
     *head_before* is the HEAD the step's first attempt started from; the
     `Fix-Checks:` trailers are read from every commit after it.
     *log_path* is the step's log, recorded on a failed decision.
+    A stop-signal exit or a ticket tempfail (75 with no recognised marker)
+    is interrupted, not a failed decision with a fix suggestion.
     """
     if step is Step.REBASE and exit_code == CONFLICTS_EXIT:
         return _needs(DecisionKind.REBASE_CONFLICT, [_rebase_payload(stdout, log_tail)])
     if step is Step.REBASE and exit_code == REFUSAL_EXIT:
         return _needs(DecisionKind.REBASE_REFUSED, [_rebase_payload(stdout, log_tail)])
+    if _wait_ended(exit_code, log_tail):
+        return StepResult(StepStatus.INTERRUPTED, [])
     if exit_code != 0:
         return _failed(exit_code, log_tail, log_path)
     if step in _FIXING_STEPS and _commit_refused(log_tail):

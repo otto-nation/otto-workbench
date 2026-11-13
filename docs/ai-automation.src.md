@@ -710,16 +710,7 @@ is spent). The error names the owning command; retry once that run finishes.
 
 ### pr and the otto-queue
 
-AI subcommands wait for an otto-queue slot before they take any lock, so a
-waiting `pr` holds nothing. The class is declared on the command's `queue=` in
-`cli.registry` (heavy, light, or none — not a table copied here). The wait
-shows as a labelled ticket (`pr comments --fix · repo#123`); `pr batch` supplies
-its own label. `--no-queue` or `WORKBENCH_PR_NO_QUEUE=1` skips the wait.
-A process that already holds `OTTO_QUEUE_ENTRY` (nested under another ticket)
-runs in place. Exit 75 means no slot came in time; 130 means the wait was
-cancelled (`otto-queue cancel`, the Herdr queue panel, or Ctrl-C). `ci-check`
-and `review` run bare queue the same way; `pr ci` / `pr review` / `pr fix`
-calling them in-process do not queue again.
+AI subcommands wait for an otto-queue slot before they take any lock, so a waiting `pr` holds nothing. The class is declared on the command's `queue=` in `cli.registry` (heavy, light, or none — not a table copied here). The wait shows as a labelled ticket (`pr comments --fix · repo#123`); `pr batch` supplies its own label. `--no-queue` or `WORKBENCH_PR_NO_QUEUE=1` skips the wait. A process that already holds `OTTO_QUEUE_ENTRY` (nested under another ticket) runs in place. Exit 75 means no slot came in time; 130 means the wait was cancelled (`otto-queue cancel`, the Herdr queue panel, or Ctrl-C). `ci-check` and `review` run bare queue the same way; `pr ci` / `pr review` / `pr fix` calling them in-process do not queue again.
 
 ### pr command contracts
 
@@ -825,14 +816,7 @@ stored waiting v1 run converts on `resume` (one-way). Report keys: `run` (`id`,
 `status`, `active`, `exit_hint`, `hint`, `pending_requests`, `failed_requests`),
 `counts`, `items` (non-terminal), `github`, `sessions` (`pr batch report` only).
 `resume` replays `--focus`. `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`.
-`github` is omitted under `--offline`; keys and checkout rules are in
-[`batch/live.py`](ai-libraries.md#batchlivepy). Step output stays in the run's
-`logs/`. Admission is [`batch/machine.py`](ai-libraries.md#batchmachinepy): `batch.pool_max`
-(2) caps concurrency, `batch.pool_default` (1) applies without host metrics, and
-`batch.mem_reserve`, `batch.cpu_pressure_max`, `batch.mem_pressure_max` gate on pressure.
-State lives under `~/.local/state/workbench/batch/<run-id>/`; `pr gc` removes
-finished runs and orphaned `refs/pr-batch/` namespaces
-([`batch/gc.py`](ai-libraries.md#batchgcpy)).
+`github` is omitted under `--offline`; keys and checkout rules are in [`batch/live.py`](ai-libraries.md#batchlivepy). Step output stays in the run's `logs/`. AI steps (review, comments, rebase/CI under `--with-ai`) start within `batch.pool_max` (2) and each wait on their own otto-queue ticket (`pr batch · <step> · <repo>#<n>`); a waiter shows `items[].wait_reason` and an `admission_wait` event, stays `running`, and a plain `pr batch cancel` (no `--kill`) SIGTERMs it. `--pool` still caps every live step, waiters included. Plain steps are still admitted by [`batch/machine.py`](ai-libraries.md#batchmachinepy) against `batch.pool_default` (1) without host metrics, plus `batch.mem_reserve`, `batch.cpu_pressure_max`, `batch.mem_pressure_max`. State lives under `~/.local/state/workbench/batch/<run-id>/`; `pr gc` removes finished runs and orphaned `refs/pr-batch/` namespaces ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
 
 ### pr status
 

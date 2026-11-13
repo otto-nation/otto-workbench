@@ -4282,12 +4282,14 @@ On macOS free memory comes from `vm_stat` (free, inactive and speculative
 pages); there is no pressure reading, so batch's `decide` still takes its
 `pool_default` path there.
 
-The host is shared by every batch driver on it, so the caller passes in what
-the others are running (`batch.machine`): their pending memory comes off the
-sample, and their live steps count against `batch.pool_default` where there
-are no host metrics. Whether a driver may start a step regardless — the floor
-slot — is the caller's to establish and pass as `floor`; `decide` no longer
-infers it from this run having nothing running.
+The host is shared by every batch driver on it for the steps batch still
+admits itself (non-AI: plain rebase, and CI without `--fix`). AI steps are
+queue entries. The caller passes in what the others are running
+(`batch.machine`): their pending memory comes off the sample, and their live
+non-AI steps count against `batch.pool_default` where there are no host
+metrics. Whether a driver may start a step regardless — the floor slot — is
+the caller's to establish and pass as `floor`; `decide` no longer infers it
+from this run having nothing running.
 
 It is also the queue's admission policy. `QueuePolicy` is what
 `otto_queue.slots` asks, so "is there room" has one owner — the `room`
@@ -4432,6 +4434,9 @@ directory the reader happens to be in.
 
 What every batch driver on this machine is running, so admission sees all of them.
 
+The registry counts the steps batch admits itself (non-AI); AI steps are
+admitted by the otto-queue.
+
 Each driver decides alone whether the host can take one more step
 (`batch.admission.decide`), but memory and CPU are the machine's, not the
 run's. Counting only its own steps, and always admitting a run's first one,
@@ -4569,6 +4574,18 @@ spawn a publish child: `--auto-publish ff` runs `commands[0]` when it is a
 plain `pr push --expect`, and `session_report` prints the planned argv.
 Closeout is a `closeout_owed` finding, not a post from this module.
 
+### batch/queue_wait.py
+
+Match live batch steps to otto-queue tickets they are waiting on.
+
+A step's process is the ticket process: `StepProcess.start` Popens the `pr`
+or `ci-check` shim, which execs Python in place, and the gate calls
+`run_ticket` in-process. The ticket row's `pid` is written in the same
+transaction that creates it, and a queued ticket holds its lease, so the pid
+is live and cannot have been reused. Matching `StepProcess.pid` against
+queued tickets is how the scheduler reports `wait_reason` without parsing
+log prose or adding a side protocol.
+
 ### batch/report.py
 
 The compact document `pr batch status` and a run's last line print.
@@ -4579,7 +4596,7 @@ One builder: `build` is the whole report.
 |---|---|
 | `run` | `id`, `status`, `active` (a scheduler is driving it), `exit_hint`, `hint`, `pending_requests` (requests waiting in its inbox), `failed_requests` (`name` and `error` of each request a drain rejected) |
 | `counts` | items by status |
-| `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
+| `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses, `wait_reason` |
 | `github` | `pr batch status` only: what GitHub says about the run's repos now (see `batch.live`) |
 | `sessions` | `pr batch report` only: per-PR findings and session commands (`batch.session_report`) |
 
@@ -4650,6 +4667,7 @@ The child processes a batch run spawns — `pr`, or `ci-check` for CI — and th
 Every step is its own process so concurrent steps share no interpreter state,
 and each gets a new session with stdin closed: no prompt in any child can
 reach a terminal, whether the batch runs under a server or in a shell.
+AI steps wait on their own otto-queue ticket rather than batch's host admission.
 
 ### batch/store.py
 
@@ -4901,7 +4919,7 @@ bound the count, and only the host check can race.
 Submit: hand a command to the worker as a job, or run it here when no worker can be started.
 
 `otto-queue submit` returns as soon as the job is queued: unattended work
-(scheduled maintenance now, `pr batch` steps next) outlives the process that
+(scheduled maintenance and its auto-tasks) outlives the process that
 asked for it.
 
 1. `Ledger.resolve` records a `queued` job, or answers from an entry with the

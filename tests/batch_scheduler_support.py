@@ -113,10 +113,11 @@ class Harness:
                  contains=None, dirty=None, rebasing=None, unpublished=None,
                  descends=None, commits=None, verbose=False,
                  machine=None, hold_tree=None, branch=None, focus=(),
-                 with_ai=None, rebase_when=batch.model.RebaseWhen.CONFLICTS):
+                 with_ai=None, rebase_when=batch.model.RebaseWhen.CONFLICTS,
+                 queue_waits=None):
         self.codes = codes or {}
         self.moves, self.stdouts = set(moves), stdouts or {}
-        self.spawned, self.events, self.live, self.max_live = [], [], 0, 0
+        self.spawned, self.envs, self.events, self.live, self.max_live = [], [], [], 0, 0
         self.published, self.publish_code = [], 0
         run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER),
                                       selected=selected, pool=pool,
@@ -148,7 +149,7 @@ class Harness:
             verbose=verbose, machine=machine, hold_tree=hold_tree,
             # The fake worktree for branch b is /wt/b, so its name is its branch.
             branch=branch or (lambda wt: Path(wt).name),
-            push=publish, tree=tree_fn)
+            push=publish, tree=tree_fn, queue_waits=queue_waits)
         self.sched = self._make()
 
     @property
@@ -210,6 +211,7 @@ class Harness:
         self.live += 1
         self.max_live = max(self.max_live, self.live)
         self.spawned.append(argv)
+        self.envs.append(dict(env) if env else {})
         return Proc()
 
     def kinds(self):

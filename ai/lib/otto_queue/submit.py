@@ -1,7 +1,7 @@
 """Submit: hand a command to the worker as a job, or run it here when no worker can be started.
 
 `otto-queue submit` returns as soon as the job is queued: unattended work
-(scheduled maintenance now, `pr batch` steps next) outlives the process that
+(scheduled maintenance and its auto-tasks) outlives the process that
 asked for it.
 
 1. `Ledger.resolve` records a `queued` job, or answers from an entry with the

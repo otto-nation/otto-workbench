@@ -299,6 +299,11 @@ def test_pr_help_documents_no_queue(capsys):
     assert "--no-queue" in capsys.readouterr().out
 
 
+def test_wait_s_accepts_inf(monkeypatch):
+    monkeypatch.setenv(otto_queue.ticket.WAIT_ENV, "inf")
+    assert cli.queue_gate._wait_s() == float("inf")
+
+
 def test_ci_check_gates_only_when_it_is_the_process(monkeypatch):
     seen = []
 

@@ -20,6 +20,7 @@ import core.proc
 import server
 from server import (
     WORKBENCH_DIR,
+    _answer_tool_call,
     _args_to_cli,
     _described,
     _extract_json,
@@ -123,6 +124,88 @@ class TestArgsToCLI:
         schema = {"properties": {"branch": {"type": "string"}}}
         args = _args_to_cli({"branch": None}, schema)
         assert args == []
+
+
+def _pr_call_schema(*, rebase_ok=(0, 3, 4), extra_ok=()):
+    """A `pr` tool schema whose rebase contract lists *rebase_ok*."""
+    return {
+        "name": "pr",
+        "_script": "/bin/pr",
+        "input_schema": {
+            "type": "object",
+            "properties": {"command": {"type": "string"}},
+            "x-contracts": {
+                "rebase": {"ok_exit_codes": list(rebase_ok) + list(extra_ok)},
+            },
+        },
+    }
+
+
+class TestContractExitCodes:
+    """A contracted non-zero exit is an answer, not an MCP error."""
+
+    def test_pr_rebase_exit_3_is_not_an_error_and_includes_stderr(self):
+        result = core.proc.CmdResult(
+            returncode=3,
+            stdout='{"status": "conflicts"}',
+            stderr="Next:\n  1. resolve each file hunk by hunk\n",
+        )
+        answer = _answer_tool_call(
+            "pr", _pr_call_schema(), {"command": "rebase"}, result)
+
+        assert answer.is_error is False
+        assert "Next:" in answer.text
+        assert "conflicts" in answer.text
+
+    def test_exit_1_is_still_an_error(self):
+        result = core.proc.CmdResult(returncode=1, stderr="pre-flight failed\n")
+        answer = _answer_tool_call(
+            "pr", _pr_call_schema(), {"command": "rebase"}, result)
+
+        assert answer.is_error is True
+        assert "pre-flight failed" in answer.text
+
+    def test_schema_without_x_contracts_behaves_as_before(self):
+        schema = {
+            "name": "echo",
+            "_script": "/bin/echo",
+            "input_schema": {"type": "object", "properties": {}},
+            "ok_exit_codes": [3],
+        }
+        listed = _answer_tool_call(
+            "echo", schema, {}, core.proc.CmdResult(returncode=3, stdout="paused"))
+        unlisted = _answer_tool_call(
+            "echo", schema, {}, core.proc.CmdResult(returncode=4, stderr="nope"))
+
+        assert listed.is_error is False
+        assert listed.text == "paused"
+        assert unlisted.is_error is True
+        assert "nope" in unlisted.text
+
+    def test_ok_nonzero_exit_with_output_schema_returns_structured(self):
+        schema = _pr_call_schema()
+        schema["output_schema"] = {"type": "object"}
+        result = core.proc.CmdResult(returncode=3, stdout='{"status": "conflicts"}')
+        answer = _answer_tool_call(
+            "pr", schema, {"command": "rebase"}, result)
+
+        assert answer.is_error is False
+        assert answer.structured == {"status": "conflicts"}
+
+    def test_unknown_or_missing_command_only_zero_is_ok(self):
+        result = core.proc.CmdResult(returncode=3, stderr="nope")
+        for args in ({"command": "bogus"}, {}):
+            answer = _answer_tool_call("pr", _pr_call_schema(), args, result)
+            assert answer.is_error is True
+
+    def test_timeout_is_still_an_error_even_if_listed_ok(self):
+        schema = _pr_call_schema(extra_ok=(core.proc.TIMEOUT_RETURNCODE,))
+        result = core.proc.CmdResult(returncode=core.proc.TIMEOUT_RETURNCODE)
+        answer = _answer_tool_call(
+            "pr", schema, {"command": "rebase"}, result)
+
+        assert answer.is_error is True
+        assert "timed out" in answer.text
 
 
 # ── Spawning ──────────────────────────────────────────────────────────────

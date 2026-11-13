@@ -62,6 +62,9 @@
               "name": "usage"
             }
           ],
+          "ok_exit_codes": [
+            0
+          ],
           "remote_effects": [
             {
               "how": "every step runs drafted \u2014 nothing is pushed or posted",
@@ -104,6 +107,9 @@
               "name": "usage"
             }
           ],
+          "ok_exit_codes": [
+            0
+          ],
           "remote_effects": []
         },
         "ci": {
@@ -128,6 +134,9 @@
               "meaning": "another pr run holds this branch or checkout; retry once it finishes",
               "name": "tempfail"
             }
+          ],
+          "ok_exit_codes": [
+            0
           ],
           "remote_effects": [
             {
@@ -168,6 +177,9 @@
               "meaning": "another pr run holds this branch or checkout; retry once it finishes",
               "name": "tempfail"
             }
+          ],
+          "ok_exit_codes": [
+            0
           ],
           "remote_effects": [
             {
@@ -216,6 +228,9 @@
               "name": "tempfail"
             }
           ],
+          "ok_exit_codes": [
+            0
+          ],
           "remote_effects": [
             {
               "how": "plain git push (never forced) via pr.branch_sync.sync_branch / git.push.push: git push --set-upstream origin <branch> [--no-verify] when origin has no refs/heads/<branch>; otherwise git push [--no-verify] origin <branch>. Then gh pr create --title \u2026 --body-file - --assignee @me --base <base> [--draft].",
@@ -256,6 +271,9 @@
               "name": "tempfail"
             }
           ],
+          "ok_exit_codes": [
+            0
+          ],
           "remote_effects": [
             {
               "how": "gh pr edit <n> --repo <repo> --body-file - via pr.describe._apply_body (the revision, and a follow-up projection ahead of the HEAD gate when follow-ups are filed). With --title, a second call: gh pr edit <n> --repo <repo> --title <title> via _apply_title. Gated by core.publishing.enabled(); --dry-run never writes.",
@@ -294,6 +312,10 @@
               "name": "tempfail"
             }
           ],
+          "ok_exit_codes": [
+            0,
+            4
+          ],
           "remote_effects": [
             {
               "how": "forwards --post to the review binary as --self --fix --post (not the pr review --post mode; same land as --self --fix --push in docs/ai-automation.md#pr-review-contract): git.land.land(gated=True) -> git.push.push, plain. Then pr ci --fix --post (docs/ai-automation.md#pr-ci-contract). Then pr describe --post (docs/ai-automation.md#pr-describe-contract). The comments pass is never run; a hint says to run pr comments --fix.",
@@ -327,6 +349,9 @@
               "name": "tempfail"
             }
           ],
+          "ok_exit_codes": [
+            0
+          ],
           "remote_effects": []
         },
         "push": {
@@ -351,6 +376,9 @@
               "meaning": "another pr run holds this branch or checkout; retry once it finishes",
               "name": "tempfail"
             }
+          ],
+          "ok_exit_codes": [
+            0
           ],
           "remote_effects": [
             {
@@ -401,6 +429,11 @@
               "meaning": "another pr run holds this branch or checkout; retry once it finishes",
               "name": "tempfail"
             }
+          ],
+          "ok_exit_codes": [
+            0,
+            3,
+            4
           ],
           "remote_effects": [
             {
@@ -468,6 +501,10 @@
               "name": "tempfail"
             }
           ],
+          "ok_exit_codes": [
+            0,
+            4
+          ],
           "remote_effects": [
             {
               "how": "review.publish.resolve prompts unless --no-post (or the review binary's --post, which pr review does not reach); then review.publish.post -> cli.review_post -> review.posting.post_review, a PENDING review with inline comments. --submit then review.publish.submit_pending as a COMMENT review. A self-review files no GitHub review (review.run.run_self_review).",
@@ -517,6 +554,9 @@
               "name": "usage"
             }
           ],
+          "ok_exit_codes": [
+            0
+          ],
           "remote_effects": []
         },
         "status": {
@@ -536,6 +576,9 @@
               "meaning": "bad pr-level flags",
               "name": "usage"
             }
+          ],
+          "ok_exit_codes": [
+            0
           ],
           "remote_effects": []
         }

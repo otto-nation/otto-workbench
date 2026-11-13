@@ -77,6 +77,10 @@ and record the gap in otto-nation/otto-nation.github.io's issue tracker.
 - The header line, progress, and strip appear only after 1s (`LOAD_DELAY_MS`); before that, empty boards stay muted "Loading…"
 - `hydrating` and `hydrated: false` come from `pr board`'s listing phase (CI loading in a row's presentation) until its status phase lands
 
+## Run output
+
+- Owner: `_lib/run_output.js` `outputModel` (status kinds from `_lib/status.js`, elapsed via `durationText`, last meaningful line, landed run). The panel auto-opens on a successful launch. Glyphs are static (no spinners). A finished review/rerun/recover swaps to the landed run (`reviewed_at >= startedMs`) with View review; the raw tail stays behind Show output. The running batch step shows the same one-line summary, from a 20-line preview on the existing 3 s timer.
+
 ## Checking and installing
 
 - Check an assembled copy, not the source tree: `_herdr_app_install_mods "$tmp"` then `herdr-app check "$tmp/mods/prs"` (source `lib/ui.sh`, `lib/constants.sh` and `ai/herdr/steps.sh` first)

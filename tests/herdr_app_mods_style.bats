@@ -33,6 +33,8 @@ teardown() {
 @test "load_status indicators are static: no spin, frames, loop, or transition" {
   run grep -nE '\.(spin|frames|loop|transition)\(' "$MODS/prs/load_status.js"
   [ "$status" -eq 1 ]
+  run grep -nE '\.(spin|frames|loop|transition)\(' "$MODS/prs/detail.js"
+  [ "$status" -eq 1 ]
 }
 
 @test "load_status uses SP.sm gap on status text" {

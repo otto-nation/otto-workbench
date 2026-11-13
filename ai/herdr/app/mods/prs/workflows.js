@@ -2,7 +2,7 @@
 import { exec, watchFolder } from "herdr";
 import {
   listArgv, statusArgv, reportArgv, logTailArgv, parseRunList, parseRunDoc, parseSessions,
-  stateChanged, laneOf,
+  stateChanged, laneOf, STEP_ORDER,
 } from "./_lib/batch.js";
 import { cancelArgv, runProgress } from "./_lib/batch_launch.js";
 import { invoke, readJson } from "./_lib/board_data.js";
@@ -44,10 +44,14 @@ export class Workflows {
     // The log path being read, so a slow tail is not doubled by the 3 s timer; another step's
     // click still starts its own read.
     this.logInflight = null;
+    this.preview = null;
+    this.previewInflight = null;
     this.watching = new Set();
     cx.timer.every(15000, (cx) => { if (this.visible) this.refresh(cx); });
     cx.timer.every(3000, (cx) => {
-      if (this.visible && this.openKey && this.step && this.stepStatus() === "running") this.loadLog(cx);
+      if (!this.visible || !this.openKey) return;
+      if (this.step && this.stepStatus() === "running") this.loadLog(cx);
+      this.loadPreview(cx);
     });
   }
 
@@ -280,6 +284,7 @@ export class Workflows {
     return {
       step: this.step,
       log: this.log,
+      preview: this.preview,
       nowMs: Date.now(),
       onStep: (s) => this.selectStep(s),
       doc: hit?.doc ?? null,
@@ -335,11 +340,13 @@ export class Workflows {
   openItem(key) {
     if (this.openKey === key) {
       this.ensureSession(this.acx);
+      this.loadPreview(this.acx);
       return;
     }
     this.openKey = key;
-    this.step = this.log = null;
+    this.step = this.log = this.preview = null;
     this.ensureSession(this.acx);
+    this.loadPreview(this.acx);
     this.acx.notify();
   }
 
@@ -353,6 +360,40 @@ export class Workflows {
     this.log = null;
     this.loadLog(this.acx);
     this.acx.notify();
+  }
+
+  loadPreview(cx) {
+    const key = this.openKey;
+    if (!key) return;
+    const hit = this.ownerOf(key);
+    const item = hit?.item;
+    const name = STEP_ORDER.find((s) => item?.steps?.[s]?.status === "running") ?? null;
+    if (!name) {
+      if (this.preview) {
+        this.preview = null;
+        cx.notify();
+      }
+      return;
+    }
+    if (this.step === name) return;
+    const path = item.steps[name].logPath;
+    if (!path) {
+      this.preview = { step: name, text: "" };
+      cx.notify();
+      return;
+    }
+    if (this.previewInflight === path) return;
+    const argv = logTailArgv(path, 20);
+    const ctx = this.machines.get(k(hit.on))?.ctx ?? { on: hit.on, cwd: null };
+    this.previewInflight = path;
+    cx.spawn(async (cx) => {
+      let ran;
+      try { ran = await invoke(exec, ctx, argv[0], argv.slice(1)); }
+      finally { if (this.previewInflight === path) this.previewInflight = null; }
+      if (this.openKey !== key) return;
+      this.preview = ran.ok ? { step: name, text: ran.stdout ?? "" } : { step: name, text: "" };
+      cx.notify();
+    });
   }
 
   loadLog(cx) {

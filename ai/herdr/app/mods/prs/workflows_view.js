@@ -5,6 +5,7 @@ import { theme } from "herdr";
 import {
   STEP_ORDER, durationText, laneOf, shortKey, runStatus, stepStatus, words, actionLabel,
 } from "./_lib/batch.js";
+import { summaryLine } from "./_lib/run_output.js";
 import { relativeTime } from "./_lib/history.js";
 import { itemStatus } from "./_lib/pr_status.js";
 import { SP, RADIUS, LAYOUT } from "./_lib/tokens.js";
@@ -165,9 +166,13 @@ function renderStepCard(item, name, state) {
       .child(head)
       .child(placeholder("No log"));
   }
+  const preview = rec.status === "running" && state.step !== name
+    ? summaryLine(state.preview?.step === name ? (state.preview.text ?? "") : "", 20)
+    : "";
   return card(`step-${name}`).gap(SP.xs)
     .on_click(() => state.onStep(name))
     .child(head)
+    .when(Boolean(preview), (e) => e.child(caption(preview)))
     .when(state.step === name, (e) => e.child(
       renderLog(state, `${item.key ?? ""}-${name}`, rec.status === "running")));
 }

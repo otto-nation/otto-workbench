@@ -9536,6 +9536,13 @@ Exit codes:
      alone — no location chosen to create one at. Both mean the same thing to a
      caller, that no base is resolvable here and a person has to say what to do.
 
+### cli/wiki_contract.py
+
+`wiki`'s CommandContract: flags by subcommand, exits, examples, local writes.
+
+The parser and command bodies live in `cli.wiki`. This module is the promise
+`--help` and the docs render, so `wiki.py` stays under the line budget.
+
 ### cli/wiki_placement.py
 
 Where a repo's knowledge base lives, and where a new one should go.

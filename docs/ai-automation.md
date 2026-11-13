@@ -1414,6 +1414,44 @@ Run background work through this machine's queue, so it waits for room instead o
 > Admission is machine-wide `batch.admission.QueuePolicy` (`batch.*` in the workbench config), never a repo's.
 > The ledger is queue/queue.db under WORKBENCH_STATE_DIR (default ~/.local/state/workbench).
 
+### wiki contract
+
+What `wiki` writes (nothing remotely), what each exit means, and the next
+step after one, rendered from `cli.wiki.CONTRACT` (`wiki --help`
+prints the same text).
+
+#### wiki contract
+
+Mechanical operations over a compiled knowledge base: locate it, report on it, and write the tree without reading for meaning.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | the subcommand succeeded; lint and index --check also mean no findings |  |
+| `1` | a finding was reported (lint findings, stale index), or the operation failed | `wiki lint` → `wiki index` |
+| `2` | no subcommand, a required flag or argument is missing, no knowledge base found from DIR/--wiki, or init could not tell where to create one | `wiki init --vault` → `wiki init --in-repo` → `wiki init --wiki DIR` |
+| `130` | Ctrl-C interrupted the CLI |  |
+
+**Examples**
+
+- `wiki init --in-repo` — create a knowledge base in the repo
+- `wiki path` — print the resolved knowledge base directory
+- `wiki status --json` — counts and recent activity as JSON
+- `wiki lint --signals` — mechanical findings, then the counted signals
+- `wiki signals` — counted evidence lint leaves to the reader
+- `wiki sources --new` — raw sources that are new or changed
+- `wiki index --check` — report whether the master index is stale
+- `wiki backup --list` — list snapshots instead of making one
+- `wiki link` — create or remove the browsing symlink this repo's wiki.link setting names
+- `wiki ingest --stage ./notes.md --title Notes` — copy a source into raw/ with frontmatter and a real hash
+- `wiki archive old-article` — retire an article to archive/, keeping it readable
+
+> Writes stay on this machine: the knowledge base tree (init, ingest, archive, index), wiki.root via set_value when init --vault adopts a vault, the vault folder, backup snapshots, and the browsing symlink link (and init --vault) may place.
+> lint and index --check exit 1 when they have findings, not only when the write failed.
+
 ### Running a branch's own libraries
 
 The Python entry points take their own pin, since `~/.local/bin/pr` is a symlink into

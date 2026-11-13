@@ -47,8 +47,11 @@ import sys
 from collections.abc import Callable
 from pathlib import Path
 
+import cli.wiki_contract
 import cli.wiki_placement
 from config.workbench_config import WIKI_ROOT_KEY, load_config_or_default
+import core.cli_reference
+import core.command_contract
 import core.module_proxy
 import core.proc
 import core.version
@@ -150,6 +153,7 @@ __all__ = [
 # script's tests read the same names. Tests patch several of these on this
 # module — the proxy below forwards the write so the functions that moved
 # still see it.
+CONTRACT = cli.wiki_contract.CONTRACT
 SCRIPT = cli.wiki_placement.SCRIPT
 ConfigWriteError = cli.wiki_placement.ConfigWriteError
 InitPlacementError = cli.wiki_placement.InitPlacementError
@@ -600,7 +604,20 @@ def build_parser(version_string: Callable[[str], str] | None = None) -> argparse
                 help="Source type recorded in frontmatter",
             )
             sub.add_argument("--title", default="", help="Title, used for the filename and frontmatter")
+    core.command_contract.attach_help(parser, CONTRACT)
+    # Subcommand flags live on the subparsers; regrouping would leave empty
+    # titled sections on the top-level help.
+    parser._action_groups[:] = [g for g in parser._action_groups if g._group_actions]
     return parser
+
+
+def reference_shape() -> core.cli_reference.CLIShape:
+    """Everything wiki accepts, with CONTRACT on the CLI as a whole."""
+    shape = core.cli_reference.shape_of(build_parser(), "wiki")
+    return core.cli_reference.CLIShape(
+        prog=shape.prog, globals=shape.globals, commands=shape.commands,
+        contract=CONTRACT,
+    )
 
 
 def main_entry() -> None:

@@ -1344,6 +1344,8 @@ could not be located — or, from `init` alone, no location was chosen.
 |------|-------------|
 | `-V`, `--version` | show program's version number and exit. |
 
+Exit codes: `0` ok · `1` failure · `2` usage · `130` cancelled — writes nothing remotely; [contract](ai-automation.md#wiki-contract)
+
 **`wiki init`** — Create a knowledge base
 
 | Flag | Description |

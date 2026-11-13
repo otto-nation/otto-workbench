@@ -728,6 +728,14 @@ prints the same text).
 
 <!-- include: bin/local/generate-cli-reference --tool otto-queue --emit contract -->
 
+### wiki contract
+
+What `wiki` writes (nothing remotely), what each exit means, and the next
+step after one, rendered from `cli.wiki.CONTRACT` (`wiki --help`
+prints the same text).
+
+<!-- include: bin/local/generate-cli-reference --tool wiki --emit contract -->
+
 ### Running a branch's own libraries
 
 The Python entry points take their own pin, since `~/.local/bin/pr` is a symlink into

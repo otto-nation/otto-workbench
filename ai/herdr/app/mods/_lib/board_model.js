@@ -76,7 +76,12 @@ export function boardModel(view, { tab = 'team', filters, scope = 'all' } = {}) 
   });
   const visible = new Set(visibleColumns(lanes, filterOn(filters, 'empty')).map((l) => l.key));
   const repoSlugs = [...(view?.repoSlugs ?? [])].sort();
-  const options = { repos: scope === 'all' ? repoSlugs : [], labels: fv.options.labels, authors: fv.options.authors };
+  const options = {
+    repos: scope === 'all' ? repoSlugs : [],
+    labels: fv.options.labels,
+    authors: fv.options.authors,
+    authorCounts: fv.options.authorCounts,
+  };
   const bar = barModel(filters, { tab, options });
   return {
     tab,

@@ -49,7 +49,7 @@ _model() {
       const shown = c.visibleColumns(c.groupColumns(again, (p) => c.laneOf(p, mine ? "mine" : "team"), spec), c.filterOn(filters, "empty"));
       const sections = cm.compactSections(c.groupColumns(fv.list, (p) => c.laneOf(p, mine ? "mine" : "team"), spec));
       const repos = scope === "all" ? [...state.repoSlugs].sort() : [];
-      const bar = f.barModel(filters, { tab, options: { repos, labels: fv.options.labels, authors: fv.options.authors } });
+      const bar = f.barModel(filters, { tab, options: { repos, labels: fv.options.labels, authors: fv.options.authors, authorCounts: fv.options.authorCounts } });
       return { columns: shown.map((x) => [x.key, x.items.map((p) => p.number), mine ? bl.columnPreset(x) : null]),
         sections: sections.map((x) => [x.key, x.count, mine ? bl.columnPreset(x) : null]), labels: fv.options.labels, authors: fv.options.authors, bar };
     };

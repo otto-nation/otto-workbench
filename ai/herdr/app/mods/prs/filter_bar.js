@@ -5,7 +5,7 @@ import { h_flex, v_flex, Popover, Input, InputState } from "gpui-base";
 import { theme } from "herdr";
 import { searchOptions } from "./_lib/filters.js";
 import { SP, RADIUS, CONTROL, LAYOUT } from "./_lib/tokens.js";
-import { ghostButton, checkRow, popoverSurface, text } from "./_ui/ui.js";
+import { ghostButton, checkRow, popoverSurface, text, sectionLabel } from "./_ui/ui.js";
 
 export class FilterBar {
   constructor(acx) {
@@ -76,13 +76,26 @@ export class FilterBar {
 
   valueContent(f, onAction) {
     const t = theme();
+    const groups = f.groups?.length
+      ? f.groups
+      : [{ label: null, options: f.options ?? [] }];
+    const kids = [];
+    for (const g of groups) {
+      const opts = searchOptions(g.options, this.query);
+      if (!opts.length) continue;
+      if (g.label) {
+        kids.push(div().h(SP.hair).bg(t.border));
+        kids.push(sectionLabel(g.label));
+      }
+      for (const o of opts) kids.push(this.valueRow(f, o, onAction));
+    }
     return popoverSurface()
       .when(Boolean(f.search), (e) => e.child(
         Input.new(this.search).h(CONTROL.h).px(SP.sm).rounded(RADIUS.control)
           .border_1().border_color(t.input).bg(t.background),
       ))
       .child(v_flex().id(`facet-${f.key}-list`).max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar()
-        .children(searchOptions(f.options, this.query).map((o) => this.valueRow(f, o, onAction))));
+        .children(kids));
   }
 
   flagRow(f, row, onAction) {

@@ -58,11 +58,13 @@ _sha_check() {
   printf '#!/usr/bin/env bash\necho %s\n' "'{\"terminals\":[]}'" > "$BATS_TEST_TMPDIR/stubs/hc"
   chmod +x "$BATS_TEST_TMPDIR/stubs/hc"
   chmod -R a-w "$OUT"
-  (cd / && env -i HOME="$BATS_TEST_TMPDIR" PATH="$BATS_TEST_TMPDIR/stubs:/usr/bin:/bin" PR_BOARD_PORT=0 \
+  # exec makes the backgrounded subshell become the server, so $! is the pid
+  # teardown must kill. Backgrounding `cd / && env ...` instead makes $! a
+  # wrapper shell, and killing it orphans the server.
+  (cd / && exec env -i HOME="$BATS_TEST_TMPDIR" PATH="$BATS_TEST_TMPDIR/stubs:/usr/bin:/bin" PR_BOARD_PORT=0 \
      PR_BOARD_TOKEN="$tok" "$(command -v bun)" "$OUT/ai/herdr/web/server/main.js" \
-     > "$BATS_TEST_TMPDIR/s.log" 2>&1 3>&- &
-   echo $! > "$BATS_TEST_TMPDIR/pid")
-  SERVER_PID="$(cat "$BATS_TEST_TMPDIR/pid")"
+     > "$BATS_TEST_TMPDIR/s.log" 2>&1 3>&-) &
+  SERVER_PID=$!
   local port=""
   for _ in $(seq 1 50); do
     port="$(sed -n 's/.*listening on http:\/\/127\.0\.0\.1:\([0-9]*\).*/\1/p' "$BATS_TEST_TMPDIR/s.log")"
@@ -77,6 +79,14 @@ _sha_check() {
   run curl -s -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $tok" \
     "http://127.0.0.1:$port/"
   [ "$output" = "200" ]
+  # SIGTERM to the recorded pid must stop the server itself, or teardown leaks it.
+  kill -TERM "$SERVER_PID"
+  local rc=0
+  wait "$SERVER_PID" || rc=$?
+  SERVER_PID=
+  [ "$rc" -eq 0 ]
+  run curl -s -o /dev/null --max-time 2 "http://127.0.0.1:$port/healthz"
+  [ "$status" -ne 0 ]
 }
 
 # Follows static `from`, side-effect `import './x'`, `export * from`, and

@@ -367,6 +367,10 @@ class ResolutionTally:
     """Files resolved and commits that conflicted across a whole rebase."""
     files: list[str] = field(default_factory=list)
     stale: list[str] = field(default_factory=list)
+    # Subset of ``stale`` restored from a prior stop; the only paths
+    # step_advance retries, once, so a failing regenerator is not re-run
+    # on every replayed commit.
+    deferred: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     commits: int = 0
     # Files resolved to exactly one side anywhere in this rebase, and each

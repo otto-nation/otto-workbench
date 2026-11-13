@@ -99,3 +99,18 @@ def test_rebuild_does_not_run_while_a_hand_written_file_is_unmerged():
 
     mock_regen.assert_not_called()
     assert tally.stale == ["go.sum"]
+
+
+def test_step_advance_retries_deferred_stale_once_not_every_step():
+    tally = rebase.types.ResolutionTally(stale=["go.sum"], deferred=["go.sum"])
+    calls = []
+    with mock.patch.object(rebase.regen_dispatch, "rebuild_stale",
+                           side_effect=lambda *a, **k: calls.append(k["paths"])), \
+         mock.patch.object(rebase.regen_dispatch, "_hand_written_unmerged",
+                           return_value=False), \
+         mock.patch.object(rebase.lifecycle, "_halt_if_discarding", return_value=7):
+        for _ in range(2):
+            rebase.lifecycle.step_advance(
+                "/fake", mock.MagicMock(), tally, target_ref=_TARGET,
+            )
+    assert calls == [["go.sum"]]

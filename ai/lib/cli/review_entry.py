@@ -355,6 +355,7 @@ def _track_error(parsed) -> str:
         name for name, on in (
             ("--fix", parsed.fix),
             ("--force", parsed.force),
+            ("--force-superseded", getattr(parsed, "force_superseded", False)),
             ("--recover", parsed.recover),
         ) if on
     ]

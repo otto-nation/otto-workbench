@@ -150,6 +150,20 @@ def test_a_partial_pr_review_with_nits_only_lists_no_verdict(reviews_dir):
     assert row.verdict == ""
 
 
+def test_a_pr_review_with_coverage_gaps_lists_no_verdict(reviews_dir):
+    _review(
+        reviews_dir, repo="acme/widget", pr_number=1, mode="pr",
+        rec=record(),
+        coverage_gaps=[{"kind": "untriaged", "subject": "ui-console/CLAUDE.md"}],
+    )
+
+    rows = review.listing.rows()
+    row, = rows
+    assert row.verdict == ""
+    _, line = review.listing.render_table(rows)
+    assert line.split()[2] == "-"
+
+
 def test_a_partial_pr_review_with_an_open_must_fix_lists_changes_requested(reviews_dir):
     _review(reviews_dir, repo="acme/widget", pr_number=1, mode="pr", status="partial")
 

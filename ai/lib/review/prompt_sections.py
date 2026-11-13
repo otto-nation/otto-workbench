@@ -299,10 +299,14 @@ def _build_omitted_guidance(
     if not preflight or not (preflight.omitted_files or dropped_any):
         return ""
     if skip_omitted and not dropped_any:
-        return " Some large files were excluded — they are not reviewed at this effort level."
+        return (
+            " Some large files were excluded — they are not reviewed at this effort level."
+            " Still give each a one-line File Triage entry saying so."
+        )
     return (
         ' First, read all files listed under "Files not pre-collected"'
-        " in a single parallel batch."
+        " in a single parallel batch and give each of them a File Triage"
+        " entry saying what you read of it."
     )
 
 

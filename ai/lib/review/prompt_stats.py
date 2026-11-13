@@ -165,6 +165,12 @@ def log_prompt_size(
         pass
 
     stats: dict = {
+        # The file is append-only across runs and kept by gc, so a row from
+        # an earlier run in the same directory is still here. Stamp the run
+        # and head so those rows can be told apart. An older file without
+        # these keys still loads; a missing stamp is "not recorded".
+        "started_at": job.started_at,
+        "head_sha": job.pr.head_sha,
         "template": f"{template_name}{suffix}",
         "prompt_bytes": prompt_bytes,
         "budget_bytes": budget_bytes,

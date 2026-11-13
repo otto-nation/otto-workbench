@@ -280,17 +280,18 @@ class TestDroppedContentsAreDeclared:
         pf = _make_preflight(omitted_files=[])
         dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
         assert _build_omitted_guidance(pf) == ""
-        assert "Files not pre-collected" in _build_omitted_guidance(
-            pf, files=dropped_all,
-        )
+        asked = _build_omitted_guidance(pf, files=dropped_all)
+        assert "Files not pre-collected" in asked
+        assert "File Triage entry saying what you read of it" in asked
 
     def test_skip_omitted_does_not_silence_dropped_contents(self):
         """The effort preset declines the large files, not every file."""
         pf = _make_preflight(omitted_files=["big.go"])
         dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
-        assert "not reviewed at this effort level" in _build_omitted_guidance(
-            pf, skip_omitted=True,
-        )
+        skipped = _build_omitted_guidance(pf, skip_omitted=True)
+        assert "not reviewed at this effort level" in skipped
+        assert "one-line File Triage entry" in skipped
+        assert "Files not pre-collected" not in skipped
         assert "Files not pre-collected" in _build_omitted_guidance(
             pf, skip_omitted=True, files=dropped_all,
         )

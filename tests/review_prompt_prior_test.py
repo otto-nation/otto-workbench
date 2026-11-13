@@ -15,7 +15,10 @@ from dataclasses import replace
 
 from review.document import SECTION_PRIOR_FINDINGS
 from review.grammar import FindingIdentity, sid_marker
-from review.record import LedgerLine, ProseSection, Question, RecordFinding, TriageEntry, VerifiedNote
+from review.record import (
+    AgentFailure, LedgerLine, ProseSection, Question, RecordFinding, TriageEntry,
+    VerifiedNote,
+)
 from review.reply_threads import ReplyThreads
 from review.store import StoredReview
 from review.types import FindingOrigin, PriorDisposition, ReplyState, ReviewMeta
@@ -195,6 +198,30 @@ class TestBuildPriorSectionLedger:
 
 
 class TestPriorTextOmitsBookkeeping:
+    def test_the_prior_section_leaves_out_the_prior_summary(self):
+        rec = record(
+            finding("M1", "bug"),
+            summary="The spot checks I made held",
+        )
+        result = _prior_text(_stored(rec=rec), None)
+        assert "spot checks" not in result
+        assert "## Summary" not in result
+        assert "**[M1]**" in result
+        assert "<!-- sid:" in result
+
+    def test_the_prior_section_leaves_out_agent_failures(self):
+        rec = record(
+            finding("M1", "bug"),
+            failures=(AgentFailure("single", "timed out", "failed"),),
+        )
+        result = _prior_text(_stored(rec=rec), None)
+        assert "Agent Failures" not in result
+        assert "**[M1]**" in result
+
+    def test_a_summary_only_prior_yields_no_prior_section(self):
+        rec = record(summary="The spot checks I made held")
+        assert _build_prior_section(_stored(rec=rec)) == ""
+
     def test_the_prior_section_leaves_out_questions_and_verified(self):
         rec = record(finding("M1", "bug"), summary="s",
                      questions=(Question("Q1", None, None, "why?"),),

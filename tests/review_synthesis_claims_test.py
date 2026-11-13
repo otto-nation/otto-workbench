@@ -19,6 +19,8 @@ from review_claims_support import CLAIM_DOC, claim
 from review_focus_support import DERIVED_FOCUS
 from review_record_support import finding, record
 
+_TRIAGE = [{"path": "a.py", "note": "ok"}]
+
 
 class TestSynthesisClaims:
     def _make_job(self, ro, tmp_path):
@@ -66,7 +68,7 @@ class TestSynthesisClaims:
         def mock_invoke(inv, **kwargs):
             calls.append(inv)
             Path(inv.output_path).write_text(json.dumps({
-                "summary": "s",
+                "summary": "s", "triage": _TRIAGE,
                 "focus": DERIVED_FOCUS, "claims": [CLAIM_DOC],
             }))
             Path(inv.session_log).write_text("")
@@ -81,7 +83,7 @@ class TestSynthesisClaims:
     def test_a_synthesis_missing_claims_gets_a_repair_turn(self, ro, tmp_path, monkeypatch):
         job = self._make_job(ro, tmp_path)
         with_claims = {
-            "summary": "s",
+            "summary": "s", "triage": _TRIAGE,
             "focus": DERIVED_FOCUS, "claims": [CLAIM_DOC],
         }
         prompts = []
@@ -89,7 +91,7 @@ class TestSynthesisClaims:
         def mock_invoke(inv, **kwargs):
             prompts.append(inv.prompt)
             doc = with_claims if "Your output was rejected" in inv.prompt else {
-                "summary": "s", "focus": DERIVED_FOCUS,
+                "summary": "s", "triage": _TRIAGE, "focus": DERIVED_FOCUS,
             }
             Path(inv.output_path).write_text(json.dumps(doc))
             Path(inv.session_log).write_text("")
@@ -110,7 +112,7 @@ class TestSynthesisClaims:
 
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(json.dumps({
-                "summary": "s", "focus": DERIVED_FOCUS,
+                "summary": "s", "triage": _TRIAGE, "focus": DERIVED_FOCUS,
             }))
             Path(inv.session_log).write_text("")
             return 0
@@ -131,7 +133,7 @@ class TestSynthesisClaims:
     ):
         job = self._make_job(ro, tmp_path)
         over = {
-            "summary": "s",
+            "summary": "s", "triage": _TRIAGE,
             "focus": DERIVED_FOCUS, "claims": [CLAIM_DOC] * (MAX_CLAIMS + 1),
         }
 
@@ -155,7 +157,7 @@ class TestSynthesisClaims:
 
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(json.dumps({
-                "summary": "s",
+                "summary": "s", "triage": _TRIAGE,
                 "focus": DERIVED_FOCUS, "claims": [CLAIM_DOC],
             }))
             Path(inv.session_log).write_text("")
@@ -180,7 +182,7 @@ class TestSynthesisClaims:
 
         def mock_invoke(inv, **kwargs):
             Path(inv.output_path).write_text(json.dumps({
-                "summary": "s",
+                "summary": "s", "triage": _TRIAGE,
                 "focus": DERIVED_FOCUS,
                 "findings": [
                     {"id": "S1", "path": "a.py", "line": 1, "body": "one"},

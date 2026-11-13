@@ -19,11 +19,11 @@ import review.steps  # noqa: E402
 from review.claim_types import ClaimVerdict  # noqa: E402
 from core.phases import Mode, Phase  # noqa: E402
 from review.phases import PhaseResult  # noqa: E402
-from review.record import Disposition, ReviewRecord  # noqa: E402
+from review.record import Disposition, ReviewRecord, TriageEntry  # noqa: E402
 from review.state import PipelineState  # noqa: E402
 from review.store import StoredReview, read_review, write_review  # noqa: E402
 from review.types import (  # noqa: E402
-    ClaimAnswer, FindingOrigin, Group, PreflightData, ReviewMeta,
+    ClaimAnswer, FindingOrigin, Group, Pipeline, PreflightData, ReviewMeta,
 )
 from review.verdict import (  # noqa: E402
     BUDGET_SUMMARY, CLEAN_SUMMARY, SETTLED_SUMMARY,
@@ -321,7 +321,12 @@ def test_a_round_with_no_open_derived_finding_still_writes_a_clean_review(
     monkeypatch.setattr(review.steps, "_phase_synthesis",
                         lambda *a, **k: pytest.fail("synthesis ran on a clean round"))
     result = review.steps._run_synthesis_or_fallback(
-        job, _state(), "", 2, merged(fresh=0), [], 0,
+        job, _state(), "", 2, merged(
+            ReviewRecord(triage=(
+                TriageEntry("b.py", "reviewed; nothing to report."),
+            )),
+            fresh=0,
+        ), [], 0,
         0.0, 20.0, settled=False)
     assert result.cost == 0.0
     stored = read_review(Path(job.review_file))
@@ -374,6 +379,26 @@ def test_one_group_goes_to_the_single_agent_review(tmp_path, monkeypatch):
     assert seen == [True]
 
 
+def test_one_group_handoff_records_the_single_pipeline(tmp_path, monkeypatch):
+    job = review_job(tmp_path, tmp_path / "r", head_sha="h" * 40, files=["a.py"])
+    monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
+    monkeypatch.setattr(review.pipeline, "_resolve_recovery", lambda j, groups: SimpleNamespace(
+        already_complete=False, cost_so_far=0.0, skip_groups=set(), state=None,
+        resume_at_gate=False))
+    monkeypatch.setattr(review.pipeline, "_single_group_goes_single", lambda *a: True)
+    monkeypatch.setattr(review.pipeline, "run_single_agent", lambda j, disprove=None: None)
+    monkeypatch.setattr(review.pipeline, "_run_group_phase",
+                        lambda *a: pytest.fail("a lone group ran as a group"))
+    review.pipeline.run_multi_phase(job, max_parallel=1)
+    assert job.pipeline_run is Pipeline.SINGLE
+    skipped = [r for r in job.phase_runs if not r.ran]
+    assert {r.phase for r in skipped} >= {"group", "synthesis"}
+    assert all(
+        r.reason == "one group covers the PR"
+        for r in skipped if r.phase in {"group", "synthesis"}
+    )
+
+
 @pytest.mark.parametrize(("groups", "incremental", "skipped", "expected"), [
     (1, False, set(), True),
     (2, False, set(), False),
@@ -421,6 +446,9 @@ def test_nothing_new_skips_synthesis_and_states_a_verdict(tmp_path, monkeypatch)
     assert "**Verdict: Needs discussion.**" in Path(job.review_file).read_text()
     assert reconciled, "reconciliation did not run"
     assert [f.id for f in stored.record.findings] == ["S1"]
+    by_phase = {r.phase: r for r in job.phase_runs}
+    assert by_phase[Phase.SYNTHESIS.value].ran is False
+    assert by_phase[Phase.SYNTHESIS.value].reason == "settled"
 
 
 def test_a_settled_over_budget_round_still_ships_settled(tmp_path, monkeypatch):
@@ -454,6 +482,9 @@ def test_a_settled_round_skips_the_disprove_gate(tmp_path, monkeypatch):
     result = review.steps._run_disprove_gate(job, state, True, 0.0, 20.0, settled=True)
     assert result.cost == 0.0
     assert Phase.DISPROVE in state.done and Phase.DISPROVE not in state.failed
+    by_phase = {r.phase: r for r in job.phase_runs}
+    assert by_phase[Phase.DISPROVE.value].ran is False
+    assert by_phase[Phase.DISPROVE.value].reason == "settled"
 
 
 @pytest.mark.parametrize("nothing_new", [True, False], ids=["settled", "unsettled"])

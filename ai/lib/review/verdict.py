@@ -13,7 +13,10 @@ A review where no group reported — every agent failed, so its header says
 not that nothing was found. On review.md the generated line closes the Summary
 with `NO_RUN_VERDICT`; `pr review` exits 1 once it has shown and recorded it.
 A partial run states only a blocking verdict (none in place of Approve) and
-exits 0, since the surviving findings are real. A self-review states none:
+exits 0, since the surviving findings are real. Incomplete coverage does the
+same: a PR review whose File Triage or requested focus is unfinished cannot
+vouch, so Approve is withheld and the line names the gaps. A blocking verdict
+stands, with a coverage tail. A self-review states none:
 `resolve_review_verdict` and `verdict_line` both consult `_is_self_review`.
 """
 
@@ -22,13 +25,14 @@ exits 0, since the surviving findings are real. A self-review states none:
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import replace
 
 from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import ReviewDocument
 from review.record import Disposition, ReviewRecord
-from review.types import ReviewMeta, SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD
+from review.types import CoverageGap, CoverageGapKind, ReviewMeta, SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD
 from core.text import plural
 
 
@@ -73,6 +77,39 @@ PARTIAL_NOTE = (
     "Review incomplete: see Agent Failures for what was not assessed."
 )
 
+# What a would-approve run with unfinished coverage states instead of Approve.
+COVERAGE_WITHHELD = "Approve withheld — incomplete coverage: {gaps}."
+
+# The sentence a blocking verdict with unfinished coverage ends with.
+COVERAGE_NOTE = "Coverage incomplete: {gaps}."
+
+
+_MAX_NAMES = 5
+
+def _named(subjects: Sequence[str]) -> str:
+    if len(subjects) <= _MAX_NAMES:
+        return ", ".join(subjects)
+    shown = subjects[:_MAX_NAMES]
+    more = len(subjects) - _MAX_NAMES
+    return f"{', '.join(shown)} and {more} more"
+
+
+def gaps_prose(gaps: Sequence[CoverageGap]) -> str:
+    """The coverage clause the verdict line names, or "" when there are no gaps.
+
+    At most five subjects are listed, then "and N more".
+    """
+    untriaged = [g.subject for g in gaps if g.kind == CoverageGapKind.UNTRIAGED]
+    focus = [g.subject for g in gaps if g.kind == CoverageGapKind.FOCUS_UNASSESSED]
+    parts: list[str] = []
+    if untriaged:
+        n = len(untriaged)
+        noun = "file" if n == 1 else "files"
+        parts.append(f"no triage entry for {n} changed {noun} ({_named(untriaged)})")
+    for subject in focus:
+        parts.append(f"requested focus {subject} not assessed")
+    return "; ".join(parts)
+
 
 def _is_self_review(meta: ReviewMeta) -> bool:
     return meta.mode is Mode.SELF
@@ -86,8 +123,10 @@ def resolve_review_verdict(record: ReviewRecord, meta: ReviewMeta) -> ReviewVerd
     one). Otherwise any open must-fix asks for changes and any open should-fix needs
     discussion, a partial run included: the blockers it found are real. Nothing open
     approves, except on a partial run, which states none — an incomplete run cannot
-    vouch for the absence of findings. Open is `ReviewRecord.unfixed`: only a fixed
-    finding closes. Nothing an agent wrote is read.
+    vouch for the absence of findings. Incomplete coverage (`meta.coverage_gaps`)
+    withholds Approve the same way: the review cannot vouch that every required
+    file and requested focus was assessed. Open is `ReviewRecord.unfixed`: only a
+    fixed finding closes. Nothing an agent wrote is read.
     """
     if _is_self_review(meta) or meta.status is ReviewStatus.ERROR:
         return None
@@ -96,6 +135,8 @@ def resolve_review_verdict(record: ReviewRecord, meta: ReviewMeta) -> ReviewVerd
     # A partial run may have left files unread: the blockers it found stand, but it
     # cannot vouch that nothing blocks.
     if verdict is ReviewVerdict.APPROVE and meta.status is ReviewStatus.PARTIAL:
+        return None
+    if verdict is ReviewVerdict.APPROVE and meta.coverage_gaps:
         return None
     return verdict
 
@@ -117,17 +158,25 @@ def verdict_line(record: ReviewRecord, meta: ReviewMeta) -> str:
     `**Verdict: Needs discussion.** 1 should-fix open.` — the rationale counts rather
     than naming IDs, because record IDs restart each round. An error run,
     and a partial run with nothing blocking open, say why they state none; a partial
-    run's blocking verdict says the review is incomplete.
+    run's blocking verdict says the review is incomplete. Incomplete coverage
+    withholds Approve and names the gaps; a blocking verdict keeps its line and
+    takes a coverage tail.
     """
     if _is_self_review(meta):
         return ""
     if meta.status is ReviewStatus.ERROR:
         return f"**No verdict.** {NO_RUN_VERDICT}"
     verdict = resolve_review_verdict(record, meta)
+    gaps = gaps_prose(meta.coverage_gaps)
+    coverage_tail = f" {COVERAGE_NOTE.format(gaps=gaps)}" if gaps else ""
     if verdict is None:
+        if meta.status is ReviewStatus.PARTIAL:
+            return f"**No verdict.** {PARTIAL_VERDICT}{coverage_tail}"
+        if gaps:
+            return f"**No verdict.** {COVERAGE_WITHHELD.format(gaps=gaps)}"
         return f"**No verdict.** {PARTIAL_VERDICT}"
     tail = f" {PARTIAL_NOTE}" if meta.status is ReviewStatus.PARTIAL else ""
-    return f"**Verdict: {verdict.prose}.** {_rationale(record)}{tail}"
+    return f"**Verdict: {verdict.prose}.** {_rationale(record)}{tail}{coverage_tail}"
 
 
 # What the Summary says when no synthesis agent wrote the review — the

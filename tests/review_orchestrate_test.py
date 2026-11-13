@@ -414,6 +414,7 @@ class TestCleanupScope:
             "review_file": str(review_dir / "review.md"),
             "session_log": str(review_dir / "session.jsonl"),
             "mode": ro.Pipeline.SINGLE,
+            "selected_pipeline": ro.Pipeline.SINGLE,
         }
         assert (review_dir / "disprove.jsonl").exists()
 

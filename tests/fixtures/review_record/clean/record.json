@@ -12,6 +12,14 @@
     {
       "path": "src/app.py",
       "note": "reviewed; nothing to report."
+    },
+    {
+      "path": "src/cli.py",
+      "note": "reviewed; nothing to report."
+    },
+    {
+      "path": "src/util.py",
+      "note": "reviewed; nothing to report."
     }
   ],
   "static_analysis": "",

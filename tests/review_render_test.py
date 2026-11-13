@@ -23,7 +23,7 @@ from review.render import (
 )
 from core.phases import Mode
 from pr.domains import ReviewStatus
-from review.types import PriorDisposition, ReviewMeta
+from review.types import CoverageGap, PhaseRun, PriorDisposition, ReviewMeta
 
 from review.claim_types import ClaimVerdict
 from review_behaviours_support import behaviour
@@ -76,6 +76,44 @@ def test_prompt_text_omits_the_models_line():
     assert "Models:" not in render_review(record(summary="x"), meta, banner=False)
 
 
+_HANDOFF_REASON = "one group covers the PR"
+_HANDOFF_PHASES = (
+    PhaseRun("scout", False, _HANDOFF_REASON),
+    PhaseRun("holistic", False, _HANDOFF_REASON),
+    PhaseRun("group", False, _HANDOFF_REASON),
+    PhaseRun("synthesis", False, _HANDOFF_REASON),
+    PhaseRun("single", True),
+    PhaseRun("disprove", False, "no must-fix or should-fix finding"),
+)
+_HANDOFF_PHASES_LINE = (
+    "Phases: single agent (one group covers the PR) · "
+    "scan, groups, synthesis not run · "
+    "disprove not run (no must-fix or should-fix finding)"
+)
+
+
+def test_the_phases_line_follows_the_models_line():
+    meta = ReviewMeta(
+        repo="a/b", pr_number=1, models="single m (low)", phases=_HANDOFF_PHASES,
+    )
+    rendered = render_review(record(summary="x"), meta)
+    assert f"{BANNER}\n\nModels: single m (low)\n\n{_HANDOFF_PHASES_LINE}\n\n## Summary" in rendered
+
+
+def test_prompt_text_omits_the_phases_line():
+    meta = ReviewMeta(
+        repo="a/b", pr_number=1, models="single m (low)", phases=_HANDOFF_PHASES,
+    )
+    assert "Phases:" not in render_review(record(summary="x"), meta, banner=False)
+
+
+def test_empty_phases_renders_no_phases_line():
+    meta = ReviewMeta(repo="a/b", pr_number=1, models="single m (low)")
+    rendered = render_review(record(summary="x"), meta)
+    assert "Phases:" not in rendered
+    assert f"{BANNER}\n\nModels: single m (low)\n\n## Summary" in rendered
+
+
 def test_the_verdict_line_closes_the_summary():
     rec = record(
         finding("S1", "x"), summary="Adds svc-lending.",
@@ -86,6 +124,23 @@ def test_the_verdict_line_closes_the_summary():
     summary = text.split("## Summary", 1)[1].split("## ", 1)[0]
     assert summary.strip().endswith("**Verdict: Needs discussion.** 1 should-fix open.")
     assert "## Verdict" not in text
+
+
+def test_incomplete_coverage_withholds_approve_in_the_verdict_line():
+    rec = record(summary="Adds docs.")
+    text = render_review(
+        rec,
+        ReviewMeta(
+            mode=Mode.PR, status=ReviewStatus.COMPLETED, repo="a/b", pr_number=1,
+            coverage_gaps=(
+                CoverageGap(kind="untriaged", subject="ui-console/CLAUDE.md"),
+            ),
+        ),
+    )
+    summary = text.split("## Summary", 1)[1].split("## ", 1)[0]
+    assert "Approve withheld — incomplete coverage: no triage entry for" in summary
+    assert "(ui-console/CLAUDE.md)" in summary
+    assert "Verdict: Approve" not in text
 
 
 def test_prompt_text_states_no_verdict():

@@ -51,6 +51,7 @@ import core.log
 import review.behaviours
 import review.claims
 import review.focus
+import review.phase_runs
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.types import EFFORT_PRESETS
 from gh.types import PRContext, PRMetadata
@@ -232,6 +233,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         sys.exit(1)
     if outcome.errors:
         core.log.warn(review.claims.check_warning(outcome.errors, job))
+    review.phase_runs.record(job, Phase.SINGLE, ran=True)
     # A carried decline is believed only for a finding the prior round held (D19).
     record = outcome.artifact.to_record(
         checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),
@@ -252,6 +254,8 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         record = run.record
         if run.result.log:
             _write_session_log(job, [job.session_log, run.result.log])
+    else:
+        review.phase_runs.record(job, Phase.DISPROVE, ran=False, reason="gate off")
     _post_process_review(job, record)
 
 
@@ -413,6 +417,7 @@ def run_multi_phase(
         core.log.info(
             "One group covers the whole PR — running the single-agent review "
             "(claims check and disprove) instead of a lone group pass")
+        review.phase_runs.handed_to_single(job)
         run_single_agent(job, disprove=disprove)
         return
 
@@ -473,6 +478,9 @@ def run_multi_phase(
             group_outputs, failed_groups = group_phase.outputs, group_phase.failures
             cost_so_far += group_phase.cost
 
+    review.phase_runs.record_group_phase(
+        job, unrun=unrun, group_skips=group_skips)
+
     # ── Phase 3: Merge ───────────────────────────────────────────────────────
     merged = _merge_round(job, group_outputs[:], failed_groups,
                           tuple(g.name for g in groups),
@@ -492,6 +500,8 @@ def run_multi_phase(
         # the review on disk is the one this run would write again. Re-checking
         # the file keeps the plan honest about a review deleted between runs.
         core.log.info("Phase 4: Synthesis — the prior run's review stands, resuming at the gate")
+        review.phase_runs.record(
+            job, Phase.SYNTHESIS, ran=True, reason="resumed from prior attempt")
         synthesis = PhaseResult()
     else:
         synthesis = _run_synthesis_or_fallback(

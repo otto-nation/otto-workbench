@@ -386,6 +386,33 @@ def test_the_single_prompt_shows_the_carry_fields_only_with_a_prior_section():
     assert "`findings[].sid`" in again and "`prior_findings`" in again
 
 
+def test_the_single_prompt_frames_a_same_head_prior_as_continuity():
+    job = _make_job(_make_preflight(prior_head_sha=""))
+    job.prior = StoredReview(
+        record(finding("M1", "still broken")),
+        ReviewMeta(head_sha=job.pr.head_sha),
+    )
+    common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+    prior = review.registry.for_phase(Phase.SINGLE).build(
+        job, common, {"artifact": ReviewArtifact}, "/tmp/s.json",
+    ).builder.vars["prior_section"]
+    assert "listed for continuity only" in prior
+    assert "The earlier review read this same commit" in prior
+    assert "This is a re-review" not in prior
+    assert "prior_findings" in prior
+
+
+def test_the_single_prompt_still_frames_an_incremental_prior_as_a_re_review():
+    job = _make_job(_make_preflight(prior_head_sha="0ldc0de"))
+    job.prior = StoredReview(record(finding("M1", "still broken")), ReviewMeta())
+    common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+    prior = review.registry.for_phase(Phase.SINGLE).build(
+        job, common, {"artifact": ReviewArtifact}, "/tmp/s.json",
+    ).builder.vars["prior_section"]
+    assert "This is a re-review" in prior
+    assert "listed for continuity only" not in prior
+
+
 def test_the_group_prompt_shows_the_carry_fields_only_for_a_prior_finding_in_its_files():
     """D20: a prior finding outside the group's files builds no prior section, so no carry fields."""
     job = _make_job(_make_preflight())
@@ -403,6 +430,41 @@ def test_the_group_prompt_shows_the_carry_fields_only_for_a_prior_finding_in_its
     outside, inside = output_block(["b.py"]), output_block(["a.py"])
     assert "`findings[].sid`" not in outside and "`prior_findings`" not in outside
     assert "`findings[].sid`" in inside and "`prior_findings`" in inside
+
+
+def _group_prior_section(job):
+    common = build_common_sections(job, max_turns=10, budget_bytes=MAX_PROMPT_BYTES)
+    extra = {
+        "artifact": GroupArtifact, "group_idx": 1, "group_count": 1, "group_name": "g",
+        "group_files_formatted": "- a.py", "group_file_paths": ["a.py"],
+    }
+    return review.registry.for_phase(Phase.GROUP).build(
+        job, common, extra, "/tmp/group-1.json",
+    ).builder.vars["prior_section"]
+
+
+def test_the_group_prompt_frames_a_same_head_prior_as_continuity():
+    job = _make_job(_make_preflight(prior_head_sha=""))
+    job.prior = StoredReview(
+        record(finding("M1", "still broken", path="a.py", line=1)),
+        ReviewMeta(head_sha=job.pr.head_sha),
+    )
+    prior = _group_prior_section(job)
+    assert "listed for continuity only" in prior
+    assert "The earlier review read this same commit" in prior
+    assert "This is a re-review" not in prior
+    assert "prior_findings" in prior
+
+
+def test_the_group_prompt_still_frames_an_incremental_prior_as_a_re_review():
+    job = _make_job(_make_preflight(prior_head_sha="0ldc0de"))
+    job.prior = StoredReview(
+        record(finding("M1", "still broken", path="a.py", line=1)),
+        ReviewMeta(),
+    )
+    prior = _group_prior_section(job)
+    assert "This is a re-review" in prior
+    assert "listed for continuity only" not in prior
 
 
 def test_the_synthesis_prompt_shows_the_carry_fields_only_on_a_re_review():

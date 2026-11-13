@@ -86,7 +86,8 @@ def test_reconcile_dates_the_prior_from_its_sidecar():
 def test_the_prompt_quotes_the_prior_record_without_bookkeeping():
     section = _build_prior_section(_prior(), "ctx")
     assert "## File Triage" not in section and "**[S1]** <!-- sid:" in section
-    assert "## Summary" in section
+    # The prior Summary is the prior run's account of itself, not a finding.
+    assert "## Summary" not in section
     assert BANNER not in section
 
 

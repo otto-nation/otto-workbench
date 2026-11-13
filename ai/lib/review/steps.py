@@ -21,6 +21,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import core.log
+import review.phase_runs
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES, SCAN_PHASES, phase_skip_argv
 from core.phases import Mode, Phase
@@ -250,6 +251,7 @@ def _run_holistic_phase(
     reason = _holistic_skip_reason(job, incremental, group_count)
     if reason:
         core.log.info(f"Holistic/scout phase skipped ({reason})")
+        review.phase_runs.record(job, phase, ran=False, reason=reason)
         if not state.scanned:
             state.done.add(phase)
             _write_pipeline_state(job, state)
@@ -259,9 +261,11 @@ def _run_holistic_phase(
     output = phase_output_path(job.review_file, phase)
     if state.scanned and _has_output(output):
         core.log.info(f"Phase 1: {label} skipped (exists)")
+        review.phase_runs.record(job, phase, ran=True, reason="exists")
         return reuse_scan(phase, output, phase_log_path(job.review_file, phase))
 
     result = run_phase(job, phase, f"Phase 1/{group_count}: {label}...")
+    review.phase_runs.record(job, phase, ran=True)
     state.done.add(phase)
     _write_pipeline_state(job, state)
     return result
@@ -311,6 +315,7 @@ def _run_synthesis_or_fallback(
             and not review.claims.open_derived_findings(job.prior)
             and not review.claims.writer_must_rejudge(job)):
         core.log.info("No findings from any group — writing clean review")
+        review.phase_runs.record(job, Phase.SYNTHESIS, ran=False, reason="no findings")
         _write_clean_review(
             job, group_count, merged.record, skipped_groups=n_skipped,
         )
@@ -325,6 +330,10 @@ def _run_synthesis_or_fallback(
         else:
             core.log.warn("All group agents failed — skipping synthesis")
             why = Diagnosis(DiagnosisKind.ALL_GROUPS_FAILED)
+        review.phase_runs.record(
+            job, Phase.SYNTHESIS, ran=False,
+            reason="--no-group" if why.kind is DiagnosisKind.SKIPPED else "all groups failed",
+        )
         # Recorded before the fallback is built, not after: the meta header the
         # fallback carries reads the status back off this file, so a verdict
         # written afterwards leaves the document claiming the run completed.
@@ -346,6 +355,7 @@ def _run_synthesis_or_fallback(
 
     if Phase.SYNTHESIS in job.skipped:
         core.log.info("Synthesis skipped — using mechanical merge")
+        review.phase_runs.record(job, Phase.SYNTHESIS, ran=False, reason="--no-synthesis")
         _publish(
             job,
             _no_synthesis_record(
@@ -361,6 +371,7 @@ def _run_synthesis_or_fallback(
 
     if settled:
         core.log.info("Synthesis skipped — no new findings, and every prior finding is settled")
+        review.phase_runs.record(job, Phase.SYNTHESIS, ran=False, reason="settled")
         _write_settled_review(job, group_count, merged.record, skipped_groups=n_skipped)
         state.done.add(Phase.SYNTHESIS)
         _write_pipeline_state(job, state)
@@ -369,6 +380,7 @@ def _run_synthesis_or_fallback(
 
     if cost_so_far > max_cost:
         core.log.warn("Using merged group output as final review (synthesis skipped due to budget)")
+        review.phase_runs.record(job, Phase.SYNTHESIS, ran=False, reason="budget")
         # Post-processed like every other path that ships group output: the
         # budget that ran out buys agent turns, and evidence verification and
         # prior-finding reconciliation are local reads that cost none of it.
@@ -391,6 +403,10 @@ def _run_synthesis_or_fallback(
     result = _phase_synthesis(
         job, holistic_content, group_count, merged,
         skipped_groups=n_skipped,
+    )
+    review.phase_runs.record(
+        job, Phase.SYNTHESIS, ran=True,
+        reason="mechanical fallback" if result.diagnosis is not None else "",
     )
     state.done.add(Phase.SYNTHESIS)
     if result.diagnosis is not None:
@@ -625,6 +641,8 @@ def _phase_disprove(job: ReviewJob, record: ReviewRecord) -> DisproveRun:
     label = PHASES[Phase.DISPROVE].label
     if ms_count == 0:
         core.log.info(f"{label} skipped — no must-fix or should-fix findings")
+        review.phase_runs.record(
+            job, Phase.DISPROVE, ran=False, reason="no must-fix or should-fix finding")
         return DisproveRun(PhaseResult(), record)
     # The gate reads the record rendered with its evidence: the findings it
     # challenges, their locations, and the code each one quotes. Disprove judges
@@ -635,6 +653,7 @@ def _phase_disprove(job: ReviewJob, record: ReviewRecord) -> DisproveRun:
                            record, evidence=True,
                            omit=NON_FINDING_SECTIONS,
                        ))
+    review.phase_runs.record(job, Phase.DISPROVE, ran=True)
     if result.artifact is None:
         return DisproveRun(result, record)
     applied = apply_disprove(record, result.artifact)
@@ -674,14 +693,17 @@ def _run_disprove_gate(
 
     if settled:
         core.log.info("nothing new to challenge; disprove skipped")
+        review.phase_runs.record(job, Phase.DISPROVE, ran=False, reason="settled")
     elif not _should_disprove(job, disprove):
         core.log.info("Disprove gate off — keeping all findings")
+        review.phase_runs.record(job, Phase.DISPROVE, ran=False, reason="gate off")
     elif cost_so_far > max_cost:
         core.log.warn(
             f"Budget exceeded before the disprove gate "
             f"(${cost_so_far:.2f}/${max_cost:.2f}) — findings go unchallenged"
         )
         failure = Diagnosis(DiagnosisKind.BUDGET_EXCEEDED)
+        review.phase_runs.record(job, Phase.DISPROVE, ran=False, reason="budget")
     else:
         stored = read_review(Path(job.review_file))
         counts = open_counts(ReviewDocument.from_stored(stored) if stored else None)
@@ -695,6 +717,8 @@ def _run_disprove_gate(
                 f"Skipping disprove — only {ms_count} M/S findings "
                 f"(threshold: {DISPROVE_MIN_FINDINGS})"
             )
+            review.phase_runs.record(
+                job, Phase.DISPROVE, ran=False, reason="below threshold")
 
     state.done.add(Phase.DISPROVE)
     if failure:

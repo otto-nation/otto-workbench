@@ -13,6 +13,8 @@
 ## File Triage
 
 - `src/app.py` — reviewed; nothing to report.
+- `src/cli.py` — reviewed; nothing to report.
+- `src/util.py` — reviewed; nothing to report.
 
 ## Summary
 

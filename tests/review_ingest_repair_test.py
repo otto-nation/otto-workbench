@@ -459,3 +459,42 @@ def test_a_schema_rejection_still_says_cannot_be_read(tmp_path):
     ingest_artifact(str(path), "PROMPT", agent, GroupArtifact)
     (text, _), = agent.calls
     assert "cannot be read" in text
+
+
+def test_a_missing_triage_entry_gets_one_repair_turn(tmp_path):
+    from gh.types import PRContext, PRMetadata
+    from review.claims import writer_check
+    from review.types import ReviewJob
+
+    job = ReviewJob(
+        repo="org/repo", pr_number="42",
+        pr=PRMetadata(
+            title="t", body="", head="feat", base="main", head_sha="abc",
+            additions=0, deletions=0, changed_files=1,
+            files=[{"path": "a.py", "additions": 0, "deletions": 0}],
+        ),
+        ctx=PRContext(), wt_path=str(tmp_path),
+        review_file=str(tmp_path / "review.md"),
+        session_log=str(tmp_path / "session.jsonl"),
+    )
+    job.focus = (user_area("Retry"),)
+    covered = {
+        "summary": "s",
+        "focus": [
+            {"id": "F1", "coverage": "checked"},
+            {"id": "", "title": "Retry", "rationale": "r",
+             "paths": [], "coverage": "checked"},
+        ],
+    }
+    path = tmp_path / "single.json"
+    path.write_text(json.dumps(covered))
+    agent = FakeAgent(path, json.dumps({
+        **covered, "triage": [{"path": "a.py", "note": "read the file"}],
+    }))
+    outcome = ingest_artifact(
+        str(path), "PROMPT", agent, ReviewArtifact, check=writer_check(job),
+    )
+    assert outcome.ok and outcome.repaired and outcome.errors == ()
+    (text, _), = agent.calls
+    assert "missing_triage" in text
+    assert "a.py" in text

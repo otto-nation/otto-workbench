@@ -1053,8 +1053,9 @@ This module owns whether a run has a claim source, the input fingerprint, the
 run-context check composed with focus coverage, turning a writer's reports
 into record entries after the check, the degraded-check warning, and
 `settle`. Renderers take claims off the record and never import it.
-`writer_check` and `check_warning` also cover behaviours: they are checked
-and warned here, but owned by `review/behaviours.py`.
+`writer_check` and `check_warning` also cover behaviours and required-file
+triage: they are checked and warned here, but owned by `review/behaviours.py`
+and `review/coverage.py`.
 
 The record is tri-state. `None` is not assessed — a writer that did not run
 and whose claims could not be carried, or a legacy `review.json`. A check
@@ -1216,6 +1217,22 @@ whose leftovers looked like author edits, and a fix commit that always moved
 HEAD past the review that produced it.
 
 `change_set` is what "did not change" means for all of them.
+
+### review/coverage.py
+
+Coverage misses a PR review records at publish, judged later by the verdict.
+
+`required_triage` is the changed-file set a PR review must account for:
+delta paths on an incremental run, otherwise every PR file, minus generated
+(tier 3) paths. `triage_problems` is the writer's ingest check against that
+set (including omitted files). `coverage_gaps` is the one owner of that
+comparison against the record's File Triage and requested focus. `_publish`
+calls it once and stores the result on `ReviewMeta.coverage_gaps`;
+`write_unchanged_review` passes the prior sidecar's gaps through rather than
+recomputing, because it carries the prior findings unchanged.
+
+# ceiling: `--repair` keeps the stored coverage_gaps rather than recomputing.
+# Upgrade trigger: if `--repair` starts rebuilding triage independently of the group files.
 
 ### review/currency.py
 
@@ -1380,6 +1397,12 @@ file open findings, and run the fix pass when asked. `cli.review_orchestrate`
 is the command over this; the phases themselves are `review.pipeline` and
 `review.steps`, and what a phase is lives in `review.phases`.
 
+Stdout is one JSON object: `review_file`, `session_log`, `mode` (the pipeline
+that ran: `multi` or `single`), and `selected_pipeline` (what sizing chose).
+A one-group multi run hands off to the single agent — `mode` is then `single`
+while `selected_pipeline` stays `multi` — and emits a `pipeline_handoff` trail
+event.
+
 ### review/outcome.py
 
 What a run writes to the review file, and what it claims about itself.
@@ -1443,6 +1466,26 @@ A re-review rotates what it is replacing into an `archives/` subdirectory and
 keeps the last few, so the directory a run finds is the one its predecessor
 left rather than an unbounded pile. That retention is layout too, which is why
 it is decided here and not by the entry point that triggers it.
+
+### review/phase_runs.py
+
+Record which review phases ran, and the pipeline a one-group hand-off took.
+
+`record` appends a `PhaseRun` onto the job. `handed_to_single` is the one-group
+redirect: it marks the run as the single-agent pipeline and records scout,
+holistic, group and synthesis as not run because one group covers the PR.
+The pipeline module's hand-off call site is the only writer of that redirect;
+orchestrate reads `job.pipeline_run` to emit the trail event and to report
+the pipeline that actually ran.
+
+`phases_line` is the `Phases:` line review.md and the comment place beside
+`Models:`: ran phases by name, skipped ones grouped by reason, and nothing
+when the sidecar recorded none.
+
+`record_group_phase` is the multi-path group decision: `--no-group`, a budget
+cut-off, groups reused from a prior attempt, or groups carried on an
+incremental round. Each other phase records beside the log that already
+states the decision.
 
 ### review/phases.py
 
@@ -1805,7 +1848,10 @@ A review where no group reported — every agent failed, so its header says
 not that nothing was found. On review.md the generated line closes the Summary
 with `NO_RUN_VERDICT`; `pr review` exits 1 once it has shown and recorded it.
 A partial run states only a blocking verdict (none in place of Approve) and
-exits 0, since the surviving findings are real. A self-review states none:
+exits 0, since the surviving findings are real. Incomplete coverage does the
+same: a PR review whose File Triage or requested focus is unfinished cannot
+vouch, so Approve is withheld and the line names the gaps. A blocking verdict
+stands, with a coverage tail. A self-review states none:
 `resolve_review_verdict` and `verdict_line` both consult `_is_self_review`.
 
 ### review/worktree.py

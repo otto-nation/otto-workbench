@@ -243,7 +243,9 @@ JSON
 
 @test "--no-grace-period removes recently created worktree" {
   local wt_dir="$TMPDIR/recent-worktree"
-  mkdir -p "$wt_dir"
+  # A real checkout: the held-run probe keeps a tree it cannot ask about,
+  # and a bare directory names no git dir to ask.
+  git init -q "$wt_dir"
   _write_worktrees <<JSON
 [{"branch":"feat/new","path":"$wt_dir","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]
 JSON

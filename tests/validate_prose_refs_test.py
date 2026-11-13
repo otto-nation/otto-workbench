@@ -26,7 +26,7 @@ def _reasons(tmp_path, text, tools, names, headings=None):
     page = tmp_path / "page.md"
     page.write_text(text)
     if headings is None:
-        headings = vpr.load_rule_headings(REPO_ROOT)
+        headings = vpr.load_headings(REPO_ROOT)
     return [v.reason for v in vpr.check_file(
         page, tools, names, headings, vpr.load_repo_basenames(REPO_ROOT))]
 
@@ -179,3 +179,26 @@ def test_a_known_non_rule_md_pointer_is_skipped(tmp_path, tools, names):
     assert _reasons(
         tmp_path, "`CONTRIBUTING.md` § No Such Heading\n", tools, names,
         headings) == []
+
+
+def test_a_docs_heading_pointer_resolves(tmp_path, tools, names):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "page.src.md").write_text("# Title\n")
+    (docs / "page.md").write_text("# Title\n\n## Included Section\n")
+    headings = vpr.load_headings(tmp_path)
+    assert _reasons(
+        tmp_path, "`docs/page.md` § Included Section\n", tools, names,
+        headings) == []
+    assert _reasons(
+        tmp_path, "`page.md` § Included Section\n", tools, names, headings) == []
+
+
+def test_a_renamed_docs_heading_fails(tmp_path, tools, names):
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "page.md").write_text("# Title\n\n## Included Section\n")
+    headings = vpr.load_headings(tmp_path)
+    assert _reasons(
+        tmp_path, "`docs/page.md` § Renamed Section\n", tools, names,
+        headings) == ["`docs/page.md` § Renamed Section: no such heading"]

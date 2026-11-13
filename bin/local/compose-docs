@@ -105,7 +105,13 @@ _expand() {
     path="$(_resolve_command "${argv[0]}")" || return 1
     # </dev/null: this loop's stdin is the document. A generator that read from
     # it would swallow the rest of the file.
-    "$path" "${argv[@]:1}" < /dev/null | _expand $(( depth + 1 ))
+    # `if !` rather than relying on set -e: this pipeline sits in a while body,
+    # where a failing command does not always abort, and a nested include ran
+    # as the right-hand side of a pipe — empty output, compose still exited 0.
+    if ! "$path" "${argv[@]:1}" < /dev/null | _expand $(( depth + 1 )); then
+      err "include: command failed: $directive"
+      return 1
+    fi
   done
 }
 

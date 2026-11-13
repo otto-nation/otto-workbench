@@ -80,7 +80,7 @@ def test_a_decline_the_gate_upholds_stays_declined(tmp_path, landed, head):
 
 
 def test_a_decline_with_no_reason_is_not_put_to_the_gate(tmp_path, landed, head):
-    """There is no claim to check, and `_record_unevidenced` reports it instead."""
+    """There is no claim to check, and `record_unevidenced` reports it instead."""
     adapter = StubAdapter(tmp_path, count=1)
     seen = {}
 
@@ -418,7 +418,7 @@ def test_a_decline_with_no_reason_reaches_the_trail(tmp_path, landed, head):
     A decline rejects a reviewer's finding on the pass's say-so and leaves no
     diff to read instead, so the reason is the whole of the record. Ticked with
     the placeholder standing it renders as a bare `*(declined)*` against a
-    finding nobody acted on — which `_record_unevidenced` did not cover, because
+    finding nobody acted on — which `record_unevidenced` did not cover, because
     it asked only about FIXED.
     """
     adapter = StubAdapter(tmp_path, count=1)

@@ -27,7 +27,7 @@ than exiting from under this module. A contended run lock exits 75
 Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
   review-threads --triage
-  review-threads --fix
+  review-threads --fix [--resume | --no-resume]
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
   review-threads --finish [--no-push-verify]
   review-threads --reply THREAD_COMMENT_OR_REVIEW_ID --body-file PATH [--post]
@@ -47,8 +47,10 @@ import core.log
 import core.publishing
 from core.trail import Trail, add_trail_args
 import gh.pr_data
+import fix.resume
 import pr.comments_fix
 import pr.context
+import pr.fix_checkpoint
 import pr.settlement
 import pr.thread_replies
 from pr.fix import FixOutcome
@@ -79,6 +81,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fix", action="store_true",
                         help="Phase: triage threads and apply mechanical fixes via "
                              "Claude agent")
+    resume = parser.add_mutually_exclusive_group()
+    resume.add_argument("--resume", action="store_true",
+                        help="Require an interrupted --fix pass to resume "
+                             "(exit 1 if none). Only with --fix")
+    resume.add_argument("--no-resume", action="store_true",
+                        help="Discard an interrupted --fix pass and start over. "
+                             "Only with --fix")
     parser.add_argument("--no-verify", action="store_true",
                         help="Skip the verify gate after --fix. The gate runs the "
                              "project's own checks against each claimed fix and "
@@ -146,8 +155,11 @@ def _github_only(
             ctx, args.reply, body or "", pr_data=route.pr_data,
             review_body_ids=route.review_body_ids,
         )
-    return pr.settlement.run_settle(
+    ckpt = pr.fix_checkpoint.load(ctx.target_dir)
+    phase = ckpt.phase if ckpt else None
+    status = pr.settlement.run_settle(
         ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
+        answers=review.closeout.tracking_answers(ctx.target_dir, phase=phase),
         fetch_threads=lambda: {
             t.id: t
             for t in review.comment_threads.read_report(
@@ -155,6 +167,8 @@ def _github_only(
             ).threads
         },
     )
+    fix.resume.clear_if_adopted(ctx.target_dir)
+    return status
 
 
 def _run_locked(trail, args, ctx, route, body: str | None = None) -> int:
@@ -170,6 +184,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
+
+    if (args.resume or args.no_resume) and not args.fix:
+        core.log.error("--resume and --no-resume require --fix")
+        return 1
 
     # Before --fix widens itself into --triage, so the conflict named is the one
     # that was typed.

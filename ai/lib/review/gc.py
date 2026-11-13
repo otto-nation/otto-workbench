@@ -50,7 +50,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 
-import fix.engine
+import fix.batches
 import gh.budget
 import gh.client
 import core.log
@@ -139,8 +139,8 @@ def cleanup_intermediates(review_dir: Path) -> None:
     """
     cleanup = phase_artifacts(review_dir)
     cleanup.append(review_dir / FILENAME_PIPELINE_STATE)
-    cleanup.append(review_dir / fix.engine.TRACKING_FILENAME)
-    cleanup.extend(sorted(review_dir.glob(fix.engine.VERIFY_TRACKING_GLOB)))
+    cleanup.append(review_dir / fix.batches.TRACKING_FILENAME)
+    cleanup.extend(sorted(review_dir.glob(fix.batches.VERIFY_TRACKING_GLOB)))
     # A run that started before chunked names may have left the unsuffixed file.
     cleanup.append(review_dir / "verify-tracking.md")
     cleanup.extend(

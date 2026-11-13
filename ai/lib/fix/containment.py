@@ -88,6 +88,9 @@ class Snapshot:
 
     files: tuple[FileRecord, ...] = ()
     ok: bool = True
+    # Git tree sha of this snapshot when ``take`` wrote one; empty for a
+    # ``read_tree`` of an arbitrary treeish, or a failed read.
+    tree: str = ""
 
     def by_path(self) -> dict[str, FileRecord]:
         """Index records by path."""
@@ -168,7 +171,10 @@ def take(workdir: str | Path) -> Snapshot:
     tree = worktree_tree(workdir)
     if not tree.ok:
         return Snapshot(ok=False)
-    return read_tree(workdir, tree.sha)
+    snap = read_tree(workdir, tree.sha)
+    if not snap.ok:
+        return snap
+    return Snapshot(files=snap.files, ok=True, tree=tree.sha)
 
 
 @dataclass

@@ -548,6 +548,34 @@ Every function has a no-answer value — ``False`` and ``""`` — so a caller
 in a hook, a CI job, or a subprocess gets a usable result instead of an
 exception. No answer is never consent.
 
+### fix/batches.py
+
+Batch, invoke, retry, and settle for a fix pass.
+
+`fix.engine` owns the pass as a whole — lock, containment, gate, suite, land.
+This module owns one agent's share of the work: how items are chunked, how one
+invocation is prompted and observed, how a stalled batch is partitioned from
+the remainder that still owes a retry, and how those answers become a settled
+list.
+
+Two rules the engine still states, implemented here:
+
+**A batch that stalled has already had its retry.** ``agent.invoke.run_fix``
+gives an unproductive pass a second attempt of its own, so handing that batch's
+deferrals to the partial-progress retry buys a third identical run. One stalled
+batch must not spend the whole pass's retry either, which is why the two are
+partitioned rather than pooled.
+
+**A retry re-decides the items it is handed.** Only ``DEFERRED`` items go into
+it — an agent that declined an item or said it needs a person answered the
+question it was asked — and its answers supersede the first pass's rather than
+being reported alongside them.
+
+**A decline owes a reason.** A DECLINED recorded with none is demoted to
+NEEDS_HUMAN when the pass is recorded (`record_unevidenced`), so no reviewer's
+finding is closed on a rejection nobody can weigh. Records stored earlier are
+left alone.
+
 ### fix/blame.py
 
 Which item a red suite is probably complaining about.
@@ -675,6 +703,15 @@ outcomes. `run_pass` calls `record` itself in that case rather than keeping a
 second copy of the tail, which is what the two copies that used to exist here
 kept drifting apart over.
 
+### fix/comments_resume.py
+
+Whether an interrupted ``pr comments --fix`` pass should be resumed.
+
+The checkpoint is the in-flight record ``pr.fix_checkpoint`` writes. This
+module is the decision: auto-detect, require, or discard, keyed on the PR,
+the branch, HEAD, and the agent's file blobs. Nothing here writes a
+checkpoint; ``fix.comments.run_pass`` and the adapter's ``advance`` do that.
+
 ### fix/containment.py
 
 Content snapshots that restore a phase's writes in a named worktree.
@@ -734,9 +771,10 @@ ones, and one of them had no partial-progress retry at all.
 
 A domain supplies a :class:`FixAdapter` and nothing else: which phase sizes the
 pass, the items, the prompt substitutions its template needs, the commit it
-wants and what to do with the outcomes. Everything between those is here.
+wants and what to do with the outcomes. Batching, invoke, retry and settle live
+in :mod:`fix.batches`; everything else between those is here.
 
-Two rules the passes disagreed on, settled here:
+Two rules the passes disagreed on, settled in :mod:`fix.batches`:
 
 **A batch that stalled has already had its retry.** ``agent.invoke.run_fix``
 gives an unproductive pass a second attempt of its own, so handing that batch's
@@ -750,7 +788,7 @@ question it was asked — and its answers supersede the first pass's rather than
 being reported alongside them.
 
 **A decline owes a reason.** A DECLINED recorded with none is demoted to
-NEEDS_HUMAN when the pass is recorded (`_record_unevidenced`), so no reviewer's
+NEEDS_HUMAN when the pass is recorded (`record_unevidenced`), so no reviewer's
 finding is closed on a rejection nobody can weigh. Records stored earlier are
 left alone.
 
@@ -767,7 +805,8 @@ The verify gate: when it runs, and what its verdicts mean.
 everything around it — what the gate is shown for a fix, a decline, a
 contradicted deferral and an already-addressed verdict, and how an answer it
 gives (or withholds) changes an item's outcome. Split from ``fix.engine``, which
-owns the batch/invoke/retry pipeline and nothing about judgement.
+owns the pass as a whole and nothing about judgement; batch, invoke and retry
+live in ``fix.batches``.
 
 A ticked `fixed` box says an edit was made, not that it works. The review
 (`pr review --self --fix`), comments (`pr comments --fix`) and CI
@@ -814,6 +853,16 @@ trail event. When any of those files were already dirty before the pass, the
 warning names ``artifacts/dirty-backup/``, which holds a bytes-exact copy of
 each such file as it was before the agent ran. It reports and never changes
 the tree.
+
+### fix/pass_resume.py
+
+Checkpoint helpers for a resumable fix-engine pass.
+
+The engine checkpoints after each batch and after the gate, the suite, and
+the landing. A later run reads those records back through these helpers —
+answers, the agent's files, the suite result, the landing — so it can skip
+work that already finished. Nothing here writes a checkpoint; the adapter's
+``checkpoint`` hook is what persists.
 
 ### fix/reconcile.py
 
@@ -880,7 +929,8 @@ the stop, and on the next run drops matching paths from the dirty baseline so
 they are attributed to the pass again.
 
 The review domain keeps its own stash (`review.convergence.set_aside_leftovers`);
-only the comments adapter opts in.
+only the comments adapter opts in. A checkpoint resume (`fix.pass_resume`)
+skips this adoption and clears the leftover record so the two cannot disagree.
 
 ### fix/scope.py
 
@@ -3721,6 +3771,20 @@ shared pipeline all three now run on, and the thing that produces the
 not the same as recording through these types: the review-findings pass
 re-renders the review document from its outcomes rather than writing a record
 at all.
+
+### pr/fix_checkpoint.py
+
+A comments-fix pass checkpoint, so settle and finish can adopt a partial snapshot.
+
+`pr comments --fix` writes `state.json` only at the end of a successful pass.
+An interrupted run therefore has no snapshot for `--settle` or `--finish` to
+read. This file is the in-flight record of that pass: phase, triage, engine
+progress, and the answers collected so far. Adopting a partial snapshot turns
+unanswered fixable items into needs-human rows and unlanded fixes into
+needs-human rows, then marks the checkpoint adopted so it cannot be resumed.
+
+The file lives under `pr.comments.artifacts_dir`, beside the tracking file,
+not in the worktree.
 
 ### pr/fix_state.py
 
@@ -9198,7 +9262,7 @@ than exiting from under this module. A contended run lock exits 75
 Usage:
   review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
   review-threads --triage
-  review-threads --fix
+  review-threads --fix [--resume | --no-resume]
   review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
   review-threads --finish [--no-push-verify]
   review-threads --reply THREAD_COMMENT_OR_REVIEW_ID --body-file PATH [--post]

@@ -14,6 +14,7 @@ if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
 import agent.invoke
+import fix.batches
 import fix.engine
 import git.push
 import review.fix
@@ -102,7 +103,7 @@ def _make_job(
 
 
 def _tracking(job: ReviewJob) -> Path:
-    return Path(job.artifact_dir) / fix.engine.TRACKING_FILENAME
+    return Path(job.artifact_dir) / fix.batches.TRACKING_FILENAME
 
 
 def _is_heading(line: str) -> bool:

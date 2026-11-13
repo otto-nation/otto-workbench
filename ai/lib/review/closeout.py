@@ -42,10 +42,14 @@ import git.push
 from git.land import CommitStatus
 import gh.owner_hooks
 import gh.owners
+import fix.batches
+import fix.resume
+import fix.tracking
 import pr.attribution
 import pr.comments
 import pr.comments_fix
 import pr.context
+import pr.fix_checkpoint
 import pr.history_rewrite
 import pr.settlement
 import pr.state
@@ -55,6 +59,29 @@ from pr.comments_state import ThreadState
 from pr.fix import FixOutcome, ItemOutcome
 from pr.thread_models import CommentItem, CommentSourceKind, PRReport, ReportThread
 import review.deferred_issue
+
+
+def tracking_answers(
+    target_dir: Path,
+    phase: pr.fix_checkpoint.CheckpointPhase | None = None,
+) -> tuple[ItemOutcome, ...]:
+    """Ticked non-DEFERRED outcomes from the interrupted pass's tracking file.
+
+    Layer 4 cannot import `fix.tracking`, so callers above it parse the file
+    and pass the answers into `adopt_partial`. An absent file is no answers.
+    Tracking ticks overlay the engine record only at ``AGENT_RUNNING``; from
+    ``AGENT_DONE`` on, and before the agent starts, they are ignored.
+    """
+    if (
+        phase is not None
+        and phase is not pr.fix_checkpoint.CheckpointPhase.AGENT_RUNNING
+    ):
+        return ()
+    path = pr.comments.artifacts_dir(target_dir) / fix.batches.TRACKING_FILENAME
+    return tuple(
+        o for o in fix.tracking.parse(path)
+        if o.outcome is not FixOutcome.DEFERRED
+    )
 
 
 def warn_if_snapshot_stale(state: pr.state.PRState, wt_path: Path) -> None:
@@ -103,6 +130,16 @@ def finish_deferred_work(
     if not ctx.pr_number:
         return True
     state = pr.state.load_state(ctx.target_dir)
+    ckpt = pr.fix_checkpoint.load(ctx.target_dir)
+    phase = ckpt.phase if ckpt else None
+    try:
+        state = pr.fix_checkpoint.adopt_partial(
+            ctx, state, answers=tracking_answers(ctx.target_dir, phase=phase),
+        )
+    except pr.fix_checkpoint.CheckpointAdoptError as exc:
+        core.log.error(str(exc))
+        return False
+    fix.resume.clear_if_adopted(ctx.target_dir)
     if state is None:
         return True
     threads_by_id = {t.id: t for t in report.threads}

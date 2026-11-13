@@ -283,3 +283,49 @@ def test_the_baseline_trail_event_carries_the_final_status():
             Path("."), result, "c", 30, trail, ref="abc1234")
     assert labelled.status is fix.suite.SuiteStatus.PREEXISTING
     assert trail.info.call_args.kwargs["data"]["status"] == "preexisting"
+
+
+def test_a_spent_budget_skips_the_baseline_and_stays_red():
+    """timeout_s<=0 is the checks having used the shared budget.
+
+    Re-running at the base with a non-positive timeout would be a second full
+    wait, or a refused declaration, neither of which labels the failure.
+    """
+    trail = MagicMock()
+    result = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.RED, command="c",
+        failures=("t::a",),
+    )
+    with patch.object(fix.baseline, "_run_at") as run_at:
+        labelled = fix.baseline.label_preexisting(
+            Path("."), result, "c", 0, trail, ref="abc1234")
+    assert labelled is result
+    run_at.assert_not_called()
+    trail.info.assert_called_once()
+    assert trail.info.call_args.args[0] == "fix_baseline_budget_spent"
+
+
+def test_run_checks_hands_the_baseline_the_time_left(tmp_path):
+    """The suite still gets the full budget; the re-run gets what remains."""
+    result = fix.suite.SuiteResult(
+        status=fix.suite.SuiteStatus.RED, command="c",
+        duration_s=899, failures=("t::a",),
+    )
+    seen = {}
+
+    def capture(workdir, result, command, timeout_s, trail, *,
+                 ref, paths_file="", progress_s=0):
+        seen["timeout_s"] = timeout_s
+        seen["progress_s"] = progress_s
+        return result
+
+    adapter = StubAdapter(tmp_path)
+    config = WorkbenchConfig(fix=FixConfig(verify_command="c", verify_timeout=900))
+    with patch.object(fix.suite, "run", return_value=result) as run, \
+            patch.object(fix.baseline, "label_preexisting", side_effect=capture):
+        out = fix.engine._run_checks(
+            adapter, config, None, base="HEAD", baseline_ref="abc", paths={"a.py"})
+    assert run.call_args.args[2] == 900
+    assert seen["timeout_s"] == 1
+    assert seen["progress_s"] == config.fix.verify_progress_interval
+    assert out is result

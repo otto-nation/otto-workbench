@@ -300,7 +300,7 @@ REVIEW_PHASES: tuple[Phase, ...] = tuple(
 
 # The fix-shaped phases that are a gate rather than a pass. An adapter names
 # one as its `verify_phase`, so `fix.verify` sizes it with `phase_turns` and
-# `fix.engine._retry` never sees it. Listed rather than derived for the reason
+# `fix.batches._retry` never sees it. Listed rather than derived for the reason
 # `SCAN_PHASES` is: nothing on a `PhaseSpec` says "gate", and the field that
 # would say so is declared on the adapter, which this module sits beneath.
 VERIFY_PHASES: frozenset[Phase] = frozenset(
@@ -318,7 +318,7 @@ def is_verify_phase(phase: str) -> bool:
 
 # The phases whose retry budget `agent.phases.phase_retry_turns` actually
 # decides: a fix-shaped phase is the only thing a `FixAdapter` names as its own,
-# and `fix.engine._retry` is that function's one caller. Derived from the shape
+# and `fix.batches._retry` is that function's one caller. Derived from the shape
 # so a fix pass added later inherits the retry invariant its tests assert
 # instead of being a fifth entry somebody has to remember to list — and a gate
 # added later fails that invariant loudly until it joins `VERIFY_PHASES`,

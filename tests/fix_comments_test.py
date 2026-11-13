@@ -256,6 +256,12 @@ class TestCommentFixLanding:
 
         assert "unverified: no fix.verify_command declared" in spec.message
 
+    def test_a_timed_out_suite_qualifies_the_comments_tally(self, tmp_path):
+        spec = self._spec(tmp_path, fixed=2, deferred=3, suite=fix.suite.SuiteResult(
+            status=fix.suite.SuiteStatus.TIMED_OUT, command="checks"))
+
+        assert "unverified: the repo's checks timed out after 0s" in spec.message
+
     def test_a_pass_that_fixed_nothing_says_only_what_it_did(self, tmp_path):
         spec = self._spec(tmp_path, fixed=0, deferred=4)
 

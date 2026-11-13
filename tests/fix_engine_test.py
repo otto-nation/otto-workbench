@@ -20,6 +20,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import agent.invoke  # noqa: E402
+import fix.batches  # noqa: E402
 import fix.engine  # noqa: E402
 import fix.tracking  # noqa: E402
 from agent.diagnosis import Diagnosis, DiagnosisKind  # noqa: E402
@@ -158,8 +159,8 @@ def test_the_retry_says_it_is_one(tmp_path, landed, head):
 
     _run(adapter, run_fix=run_fix)
 
-    assert not prompts[0].startswith(fix.engine._RESUME_HINT)
-    assert prompts[1].startswith(fix.engine._RESUME_HINT)
+    assert not prompts[0].startswith(fix.batches.RESUME_HINT)
+    assert prompts[1].startswith(fix.batches.RESUME_HINT)
 
 
 def test_a_settled_verdict_is_not_retried(tmp_path, landed, head):
@@ -258,7 +259,7 @@ def test_deferred_work_over_the_chunk_size_is_retried_in_batches(
 
     def run_fix(phase, prompt, **kwargs):
         ids = [o.id for o in fix.tracking.parse(adapter.tracking_path)]
-        if prompt.startswith(fix.engine._RESUME_HINT):
+        if prompt.startswith(fix.batches.RESUME_HINT):
             retries.append(ids)
             return _answer(adapter)(phase, prompt, **kwargs)
         first_pass.append(ids)
@@ -333,13 +334,13 @@ def test_every_verify_chunk_is_taken_back_out_of_the_batch_scope(
     for chunk in (1, 2):
         adapter.verify_tracking_path(chunk).write_text("## answers\n")
     inside = {
-        fix.engine._relative_to(adapter.workdir, adapter.verify_tracking_path(n))
+        fix.batches.relative_to(adapter.workdir, adapter.verify_tracking_path(n))
         for n in (1, 2)
     }
     assert all(inside), "the stub's artifacts must sit inside the worktree"
     snapshots.return_value = {"ours.py", *inside}
 
-    scope = fix.engine._batch_scope(adapter, before=set())
+    scope = fix.batches.batch_scope(adapter, before=set())
 
     assert scope.files == {"ours.py"}
 

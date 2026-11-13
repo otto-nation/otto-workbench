@@ -54,8 +54,9 @@ every other phase flag alongside it (the argparse layer in `cli.review_threads`)
 
 from __future__ import annotations
 
+import copy
 import re
-from collections.abc import Callable, Collection, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -66,6 +67,7 @@ import git.push
 import pr.comments
 import pr.comments_fix
 import pr.context
+import pr.fix_checkpoint
 import pr.permalinks
 import pr.state
 import pr.summary_model
@@ -821,12 +823,41 @@ def settle_flag_error(kind: FixOutcome, reason: str, commit: str) -> str:
     return ""
 
 
+def _refuse_no_snapshot() -> int:
+    core.log.error(
+        "No fix snapshot to settle against — run "
+        "`pr comments --fix` first"
+    )
+    return 1
+
+
+def _state_from_open_threads(
+    ctx: pr.context.ResolvedContext,
+    wt_path: Path,
+    targets: list[str],
+    threads: Mapping[str, ReportThread] | None,
+) -> pr.state.PRState | None:
+    """A new snapshot when *targets* are still open on the PR, else None."""
+    found = bool(threads) and any(tid in threads for tid in targets)
+    if not found:
+        return None
+    return pr.state.load_or_init(
+        target_dir=ctx.target_dir,
+        repo=ctx.repo,
+        branch=ctx.branch,
+        pr_number=ctx.pr_number,
+        head_sha=ctx.head_sha,
+        worktree_root=str(wt_path),
+    )
+
+
 def run_settle(
     ctx: pr.context.ResolvedContext,
     targets: list[str],
     as_name: str,
     reason: str,
     commit: str,
+    answers: Sequence[ItemOutcome] = (),
     *,
     fetch_threads: Callable[[], Mapping[str, ReportThread]] | None = None,
 ) -> int:
@@ -853,36 +884,53 @@ def run_settle(
 
     wt_path = ctx.require_worktree()
     state = pr.state.load_state(ctx.target_dir)
+    prepared = pr.fix_checkpoint.prepared_partial(ctx, state, answers=answers)
+    record = (
+        prepared[0].fix.fix if prepared is not None
+        else (state.fix.fix if state is not None else None)
+    )
     known = {
-        o.id for o in (state.fix.fix.items if state is not None else []) if o.id
+        o.id for o in (record.items if record is not None else []) if o.id
     }
     missing = [tid for tid in targets if tid not in known]
     threads: Mapping[str, ReportThread] | None = None
     if missing and fetch_threads is not None:
         threads = fetch_threads()
 
-    if state is None or not state.fix.fix.items:
-        found = bool(threads) and any(tid in threads for tid in targets)
-        if found:
-            state = pr.state.load_or_init(
-                target_dir=ctx.target_dir,
-                repo=ctx.repo,
-                branch=ctx.branch,
-                pr_number=ctx.pr_number,
-                head_sha=ctx.head_sha,
-                worktree_root=str(wt_path),
-            )
+    if record is None or not record.items:
+        opened = _state_from_open_threads(ctx, wt_path, targets, threads)
+        if opened is not None:
+            state = opened
         elif fetch_threads is None:
-            core.log.error(
-                "No fix snapshot to settle against — run "
-                "`pr comments --fix` first"
-            )
-            return 1
+            return _refuse_no_snapshot()
         else:
             # Nothing is recorded here: the throwaway record exists only so
             # settle_targets reports the targets it never recorded.
             settle_targets(FixRecord(), targets, threads=threads or {})
             return 1
+    else:
+        # Adopting a partial snapshot is irreversible; validate on a copy.
+        probe = settle_targets(
+            copy.deepcopy(record), targets, threads=threads,
+        )
+        if probe is None:
+            return 1
+        # Adopting marks the checkpoint ADOPTED; a bad --commit must fail
+        # first so --fix can still resume.
+        if settled_commits(wt_path, probe.picked, kind, commit) is None:
+            return 1
+        try:
+            state = pr.fix_checkpoint.adopt_partial(
+                ctx, state, answers=answers,
+            )
+        except pr.fix_checkpoint.CheckpointAdoptError as exc:
+            core.log.error(str(exc))
+            return 1
+        empty = state is None or not state.fix.fix.items
+        if empty:
+            state = _state_from_open_threads(ctx, wt_path, targets, threads)
+        if empty and state is None:
+            return _refuse_no_snapshot()
 
     result = settle_targets(state.fix.fix, targets, threads=threads)
     if result is None:

@@ -638,11 +638,10 @@ keeps the next round from starting over:
 - **A gate that could not record does not demote.** A failed or malformed
   checklist write leaves items as claimed, unverified (`could not record
   answers … not demoted`). Only a recorded broken verdict demotes.
-- **Checks heartbeat.** `fix.verify_timeout` (default 900s) bounds the repo's
-  checks; a timeout is "did not answer", not red. `fix.verify_progress_interval`
-  (default 60s, `<= 0` disables) prints `checks still running — Ns of …s
-  (fix.verify_timeout)`. The base-commit re-run gets its own timeout, so the
-  worst case is twice the bound.
+- **Checks heartbeat.** `fix.verify_timeout` (default 900s) is shared by the
+  checks and the base re-run; the re-run gets what remains and is skipped at
+  `<= 0`. A timeout reports `timed out after N s`, not red.
+  `fix.verify_progress_interval` (default 60s, `<= 0` disables) heartbeats both.
 - **`pr fix` skips the review** when only declined, skipped or held findings
   remain.
 - **An interrupted pass resumes.** The next run on the same HEAD stashes the
@@ -790,7 +789,7 @@ pass commits under one static subject, so content is the only field that tells
 two of them apart — and cites the branch's own history from there. Nothing
 clears on a guess: a commit still on the branch is unpushed for the ordinary
 reason, and an orphan with no replay, or with two, holds too and says how to
-recover. Re-running `--fix` is not the way; it discards reviewed replies.
+recover. Re-running `--fix` after a completed pass discards reviewed replies; an interrupted pass resumes on the same HEAD (`--no-resume` starts over). Checkpoint resume skips finished phases. Leftover-adoption (`interrupted-pass.json`, written whenever a comments pass is interrupted) applies unless the pass resumes from a fix-checkpoint at `AGENT_RUNNING` or later (`--no-resume`, HEAD moved, new feedback, or a checkpoint before `AGENT_RUNNING`).
 
 ### Closing out comments
 
@@ -807,11 +806,7 @@ PR)`). An id found neither place is still refused.
 Closeout warns `<id>: left open — <reason>` for FIXED/ALREADY_ADDRESSED threads
 it did not resolve. Every reason except `not on the PR` keeps reply debt, so
 `pr status` still shows closeout owed. Open unanswered threads with no snapshot
-row are listed with `pr comments --fix` or `pr comments --settle`.
-
-A comments `--fix` stopped mid-agent records leftovers and, on the next comments
-pass at the same HEAD, resumes matching blobs so they can be committed. An empty
-round will not commit those leftovers.
+row are listed with `pr comments --fix` or `pr comments --settle`. A comments `--fix` stopped mid-agent records leftovers (`interrupted-pass.json`) and, on the next pass at the same HEAD, resumes matching blobs so they can be committed unless that pass resumes from a fix-checkpoint at `AGENT_RUNNING` or later. An empty round will not commit those leftovers.
 
 ### The summary comments are the record, not the state file
 

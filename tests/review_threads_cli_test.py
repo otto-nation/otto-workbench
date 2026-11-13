@@ -650,3 +650,45 @@ def test_main_resolves_with_find_for_fix_finish():
     """`--fix --finish` publishes what an earlier pass recorded; it commits nothing."""
     resolve = _resolve_after_main(["--fix", "--finish"])
     assert resolve.call_args.kwargs["worktree"] is pr.context.WorktreeNeed.FIND
+
+
+class TestResumeFlags:
+    def test_resume_without_fix_exits_1(self, capsys):
+        assert cli.review_threads.main(["--resume"]) == 1
+        assert "--fix" in capsys.readouterr().err
+
+    def test_no_resume_without_fix_exits_1(self, capsys):
+        assert cli.review_threads.main(["--no-resume"]) == 1
+        assert "--fix" in capsys.readouterr().err
+
+    def test_resume_and_no_resume_is_argparse_error(self):
+        with pytest.raises(SystemExit) as exc:
+            cli.review_threads.build_parser().parse_args(
+                ["--resume", "--no-resume"])
+        assert exc.value.code == 2
+
+    def test_resume_fix_with_nothing_to_resume_exits_1(self, tmp_path, capsys):
+        work = tmp_path / "wt"
+        (work / ".git").mkdir(parents=True)
+        ctx = make_ctx(
+            repo="owner/repo", pr_number=9, branch="feat/x",
+            worktree_root=work, head_sha="abc1234",
+            target_dir=tmp_path / "target",
+        )
+        pr_data = PRData(
+            viewer_login="me", head_sha="abc1234", head_ref="feat/x",
+            base_ref="main", review_threads=[], reviews=[],
+            threads_complete=True,
+        )
+        args = cli.review_threads.build_parser().parse_args(["--fix", "--resume"])
+        args.triage = True
+        with patch.object(review.comment_threads, "fetch_pr_data",
+                          return_value=pr_data), \
+             patch.object(pr.comments, "fetch_review_body_comments",
+                          return_value=[]), \
+             patch.object(pr.comments, "fetch_issue_comments", return_value=[]), \
+             patch.object(pr.comments, "fetch_reviewer_verdicts",
+                          return_value=[]):
+            code = review.comment_threads.run_threads(MagicMock(), args, ctx)
+        assert code == 1
+        assert "no interrupted" in capsys.readouterr().err

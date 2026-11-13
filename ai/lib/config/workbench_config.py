@@ -498,13 +498,16 @@ class FixConfig:
     repo that has not said, and `fix.suite` reports it as such rather than
     letting an unchecked pass read like a clean one.
 
-    ``verify_timeout`` is seconds, and a timeout is not a failure of the code —
-    a pass whose checks time out records that they timed out after N seconds,
-    and leaves its claims where the verify gate put them.
+    ``verify_timeout`` is seconds for the declared checks and the baseline
+    re-run together. A timeout is not a failure of the code — a pass whose
+    checks time out records that they timed out after N seconds, and leaves
+    its claims where the verify gate put them. The baseline re-run is given
+    whatever of the budget remains after the checks; at zero or less it is
+    skipped and a red verdict stays red.
 
     ``verify_progress_interval`` is seconds between heartbeat lines while those
-    checks run. ``<= 0`` disables the heartbeat. The base-commit re-run gets its
-    own ``verify_timeout``, so the worst case is twice the bound.
+    checks run. ``<= 0`` disables the heartbeat. Both the pass run and the
+    remaining-budget baseline re-run get the same interval.
 
     Scoped to the repo. The command names paths inside one checkout, so a
     machine-wide value would point every other repo at a script it does not

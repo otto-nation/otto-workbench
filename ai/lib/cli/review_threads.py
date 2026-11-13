@@ -102,6 +102,8 @@ CONTRACT = core.command_contract.CommandContract(
             "Phases",
             ("--triage", "--fix", "--finish", "--reply", "--settle")),
         core.command_contract.FlagGroup(
+            "Resume (with --fix)", ("--resume", "--no-resume")),
+        core.command_contract.FlagGroup(
             "Deferral", ("--track", "--track-all")),
         core.command_contract.FlagGroup(
             "Settle details",

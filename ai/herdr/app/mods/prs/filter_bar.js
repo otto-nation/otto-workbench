@@ -1,11 +1,11 @@
 // Compact filter bar: Show / Repo / Label / Author popovers, tags, Clear.
 // State transitions live in _lib/filters.js; this module only draws barModel().
 import { div } from "gpui-kit";
-import { h_flex, v_flex, Popover, Checkbox, Input, InputState } from "gpui-base";
+import { h_flex, v_flex, Popover, Input, InputState } from "gpui-base";
 import { theme } from "herdr";
 import { searchOptions } from "./_lib/filters.js";
-import { SP, RADIUS, CONTROL, LAYOUT, ROW_H } from "./_lib/tokens.js";
-import { ghostButton, checkbox, popoverSurface, text, caption } from "./_ui/ui.js";
+import { SP, RADIUS, CONTROL, LAYOUT } from "./_lib/tokens.js";
+import { ghostButton, checkRow, popoverSurface, text } from "./_ui/ui.js";
 
 export class FilterBar {
   constructor(acx) {
@@ -86,35 +86,29 @@ export class FilterBar {
   }
 
   flagRow(f, row, onAction) {
-    const t = theme();
-    return h_flex().min_h(ROW_H.list).px(SP.xs).gap(SP.sm).items_center().rounded(RADIUS.control)
-      .hover((s) => s.bg(t.hover))
-      .child(Checkbox.new(`fopt-${f.key}-${row.key}`)
-        .checked(Boolean(row.on))
-        .on_change(() => onAction(row.action))
-        .flex_1().min_w(0)
-        .child(checkbox(Boolean(row.on)))
-        .child(text("label", row.label).flex_1().min_w(0))
-        .when(Boolean(row.hint), (e) => e.child(caption(row.hint))));
+
+    return checkRow(`fopt-${f.key}-${row.key}`, {
+      on: Boolean(row.on),
+      label: row.label,
+      hint: row.hint,
+      onToggle: () => onAction(row.action),
+    });
   }
 
   valueRow(f, o, onAction) {
-    const t = theme();
-    const on = o.state === "include";
     const excluded = o.state === "exclude";
-    return h_flex().min_h(ROW_H.list).px(SP.xs).gap(SP.sm).items_center().rounded(RADIUS.control)
-      .hover((s) => s.bg(t.hover))
-      .child(Checkbox.new(`fopt-${f.key}-${o.value}`)
-        .checked(on)
-        .on_change(() => onAction(o.include))
-        .flex_1().min_w(0)
-        .child(checkbox(on))
-        .child(text("label", o.label, excluded ? t.muted : t.foreground).flex_1().min_w(0)))
-      .child(ghostButton(
+    return checkRow(`fopt-${f.key}-${o.value}`, {
+      on: o.state === "include",
+      label: o.label,
+      count: o.count,
+      muted: excluded,
+      onToggle: () => onAction(o.include),
+      trailing: ghostButton(
         `fhide-${f.key}-${o.value}`,
         excluded ? "Unhide" : "Hide",
         () => onAction(o.exclude),
-      ));
+      ),
+    });
   }
 
   tagsRow(tags, onAction) {

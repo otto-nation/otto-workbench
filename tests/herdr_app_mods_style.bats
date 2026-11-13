@@ -19,6 +19,12 @@ teardown() {
   [ "$status" -eq 1 ]
 }
 
+@test "filter rows go through checkRow; Checkbox.new lives only in _ui" {
+  grep -q 'export function checkRow(' "$MODS/_ui/ui.js"
+  run grep -n 'Checkbox.new(' "$MODS"/prs/*.js
+  [ "$status" -eq 1 ]
+}
+
 @test "the brand forbids pills: no pill( call or export remains" {
   run grep -nE '\bpill\(' "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/queue/*.js
   [ "$status" -eq 1 ]

@@ -4,7 +4,7 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `_lib`, `_ui
 
 ## Where things live
 
-- Shared UI components: `_ui/ui.js` (installed into every mod as `./_ui/ui.js`, like `_lib/`). Reuse `button` (outline), `solidButton` (the one primary action), `iconButton`, `ghostButton`, `checkbox`, `popoverSurface`, `inset`, `segment`/`segmented`, `laneTitle`, `card`, `hoverRow`, `pane`, `paneBar`, `emptyPane`, `scrollBody`, `placeholder`, `caption`, `type`/`text`, `tag`, `statusText`, `sectionLabel`, `badge`/`badgeRow`/`statsRow`, `addStat`/`delStat`, `mono` before hand-building a chain; add a component there when a pattern appears a second time
+- Shared UI components: `_ui/ui.js` (installed into every mod as `./_ui/ui.js`, like `_lib/`). Reuse `button` (outline), `solidButton` (the one primary action), `iconButton`, `ghostButton`, `checkbox`, `checkRow`, `popoverSurface`, `inset`, `segment`/`segmented`, `laneTitle`, `card`, `hoverRow`, `pane`, `paneBar`, `emptyPane`, `scrollBody`, `placeholder`, `caption`, `type`/`text`, `tag`, `statusText`, `sectionLabel`, `badge`/`badgeRow`/`statsRow`, `addStat`/`delStat`, `mono` before hand-building a chain; add a component there when a pattern appears a second time
 - Every top-level `_*/` directory under `mods/` is a shared tree installed into every mod, so only put real libraries there (no scratch dirs like `_tmp/`)
 - Sizes, spacing, fills and breakpoints: `_lib/tokens.js`. Colours come only from `theme()`. No literal pixel or colour values in views
 - Pure logic: `_lib/*.js`, covered by `tests/herdr_app_mods_lib_*.bats`

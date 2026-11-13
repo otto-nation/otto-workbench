@@ -22,6 +22,7 @@ import otto_queue.ledger  # noqa: E402
 import otto_queue.paths  # noqa: E402
 from otto_queue.ledger import Ledger, LedgerBusy, LedgerError  # noqa: E402
 from otto_queue.model import EntryState  # noqa: E402
+from otto_queue_support import set_columns # noqa: E402
 
 ADDITIVE = re.compile(r"^(CREATE (TABLE|INDEX) IF NOT EXISTS|ALTER TABLE \w+ ADD COLUMN) ")
 
@@ -134,3 +135,70 @@ def test_every_migration_statement_is_additive():
     assert all(ADDITIVE.match(s) for s in statements), statements
     added = [s for s in statements if s.startswith("ALTER")]
     assert all("NOT NULL" not in s or "DEFAULT" in s for s in added), added
+
+
+DAY = 86400.0
+
+
+def _finished(root, state, *, age_days, key=None):
+    entry_id = _row(root, state=state)
+    set_columns(root, entry_id, finished_at=time.time() - age_days * DAY, idem_key=key)
+    return entry_id
+
+
+def test_compaction_prunes_old_finished_rows_and_keeps_the_rest(tmp_path):
+    ledger = Ledger.open(tmp_path)
+    old_failed = _finished(tmp_path, "failed", age_days=30)
+    young_done = _finished(tmp_path, "done", age_days=1)
+    live = _row(tmp_path, state="queued")
+    pruned = ledger.compact(retention_s=14 * DAY, now=time.time())
+    assert pruned == [old_failed]
+    assert ledger.get(old_failed) is None
+    assert ledger.get(young_done) is not None and ledger.get(live) is not None
+
+
+def test_compaction_keeps_the_newest_done_entry_of_each_key(tmp_path):
+    ledger = Ledger.open(tmp_path)
+    older = _finished(tmp_path, "done", age_days=60, key="review:abc")
+    newest = _finished(tmp_path, "done", age_days=40, key="review:abc")
+    assert ledger.compact(retention_s=14 * DAY, now=time.time()) == [older]
+    assert ledger.get(newest).state is EntryState.DONE
+
+
+def test_compaction_never_prunes_a_state_this_code_does_not_know(tmp_path):
+    ledger = Ledger.open(tmp_path)
+    future = _finished(tmp_path, "paused", age_days=60)
+    assert ledger.compact(retention_s=14 * DAY, now=time.time()) == []
+    assert _sql(tmp_path).execute("SELECT COUNT(*) FROM entries WHERE id = ?", (future,)).fetchone()[0] == 1
+
+
+def test_compaction_removes_the_pruned_entries_files_and_records_when(tmp_path):
+    ledger = Ledger.open(tmp_path)
+    old = _finished(tmp_path, "done", age_days=30)
+    for path in (otto_queue.paths.log_path(tmp_path, old), otto_queue.paths.lease_path(tmp_path, old)):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x")
+    moment = time.time()
+    ledger.compact(retention_s=14 * DAY, now=moment)
+    assert not otto_queue.paths.log_path(tmp_path, old).exists()
+    assert not otto_queue.paths.lease_path(tmp_path, old).exists()
+    assert ledger.compacted_at() == moment
+
+
+def test_compaction_truncates_the_wal(tmp_path):
+    ledger = Ledger.open(tmp_path)
+    # An idle connection keeps the WAL file in place; without one SQLite deletes
+    # it on the last close, and there would be nothing to measure.
+    keeper = _sql(tmp_path)
+    try:
+        # sqlite3.connect is lazy, and a statement that reads no table (SELECT 1)
+        # never opens the file on some SQLite builds; reading a table holds it.
+        keeper.execute("SELECT count(*) FROM entries").fetchone()
+        for _ in range(50):
+            _row(tmp_path, state="done")
+        wal = otto_queue.paths.db_path(tmp_path).with_name(otto_queue.paths.DB_NAME + "-wal")
+        assert wal.stat().st_size > 0
+        ledger.compact(retention_s=14 * DAY, now=time.time())
+        assert wal.stat().st_size == 0
+    finally:
+        keeper.close()

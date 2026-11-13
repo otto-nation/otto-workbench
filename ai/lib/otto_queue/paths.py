@@ -1,4 +1,4 @@
-"""Where the queue keeps its files: `state_dir()/queue/` holds the ledger, `leases/` and `slots/`.
+"""Where the queue keeps its files: `state_dir()/queue/` holds the ledger, `leases/`, `slots/`, `logs/` and `worker.lock`.
 
 Resolved per call, never at import, so a re-pointed `WORKBENCH_STATE_DIR` is
 seen by every reader.
@@ -17,6 +17,8 @@ QUEUE_DIRNAME = "queue"
 DB_NAME = "queue.db"
 LEASES_DIRNAME = "leases"
 SLOTS_DIRNAME = "slots"
+LOGS_DIRNAME = "logs"
+WORKER_LOCK_NAME = "worker.lock"
 
 
 def queue_root() -> Path:
@@ -38,3 +40,11 @@ def slot_path(root: Path, entry_class: EntryClass, index: int) -> Path:
 
 def admit_lock_path(root: Path) -> Path:
     return root / SLOTS_DIRNAME / "admit.lock"
+
+
+def log_path(root: Path, entry_id: int) -> Path:
+    return root / LOGS_DIRNAME / f"{entry_id}.log"
+
+
+def worker_lock_path(root: Path) -> Path:
+    return root / WORKER_LOCK_NAME

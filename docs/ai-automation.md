@@ -298,7 +298,7 @@ Skills with a cadence and a `should-<skill>.sh` gate (shown in the table above) 
 
 The headless session runs the full hook set and reaches its own Stop hook, so `run-auto-task` exports `WORKBENCH_AUTO_TASK` and every gate exits 1 when it sees it. That is what stops the cascade. It replaced `--bare`, which skipped hooks but also broke slash-command resolution, so the spawned session answered `Unknown command: /<skill>` and did nothing.
 
-The Stop hook only fires under Claude Code, so the same gates are asked again by `maintenance/bin/run-due-auto-tasks` on the 12h maintenance timer — otherwise a machine working in another harness trips nothing. The gates are cooldowns over file mtimes rather than events, so the timer is a true second caller and not an approximation of one. It spawns at most one task per cycle, longest cooldown first, and skips silently where Claude Code is not installed.
+The Stop hook only fires under Claude Code, so the same gates are asked again by `maintenance/bin/run-due-auto-tasks` on the 12h maintenance timer — otherwise a machine working in another harness trips nothing. The gates are cooldowns over file mtimes rather than events, so the timer is a true second caller and not an approximation of one. It starts at most one task per cycle, longest cooldown first, as an otto-queue job keyed by task and UTC day — detached, as the Stop hook does, where no worker can be started — and skips silently where Claude Code is not installed.
 
 Additionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.
 
@@ -1393,9 +1393,10 @@ Run background work through this machine's queue, so it waits for room instead o
 
 | Code | Meaning | Next |
 |---|---|---|
-| `0` | status listed the ledger; cancel stopped a waiting or running entry; run's command succeeded |  |
+| `0` | status listed the ledger; cancel stopped a waiting or running entry; run's command succeeded; submit queued or joined the job, or ran it here and it succeeded |  |
 | `1` | cancel named no live entry (unknown id, or already finished); the ledger could not be opened | `otto-queue status` → `cancel a live id from that list` |
 | `2` | no subcommand, run without --ticket, or run with no command after -- |  |
+| `69` | submit --queue-only: no worker could take the job, so it was withdrawn and nothing ran | `run the command yourself` → `or retry once a worker is up` |
 | `75` | no slot before --wait, or another process holds the ledger; retry | `otto-queue status` → `retry once a slot or the ledger is free` |
 | `130` | the entry was cancelled before it ran, or Ctrl-C interrupted the CLI |  |
 
@@ -1403,11 +1404,12 @@ Run background work through this machine's queue, so it waits for room instead o
 
 - `otto-queue run --ticket --class light -- pytest tests/foo_test.py` — wait for a light slot, then run pytest here
 - `otto-queue run --ticket --key review:main -- pr review --self` — join a live review with that key, or reuse a done one's status
+- `otto-queue submit --key nightly -- pr gc` — queue pr gc for the worker and return; runs here if no worker starts
 - `otto-queue status` — list live entries and recent finished ones
 - `otto-queue status --json` — the same, one JSON object per entry
 - `otto-queue cancel 12` — stop waiting entry 12, or SIGTERM a running one
 
-> run also exits with COMMAND's own status when the command ran.
+> run, and submit when it ran the job here, also exit with COMMAND's own status.
 > --key is idempotent: a live match is joined, a done match returns its status, --force runs regardless.
 > Admission is machine-wide `batch.admission.QueuePolicy` (`batch.*` in the workbench config), never a repo's.
 > The ledger is queue/queue.db under WORKBENCH_STATE_DIR (default ~/.local/state/workbench).

@@ -1,0 +1,12 @@
+[Unit]
+Description=otto-workbench background jobs — the memory budget otto-queue's jobs share
+
+[Slice]
+# Above MemoryHigh the kernel reclaims and throttles the slice; MemoryMax is the
+# hard cap, where an over-cap job is OOM-killed inside the slice only, leaving
+# Herdr and the interactive agents alone. 2560M is 2.5G, spelled in whole units.
+# MemorySwapMax=0: with swap allowed, a job at MemoryMax is pushed to swap instead
+# of killed, and on a zram host that swap is the interactive agents' RAM.
+MemoryHigh=2G
+MemoryMax=2560M
+MemorySwapMax=0

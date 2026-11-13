@@ -1,0 +1,23 @@
+[Unit]
+Description=otto-queue worker — runs this machine's queued workbench jobs
+
+[Service]
+Type=exec
+# workbench_env gives the worker, and every job it starts, the PATH and
+# ~/.env.local an interactive shell has (zsh/env.sh). Paths are substituted at
+# render time, so systemd has no variables to expand here.
+ExecStart=/bin/sh -c '. "__WORKBENCH_DIR__/zsh/env.sh" && workbench_env && exec "__WORKBENCH_DIR__/ai/bin/otto-queue" worker'
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+# A crash restarts it so queued jobs still drain; an idle exit is a success and
+# is not restarted. Jobs run in their own scopes in workbench.slice, so stopping
+# this unit does not stop them.
+Restart=on-failure
+RestartSec=30
+# When systemd-run --scope is unusable the runners stay children of this
+# service; KillMode=process leaves them running if the worker is stopped or
+# restarted after a crash.
+KillMode=process
+
+[Install]
+# Started at boot (the user manager lingers), so jobs a crash left queued drain.
+WantedBy=default.target

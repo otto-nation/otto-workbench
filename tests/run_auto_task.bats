@@ -224,3 +224,45 @@ _make_due_repo() {
     }
   done
 }
+
+# ── --foreground, for an otto-queue job ─────────────────────────────────────
+
+@test "run-auto-task --foreground: waits for the session and returns its status" {
+  # The job's lifetime is the process's. Detached, the job would end — and
+  # release its heavy slot — while the agent was still starting.
+  cat > "$STUB_BIN/claude" <<EOF
+#!/usr/bin/env bash
+sleep 1
+touch "\$TMPDIR/stub-finished"
+exit 3
+EOF
+  chmod +x "$STUB_BIN/claude"
+
+  run "$RUN_AUTO_TASK" --foreground retro
+  [[ "$status" -eq 3 ]]
+  [[ -f "$TMPDIR/stub-finished" ]]
+}
+
+@test "run-auto-task --foreground: sends the same slash command and sentinel" {
+  run "$RUN_AUTO_TASK" --foreground promote
+  [[ "$status" -eq 0 ]]
+  grep -q -- '-p /promote' "$ARGV_LOG"
+  grep -q '^WORKBENCH_AUTO_TASK=promote$' "$ARGV_LOG"
+}
+
+@test "run-auto-task --foreground: records claude's status in the usage ledger" {
+  # The stream path: the status recorded must be claude's, not the renderer's.
+  local usage_log="$TEST_HOME/usage-calls"
+  cat > "$STUB_BIN/ai-usage-log" <<EOF
+#!/usr/bin/env bash
+if [[ "\$1" == "render" ]]; then cat; exit 0; fi
+printf '%s\n' "\$*" >> "$usage_log"
+EOF
+  chmod +x "$STUB_BIN/ai-usage-log"
+  printf '#!/usr/bin/env bash\necho "{}"\nexit 4\n' > "$STUB_BIN/claude"
+  chmod +x "$STUB_BIN/claude"
+
+  run "$RUN_AUTO_TASK" --foreground dream
+  [[ "$status" -eq 4 ]]
+  grep -q -- '--task dream --exit-code 4' "$usage_log"
+}

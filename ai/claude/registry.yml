@@ -48,4 +48,4 @@ tools:
   - name: run-auto-task
     permission: false
     visibility: hidden
-    description: "Run a Claude Code skill as a headless background session with output logging"
+    description: "Run a Claude Code skill as a headless session with output logging — detached for the Stop hook, or with --foreground for an otto-queue job"

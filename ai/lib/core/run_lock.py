@@ -64,7 +64,9 @@ makes the next contender's error message name a command rather than a pid.
 dead pid in one is the normal case rather than evidence of a crash. A released
 record carries a ``released`` timestamp, written under the flock just before
 it is dropped; a held one has ``released: null``. To ask the kernel rather
-than read the file, call ``is_held``.
+than read the file, call ``is_held`` for a target or ``tree_hold`` for a
+checkout; ``lib/run_lock_cli.py held-tree`` is the second for a caller that
+is not Python (``bin/wt-cleanup``).
 
 Which locks a run takes is not decided here. Every ``pr`` command declares its
 scopes on its ``Need`` in ``cli.registry``, and ``cli.locks`` takes them:
@@ -162,6 +164,14 @@ VACATED_BUDGET_S = 2.0
 
 # sysexits.h EX_TEMPFAIL: retry later — a live lock holder.
 EXIT_BUSY = ExitCode.TEMPFAIL
+
+
+class TreeHold(enum.StrEnum):
+    """Whether a live run holds a checkout, or the question could not be asked."""
+
+    FREE = "free"
+    HELD = "held"
+    UNKNOWN = "unknown"
 
 
 class Scope(enum.Enum):
@@ -812,6 +822,25 @@ def is_held(target_dir: Path) -> bool:
     descriptor already reports our own lock as held.
     """
     return _probe(Path(target_dir) / LOCK_FILE)
+
+
+def tree_hold(worktree: Path) -> TreeHold:
+    """Whether a live run holds *worktree*'s checkout lock.
+
+    ``free`` when the path does not exist (a vanished worktree has nothing to
+    protect) or git named a git dir and the lock is not held. ``held`` when it
+    is. ``unknown`` when the path exists and git names no git dir or git fails
+    — a caller about to delete the tree must treat that as held.
+    """
+    path = Path(worktree)
+    if not path.exists():
+        return TreeHold.FREE
+    spec = _tree_spec(path)
+    if spec is None:
+        return TreeHold.UNKNOWN
+    if _probe(spec.path):
+        return TreeHold.HELD
+    return TreeHold.FREE
 
 
 def _probe(path: Path) -> bool:

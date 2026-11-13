@@ -31,6 +31,9 @@ class ExitCode(IntEnum):
     USAGE = 2
     CONFLICTS = 3
     REFUSED = 4
+    # sysexits.h EX_UNAVAILABLE: a service this needs is not there — no queue
+    # worker could take the job, so nothing ran and the caller may run it itself.
+    UNAVAILABLE = 69
     # sysexits.h EX_TEMPFAIL: retry later — a live lock holder, a spent quota.
     TEMPFAIL = 75
     # 128 + SIGINT: cancelled before the work finished, or Ctrl-C. core.proc owns
@@ -49,6 +52,7 @@ _SUMMARIES = {
     ExitCode.USAGE: "Usage error: the arguments could not be understood (argparse's code)",
     ExitCode.CONFLICTS: "Conflicts a person must look at; a JSON report is on stdout",
     ExitCode.REFUSED: "Refused on purpose before changing anything; JSON names the override",
+    ExitCode.UNAVAILABLE: "Unavailable: a service it needs is not there; nothing ran",
     ExitCode.TEMPFAIL: "Temporary: retry later (a live lock holder, a spent GitHub quota)",
     ExitCode.CANCELLED: "Cancelled: interrupted or the work was stopped before it finished",
 }

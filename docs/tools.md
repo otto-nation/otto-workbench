@@ -16,7 +16,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `pr` | Unified PR lifecycle CLI — creation, CI failures, code review, and review comments |
 | `review` | Run the configured review agent on a PR with local worktree checkout and iterative review support |
 | `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
-| `otto-queue` | Machine-wide queue for background work — admits a command against the heavy/light budget, de-duplicates it by key, and records it in a per-machine ledger |
+| `otto-queue` | Machine-wide queue for background work — admits a command against the heavy/light budget or queues it as a job for an on-demand worker, de-duplicates it by key, and records it in a per-machine ledger |
 | `workbench-rules` | Manages this machine's own coding-rule layers — local additions and overrides, for whichever harnesses are installed |
 | `ceiling-scan` | Scan for ceiling: and ceiling-permanent: markers and produce a structured debt ledger |
 | `dream-scan` | Scan session transcripts and memory state for dream consolidation |
@@ -60,7 +60,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `reuse-session-start` | SessionStart hook — inject reuse level and ceiling scan nudge |
 | `reuse-subagent-start` | SubagentStart hook — inject reuse level into spawned subagents |
 | `workbench-statusline` | Status line script — displays reuse level, ceiling debt count, and review status |
-| `run-auto-task` | Run a Claude Code skill as a headless background session with output logging |
+| `run-auto-task` | Run a Claude Code skill as a headless session with output logging — detached for the Stop hook, or with --foreground for an otto-queue job |
 | `herdr-app` | Open the main Herdr window detached from the terminal (no-op when running), or run a Herdr command. Operator tool |
 | `herdr-app-untrusted` | Launch an isolated Herdr window (HC_SESSION=untrusted) with no local terminals. Operator tool |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
@@ -483,6 +483,10 @@ the worktree back and are named in the summary. Every path the check forgives is
 written to `~/.local/state/workbench/logs/wt-cleanup.log` with its reason, so a
 removal this widens can be audited afterwards.
 
+A worktree a live `pr` run is working in — one whose checkout lock
+(`core.run_lock`, asked through `lib/run_lock_cli.py held-tree`) is held —
+is skipped, merged or not, and so is one the probe could not answer for.
+
 The worktree list comes from `wt list --format json`, whose payload carries a
 `schema` number. The script reads schema 2 and refuses any other with an error
 rather than reading fields that may have moved — a mismatch means worktrunk
@@ -812,7 +816,7 @@ Run background work through this machine's queue, so it waits for room instead o
 
 Flags, exit codes and examples are `CONTRACT` in `cli.otto_queue` (`otto-queue --help`).
 
-Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail · `130` cancelled — writes nothing remotely; [contract](ai-automation.md#otto-queue-contract)
+Exit codes: `0` ok · `1` failure · `2` usage · `69` unavailable · `75` tempfail · `130` cancelled — writes nothing remotely; [contract](ai-automation.md#otto-queue-contract)
 
 **`otto-queue run`** — Run a command once the queue admits it
 
@@ -822,8 +826,26 @@ Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail · `130` cancell
 | `--class` `<heavy\|light>` | heavy: counted and memory-checked (default); light: counted only. |
 | `--key` `<key>` | Join a live entry with this key, or return a done one's status. |
 | `--force` | Run even when --key matches an entry. |
+| `--no-reuse` | With --key, run again when only a finished entry matches; a live one is still joined. |
 | `--wait` `<wait>` | Seconds to wait for a slot before exiting 75 (default: 3600). |
 | `...` | -- and the command to run. |
+
+**`otto-queue submit`** — Queue a command for the worker and return
+
+| Flag | Description |
+|------|-------------|
+| `--class` `<heavy\|light>` | heavy: counted and memory-checked (default); light: counted only. |
+| `--key` `<key>` | Join a live entry with this key, or return a done one's status. |
+| `--force` | Run even when --key matches an entry. |
+| `--no-reuse` | With --key, run again when only a finished entry matches; a live one is still joined. |
+| `--queue-only` | When no worker can start, withdraw the job and exit 69 instead of running it here. |
+| `...` | -- and the command to run. |
+
+**`otto-queue worker`** — Run queued jobs until idle; started by the supervisor
+
+| Flag | Description |
+|------|-------------|
+| `--idle` `<idle>` | Seconds with no job before exiting (default: 120). |
 
 **`otto-queue status`** — List live entries and the most recent finished ones
 

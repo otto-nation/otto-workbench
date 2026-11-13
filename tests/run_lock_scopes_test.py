@@ -12,7 +12,7 @@ if str(LIB_DIR) not in sys.path:
 import pytest  # noqa: E402
 
 import core.run_lock  # noqa: E402
-from core.run_lock import CHECKOUT, NO_LOCK, TARGET, LockBusy  # noqa: E402
+from core.run_lock import CHECKOUT, NO_LOCK, TARGET, LockBusy, TreeHold  # noqa: E402
 from run_lock_support import flocked, git_dir, held_elsewhere, live_pid  # noqa: E402
 
 
@@ -118,3 +118,22 @@ def test_a_refused_checkout_names_the_tree(worktree, tmp_path):
             pytest.fail("a held checkout must refuse the block")
     assert exc.value.kind == "checkout"
     assert f"owns this checkout {worktree}: pr rebase" in str(exc.value)
+
+
+def test_tree_hold_answers_for_a_checkout_another_run_holds(worktree):
+    lock = git_dir(worktree) / core.run_lock.TREE_LOCK_FILE
+    assert core.run_lock.tree_hold(worktree) is TreeHold.FREE
+    with held_elsewhere(lock, {"pid": 1, "command": "pr review 7", "released": None}):
+        assert core.run_lock.tree_hold(worktree) is TreeHold.HELD
+    # The record is still on disk, released or not: only the kernel can answer.
+    assert lock.exists()
+    assert core.run_lock.tree_hold(worktree) is TreeHold.FREE
+
+
+def test_tree_hold_sees_a_checkout_this_process_holds(worktree, tmp_path):
+    with core.run_lock.acquire(tmp_path / "target", "pr x", "t", worktree=worktree):
+        assert core.run_lock.tree_hold(worktree) is TreeHold.HELD
+
+
+def test_tree_hold_is_free_where_git_names_no_checkout(tmp_path):
+    assert core.run_lock.tree_hold(tmp_path / "gone") is TreeHold.FREE

@@ -38,7 +38,7 @@ tools:
     parser: cli.otto_queue:reference_shape
     permission: true
     visibility: brief
-    description: "Machine-wide queue for background work — admits a command against the heavy/light budget, de-duplicates it by key, and records it in a per-machine ledger"
+    description: "Machine-wide queue for background work — admits a command against the heavy/light budget or queues it as a job for an on-demand worker, de-duplicates it by key, and records it in a per-machine ledger"
 
   - name: workbench-rules
     permission: true

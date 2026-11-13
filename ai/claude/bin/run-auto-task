@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
-# Run a Claude Code skill as a headless background session.
+# Run a Claude Code skill detached by default, or in the caller's process with --foreground.
 #
-# Usage: run-auto-task <skill-name>
+# Usage: run-auto-task [--foreground] <skill-name>
 #
-# Spawns `claude -p` in the background and streams output to
+# Spawns `claude -p` detached by default and streams output to
 # ~/.claude/logs/<skill>-<timestamp>.log.
 # Designed to be called from Stop hooks instead of setting pending flags.
+# `--foreground` runs the session in this process and exits with its status, for an otto-queue job (`maintenance/bin/run-due-auto-tasks`), whose admission and memory cap last exactly as long as its process.
 #
 # Cascade prevention is WORKBENCH_AUTO_TASK, exported below and checked by the
 # four gates the Stop hook calls. It replaced --bare, which skipped hooks but
@@ -23,9 +24,10 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 
 usage() {
   cat <<EOF
-Usage: run-auto-task <skill-name>
+Usage: run-auto-task [--foreground] <skill-name>
 
-Run a Claude Code skill as a headless background session.
+Run a Claude Code skill detached by default, or in the caller's process with --foreground.
+\`--foreground\` runs the session in this process and exits with its status, for an otto-queue job (\`maintenance/bin/run-due-auto-tasks\`), whose admission and memory cap last exactly as long as its process.
 
 Spawns \`claude -p\` and streams output to
 ~/.claude/logs/<skill>-<timestamp>.log. The spawned session inherits
@@ -39,7 +41,12 @@ EOF
 
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 
-skill="${1:?Usage: run-auto-task <skill-name>}"
+foreground=false
+if [[ "${1:-}" == "--foreground" ]]; then
+  foreground=true
+  shift
+fi
+skill="${1:?Usage: run-auto-task [--foreground] <skill-name>}"
 
 log_dir="${CLAUDE_LOG_DIR:-$CLAUDE_DIR/logs}"
 mkdir -p "$log_dir"
@@ -55,18 +62,32 @@ export WORKBENCH_AUTO_TASK="$skill"
 # _base_cmd() disables; route through the backend once it takes a slash-commands flag.
 # Until then the raw stream is teed here and rendered back to readable text, so the
 # call still lands in the usage ledger without the log turning into JSONL.
-if ! command -v ai-usage-log > /dev/null 2>&1; then
-  nohup claude -p "/$skill" --permission-mode bypassPermissions \
-    > "$log_file" 2>&1 & disown
-  exit 0
-fi
-
-(
-  trap '' HUP
+#
+# _session — the headless session, its output in $log_file; returns claude's own status.
+_session() {
+  if ! command -v ai-usage-log > /dev/null 2>&1; then
+    claude -p "/$skill" --permission-mode bypassPermissions > "$log_file" 2>&1
+    return
+  fi
+  local rc
   claude -p "/$skill" --permission-mode bypassPermissions \
     --output-format stream-json --verbose 2>&1 |
     ai-usage-log render --tee "$raw_file" > "$log_file"
   rc="${PIPESTATUS[0]}"
   ai-usage-log record --from-log "$raw_file" --script run-auto-task \
     --entry-point agent --task "$skill" --exit-code "$rc" || true
+  return "$rc"
+}
+
+# Foreground for a caller that owns the session's lifetime (an otto-queue job);
+# detached for the Stop hook, which must not block on a multi-minute agent.
+if [[ "$foreground" == "true" ]]; then
+  session_status=0
+  _session || session_status=$?
+  exit "$session_status"
+fi
+
+(
+  trap '' HUP
+  _session
 ) > /dev/null 2>&1 & disown

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Scheduled maintenance for otto-workbench.
-# Called by launchd (macOS) or systemd timer (Linux) — pulls latest changes,
-# runs sync, cleans stale worktrees, and collects stale PR artifacts.
+# Triggered by launchd (macOS) or a systemd timer (Linux), which only submit it to otto-queue; the queue's worker runs the body as a job.
+# Pulls latest changes, runs sync, cleans stale worktrees, and collects stale PR artifacts.
 #
 # Exit codes:
 #   0  Success (updated or already up-to-date)
 #   1  Error (fetch/pull/sync failed)
+#   75 Deferred (EX_TEMPFAIL): a pr batch run is live; the queue retries it with backoff
 
 set -e
 
@@ -39,6 +40,43 @@ workbench_env
 mkdir -p "$WORKBENCH_STATE_DIR"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
+
+# Scheduled maintenance runs as an otto-queue job: inside workbench.slice on
+# Linux, counted against the machine's heavy budget, and never two at once —
+# the `maintenance` key joins a run already queued or running, and --no-reuse
+# lets the next cycle run again once one has finished. So the timer or launchd
+# agent only submits. `otto-workbench maintenance run` passes --ticket to run it
+# here, in the terminal, under the same key. OTTO_QUEUE_ENTRY marks a run the
+# queue started; _WB_MAINTENANCE_QUEUED marks one the queue ran unqueued (its
+# ledger could not be opened), which would otherwise submit itself again.
+OTTO_QUEUE_BIN="${OTTO_QUEUE_BIN:-$WORKBENCH_DIR/ai/bin/otto-queue}"
+if [[ -z "${OTTO_QUEUE_ENTRY:-}" && -z "${_WB_MAINTENANCE_QUEUED:-}" && -x "$OTTO_QUEUE_BIN" ]]; then
+  queue_command=(submit)
+  if [[ "${1:-}" == "--ticket" ]]; then
+    queue_command=(run --ticket)
+  fi
+  export _WB_MAINTENANCE_QUEUED=1
+  exec "$OTTO_QUEUE_BIN" "${queue_command[@]}" --class heavy --key maintenance --no-reuse \
+    -- "$WORKBENCH_DIR/maintenance/bin/otto-workbench-maintenance"
+fi
+
+# _batch_running — true when `pr batch status --list` reports an active run.
+# No `pr` (the ai component is not installed) means no batch can be running.
+_batch_running() {
+  [[ -x "$LOCAL_BIN_DIR/pr" ]] || return 1
+  local listing
+  listing=$("$LOCAL_BIN_DIR/pr" batch status --list 2>/dev/null) || return 1
+  python3 -c 'import json, sys; sys.exit(0 if any(r.get("active") for r in json.load(sys.stdin).get("runs", [])) else 1)' \
+    <<<"$listing"
+}
+
+# A live `pr batch` run checks out, rebases and pushes with the code this run is
+# about to pull and sync over. 75 (EX_TEMPFAIL) is a busy resource, not a
+# failure: the queue runs this job again with backoff.
+if _batch_running; then
+  log "A pr batch run is live; deferring maintenance so it does not sync code under it"
+  exit 75
+fi
 
 cd "$WORKBENCH_DIR"
 
@@ -86,7 +124,8 @@ fi
 
 # The steps below stay unbounded here on purpose. `pr gc` must keep its exit
 # code 75, which run-bounded would collapse to 1, and run-due-auto-tasks spawns
-# detached agents that a process-group kill would take down with it.
+# detached agents where no worker can take them as queue jobs, which a
+# process-group kill would take down with it.
 log "Cleaning stale worktrees"
 if "$MAIN_WORKTREE/bin/wt-cleanup" --quiet 2>&1; then
   log "Worktree cleanup complete"
@@ -98,19 +137,19 @@ fi
 # is a symlink the ai/claude component installs. Components install
 # independently, so its absence is a machine that never asked for it — a skip,
 # not a warning to repeat on every cycle for the life of the install.
-# 75 is `pr`'s EXIT_BUDGET_EXHAUSTED: the sweep stopped because the account's
-# hourly GitHub quota is spent. Distinguished from a real failure because it is
-# neither broken nor actionable — the budget refills on its own and the next
-# cycle collects what this one could not ask about. Calling it a failure sent
-# someone looking for an expired token.
+# `pr` exits 75 both for EXIT_BUDGET_EXHAUSTED and for a busy run lock
+# (`core.run_lock.EXIT_BUSY`). Neither becomes this script's status, so a gc
+# skip never re-queues pull and sync. Distinguished from a real failure because
+# it is neither broken nor actionable — the budget refills on its own, a busy
+# lock clears, and the next cycle collects what this one could not.
 if [[ -x "$LOCAL_BIN_DIR/pr" ]]; then
   log "Collecting stale PR artifacts"
   gc_status=0
   "$LOCAL_BIN_DIR/pr" gc 2>&1 || gc_status=$?
   if [[ $gc_status -eq 0 ]]; then
     log "PR artifact collection complete"
-  elif [[ $gc_status -eq 75 ]]; then  # pr EXIT_BUDGET_EXHAUSTED (EX_TEMPFAIL)
-    log "PR artifact collection skipped — GitHub API budget exhausted, will retry next cycle"
+  elif [[ $gc_status -eq 75 ]]; then
+    log "PR artifact collection skipped — GitHub API budget exhausted or its target is busy, will retry next cycle"
   else
     log "WARNING: pr gc failed (non-fatal, exit $gc_status)"
   fi

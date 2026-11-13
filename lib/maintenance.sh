@@ -143,7 +143,10 @@ _systemd_install() {
   sed -e "s|__WORKBENCH_DIR__|$(_maintenance_run_dir)|g" \
     "$svc_template" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.service"
 
-  _systemd_render_timer "$interval" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer" || return 1
+  # Rendered before the write: a failed render must not truncate the installed timer.
+  local rendered
+  rendered=$(_systemd_render_timer "$interval") || return 1
+  printf '%s\n' "$rendered" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer"
 
   systemctl --user daemon-reload
 }

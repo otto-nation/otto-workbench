@@ -1,6 +1,8 @@
 """Tests for `core.command_contract.union_schema`."""
 
 import json
+
+import pytest
 import sys
 from pathlib import Path
 
@@ -63,3 +65,13 @@ def test_mcp_exclude_drops_a_command_from_the_enum_and_contracts():
     assert "beta" not in blob
     assert "beta" not in command["enum"]
     assert "beta" not in doc["input_schema"]["x-contracts"]
+
+
+def test_a_contract_excludes_only_its_own_command():
+    doc = _two_command_doc(alpha=_toy(mcp_exclude=("beta",)), beta=_toy())
+    assert doc["input_schema"]["properties"]["command"]["enum"] == ["alpha", "beta"]
+
+
+def test_unknown_mcp_exclude_name_raises():
+    with pytest.raises(ValueError):
+        _two_command_doc(alpha=_toy(mcp_exclude=("gamma",)), beta=_toy())

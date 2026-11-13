@@ -382,7 +382,22 @@ class TestToolSchema:
             pytest.skip("scripts not found")
         entry = load_registry_entries(WORKBENCH_DIR)[script]
         assert _tool_schema(script, entry) is None
-        assert _tool_schema(Path("/usr/bin/wt")) is None
+        assert _tool_schema(Path("/usr/bin/wt")) is None  # no entry at all
+
+    def test_a_parser_that_fails_to_load_is_skipped_not_raised(self, monkeypatch):
+        def boom(*a, **k):
+            raise ImportError("broken parser")
+        monkeypatch.setattr(core.cli_reference, "load", boom)
+        entry = RegistryEntry(
+            name="toy", description="toy", visibility=Visibility.BRIEF,
+            parser="cli.toy:reference_shape",
+        )
+        assert _tool_schema(Path("/bin/toy"), entry) is None
+
+    def test_fingerprint_watches_parser_modules(self):
+        from server import discovery_fingerprint  # noqa: PLC0415
+        paths = {path for path, _ in discovery_fingerprint()}
+        assert str(WORKBENCH_DIR / "ai" / "lib" / "cli" / "otto_log.py") in paths
 
 
 class TestDescribed:
@@ -645,6 +660,12 @@ class TestContractedTools:
         )
 
         assert _tool_schema(Path("/bin/toy"), entry) is None
+
+    def test_unknown_mcp_exclude_name_is_an_error(self):
+        contract = core.command_contract.CommandContract(
+            summary="x", groups=(), exits=(), examples=(), mcp_exclude=("typo",))
+        with pytest.raises(ValueError):
+            core.command_contract.union_schema("toy", "d", ["a"], {"a": contract})
 
     def test_a_served_non_pr_subcommand_argv_is_positional_then_flags(self):
         if not (WORKBENCH_DIR / "ai" / "bin" / "otto-log").exists():

@@ -175,8 +175,12 @@ def _tool_schema(script: Path, entry: RegistryEntry | None = None) -> dict | Non
     """
     if entry is None or not entry.parser:
         return None
-    shape = core.cli_reference.load(entry.parser, entry.name, WORKBENCH_DIR)
-    schema = _schema_from_shape(entry, shape)
+    try:
+        shape = core.cli_reference.load(entry.parser, entry.name, WORKBENCH_DIR)
+        schema = _schema_from_shape(entry, shape)
+    except Exception as exc:  # noqa: BLE001 - one bad parser must not drop every tool
+        logger.error("Skipping %s: its schema could not be read: %s", entry.name, exc)
+        return None
     if schema is None:
         return None
     schema["_script"] = str(script)
@@ -189,12 +193,12 @@ def _schema_from_shape(
     """The MCP document for *entry*, or None when it should not be offered."""
     if shape.contract is not None:
         commands = [command.name for command in shape.commands]
-        excluded = frozenset(shape.contract.mcp_exclude)
-        if not any(name not in excluded for name in commands):
-            return None
         contracts = {name: shape.contract for name in commands}
-        return core.command_contract.union_schema(
+        doc = core.command_contract.union_schema(
             entry.name, entry.description, commands, contracts)
+        if not doc["input_schema"]["properties"]["command"]["enum"]:
+            return None
+        return doc
     if any(command.contract is not None for command in shape.commands):
         from cli.schema import tool_schema
         return dict(tool_schema())
@@ -302,6 +306,11 @@ def discovery_fingerprint(root: Path | None = None) -> tuple:
     base = WORKBENCH_DIR if root is None else Path(root)
     lib = base / "ai" / "lib" / "cli"
     watched = [*registry_files(base), lib / "schema.py", lib / "registry.py"]
+    # Parser modules decide which tools and subcommands are served (mcp_exclude).
+    for entry in load_registry_entries(base).values():
+        module = entry.parser.partition(":")[0] if entry.parser else ""
+        if module:
+            watched.append(base / "ai" / "lib" / Path(*module.split(".")).with_suffix(".py"))
     return tuple(sorted((str(path), _stamp(path)) for path in watched))
 
 

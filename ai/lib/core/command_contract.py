@@ -382,8 +382,16 @@ def union_schema(
     the worktree globals. Each entry in *contracts* is rendered with
     `schema` and stored under ``input_schema.x-contracts``.
     """
+    for command, contract in contracts.items():
+        unknown = [n for n in contract.mcp_exclude if n not in commands]
+        if unknown:
+            raise ValueError(
+                f"{name}: mcp_exclude on {command!r} names unknown commands {unknown}")
+    # A contract excludes only its own command: unioning across contracts let
+    # one per-subcommand contract hide another command globally.
     excluded = frozenset(
-        skipped for contract in contracts.values() for skipped in contract.mcp_exclude
+        command for command, contract in contracts.items()
+        if command in contract.mcp_exclude
     )
     properties: dict = {
         "command": {

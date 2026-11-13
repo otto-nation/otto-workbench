@@ -944,3 +944,16 @@ def test_base_branch_without_a_worktree_uses_the_branch_ref_not_head(
     ctx = make_ctx(base="", worktree_root=None, branch="child")
 
     assert pr.context.base_branch(ctx) == "parent"
+
+
+@pytest.mark.parametrize("state", ["MERGED", "CLOSED"])
+def test_the_current_branch_has_no_pr_when_its_latest_one_is_not_open(monkeypatch, state):
+    monkeypatch.setattr(gh.client, "pr_view", lambda *_a, **_k: {
+        "number": 1851, "baseRefName": "main", "state": state})
+    assert pr.context._pr_from_current() == pr.context.BranchPR()
+
+
+def test_the_current_branch_resolves_its_open_pr(monkeypatch):
+    monkeypatch.setattr(gh.client, "pr_view", lambda *_a, **_k: {
+        "number": 2004, "baseRefName": "main", "state": "OPEN"})
+    assert pr.context._pr_from_current() == pr.context.BranchPR(number=2004, base="main")

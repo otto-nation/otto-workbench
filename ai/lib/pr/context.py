@@ -840,7 +840,15 @@ def _as_pr_number(said: str) -> int | None:
 
 
 def _pr_from_current(cwd: str | None = None) -> BranchPR:
-    data = gh.client.pr_view("", "number", "baseRefName", cwd=cwd)
+    """The open PR for the current branch, matching :func:`_pr_from_branch`.
+
+    `gh pr view` with no argument answers with the branch's latest PR in any
+    state, so a branch name reused after its PR merged would otherwise resolve
+    to that merged PR — and `pr create` refuses as though it were open.
+    """
+    data = gh.client.pr_view("", "number", "baseRefName", "state", cwd=cwd)
+    if data.get("state") != "OPEN":
+        return BranchPR()
     return BranchPR(
         number=_as_pr_number(str(data.get("number", ""))),
         base=data.get("baseRefName") or "",

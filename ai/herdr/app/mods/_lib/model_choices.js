@@ -158,3 +158,13 @@ export function phaseOptions(doc, phase, query, current = '') {
 
   return { ok: true, sections };
 }
+
+// True iff phaseOptions would mark this ref's row disabled for the phase.
+// No doc / unknown ref / blank Configured: fail-open, nothing blocked; pr still validates.
+export function refBlocked(doc, phase, ref) {
+  const r = String(ref ?? '').trim();
+  if (!r) return false;
+  const opts = phaseOptions(doc, phase, '', r);
+  if (!opts.ok) return false;
+  return opts.sections.some((s) => s.rows.some((row) => row.ref === r && row.disabled));
+}

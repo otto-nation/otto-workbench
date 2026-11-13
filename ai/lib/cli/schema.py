@@ -68,34 +68,23 @@ def tool_schema() -> dict:
     ``x-positional``: the server emits it as the first argv token, not as
     ``--command``.
     """
-    doc = {
-        "name": SCRIPT,
-        "description": "Unified PR lifecycle CLI — CI, review, comments, rebase",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "command": {
-                    "type": "string",
-                    "enum": list(COMMANDS),
-                    "description": "Subcommand to run",
-                    "x-positional": True,
-                },
-                "repo_dir": {"type": "string", "description": "Git worktree directory", "x-context": True},
-                "branch": {"type": "string", "description": "Branch name", "x-context": True},
-                "pr": {"type": "string", "description": "PR number or URL", "x-context": True},
-            },
-            "required": ["command"],
-        },
-    }
     contracts = {}
     for name, spec in COMMANDS.items():
         contract = contract_for(spec)
         if contract is None:
             continue
-        contracts[name] = core.command_contract.schema(contract)
-    if contracts:
-        doc["input_schema"]["x-contracts"] = contracts
-    return doc
+        contracts[name] = contract
+    return core.command_contract.union_schema(
+        SCRIPT,
+        "Unified PR lifecycle CLI — CI, review, comments, rebase",
+        list(COMMANDS),
+        contracts,
+        context_properties={
+            "repo_dir": {"type": "string", "description": "Git worktree directory", "x-context": True},
+            "branch": {"type": "string", "description": "Branch name", "x-context": True},
+            "pr": {"type": "string", "description": "PR number or URL", "x-context": True},
+        },
+    )
 
 
 def subcommand_schema(command: str) -> dict | None:

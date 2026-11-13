@@ -74,8 +74,9 @@ _run_step() {
 @test "jq adds the board to panel-body after files and changes" {
   run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
   [ "$status" -eq 0 ]
-  jq -e '[.. | objects | select(.id? == "panel-body") | .children | map(.id)] == [["files","changes","prs-panel"]]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "panel-body") | .children | map(.id)] == [["files","changes","prs-panel","queue-panel"]]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "prs-panel") | .content.mod] == ["prs"]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "queue-panel") | .content] == [{"mod":"queue"}]' <<< "$output"
 }
 
 @test "jq marks the panel copy of the board so it offers Full screen" {
@@ -92,13 +93,15 @@ _run_step() {
   jq -e '[.. | objects | select(.id? == "panel") | [.min, .size]] == [[280, {"px": 368}]]' <<< "$output"
 }
 
-@test "jq wraps the tab bar in a row with the PRs toggle" {
+@test "jq wraps the tab bar in a row with the PRs and Queue toggles" {
   run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
   [ "$status" -eq 0 ]
   jq -e '[.. | objects | select(.id? == "work") | .children | map(.id) | .[0]] == ["tabs-row"]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "tabs-row") | .children | map(.id)] == [["tabs","prs-button"]]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "tabs-row") | .children | map(.id)] == [["tabs","prs-button","queue-button"]]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "tabs-row") | .size] == [{"px":42}]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "prs-button") | .content.mod] == ["prs-button"]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "queue-button") | .content.mod] == ["queue-button"]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "queue-button") | .size] == [{"px":88}]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "tabs") | .size] == [{"weight":1}]' <<< "$output"
 }
 
@@ -284,7 +287,7 @@ _run_step() {
   _seed_main
   run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *'herdr-app: show the workbench layout (a PRs toggle beside Files/Changes opens the board) with: herdr-app do layout.switch --name workbench'* ]]
+  [[ "$output" == *'herdr-app: show the workbench layout (PRs and Queue toggles beside Files/Changes open those panels) with: herdr-app do layout.switch --name workbench'* ]]
   run _run_step
   [ "$status" -eq 0 ]
   [[ "$output" != *'layout.switch --name workbench'* ]]

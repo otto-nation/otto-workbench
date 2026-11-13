@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for _herdr_app_install_mods — copy herdr-app mods with a per-file manifest.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/mods_install.sh ai/herdr/steps.sh ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/* ai/herdr/app/mods/prs-button/* ai/herdr/app/mods/queue/* lib/constants.sh lib/files.sh
+# select-on: ai/herdr/mods_install.sh ai/herdr/steps.sh ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/* ai/herdr/app/mods/prs-button/* ai/herdr/app/mods/queue/* ai/herdr/app/mods/queue-button/* lib/constants.sh lib/files.sh
 
 setup() {
   load 'test_helper'
@@ -81,6 +81,9 @@ _cksum() {
   cmp -s "$SRC/queue/main.js" "$APP/mods/queue/main.js"
   cmp -s "$SRC/queue/mod.json" "$APP/mods/queue/mod.json"
   cmp -s "$SRC/_lib/queue.js" "$APP/mods/queue/_lib/queue.js"
+  [ -f "$APP/mods/queue-button/main.js" ]
+  [ -f "$APP/mods/queue-button/mod.json" ]
+  cmp -s "$SRC/queue-button/main.js" "$APP/mods/queue-button/main.js"
 }
 
 # herdr docks a mod the first time it sees the folder, reading mod.json for where;

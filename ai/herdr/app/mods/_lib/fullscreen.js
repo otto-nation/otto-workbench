@@ -12,7 +12,7 @@
  * "off" when there is no root, `main` is missing, or `main` is not hidden.
  * When `main.hidden` is truthy: "on" if `panel` exists, is not hidden, and
  * `panel-body.active` is "prs-panel"; otherwise "stranded".
- * Only "on" and "off" are stable: "stranded" must be healed by a caller (prs-button does,
+ * Only "on" and "off" are stable: "stranded" must be healed by a caller (panel_button does,
  * via healDue) or the main area stays hidden.
  *
  * panelShown(root) -> whether the panel copy is on screen: `panel` not hidden and

@@ -1,19 +1,21 @@
-# The workbench layout: Herdr's shipped main with a PRs toggle beside the tab bar opening the board as a panel.
-# The board is a panel-body child the PRs toggle selects. placement tells the mod it is the panel
+# The workbench layout: Herdr's shipped main with PRs and Queue toggles beside the tab bar.
+# Each is a panel-body child its toggle selects. placement tells the board it is the panel
 # copy, which offers Full screen; the board tab opened from it carries no placement.
 def prs_panel: {id: "prs-panel", type: "block", content: {mod: "prs", props: {placement: "panel"}}};
-# Herdr's tabs mod hard-codes Files/Changes, so the PRs toggle is a sibling block.
-# prs-button width: 2*px 8 + icon 14 + gap 5 + "PRs" label + pr(SP.sm); 72 leaves slack.
+def queue_panel: {id: "queue-panel", type: "block", content: {mod: "queue"}};
+# Herdr's tabs mod hard-codes Files/Changes, so the extra toggles are sibling blocks.
+# Button width: 2*px 8 + icon 14 + gap 5 + label + pr(SP.sm). 72/88 leave slack.
 def tabs_row:
   {id: "tabs-row", type: "row", size: .size, children: [
     (.size = {weight: 1}),
-    {id: "prs-button", type: "block", size: {px: 72}, content: {mod: "prs-button"}}
+    {id: "prs-button", type: "block", size: {px: 72}, content: {mod: "prs-button"}},
+    {id: "queue-button", type: "block", size: {px: 88}, content: {mod: "queue-button"}}
   ]};
 
 if ([.. | objects | select(.id? == "panel-body")] | length) != 1
 then error("main layout has no single panel-body node")
 else
-  (.. | objects | select(.id? == "panel-body") | .children) |= (map(select(.id != "prs-panel")) + [prs_panel])
+  (.. | objects | select(.id? == "panel-body") | .children) |= (map(select(.id != "prs-panel" and .id != "queue-panel")) + [prs_panel, queue_panel])
   # Full screen hides main and sets the panel to weight 1; Herdr still clamps a node to its max,
   # so main's 900px panel cap would hold the board to 900px of the freed width.
   | (.. | objects | select(.id? == "panel")) |= del(.max)

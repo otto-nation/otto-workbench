@@ -35,7 +35,7 @@ export const FILL = { lane: "55", add: "18", del: "18" };
 // spacing.control-height(-dense) and spacing.control-padding.
 export const CONTROL = { h: BRAND.controlHeight, hDense: BRAND.controlHeightDense, px: BRAND.controlPadding };
 // The tab bar's panel toggles. herdr's own tabs mod draws Files and Changes at these sizes, and
-// the PRs toggle sits beside them, so it matches herdr rather than a brand control height.
+// the PRs and Queue toggles sit beside them, so they match herdr rather than a brand control height.
 export const PANEL_BUTTON = { h: 26, px: 8, gap: 5, icon: 14 };
 // spacing.row-height(-dense). A sidebar row holds a body line and a meta line plus a 6px inset,
 // taller than any brand row; diff is a code line.

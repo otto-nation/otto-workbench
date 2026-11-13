@@ -23,7 +23,7 @@ def test_create_documents_the_existing_pr_refusal_and_the_gate():
 
 
 def test_create_exit_codes():
-    assert [int(o.code) for o in cli.pr_create.CONTRACT.exits] == [0, 1, 2, 75]
+    assert [int(o.code) for o in cli.pr_create.CONTRACT.exits] == [0, 1, 2, 75, 130]
     assert cli.pr_create.CONTRACT.exits[0].code is ExitCode.OK
 
 

@@ -331,7 +331,7 @@ _run_tasks() {
   _stub_gate wiki-capture 1
   _run_tasks
   [ "$status" -eq 0 ]
-  [ "$(cat "$QUEUE_CALLS")" = "/|submit --class heavy --key auto-task:dream:$(date -u +%Y%m%d) --queue-only -- $TEST_HOME/.local/bin/run-auto-task --foreground dream" ]
+  [ "$(cat "$QUEUE_CALLS")" = "/|submit --class heavy --key auto-task:dream:$(date -u +%Y%m%d) --queue-only --label auto-task · dream -- $TEST_HOME/.local/bin/run-auto-task --foreground dream" ]
   [ ! -f "$SPAWN_LOG" ]
 }
 
@@ -356,7 +356,7 @@ _run_tasks() {
   repo="$(gate_repo "wiki-repo")"
   _run_tasks
   [ "$(cut -d'|' -f1 < "$QUEUE_CALLS")" = "$repo" ]
-  grep -qF -- "--key auto-task:wiki-capture:$repo:$(date -u +%Y%m%d) --queue-only" "$QUEUE_CALLS"
+  grep -qF -- "--key auto-task:wiki-capture:$repo:$(date -u +%Y%m%d) --queue-only --label auto-task · wiki-capture" "$QUEUE_CALLS"
 }
 
 @test "a queued task still ends the cycle at one" {

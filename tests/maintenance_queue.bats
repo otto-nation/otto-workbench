@@ -47,14 +47,14 @@ _maint() {
 @test "a scheduled run submits itself to the queue and does nothing else" {
   _maint
   [ "$status" -eq 0 ]
-  [ "$(cat "$QUEUE_CALLS")" = "submit --class heavy --key maintenance --no-reuse -- $SCRIPT" ]
+  [ "$(cat "$QUEUE_CALLS")" = "submit --class heavy --key maintenance --no-reuse --label maintenance -- $SCRIPT" ]
   [[ "$output" != *"Fetching"* ]]
 }
 
 @test "maintenance run --ticket runs it as a ticket under the same key" {
   _maint -- --ticket
   [ "$status" -eq 0 ]
-  [ "$(cat "$QUEUE_CALLS")" = "run --ticket --class heavy --key maintenance --no-reuse -- $SCRIPT" ]
+  [ "$(cat "$QUEUE_CALLS")" = "run --ticket --class heavy --key maintenance --no-reuse --label maintenance -- $SCRIPT" ]
 }
 
 @test "a run the queue started defers with 75 while a batch is live" {

@@ -17,9 +17,14 @@ the machine's budget, and runs once per idempotency key.
 2. **Wait.** Every `POLL_S`, orphans are reaped, and only the oldest waiting
    entry of the class (tickets, and while a worker is alive its ready jobs)
    asks `otto_queue.slots.try_admit`. Each new reason for waiting is printed
-   once. `cancel` or Ctrl-C while waiting ends the ticket
-   with 130. Reaching `wait_s` with no slot records `tempfail` and returns 75
-   (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
+   once. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler while waiting
+   ends the ticket with that exit status (130 when none is given). Reaching
+   `wait_s` with no slot records `tempfail` and returns 75 (EX_TEMPFAIL), so a
+   caller can tell "never got room" from a failure.
+
+`LABEL_ENV` and `WAIT_ENV` are the names `cli.queue_gate` and `pr batch` use to
+pass a display label and wait bound into a ticket they construct. `run_ticket`
+does not read them: the `otto-queue run` flags stay the only input to the CLI.
 3. **Run.** The row moves to `running`, and the command runs through
    `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
    terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue
@@ -58,7 +63,8 @@ import core.signal_relay
 import otto_queue.lease
 import otto_queue.ledger
 import otto_queue.slots
-from otto_queue.model import Entry, EntryClass, EntryKind, EntryState, NewEntry
+from otto_queue.model import (  # noqa: F401  LABEL_ENV and WAIT_ENV are re-exported
+    LABEL_ENV, WAIT_ENV, Entry, EntryClass, EntryKind, EntryState, NewEntry)
 
 # How long a ticket waits for a slot before ending as `tempfail`. A review takes
 # about ten minutes, so an hour is several heavy entries deep: long enough that
@@ -92,15 +98,17 @@ class TicketRequest:
     force: bool = False
     reuse: bool = True
     wait_s: float = DEFAULT_WAIT_S
+    label: str | None = None
 
     def entry(self) -> NewEntry:
         return NewEntry(argv=self.argv, cwd=self.cwd, entry_class=self.entry_class,
-                        idem_key=self.idem_key)
+                        idem_key=self.idem_key, label=self.label)
 
 
 def claimed_request(entry: Entry, request: TicketRequest) -> TicketRequest:
     """*request* running the claimed *entry*'s own command, so the ledger and the run agree."""
-    return replace(request, argv=entry.argv, cwd=entry.cwd, entry_class=entry.entry_class)
+    return replace(request, argv=entry.argv, cwd=entry.cwd, entry_class=entry.entry_class,
+                   label=entry.label)
 
 
 @dataclass(frozen=True)
@@ -198,9 +206,11 @@ def _run_unstarted(ledger: otto_queue.ledger.Ledger, entry: Entry, request: Tick
 def _record_crash(ledger: otto_queue.ledger.Ledger, entry_id: int, exc: BaseException) -> None:
     # Terminal before the lease (and any slot) is released: a live row
     # whose lease is gone is an orphan, and reap_orphans marks it failed.
-    if isinstance(exc, KeyboardInterrupt):
+    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
         ledger.cancel(entry_id)
-        ledger.finish(entry_id, core.proc.INTERRUPT_RETURNCODE)
+        code = exc.code if isinstance(getattr(exc, "code", None), int) and exc.code else (
+            core.proc.INTERRUPT_RETURNCODE)
+        ledger.finish(entry_id, code)
         return
     ledger.fail(entry_id)
 

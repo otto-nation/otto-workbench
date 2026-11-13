@@ -24,7 +24,7 @@ def test_review_help_documents_summary_prompts_and_post_mode():
 
 def test_review_exit_codes():
     assert [int(o.code) for o in cli.review_entry.CONTRACT.exits] == [
-        0, 1, 2, 4, 75]
+        0, 1, 2, 4, 75, 130]
     assert cli.review_entry.CONTRACT.exits[0].code is ExitCode.OK
     assert cli.review_entry.CONTRACT.exits[3].code is ExitCode.REFUSED
 

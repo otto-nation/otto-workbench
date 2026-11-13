@@ -147,8 +147,11 @@ CONTRACT = core.command_contract.CommandContract(
             "bad flags"),
         core.command_contract.ExitOutcome(
             ExitCode.TEMPFAIL,
-            "another pr run holds this branch or checkout; retry once "
-            "it finishes"),
+            "another pr run holds this branch or checkout, or no otto-queue "
+            "slot came in time; retry once it finishes"),
+        core.command_contract.ExitOutcome(
+            ExitCode.CANCELLED,
+            "waiting for an otto-queue slot was cancelled"),
     ),
     examples=(
         core.command_contract.Example(
@@ -167,6 +170,7 @@ CONTRACT = core.command_contract.CommandContract(
             "post one thread reply"),
     ),
     notes=(
+        cli.contract_notes.QUEUED,
         cli.contract_notes.PUSH_WAIT,
         "Without --post, GitHub writes and the held-commit push are "
         "drafted.",

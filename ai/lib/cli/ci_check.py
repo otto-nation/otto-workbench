@@ -15,12 +15,14 @@ Exit codes, remote writes and examples are `CONTRACT` below.
 
 from __future__ import annotations
 
+import os
 import sys
 
 import cli.boundary
 import cli.contract_notes
 import cli.locks
 import cli.needs
+import cli.queue_gate
 import core.command_contract
 import core.log
 import core.proc
@@ -94,8 +96,11 @@ CONTRACT = core.command_contract.CommandContract(
             "bad flags"),
         core.command_contract.ExitOutcome(
             ExitCode.TEMPFAIL,
-            "another pr run holds this branch or checkout; retry once it "
-            "finishes"),
+            "another pr run holds this branch or checkout, or no otto-queue "
+            "slot came in time; retry once it finishes"),
+        core.command_contract.ExitOutcome(
+            ExitCode.CANCELLED,
+            "waiting for an otto-queue slot was cancelled"),
     ),
     examples=(
         core.command_contract.Example(
@@ -110,6 +115,7 @@ CONTRACT = core.command_contract.CommandContract(
             "fix and push without rebasing first"),
     ),
     notes=(
+        cli.contract_notes.QUEUED,
         cli.contract_notes.PUSH_WAIT,
         "--no-verify here skips the verify gate (an agent exercising each "
         "fix), not git's pre-push hook.",
@@ -180,6 +186,17 @@ def main(argv: list[str] | None = None, *,
     parser = build_parser()
     argv = list(sys.argv[1:] if argv is None else argv)
     args = parser.parse_args(argv)
+
+    if install_signal_handler:
+        code = cli.queue_gate.gate(
+            "ci", argv,
+            reexec=(sys.executable, os.path.abspath(sys.argv[0]), *argv),
+            entry_class=cli.queue_gate.class_for("ci", argv),
+            label=cli.queue_gate.label_for(
+                "ci", argv, pr_ref=args.pr, branch=args.branch,
+                repo_dir=args.repo_dir))
+        if code is not None:
+            return code
 
     # Before anything runs, so no code path can push ahead of the decision.
     with core.publishing.run(post=args.post):

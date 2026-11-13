@@ -135,8 +135,10 @@ CONTRACT = core.command_contract.CommandContract(
                 "to rebase anyway: pr rebase --force-landed --branch {branch}",
             )),
         )),
-        core.command_contract.ExitOutcome(ExitCode.TEMPFAIL, "another pr run holds this branch or checkout; "
-                                          "retry once it finishes"),
+        core.command_contract.ExitOutcome(ExitCode.TEMPFAIL, "another pr run holds this branch or checkout, "
+                                          "or no otto-queue slot came in time; retry once it finishes"),
+        core.command_contract.ExitOutcome(ExitCode.CANCELLED,
+                                          "waiting for an otto-queue slot was cancelled"),
     ),
     examples=(
         core.command_contract.Example("pr rebase --fix", "rebase onto the PR's base, AI-resolve conflicts, "
@@ -151,6 +153,7 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.Example("pr rebase --force-landed --fix", "rebase even though the work landed"),
     ),
     notes=(
+        cli.contract_notes.QUEUED,
         "`--force` is a deprecated alias of `--force-landed`.",
         cli.contract_notes.PUSH_WAIT,
     ),

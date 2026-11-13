@@ -29,9 +29,10 @@ export function renderActionBar(actions, { confirm, note, onAction, onConfirm, o
   if (confirm) {
     const c = confirm.confirm;
     const notes = Array.isArray(c.notes) ? c.notes.filter(Boolean).join(" ") : "";
-    const msg = c.sha
-      ? `${confirm.label} on ${c.pr}? Posts the review of ${c.sha} to GitHub.`
-      : `${confirm.label} on ${c.pr}?${notes ? ` ${notes}` : ""}`;
+    const msg = c.message
+      ?? (c.sha
+        ? `${confirm.label} on ${c.pr}? Posts the review of ${c.sha} to GitHub.`
+        : `${confirm.label} on ${c.pr}?${notes ? ` ${notes}` : ""}`);
     return paneBar()
       .child(text("body", msg))
       .child(h_flex().gap(SP.sm).child(button("act-confirm", `Confirm: ${confirm.label}`, onConfirm))
@@ -56,6 +57,7 @@ export function detailOf(pr, { item = null } = {}) {
     runs: (pr.reviewRuns ?? []).map((r) => r.run),
     cwd: pr.cwd ?? null, headMoved: Boolean(pr.hasNewChangesSinceReview),
     batchBusy: Boolean(pr.busy), live: pr.reviewTerminal ?? null, sha: pr.headSha ?? "",
+    features: pr.features ?? [],
     presentation: prPresentation(pr, { item }),
   };
 }

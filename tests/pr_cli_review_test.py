@@ -1,6 +1,7 @@
 """pr CLI: `pr review` and `pr comments` — auto-self, mode flags, --post, --repair,
 --summary and --list."""
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -161,70 +162,157 @@ def test_cmd_review_post_delegates_to_review_post(mock_call, reviews_dir):
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-def test_cmd_review_post_passes_submit(mock_call, reviews_dir):
-    mock_call.return_value = 0
+def test_cmd_review_post_publish_forwards_to_review_post(mock_call, reviews_dir):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
     (review_dir / "review.md").write_text("# Review")
-    rc = cli.pr.cmd_review(["--post", "--submit"], make_ctx(pr_number=42), bin_dir=BIN_DIR)
+    rc = cli.pr.cmd_review(
+        ["--post", "--publish", "approve"], make_ctx(pr_number=42), bin_dir=BIN_DIR,
+    )
     assert rc == 0
+    assert mock_call.call_args[0][0] == "cli.review_post:main"
     cmd = mock_call.call_args[0][1]
-    assert "--submit" in cmd
+    assert cmd[cmd.index("--publish") + 1] == "approve"
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
-def test_cmd_review_post_forwards_the_event(mock_call, reviews_dir):
+def test_cmd_review_post_publish_is_not_mutually_exclusive(mock_call, reviews_dir):
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
     (review_dir / "review.md").write_text("# Review")
-    rc = cli.pr.cmd_review(["--post", "--event", "approve"], make_ctx(pr_number=42),
-                           bin_dir=BIN_DIR)
+    rc = cli.pr.cmd_review(
+        ["--post", "--publish", "approve"], make_ctx(pr_number=42), bin_dir=BIN_DIR,
+    )
     assert rc == 0
-    cmd = mock_call.call_args[0][1]
-    assert cmd[cmd.index("--event") + 1] == "approve"
-
-
-def test_accepted_value_flags_includes_review_event():
-    assert "--event" in cli.pr._accepted_value_flags(cli.registry.COMMANDS["review"])
+    assert mock_call.call_args[0][0] == "cli.review_post:main"
 
 
 @patch("core.publishing.call_entry_point", return_value=0)
 @patch("pr.context.resolve")
-def test_review_post_event_is_not_eaten_as_the_positional_target(
+def test_review_post_publish_is_not_eaten_as_the_positional_target(
         mock_resolve, mock_call, reviews_dir):
-    """`pr review --post --event approve` must not classify `approve` as a target."""
+    """`pr review --post --publish approve` must not classify `approve` as a target."""
     mock_resolve.return_value = make_ctx(pr_number=42)
     review_dir = reviews_dir / "repo-42"
     review_dir.mkdir()
     (review_dir / "review.md").write_text("# Review")
-    assert _run_main("review", "--post", "--event", "approve") == 0
+    assert _run_main("review", "--post", "--publish", "approve") == 0
     assert mock_call.call_args[0][0] == "cli.review_post:main"
     cmd = mock_call.call_args[0][1]
-    assert cmd[cmd.index("--event") + 1] == "approve"
+    assert cmd[cmd.index("--publish") + 1] == "approve"
     assert mock_resolve.call_args[1]["branch"] is None
     assert mock_resolve.call_args[1]["pr_ref"] is None
 
 
-def test_review_post_main_refuses_an_unknown_event(rp, capsys):
+@patch("review.publish.publish_draft")
+@patch("core.publishing.call_entry_point")
+def test_cmd_review_publish_alone_publishes_the_draft(
+        mock_call, mock_publish, reviews_dir):
+    from review.posting import ReviewEvent
+    from review.publish import DraftPublish
+    mock_publish.return_value = DraftPublish.PUBLISHED
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir()
+    (review_dir / "review.md").write_text("# Review")
+    rc = cli.pr.cmd_review(
+        ["--publish", "approve"], make_ctx(pr_number=42), bin_dir=BIN_DIR,
+    )
+    assert rc == 0
+    mock_call.assert_not_called()
+    mock_publish.assert_called_once()
+    assert mock_publish.call_args[0][3] is ReviewEvent.APPROVE
+
+
+@patch("review.publish.publish_draft")
+@patch("core.publishing.call_entry_point")
+def test_cmd_review_publish_equals_token_routes_the_same_way(
+        mock_call, mock_publish, reviews_dir):
+    from review.posting import ReviewEvent
+    from review.publish import DraftPublish
+    mock_publish.return_value = DraftPublish.PUBLISHED
+    review_dir = reviews_dir / "repo-42"
+    review_dir.mkdir()
+    (review_dir / "review.md").write_text("# Review")
+    rc = cli.pr.cmd_review(
+        ["--publish=approve"], make_ctx(pr_number=42), bin_dir=BIN_DIR,
+    )
+    assert rc == 0
+    mock_call.assert_not_called()
+    assert mock_publish.call_args[0][3] is ReviewEvent.APPROVE
+
+
+def test_accepted_value_flags_includes_publish():
+    assert "--publish" in cli.pr._accepted_value_flags(cli.registry.COMMANDS["review"])
+
+
+def test_review_post_main_refuses_an_unknown_publish_event(rp):
     with pytest.raises(SystemExit) as exc:
-        rp.main(["--pr", "1", "--review-file", "/nope/review.md", "--event", "merge"])
+        rp.main(["--pr", "1", "--review-file", "/nope/review.md", "--publish", "merge"])
     assert exc.value.code == 2
 
 
-def test_the_pr_review_reference_parser_documents_event():
-    import cli.review_modes
+def test_review_post_submit_and_event_are_usage_errors(rp):
+    with pytest.raises(SystemExit) as exc:
+        rp.main(["--pr", "1", "--review-file", "/nope/review.md", "--submit"])
+    assert exc.value.code == 2
+    with pytest.raises(SystemExit) as exc:
+        rp.main(["--pr", "1", "--review-file", "/nope/review.md", "--event", "comment"])
+    assert exc.value.code == 2
+
+
+def test_pr_review_post_submit_is_a_usage_error():
     import cli.review_entry
     parser = cli.review_modes.reference_parser(cli.review_entry.build_parser())
-    assert "--event" in parser.format_help()
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(["--post", "--submit"])
+    assert exc.value.code == 2
 
 
-def test_the_reference_parsers_event_choices_match_review_event():
+def test_the_pr_review_reference_parser_documents_publish():
     import cli.review_entry
-    import cli.review_modes
+    parser = cli.review_modes.reference_parser(cli.review_entry.build_parser())
+    assert "--publish" in parser.format_help()
+    assert "--event" not in parser.format_help()
+
+
+def test_the_reference_parsers_publish_choices_match_review_event():
+    import cli.review_entry
     from review.posting import ReviewEvent
     parser = cli.review_modes.reference_parser(cli.review_entry.build_parser())
-    action = next(a for a in parser._actions if "--event" in a.option_strings)
+    action = next(a for a in parser._actions if "--publish" in a.option_strings)
     assert list(action.choices) == [e.value for e in ReviewEvent]
+
+
+def test_review_post_publish_choices_match_review_event(rp, monkeypatch):
+    from review.posting import ReviewEvent
+    recorded = {}
+    orig = argparse.ArgumentParser.add_argument
+
+    def add(self, *args, **kwargs):
+        if "--publish" in args:
+            recorded["choices"] = list(kwargs.get("choices") or [])
+        return orig(self, *args, **kwargs)
+
+    monkeypatch.setattr(argparse.ArgumentParser, "add_argument", add)
+    with pytest.raises(SystemExit):
+        rp.main(["--help"])
+    assert recorded["choices"] == [e.value for e in ReviewEvent]
+
+
+def test_cmd_review_fix_cannot_run_with_publish():
+    rc = cli.pr.cmd_review(
+        ["--fix", "--publish", "comment"], make_ctx(pr_number=42), bin_dir=BIN_DIR,
+    )
+    assert rc == 1
+
+
+def test_publish_and_summary_are_mutually_exclusive():
+    rc = cli.pr.cmd_review(
+        ["--publish", "comment", "--summary"], make_ctx(pr_number=42), bin_dir=BIN_DIR,
+    )
+    assert rc == 1
+
+
 
 
 @patch("core.publishing.call_entry_point", return_value=0)

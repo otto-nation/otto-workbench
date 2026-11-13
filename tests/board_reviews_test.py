@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 from board.model import ReviewHealth
 from board.reviews import (
+    GITHUB_STATE_BY_POST_EVENT,
     join,
     keep_landed,
     landed_candidates,
@@ -11,6 +12,7 @@ from board.reviews import (
     runs_for,
     runs_for_pr,
 )
+from pr.state import GITHUB_STATE_BY_POST_EVENT as STATE_MAP
 
 
 def _row(**overlay):
@@ -145,6 +147,20 @@ def test_my_review_state_maps_each_posted_event():
 def test_my_review_state_is_null_for_a_dismissed_only_run():
     got = join([_pr()], [_row(post={"event": "dismissed"})], "o/n", "github.com", "me")
     assert got[0].my_review_state is None
+
+
+def test_submitted_is_carried_on_the_post_ref():
+    run = runs_for(_row(post={"event": "comment", "submitted": True}))[0]
+    assert run.post.submitted is True
+
+
+def test_my_review_state_does_not_map_a_pending_draft():
+    got = join([_pr()], [_row(post={"event": "pending"})], "o/n", "github.com", "me")
+    assert got[0].my_review_state is None
+
+
+def test_post_state_mapping_comes_from_pr_state():
+    assert GITHUB_STATE_BY_POST_EVENT is STATE_MAP
 
 
 def test_my_review_state_compares_login_case_insensitively():

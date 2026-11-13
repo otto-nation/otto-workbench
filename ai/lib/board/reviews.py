@@ -13,13 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from board.model import ReviewHealth, ReviewRunRef, RunPostRef
-
-
-POST_STATE_BY_EVENT = {
-    "approve": "APPROVED",
-    "requested_changes": "CHANGES_REQUESTED",
-    "comment": "COMMENTED",
-}
+from pr.state import GITHUB_STATE_BY_POST_EVENT, PostEvent
 
 LANDED_CAP = 100
 LANDED_DAYS = 30
@@ -94,12 +88,19 @@ def posted(run) -> bool:
     return run is not None and _field(run, "post") is not None
 
 
+def published_event(run) -> bool:
+    """A post that is neither absent nor a draft still on GitHub."""
+    event = run.posted_event if isinstance(run, ReviewRunRef) else _field(run, "posted_event")
+    return event is not None and event != PostEvent.PENDING.value
+
+
 def _post_ref(post) -> RunPostRef | None:
     if post is None:
         return None
     return RunPostRef(
         event=_field(post, "event") or "",
         posted_at=_field(post, "posted_at") or "",
+        submitted=_field(post, "submitted"),
     )
 
 
@@ -174,8 +175,13 @@ def my_review_state(pr, runs, me: str | None) -> str | None:
         return state
     for run in runs:
         event = run.posted_event if isinstance(run, ReviewRunRef) else _field(run, "posted_event")
-        mapped = POST_STATE_BY_EVENT.get(event)
-        if event is not None and mapped:
+        if event is None:
+            continue
+        try:
+            mapped = GITHUB_STATE_BY_POST_EVENT.get(PostEvent(event))
+        except ValueError:
+            mapped = None
+        if mapped:
             return mapped
     return None
 

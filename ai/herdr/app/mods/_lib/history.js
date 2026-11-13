@@ -4,7 +4,8 @@
  */
 
 const POST_BY_EVENT = {
-  comment: { label: 'posted as comment', status: 'none' },
+  pending: { label: 'draft on GitHub — only you can see it', status: 'warn' },
+  comment: { label: 'published as comment', status: 'none' },
   approve: { label: 'approved', status: 'pass' },
   requested_changes: { label: 'changes requested', status: 'warn' },
   dismissed: { label: 'dismissed', status: 'none' },

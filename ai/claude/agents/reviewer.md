@@ -290,8 +290,9 @@ After writing the review file, print:
 
 Do not post the review automatically. The user should verify the file first. Publishing is the `pr` CLI's job, run from the PR's worktree:
 
-- `pr review --post <PR>` — posts the review file as a PENDING review
-- `pr review --post --submit <PR>` — posts it and submits it as a COMMENT review
+- `pr review --post <PR>` — posts a draft only you can see
+- `pr review --post --publish comment <PR>` — posts it published as a comment
+- `pr review --publish comment <PR>` — publishes a draft already on GitHub
 
 `pr review --post` posts the review a `pr review` run recorded in its review directory (`review.json`), leaving out the File Triage and the prior-findings bookkeeping, turning references into permalinks and placing inline comments. A JSON file you wrote by hand in an interactive session is not what it reads: run `pr review` to produce a review it can post. Never rebuild a post by hand with `gh api .../reviews` — a hand-rolled post skips all of it and diverges from what the tooling tracks.
 

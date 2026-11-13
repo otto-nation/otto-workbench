@@ -43,6 +43,7 @@ from pr.state import PostedAs, PostEvent, PostTracking
 from pr.target import display_repo
 import review.listing
 from review.paths import FILENAME_POST_SESSION, find_review_file, read_review_meta, review_file_path
+import review.publish
 from review.posting import ReviewEvent, write_post_tracking
 from review.store import read_review
 from review.summary import build_review_summary, json_summary
@@ -70,11 +71,38 @@ def post(argv: list[str], ctx: pr.context.ResolvedContext, *,
     # never made contend with it.
     if ctx.branch:
         post_argv += ["--expect-ref", ctx.branch]
-    if "--submit" in argv:
-        post_argv.append("--submit")
-        argv = [a for a in argv if a != "--submit"]
     post_argv += argv
     return core.publishing.call_entry_point("cli.review_post:main", post_argv)
+
+
+def publish(argv: list[str], ctx: pr.context.ResolvedContext, *,
+            bin_dir: Path, **_kw) -> int:
+    """Publish the draft recorded for the latest review as EVENT."""
+    parser = argparse.ArgumentParser(
+        prog="pr review --publish", add_help=False, allow_abbrev=False,
+    )
+    parser.add_argument(
+        "--publish", choices=[e.value for e in ReviewEvent], required=True,
+    )
+    known, _rest = parser.parse_known_args(list(argv))
+    event = ReviewEvent(known.publish)
+
+    pr_num = str(ctx.pr_number) if ctx.pr_number else None
+    if not pr_num:
+        core.log.error("Cannot determine PR number")
+        return 1
+
+    review_path = find_review_file(ctx.repo, pr_num)
+    if not review_path:
+        core.log.error(
+            f"No review file found for {display_repo(ctx.repo, ctx.host)}#{pr_num}")
+        core.log.dim("Run: pr review")
+        return 1
+
+    outcome = review.publish.publish_draft(
+        ctx.repo, pr_num, str(review_path), event,
+    )
+    return 0 if outcome.ok else 1
 
 
 def _sync_recorded_review(ctx: pr.context.ResolvedContext, pr_num: str,
@@ -171,6 +199,10 @@ def dismiss(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     if existing and existing.status == PostEvent.DISMISSED.value:
         core.log.info("This review run is already dismissed")
         return 0
+    if existing and existing.pending:
+        core.log.error(
+            "A draft of this run is on GitHub; dismiss applies to an unposted run")
+        return 1
     if existing:
         core.log.error(f"This review run was already posted ({existing.status}); "
                        "dismiss applies to an unposted run")
@@ -235,8 +267,15 @@ def _if_changed_from_argv(argv: Sequence[str]) -> str | None:
 MODES: dict[str, ReviewMode] = {
     "--post":    ReviewMode(
         post,
-        help="Post an EXISTING review to GitHub (under pr review this "
-             "flag is a mode, not the review binary's post-after-run flag)"),
+        help="Post the existing review to GitHub as a draft (a PENDING review "
+             "only you can see); with --publish, post it published"),
+    "--publish": ReviewMode(
+        publish,
+        choices=tuple(e.value for e in ReviewEvent),
+        modifies="--post",
+        help="Publish on GitHub as EVENT: with --post, post the existing review "
+             "published; alone, publish the draft recorded for the latest review "
+             "(refused when none is pending or the PR head moved since it was posted)"),
     "--repair":  ReviewMode(repair, help="Repair broken review artifacts via summary or rebuild"),
     "--summary": ReviewMode(summary, help="Print a JSON summary of an existing review"),
     "--dismiss": ReviewMode(dismiss, help="Record the latest review as dismissed, posting nothing"),
@@ -270,17 +309,20 @@ def reference_parser(base: argparse.ArgumentParser) -> argparse.ArgumentParser:
     for container in (parser, *parser._action_groups):
         container.conflict_handler = "resolve"
     for flag, mode in MODES.items():
-        parser.add_argument(
-            flag,
-            action="store_true",
-            help=f"{mode.help} — a mode; excludes the other mode flags",
-        )
-    # Read by `--post` alone, which forwards it to review-post; declared here
-    # so `pr review --help` and the prose checks know the spelling.
-    parser.add_argument(
-        "--event", choices=[e.value for e in ReviewEvent],
-        help="With --post: what the review says on GitHub (default: comment)",
-    )
+        if mode.modifies:
+            suffix = (
+                f" — a mode, or a modifier of {mode.modifies}; "
+                "excludes the other mode flags"
+            )
+        else:
+            suffix = " — a mode; excludes the other mode flags"
+        help_text = f"{mode.help}{suffix}"
+        if mode.choices:
+            parser.add_argument(
+                flag, choices=mode.choices, metavar="EVENT", help=help_text,
+            )
+        else:
+            parser.add_argument(flag, action="store_true", help=help_text)
     parser.add_argument(
         "--if-changed", metavar="stamp",
         help="With --list --schema-version: answer {\"unchanged\": true} when no "
@@ -303,5 +345,9 @@ def flags_prose() -> str:
     """The mode flags as an English list, for the exclusivity error."""
     flags = list(MODES)
     if len(flags) == 1:
-        return flags[0]
-    return f"{', '.join(flags[:-1])}, and {flags[-1]}"
+        text = flags[0]
+    else:
+        text = f"{', '.join(flags[:-1])}, and {flags[-1]}"
+    if "--publish" in MODES:
+        text += "; --publish also modifies --post"
+    return text

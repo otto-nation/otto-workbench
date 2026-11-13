@@ -18,8 +18,8 @@ import pytest  # noqa: E402
 import cli.review_modes  # noqa: E402
 from cli.needs import (  # noqa: E402
     LOCAL, NO_LOCK, NONE, REMOTE, REVIEW_DEFAULT_NEED, REVIEW_MODE_NEED, REVIEW_SELF_NEED,
-    TARGET_AND_CHECKOUT, TARGET_ONLY, Need, ReviewMode, ci_need, comments_need, has_flag,
-    rebase_need, review_modes, review_need,
+    TARGET_AND_CHECKOUT, TARGET_ONLY, Need, ReviewMode, argv_without_mode, ci_need,
+    comments_need, has_flag, rebase_need, review_modes, review_need,
 )
 import pr.context  # noqa: E402
 
@@ -93,6 +93,51 @@ def test_fix_with_post_is_not_the_post_mode():
 
 def test_fix_leaves_the_other_modes_alone():
     assert review_modes(["--fix", "--summary"], MODES) == ["--summary"]
+
+
+def test_a_modifier_is_dropped_when_its_mode_is_also_given():
+    modes = {
+        "--post": ReviewMode(handler=_handled),
+        "--publish": ReviewMode(
+            handler=_handled, choices=("comment",), modifies="--post",
+        ),
+    }
+    assert review_modes(["--post", "--publish", "comment"], modes) == ["--post"]
+    assert review_modes(["--publish", "comment"], modes) == ["--publish"]
+
+
+def test_equals_tokens_and_double_dash_are_read_as_modes():
+    modes = {
+        "--post": ReviewMode(handler=_handled),
+        "--publish": ReviewMode(
+            handler=_handled, choices=("approve",), modifies="--post",
+        ),
+    }
+    assert review_modes(["--publish=approve"], modes) == ["--publish"]
+    assert review_modes(["--", "--publish"], modes) == []
+
+
+def test_fix_with_post_and_publish_reaches_no_mode():
+    """`--fix --post --publish X` is the binary's publishing gate, not a mode."""
+    modes = {
+        "--post": ReviewMode(handler=_handled),
+        "--publish": ReviewMode(
+            handler=_handled, choices=("comment",), modifies="--post",
+        ),
+        "--summary": ReviewMode(handler=_handled),
+    }
+    assert review_modes(["--fix", "--post", "--publish", "comment"], modes) == []
+
+
+def test_argv_without_mode_keeps_a_valued_flag():
+    mode = ReviewMode(handler=_handled, choices=("approve",))
+    assert argv_without_mode(
+        ["--publish", "approve", "42"], "--publish", mode,
+    ) == ["--publish", "approve", "42"]
+    assert argv_without_mode(["--publish=approve"], "--publish", mode) == [
+        "--publish=approve",
+    ]
+    assert argv_without_mode(["--publish"], "--publish", mode) == []
 
 
 # ── the need a mode declares ─────────────────────────────────────────────

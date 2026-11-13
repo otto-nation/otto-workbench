@@ -244,7 +244,7 @@ def _stub_pr_edges(cr, monkeypatch, tmp_path, tape, review_file, *, returncode=0
 
 def _pr_args(**overrides):
     base = dict(
-        no_post=True, post=False, submit=False, issue="", max_parallel=1,
+        no_post=True, post=False, issue="", max_parallel=1,
         force=False, disprove=None, max_cost=None, model=None, repo_dir="",
         effort=None, max_groups=None, generated=False, recover=False,
         debug=False, push=False, fix=False, no_holistic=False, no_scout=False,

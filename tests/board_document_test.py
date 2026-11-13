@@ -10,7 +10,7 @@ import review.listing
 from board.cache import path_for, read, write
 from board.document import Checkout, build, stamp
 from board.github import PullList, StatusFetch
-from board.model import CiStatus, Mergeable, Phase, PrState, PullFacts, StatusFacts
+from board.model import FEATURES, CiStatus, Mergeable, Phase, PrState, PullFacts, StatusFacts
 from batch.model import Step
 from batch.plan import Plan, PlanRow, StepNeed
 from conftest import init_repo
@@ -200,6 +200,21 @@ def test_stamp_stable_across_fetched_at(tmp_path, monkeypatch):
     assert first["stamp"] == second["stamp"]
     assert first["repos"][0]["fetched_at"] != second["repos"][0]["fetched_at"]
     assert stamp(first) == first["stamp"]
+
+
+def test_full_document_carries_review_publish_features(tmp_path, monkeypatch):
+    found = _env(tmp_path, monkeypatch, pulls=[_pull(7, "aaa")])
+    doc = build(Phase.LISTING, [found.path])
+    assert doc["features"] == ["review-publish"]
+    assert list(FEATURES) == ["review-publish"]
+
+
+def test_stamp_differs_when_features_differ(tmp_path, monkeypatch):
+    found = _env(tmp_path, monkeypatch, pulls=[_pull(7, "aaa")])
+    doc = build(Phase.LISTING, [found.path])
+    other = {k: v for k, v in doc.items() if k != "stamp"}
+    other["features"] = []
+    assert stamp(other) != doc["stamp"]
 
 
 def test_if_changed_unchanged_envelope(tmp_path, monkeypatch):

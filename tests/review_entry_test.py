@@ -252,7 +252,7 @@ def test_self_review_recover_reads_head_after_worktree_switch(
         force=False, no_holistic=False, no_scout=False, disprove=None, max_cost=None,
         model=None, repo_dir="", fix=False, effort="medium", max_groups=None,
         generated=False, recover=True, debug=False, base="",
-        post=False, push=False, no_post=False, submit=False,
+        post=False, push=False, no_post=False,
     ), [], "test 1.0")
 
     assert body.call_args.kwargs["recover_head_sha"] == "fresh11"

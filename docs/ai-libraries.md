@@ -9413,12 +9413,12 @@ Post a review file to GitHub as a PR review.
 
 Parses a markdown review file (produced by `review`), validates
 finding positions against the PR diff, and creates a PENDING review via
-the GitHub API using each finding's record ID. Pass --submit to submit
-the review immediately.
+the GitHub API using each finding's record ID. Pass --publish EVENT to
+publish it instead of leaving a draft.
 
 Usage:
   review-post --pr NUMBER --review-file PATH
-              [--severity M,S,N] [--dry-run] [--submit] [--event EVENT]
+              [--severity M,S,N] [--dry-run] [--publish EVENT]
 
 ### cli/review_rebuild.py
 

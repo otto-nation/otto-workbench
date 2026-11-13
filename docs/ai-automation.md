@@ -441,7 +441,7 @@ All resolved through `PATH` (except `hc` → `PR_BOARD_HC`), run as the agent:
 | `hc` / `herdr-core` | `ls --json` (repo discovery, 1), `ls --json --label otto.app=pr` + `get <t> --json` (busy, 1), `run --bg --json …` (2, 3, 4), `get <t> --json` (run follow-up, 2), `read <t> --lines 80` (2, 4), `kill <t>` (2), `exec --json --on …` (remote targets only) |
 | `gh` | `api …/files`, patch pages (1); `pr board` runs its own `gh` calls as its children; via `wt` (3) |
 | `git` | `check-attr -z linguist-generated` (1) |
-| `pr` | `pr board --schema-version 1 --checkout DIR --phase listing\|status\|owed [--offline] [--if-changed STAMP]` (app and web: one per target per pull, serialized per machine; `owed` only while a page shows Mine, at most once a minute per repo) (1); `pr review` inside launched terminals (2); `pr batch status --list --schema-version 2`, `pr batch status RUN --full --offline --schema-version 2`, `pr batch cancel --kill RUN --schema-version 2` (4); `pr batch run --checkout DIR --prs KEYS --steps STEPS --with-review --with-ai STEPS --auto-publish ff --select SEL` inside launched terminals (4) |
+| `pr` | `pr board --schema-version 1 --checkout DIR --phase listing\|status\|owed [--offline] [--if-changed STAMP]` (app and web: one per target per pull, serialized per machine; `owed` only while a page shows Mine, at most once a minute per repo) (1); `pr review` inside launched terminals (2; post actions need `review-publish` in that machine's board `features`); `pr batch status --list --schema-version 2`, `pr batch status RUN --full --offline --schema-version 2`, `pr batch cancel --kill RUN --schema-version 2` (4); `pr batch run --checkout DIR --prs KEYS --steps STEPS --with-review --with-ai STEPS --auto-publish ff --select SEL` inside launched terminals (4) |
 | `tail` | `tail -n 200 <step log path>` (4; path from `pr batch status`) |
 | `wt` | `switch pr:<n> --no-cd --format json` (3) |
 | `sh` | `sh -c 'command -v pr; command -v gh; command -v wt; true'` (1) |
@@ -604,13 +604,23 @@ next write overwrites the edit; nothing reads it back.
 - **A review directory with no `review.json`** is stale. The next `pr review` regenerates it from scratch; a re-review of it runs full rather than incremental.
 - **A schema-1 `review.json`/`prior.json`** is upgraded on load, keeping posted stable IDs, so re-review stays incremental with prior findings and declines. For that round a finding whose location the old parser never placed is a whole-PR finding. Any other unknown schema is stale. A run interrupted before the upgrade restarts from scratch on resume.
 - `pr review --repair` re-syncs when `review.json` already loads. It rebuilds from `group-N.json` only when there is no readable `review.json`, skipping a group file that no longer loads; a directory holding only pre-upgrade `group-N.md` files cannot be rebuilt — re-run the review.
-- `pr review --post --event approve` / `request_changes` submits the review as
-  an approval or a change request (implies `--submit`). Refused when the PR
-  head moved since the review was written; post as a comment, or re-run.
+- `pr review --post` posts an existing review as a draft (a PENDING review
+  only you can see). Refused when the review needs more than one GitHub chunk
+  (GitHub holds one draft per reviewer); publish it with
+  `pr review --post --publish comment`.
+- `pr review --post --publish comment` / `approve` / `request_changes` posts
+  the existing review already published as that event. Refused when the PR
+  head moved since the review was written (approve/request_changes); post as
+  a comment, or re-run.
+- `pr review --publish comment` / `approve` / `request_changes` publishes the
+  draft recorded in `post.jsonl` as that event. Refused when nothing is
+  pending, the draft is no longer pending on GitHub, or the PR head moved
+  since it was posted.
 - `pr review --dismiss` records the latest run as dismissed, with no GitHub
   call. Refused for a run already posted.
 - `pr review --list --schema-version 1` rows carry `post` and `history`, and
-  the document carries `reviews_root` and `stamp`. `--if-changed STAMP` answers
+  the document carries `reviews_root` and `stamp`. A run's `post.event` may be
+  `pending` (a draft still on GitHub) and carries `submitted`. `--if-changed STAMP` answers
   `{"unchanged": true}` with no `reviews` when nothing under the reviews root
   changed since the document that carried that stamp. `review.archive_keep`
   (default 3) is how many earlier runs `history` keeps.
@@ -727,7 +737,7 @@ cannot disagree.
 An objection to the approach is a must-fix finding about the PR as a whole;
 there is no Disapprove.
 
-Posting still uses the event the operator chose (`--event`); nothing maps the
+Posting still uses the event the operator chose (`--publish`); nothing maps the
 verdict to an approval. Readiness blocks on open must-fix counts, not on the
 verdict.
 
@@ -1069,15 +1079,16 @@ Report CI failures for the branch. --fix diagnoses and applies fixes; --post pus
 
 #### pr review contract
 
-Run the configured review agent on a PR, or handle a mode (--post an existing review, --repair, --summary, --dismiss, --recover, --list). A plain PR run prompts before posting.
+Run the configured review agent on a PR, or handle a mode (--post an existing review as a draft, --publish it, --repair, --summary, --dismiss, --recover, --list). A plain PR run prompts before posting.
 
 **Writes remotely**
 
 | Trigger | Writes | Where | How | If refused |
 |---|---|---|---|---|
-| `(bare invocation)` | a PENDING review with inline comments; --submit submits it as a COMMENT review | GitHub | review.publish.resolve prompts unless --no-post (or the review binary's --post, which pr review does not reach); then review.publish.post -> cli.review_post -> review.posting.post_review, a PENDING review with inline comments. --submit then review.publish.submit_pending as a COMMENT review. A self-review files no GitHub review (review.run.run_self_review). | declining a prompt leaves the review on disk, unposted; a failed post is not rolled back |
+| `(bare invocation)` | a draft review (PENDING, only you can see it) with inline comments; a second prompt publishes it as a comment | GitHub | review.publish.resolve prompts unless --no-post (or the review binary's --post, which pr review does not reach); then review.publish.post -> cli.review_post -> review.posting._post_and_track; the second prompt -> review.publish.publish_draft(COMMENT). A self-review files no GitHub review (review.run.run_self_review). | declining a prompt leaves the review on disk, unposted; a failed post is not rolled back |
 | `--self --fix --push` | the fix commit pushed to refs/heads/<branch> | origin | review.invoke.run forwards --post to orchestrate when may_publish (--push or the binary's --post). fix.engine._land -> git.land.land(gated=True) -> git.push.push, plain, never forced. | a refused or held push leaves the commit local; git.push.report prints Resume on REFUSED/LOST, nothing on HELD |
-| `--post` | posts an existing review; --event picks comment/approve/request_changes | GitHub | cli.review_modes.post -> core.publishing.call_entry_point(cli.review_post:main). --event picks comment/approve/request_changes; approve and request_changes imply --submit. | no PR number or no review file: exit 1, GitHub unchanged; a failed post is not rolled back |
+| `--post` | posts an existing review as a draft; with --publish EVENT, posted published (comment/approve/request_changes) | GitHub | cli.review_modes.post -> core.publishing.call_entry_point(cli.review_post:main). --publish EVENT posts it published; without --publish it is a draft. | no PR number or review file, a review too large for one draft, or an approve/request_changes on a drifted review: exit 1, GitHub unchanged; a failed chunked post is not rolled back |
+| `--publish` | publishes the draft recorded for the latest review as EVENT | GitHub | cli.review_modes.publish -> review.publish.publish_draft -> POST pulls/{n}/reviews/{id}/events | no draft recorded, the draft no longer pending on GitHub, or the PR head moved since it was posted: exit 1, GitHub unchanged |
 | `--track` | files the finding on the tracker (GitHub or Linear issue) | GitHub or Linear | review.file_tracked.run -> review.finding_issue.file_and_link -> review.issue.create_issue (GitHub through gh.client; Linear through the linear CLI), gated by core.publishing.enabled(). Under pr review, --post is a mode and cannot combine with --track; the publishing spelling is review --self --track ID --post. | without the publishing gate the filing is drafted; a failed create leaves the findings unfiled |
 
 **Exit codes**
@@ -1085,7 +1096,7 @@ Run the configured review agent on a PR, or handle a mode (--post an existing re
 | Code | Meaning | Next |
 |---|---|---|
 | `0` | review completed (a partial run included), --version printed, a mode succeeded, or --track drafted/filed |  |
-| `1` | flag conflicts (--fix without --self, --push without --fix, --recover with --force, --no-post with --post, --track with a mode or without --self); no target; a removed subcommand; bad --focus; unresolvable --base; every agent failed; no PR/review file for a mode; --fix on a drifted recover; owner boundary |  |
+| `1` | flag conflicts (--fix without --self, --push without --fix, --recover with --force, --no-post with --post, --track with a mode or without --self); no target; a removed subcommand; bad --focus; unresolvable --base; every agent failed; no PR/review file for a mode; --publish with no pending draft or a moved head; --post of a too-large draft; a mode with --fix; --fix on a drifted recover; owner boundary |  |
 | `2` | bad flags; --if-changed without --schema-version |  |
 | `4` | the branch looks superseded; refused before reviewing; JSON names override --force-superseded | `pr review --force-superseded … to review it anyway` |
 | `75` | another pr run holds this branch or checkout; retry once it finishes |  |
@@ -1094,12 +1105,14 @@ Run the configured review agent on a PR, or handle a mode (--post an existing re
 
 - `pr review --no-post 42` — review PR 42; do not post and do not prompt
 - `pr review --self --fix --push` — self-review, apply findings, push the fix commit
-- `pr review --post --event comment` — post an existing review as a COMMENT review
+- `pr review --post` — post an existing review as a draft only you can see
+- `pr review --post --publish comment` — post an existing review published as a comment
+- `pr review --publish approve` — approve with the draft already on GitHub
 - `pr review --json-summary 42` — review PR 42; stdout is one REVIEW_SUMMARY:{json} line
 
 > Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > Under `pr review`, `--post` names a mode that posts an existing review; the `review` binary's own `--post` (post after running) is not reachable through `pr`.
-> A plain PR run prompts before posting and before replacing a pending review; --no-post skips both. --force skips the stale/pending prompts, not the post prompts. `--force` still overrides supersession; prefer `--force-superseded`.
+> A plain PR run prompts before posting a draft and again before publishing it as a comment; --no-post skips both. --force skips the stale/pending prompts, not the post prompts. `--force` still overrides supersession; prefer `--force-superseded`.
 > A self-review files no GitHub review.
 
 #### pr comments contract
@@ -1327,7 +1340,7 @@ The PR board document (JSON). Requires the global --schema-version (the versions
 - `pr --schema-version 1 board --checkout ~/git/o/r/main --phase listing` — print the listing document
 - `pr --schema-version 1 board --checkout ~/git/o/r/main --phase status --prs 12,15` — status for named PRs
 
-> Writes nothing remotely. --schema-version is a global flag. complete is false for status --prs and owed (clients merge by (repo, number)). Clients hide a row whose effective team lane is landed.
+> Writes nothing remotely. --schema-version is a global flag. complete is false for status --prs and owed (clients merge by (repo, number)). Clients hide a row whose effective team lane is landed. The full document carries features (this build's pr capabilities a board consumer drives; currently review-publish).
 
 #### pr batch contract
 
@@ -1608,7 +1621,8 @@ Health is `up-to-date`, `needs-rebase`, `has-conflicts`, `base-closed`, or
 See the [`pr board` contract](#pr-board-contract). Python owns every fact, lane,
 badge, presentation slot and column; no draft CI exemption.
 `--if-changed` matching the stamp returns `{schema_version, phase, stamp,
-unchanged: true}`.
+unchanged: true}`. The document carries `features` (this build's `pr`
+capabilities a board consumer drives; currently `review-publish`).
 
 ### The Pi package the sync declares, and who gets it
 

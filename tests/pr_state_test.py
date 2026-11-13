@@ -24,6 +24,9 @@ from pr.state import (
     PRCloseState,
     PRClosure,
     PRState,
+    PostedAs,
+    PostEvent,
+    PostTracking,
     load_state,
     save_state,
     new_state,
@@ -560,3 +563,47 @@ class TestTerminalSummary:
 
     def test_the_action_name_is_published(self):
         assert pr.state.TERMINAL_SUMMARY_ACTION == "pr_outcome"
+
+
+@pytest.mark.parametrize(
+    "fields,pending,published",
+    [
+        (dict(status=PostEvent.PENDING.value), True, False),
+        (dict(
+            status=PostEvent.COMMENT.value, submitted=False,
+            posted_as=PostedAs.REVIEW.value, head_sha_at_post="abc",
+        ), True, False),
+        (dict(
+            status=PostEvent.COMMENT.value, submitted=False,
+            posted_as=PostedAs.REVIEW.value,
+        ), False, True),
+        (dict(
+            status=PostEvent.COMMENT.value, submitted=True,
+            posted_as=PostedAs.REVIEW.value, head_sha_at_post="abc",
+        ), False, True),
+        (dict(
+            status=PostEvent.APPROVE.value, submitted=True,
+            posted_as=PostedAs.REVIEW.value,
+        ), False, True),
+        (dict(
+            status=PostEvent.DISMISSED.value,
+            posted_as=PostedAs.NOTHING.value,
+        ), False, False),
+        (dict(
+            status=PostEvent.COMMENT.value, submitted=False,
+            posted_as=PostedAs.COMMENT.value, head_sha_at_post="abc",
+        ), False, True),
+    ],
+    ids=[
+        "pending-status",
+        "legacy-draft",
+        "legacy-dedup",
+        "submitted-comment",
+        "submitted-approve",
+        "dismissed",
+        "issue-comment",
+    ],
+)
+def test_post_tracking_pending_and_published(fields, pending, published):
+    tracking = PostTracking(**{"posted_as": PostedAs.REVIEW.value, **fields})
+    assert (tracking.pending, tracking.published) == (pending, published)

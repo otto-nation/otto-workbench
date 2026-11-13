@@ -7,7 +7,7 @@ lookup that could not be answered.
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -104,11 +104,16 @@ class TestWritePostTracking:
         assert loaded is not None
         assert loaded.review_id == 123
 
-
-class TestFormatSubmitCommand:
-    def test_produces_correct_command(self, rp):
-        result = rp._format_submit_command("org/repo", "42", 12345)
-        assert result == "gh api repos/org/repo/pulls/42/reviews/12345/events --method POST -f event=COMMENT"
+    def test_leaves_no_partial_file_when_json_dump_raises(self, rp, tmp_path):
+        d = self._review_dir(tmp_path)
+        review = str(d / "review.md")
+        with patch("json.dump", side_effect=TypeError("boom")):
+            with pytest.raises(TypeError):
+                rp.write_post_tracking(review, PostTracking(
+                    posted_as=PostedAs.REVIEW.value, status=PostEvent.COMMENT.value,
+                    review_ids=[1], commit_id="abc",
+                ))
+        assert not (d / "post.jsonl").exists()
 
 
 class TestChunkComments:
@@ -174,44 +179,49 @@ class TestCheckExistingPending:
         assert "HTTP 503" in capsys.readouterr().err
 
 
-class TestPostReview:
-    PAYLOAD = {"body": "test", "commit_id": "abc123"}
-
+class TestPostChunkedReview:
     def test_no_existing_pending(self, rp):
         with (
             patch("gh.pr_reads._check_existing_pending", return_value=rp.PendingReview()),
-            patch("gh.client.api", return_value=CmdResult(0, '{"id": 42}')),
+            patch("gh.client.api_json", return_value={"id": 42}),
         ):
-            result = rp.post_review("org/repo", "1", self.PAYLOAD)
-            assert result == {"id": 42}
+            result = rp._post_chunked_review(
+                "org/repo", "1", "abc123", "test", [], 30,
+            )
+            assert result == [{"id": 42}]
 
     def test_deletes_existing_pending(self, rp):
         with (
             patch("gh.pr_reads._check_existing_pending", return_value=rp.PendingReview(999)),
             patch("gh.client.api", return_value=CmdResult(0, '{"id": 42}')) as mock_api,
+            patch("gh.client.api_json", return_value={"id": 42}),
         ):
-            result = rp.post_review("org/repo", "1", self.PAYLOAD)
-            assert result == {"id": 42}
+            result = rp._post_chunked_review(
+                "org/repo", "1", "abc123", "test", [], 30,
+            )
+            assert result == [{"id": 42}]
             delete_calls = [c for c in mock_api.call_args_list
                             if c.kwargs.get("method") == "DELETE"]
             assert len(delete_calls) == 1
 
-    def test_with_submit(self, rp):
+    def test_a_draft_sends_no_event_key(self, rp):
         with (
             patch("gh.pr_reads._check_existing_pending", return_value=rp.PendingReview()),
-            patch("gh.client.api", return_value=CmdResult(0, '{"id": 42}')) as mock_api,
+            patch("gh.client.api_json", return_value={"id": 42}) as mock_api,
         ):
-            result = rp.post_review("org/repo", "1", self.PAYLOAD, submit=True)
-        assert result == {"id": 42}
+            rp._post_chunked_review("org/repo", "1", "abc123", "test", [], 30)
         sent = json.loads(mock_api.call_args.kwargs["input_text"])
-        assert sent["event"] == "COMMENT"
+        assert "event" not in sent
 
-    def test_an_event_is_the_payloads_event(self, rp):
+    def test_publish_is_the_payloads_event(self, rp):
         with (
             patch("gh.pr_reads._check_existing_pending", return_value=rp.PendingReview()),
-            patch("gh.client.api", return_value=CmdResult(0, '{"id": 42}')) as mock_api,
+            patch("gh.client.api_json", return_value={"id": 42}) as mock_api,
         ):
-            rp.post_review("org/repo", "1", self.PAYLOAD, submit=True, event=ReviewEvent.APPROVE)
+            rp._post_chunked_review(
+                "org/repo", "1", "abc123", "test", [], 30,
+                publish=ReviewEvent.APPROVE,
+            )
         sent = json.loads(mock_api.call_args.kwargs["input_text"])
         assert sent["event"] == "APPROVE"
 
@@ -234,8 +244,8 @@ class TestChunkedEvent:
             patch("time.sleep"),
         ):
             rp._post_chunked_review("org/repo", "1", "abc", "body", comments,
-                                    chunk_size=1, submit=True,
-                                    event=ReviewEvent.REQUEST_CHANGES)
+                                    chunk_size=1,
+                                    publish=ReviewEvent.REQUEST_CHANGES)
 
         assert [p["event"] for p in sent] == ["COMMENT", "COMMENT", "REQUEST_CHANGES"]
 
@@ -247,18 +257,6 @@ class TestReviewEvent:
             ("APPROVE", PostEvent.APPROVE),
             ("REQUEST_CHANGES", PostEvent.REQUESTED_CHANGES),
         ]
-
-
-class TestSubmitReview:
-    def test_success(self, rp):
-        with patch("gh.client.api", return_value=CmdResult(0, '{"ok": true}')) as mock_api:
-            assert rp._submit_review("org/repo", "1", 42) is True
-        assert mock_api.call_args[0][0] == "repos/org/repo/pulls/1/reviews/42/events"
-
-    def test_failure_warns(self, rp, capsys):
-        with patch("gh.client.api", return_value=CmdResult(1, '{"message": "bad request"}')):
-            assert rp._submit_review("org/repo", "1", 42) is False
-        assert "Failed to submit" in capsys.readouterr().err
 
 
 class TestFetchPrRefs:
@@ -329,7 +327,6 @@ class TestReclassifyAndRetry:
         args.repo = repo
         args.pr = pr
         args.review_file = "/tmp/test-review.md"
-        args.submit = False
         return args
 
     def _reverse_path_musts(self, rp):
@@ -364,7 +361,7 @@ class TestReclassifyAndRetry:
         ):
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [body_f],
-                "abc123", 30, {"M", "N"}, False,
+                "abc123", 30, {"M", "N"},
                 record=record(), meta=ReviewMeta(),
             )
             assert len(inline) == 1
@@ -393,7 +390,7 @@ class TestReclassifyAndRetry:
             rec = record(summary="Clean refactor.")
             inline_comments, inline, body, body_text, results = rp._reclassify_and_retry(
                 self._make_args(), [f], [],
-                "abc123", 30, {"M"}, False,
+                "abc123", 30, {"M"},
                 record=rec, meta=ReviewMeta(),
             )
             assert (inline_comments, inline, results) == ([], [], [{"id": 99}])
@@ -415,7 +412,7 @@ class TestReclassifyAndRetry:
         ):
             rp._reclassify_and_retry(
                 self._make_args(), self._reverse_path_musts(rp), [],
-                "abc123", 30, {"M"}, False,
+                "abc123", 30, {"M"},
                 record=record(), meta=ReviewMeta(),
             )
         by_path = {c["path"]: c["body"] for c in posted["comments"]}
@@ -443,7 +440,7 @@ class TestReclassifyAndRetry:
         ):
             rp._reclassify_and_retry(
                 self._make_args(), self._reverse_path_musts(rp), [],
-                "abc123", 30, {"M"}, False,
+                "abc123", 30, {"M"},
                 record=record(), meta=ReviewMeta(),
             )
         lock = [line for line in posted["body"].splitlines() if "lock never released" in line]
@@ -472,7 +469,7 @@ class TestReclassifyAndRetry:
         ):
             _, _, body, _, _ = rp._reclassify_and_retry(
                 self._make_args(), [inline_f], [skipped_f],
-                "abc123", 30, {"M", "I"}, False,
+                "abc123", 30, {"M", "I"},
                 record=record(), meta=ReviewMeta(),
             )
             assert any(f.body == "Good pattern" for f in body)
@@ -544,7 +541,7 @@ class TestUnansweredLookupsAreAudible:
                    return_value=rp.PendingReview(looked=False)), \
              patch("gh.client.api", return_value=CmdResult(0, "{}")):
             review.posting._post_chunked_review(
-                "org/repo", "1", "abc", "body", [], 10, False)
+                "org/repo", "1", "abc", "body", [], 10)
 
         assert "Could not check for an existing PENDING review" in capsys.readouterr().err
 
@@ -554,6 +551,159 @@ class TestUnansweredLookupsAreAudible:
                    return_value=rp.PendingReview()), \
              patch("gh.client.api", return_value=CmdResult(0, "{}")):
             review.posting._post_chunked_review(
-                "org/repo", "1", "abc", "body", [], 10, False)
+                "org/repo", "1", "abc", "body", [], 10)
 
         assert "existing PENDING review" not in capsys.readouterr().err
+
+
+class TestPostAndTrackRecordsGithubState:
+    def _args(self, tmp_path, publish=None):
+        import argparse
+        d = tmp_path / "rev"
+        d.mkdir()
+        args = argparse.Namespace(
+            repo="org/repo", pr="1",
+            review_file=str(d / "review.md"),
+            publish=publish,
+        )
+        return args, d
+
+    def _read(self, d):
+        return serde_from_dict(PostTracking, json.loads((d / "post.jsonl").read_text()))
+
+    def test_an_unsubmitted_post_records_pending(self, rp, tmp_path):
+        args, d = self._args(tmp_path)
+        with (
+            patch("review.dedup.fetch_bot_reviews", return_value=review.dedup.BotReviews()),
+            patch("review.dedup.check_review_already_posted", return_value=[]),
+            patch("review.posting._post_chunked_review", return_value=[{"id": 11}]),
+        ):
+            review.posting._post_and_track(
+                args, [], "body", [], [], [],
+                "abc123", "def456", 30, {"M"},
+                record=record(), meta=ReviewMeta(),
+            )
+        tracking = self._read(d)
+        assert (tracking.status, tracking.submitted) == (PostEvent.PENDING.value, False)
+
+    def test_a_submitted_post_records_its_event(self, rp, tmp_path):
+        args, d = self._args(tmp_path, publish="approve")
+        with (
+            patch("review.dedup.fetch_bot_reviews", return_value=review.dedup.BotReviews()),
+            patch("review.dedup.check_review_already_posted", return_value=[]),
+            patch("review.posting._post_chunked_review", return_value=[{"id": 11}]),
+        ):
+            review.posting._post_and_track(
+                args, [], "body", [], [], [],
+                "abc123", "def456", 30, {"M"},
+                record=record(), meta=ReviewMeta(),
+            )
+        tracking = self._read(d)
+        assert (tracking.status, tracking.submitted) == (PostEvent.APPROVE.value, True)
+
+    def test_a_chunked_post_records_its_event_submitted(self, rp, tmp_path):
+        args, d = self._args(tmp_path)
+        with (
+            patch("review.dedup.fetch_bot_reviews", return_value=review.dedup.BotReviews()),
+            patch("review.dedup.check_review_already_posted", return_value=[]),
+            patch("review.posting._post_chunked_review",
+                  return_value=[{"id": 1}, {"id": 2}]),
+        ):
+            review.posting._post_and_track(
+                args, [], "body", [], [], [],
+                "abc123", "def456", 30, {"M"},
+                record=record(), meta=ReviewMeta(),
+            )
+        tracking = self._read(d)
+        assert (tracking.status, tracking.submitted) == (PostEvent.COMMENT.value, True)
+
+    def test_dedup_records_the_matched_review_state(self, rp, tmp_path):
+        args, d = self._args(tmp_path)
+        bots = review.dedup.BotReviews([
+            {"id": 99, "body": "body", "state": "APPROVED"},
+        ])
+        with (
+            patch("review.dedup.fetch_bot_reviews", return_value=bots),
+            patch("review.dedup.check_review_already_posted", return_value=[99]),
+            patch("review.posting._post_chunked_review") as post,
+        ):
+            review.posting._post_and_track(
+                args, [], "body", [], [], [],
+                "abc123", "def456", 30, {"M"},
+                record=record(), meta=ReviewMeta(),
+            )
+        post.assert_not_called()
+        tracking = self._read(d)
+        assert (tracking.status, tracking.submitted) == (PostEvent.APPROVE.value, True)
+        assert tracking.head_sha_at_post == "def456"
+        assert tracking.review_sha == "def456"
+
+    def test_a_too_large_draft_exits_without_github_writes(self, rp, tmp_path):
+        args, d = self._args(tmp_path)
+        comments = [{"path": "f", "line": i, "body": "x"} for i in range(3)]
+        with (
+            patch("review.dedup.fetch_bot_reviews") as fetch,
+            patch("gh.client.api") as api,
+            patch("gh.client.api_json") as api_json,
+            patch("gh.pr_reads._check_existing_pending") as pending,
+            patch("time.sleep"),
+        ):
+            rc = review.posting._post_and_track(
+                args, comments, "body", [], [], [],
+                "abc123", "def456", 1, {"M"},
+                record=record(), meta=ReviewMeta(),
+            )
+        assert rc == 1
+        fetch.assert_not_called()
+        api.assert_not_called()
+        api_json.assert_not_called()
+        pending.assert_not_called()
+        assert not (d / "post.jsonl").exists()
+
+    def test_own_draft_without_publish_exits_0_without_write(self, rp, tmp_path):
+        args, d = self._args(tmp_path)
+        (d / "post.jsonl").write_text(json.dumps({
+            "posted_as": "review", "status": "pending", "review_id": 11,
+            "submitted": False, "head_sha_at_post": "abc",
+        }) + "\n")
+        original = (d / "post.jsonl").read_text()
+        pr_data = MagicMock(pending_review_id=11)
+        with (
+            patch("review.dedup.fetch_bot_reviews") as fetch,
+            patch("gh.client.api") as api,
+            patch("gh.client.api_json") as api_json,
+        ):
+            rc = review.posting._post_and_track(
+                args, [], "body", [], [], [],
+                "abc123", "def456", 30, {"M"}, pr_data,
+                record=record(), meta=ReviewMeta(),
+            )
+        assert rc == 0
+        fetch.assert_not_called()
+        api.assert_not_called()
+        api_json.assert_not_called()
+        assert (d / "post.jsonl").read_text() == original
+
+    def test_own_draft_with_publish_exits_1_without_write(self, rp, tmp_path):
+        args, d = self._args(tmp_path, publish="comment")
+        (d / "post.jsonl").write_text(json.dumps({
+            "posted_as": "review", "status": "pending", "review_id": 11,
+            "submitted": False, "head_sha_at_post": "abc",
+        }) + "\n")
+        original = (d / "post.jsonl").read_text()
+        pr_data = MagicMock(pending_review_id=11)
+        with (
+            patch("review.dedup.fetch_bot_reviews") as fetch,
+            patch("gh.client.api") as api,
+            patch("gh.client.api_json") as api_json,
+        ):
+            rc = review.posting._post_and_track(
+                args, [], "body", [], [], [],
+                "abc123", "def456", 30, {"M"}, pr_data,
+                record=record(), meta=ReviewMeta(),
+            )
+        assert rc == 1
+        fetch.assert_not_called()
+        api.assert_not_called()
+        api_json.assert_not_called()
+        assert (d / "post.jsonl").read_text() == original

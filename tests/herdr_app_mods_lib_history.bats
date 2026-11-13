@@ -24,10 +24,10 @@ _js() {
   " -- "$1"
 }
 
-@test "post labels: comment, approve, requested_changes, dismissed, unposted, unknown, empty" {
-  _js 'historyRows([run({post:{event:"comment"}}),run({post:{event:"approve"}}),run({post:{event:"requested_changes"}}),run({post:{event:"dismissed"}}),run({post:null}),run({post:{event:"other"}}),run({post:{event:""}})], now).map(r=>r.post.label)'
+@test "post labels: pending, comment, approve, requested_changes, dismissed, unposted, unknown, empty" {
+  _js 'historyRows([run({post:{event:"pending"}}),run({post:{event:"comment"}}),run({post:{event:"approve"}}),run({post:{event:"requested_changes"}}),run({post:{event:"dismissed"}}),run({post:null}),run({post:{event:"other"}}),run({post:{event:""}})], now).map(r=>r.post.label)'
   [ "$status" -eq 0 ]
-  jq -e '.==["posted as comment","approved","changes requested","dismissed","unposted","posted","posted"]' <<<"$output"
+  jq -e '.==["draft on GitHub — only you can see it","published as comment","approved","changes requested","dismissed","unposted","posted","posted"]' <<<"$output"
 }
 
 @test "structured:false blanks verdict/sha/cost; findingsText is details not recorded" {
@@ -61,9 +61,9 @@ _js() {
 }
 
 @test "post status and healthStatus: comment/approve/requested_changes/dismissed/null/other/empty; partial/error/ok" {
-  _js '({post:historyRows([run({post:{event:"comment"}}),run({post:{event:"approve"}}),run({post:{event:"requested_changes"}}),run({post:{event:"dismissed"}}),run({post:null}),run({post:{event:"other"}}),run({post:{event:""}})], now).map(r=>r.post.status),health:[historyRows([run({status:"partial"})],now)[0].healthStatus,historyRows([run({status:"error"})],now)[0].healthStatus,historyRows([run()],now)[0].healthStatus]})'
+  _js '({post:historyRows([run({post:{event:"pending"}}),run({post:{event:"comment"}}),run({post:{event:"approve"}}),run({post:{event:"requested_changes"}}),run({post:{event:"dismissed"}}),run({post:null}),run({post:{event:"other"}}),run({post:{event:""}})], now).map(r=>r.post.status),health:[historyRows([run({status:"partial"})],now)[0].healthStatus,historyRows([run({status:"error"})],now)[0].healthStatus,historyRows([run()],now)[0].healthStatus]})'
   [ "$status" -eq 0 ]
-  jq -e '.post==["none","pass","warn","none","none","none","none"] and .health==["warn","fail",null]' <<<"$output"
+  jq -e '.post==["warn","none","pass","warn","none","none","none","none"] and .health==["warn","fail",null]' <<<"$output"
 }
 
 @test "health: Partial, Error, ok; missing post is unposted" {

@@ -92,7 +92,6 @@ class ReviewFlags:
     may_publish: bool = False
     no_post: bool = False
     auto_post: bool = False
-    auto_submit: bool = False
     repo_dir: str = ""
 
 
@@ -275,7 +274,7 @@ def run_pr_review(
         posting = review.publish.resolve(
             repo, pr_number, review_file,
             no_post=flags.no_post, auto_post=flags.auto_post,
-            auto_submit=flags.auto_submit, bin_dir=flags.bin_dir,
+            bin_dir=flags.bin_dir,
             branch=ctx.branch or "",
         )
 

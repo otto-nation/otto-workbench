@@ -78,7 +78,7 @@ _js() {
 }
 
 @test "outcomeText maps action and exitCode to level and title" {
-  _js '[m.outcomeText("review",0),m.outcomeText("rerun",0).title,m.outcomeText("recover",1),m.outcomeText("post-approve",null),m.outcomeText("weird",0).title,m.outcomeText("batch-fix",0)]'
+  _js '[m.outcomeText("review",0),m.outcomeText("rerun",0).title,m.outcomeText("recover",1),m.outcomeText("post-approve",null),m.outcomeText("post-draft",0).title,m.outcomeText("publish-comment",0).title,m.outcomeText("weird",0).title,m.outcomeText("batch-fix",0)]'
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"level":"success","title":"Review finished"},"Review finished",{"level":"error","title":"Recovery failed (exit 1)"},{"level":"error","title":"Approval ended unexpectedly"},"Action finished",{"level":"success","title":"Fix finished"}]' ]
+  [ "$output" = '[{"level":"success","title":"Review finished"},"Review finished",{"level":"error","title":"Recovery failed (exit 1)"},{"level":"error","title":"Approval ended unexpectedly"},"Draft post finished","Publish finished","Action finished",{"level":"success","title":"Fix finished"}]' ]
 }

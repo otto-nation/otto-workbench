@@ -97,7 +97,7 @@ from pathlib import Path
 import core.serde
 import core.workbench_paths
 from core.serde import load_file as serde_load_file
-from pr.state import PostTracking
+from pr.state import PostEvent, PostTracking
 from pr.target import display_repo
 from review.paths import (
     ARCHIVE_META_EXT, ARCHIVE_POST_EXT, ARCHIVE_RECORD_EXT, ARCHIVE_REVIEW_EXT,
@@ -126,14 +126,20 @@ SCHEMA_VERSIONS = (1,)
 class RunPost:
     """What a run's `post.jsonl` says happened to it on GitHub, or that it was dismissed.
 
-    `event` is a `PostEvent` value. A dismissed run posted nothing, and says so
-    here so a consumer can tell "answered" from "not yet looked at".
+    `event` is an open vocabulary of `PostEvent` values: a draft is `"pending"`
+    with `submitted: false`, and a consumer shows an unknown value generically.
+    Growing the value set does not bump the schema — `"dismissed"` already set
+    that precedent. A dismissed run posted nothing, and says so here so a
+    consumer can tell "answered" from "not yet looked at".
+
+    `submitted` means published on GitHub. Optional, so the schema does not bump.
     """
 
     event: str
     posted_at: str
     review_id: int
     sha_drifted: bool
+    submitted: bool = False
 
 
 @dataclass(frozen=True)
@@ -239,8 +245,12 @@ def _post_from(path: Path) -> RunPost | None:
     tracking = serde_load_file(PostTracking, path)
     if tracking is None:
         return None
-    return RunPost(event=tracking.status, posted_at=tracking.posted_at,
-                   review_id=tracking.review_id, sha_drifted=tracking.sha_drifted)
+    event = PostEvent.PENDING.value if tracking.pending else tracking.status
+    return RunPost(
+        event=event, posted_at=tracking.posted_at,
+        review_id=tracking.review_id, sha_drifted=tracking.sha_drifted,
+        submitted=tracking.published,
+    )
 
 
 def _run_for(review_dir: Path, stamp: str, cache: UsageCache) -> ReviewRun:

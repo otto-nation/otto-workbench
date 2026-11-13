@@ -112,6 +112,22 @@ class PostEvent(Enum):
     APPROVE = "approve"
     REQUESTED_CHANGES = "requested_changes"
     DISMISSED = "dismissed"
+    PENDING = "pending"
+
+
+GITHUB_STATE_BY_POST_EVENT = {
+    PostEvent.COMMENT: "COMMENTED",
+    PostEvent.APPROVE: "APPROVED",
+    PostEvent.REQUESTED_CHANGES: "CHANGES_REQUESTED",
+}
+
+
+def post_event_for_github_state(state: str) -> PostEvent | None:
+    """The PostEvent a GitHub review state maps to, or None when it does not."""
+    for event, github in GITHUB_STATE_BY_POST_EVENT.items():
+        if github == state:
+            return event
+    return None
 
 
 @dataclass
@@ -139,6 +155,26 @@ class PostTracking:
             self.review_id = self.review_ids[0]
         if self.review_id and not self.review_ids:
             self.review_ids = [self.review_id]
+
+    @property
+    def pending(self) -> bool:
+        """A draft still on GitHub, including the pre-pending tracking shape."""
+        if self.status == PostEvent.PENDING.value:
+            return True
+        return (
+            self.status == PostEvent.COMMENT.value
+            and not self.submitted
+            and self.posted_as == PostedAs.REVIEW.value
+            and bool(self.head_sha_at_post)
+        )
+
+    @property
+    def published(self) -> bool:
+        """A review or comment is on GitHub and is not a draft."""
+        return (
+            self.posted_as in (PostedAs.REVIEW.value, PostedAs.COMMENT.value)
+            and not self.pending
+        )
 
 
 # ── The envelope ────────────────────────────────────────────────────────────

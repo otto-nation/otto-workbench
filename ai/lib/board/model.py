@@ -16,6 +16,11 @@ from enum import StrEnum
 
 SCHEMA_VERSIONS = (1,)
 
+# What this build's `pr` accepts that a board consumer drives; add one when a
+# consumer must tell a newer `pr` from an older one; never remove one without
+# a schema bump.
+FEATURES = ("review-publish",)
+
 
 class Phase(StrEnum):
     LISTING = "listing"
@@ -127,6 +132,7 @@ class LatestReview:
 class RunPostRef:
     event: str
     posted_at: str = ""
+    submitted: bool | None = None
 
 
 @dataclass(frozen=True)

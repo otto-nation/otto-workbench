@@ -105,10 +105,7 @@ def _gave_up(platform: str, confirm_s: float) -> str:
     reason = f"the worker did not start within {confirm_s:g}s"
     if not platform.startswith("linux"):
         return reason
-    return (
-        f"{reason}; "
-        "systemd StartLimitBurst may have been hit after repeated re-issues"
-    )
+    return f"{reason}; check: systemctl --user status otto-queue-worker"
 
 
 def _start(command: list[str]) -> str | None:

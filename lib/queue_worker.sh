@@ -98,7 +98,9 @@ _queue_worker_refresh_launchd() {
   launchctl unload "$_QUEUE_WORKER_PLIST" 2>/dev/null || true
   # A failed write leaves the old plist in place: load it again, or the next
   # sync reads the unloaded agent as the operator's choice and never loads it.
-  if ! _queue_worker_apply "$template" "$_QUEUE_WORKER_PLIST"; then
+  local rc=0
+  _queue_worker_apply "$template" "$_QUEUE_WORKER_PLIST" || rc=$?
+  if [[ $rc -eq 2 ]]; then
     launchctl load "$_QUEUE_WORKER_PLIST" 2>/dev/null || true
     return 0
   fi

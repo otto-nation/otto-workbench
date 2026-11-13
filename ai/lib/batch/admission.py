@@ -172,7 +172,12 @@ def read_host(root: Path = Path("/"), *, cgroup: PurePosixPath | None = None) ->
 
 
 def slice_cgroup(name: str, root: Path = Path("/")) -> PurePosixPath | None:
-    """The cgroup of the user manager's slice *name*, from this process's own path; None outside a user manager."""
+    """The cgroup of the user manager's slice *name*, from this process's own path; None outside a user manager.
+
+    The path is returned even before the slice directory exists (systemd creates it
+    when the first scope starts in it); until then the slice's own limit goes unseen
+    and admission falls back to the manager's and root's limits.
+    """
     manager = core.cgroup.user_manager_cgroup(root)
     if manager is None:
         return None

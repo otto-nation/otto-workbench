@@ -62,7 +62,16 @@ import core.proc
 import core.timeouts
 import otto_queue.lease
 import otto_queue.paths
-from otto_queue.model import MAX_JOB_ATTEMPTS, LIVE_STATES, Entry, EntryClass, EntryKind, EntryState, NewEntry, state_for_exit
+from otto_queue.model import (
+    LIVE_STATES,
+    MAX_JOB_ATTEMPTS,
+    Entry,
+    EntryClass,
+    EntryKind,
+    EntryState,
+    NewEntry,
+    state_for_exit,
+)
 
 # Finished rows `entries()` returns beside the live ones: enough for `status` to
 # show what just ended without reading the whole history.
@@ -291,7 +300,7 @@ def _insert(conn: sqlite3.Connection, new: NewEntry, pid: int | None) -> int:
 
 def _end_orphan(conn: sqlite3.Connection, entry: Entry) -> None:
     if entry.kind is EntryKind.JOB and entry.attempts < MAX_JOB_ATTEMPTS:
-        conn.execute("UPDATE entries SET state = ?, pid = NULL WHERE id = ?",
+        conn.execute("UPDATE entries SET state = ?, pid = NULL, not_before = NULL WHERE id = ?",
                      (EntryState.QUEUED.value, entry.id))
         return
     conn.execute("UPDATE entries SET state = ?, finished_at = ? WHERE id = ?",

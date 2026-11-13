@@ -22,7 +22,7 @@ import otto_queue.ledger  # noqa: E402
 import otto_queue.paths  # noqa: E402
 from otto_queue.ledger import Ledger, LedgerBusy, LedgerError  # noqa: E402
 from otto_queue.model import EntryState  # noqa: E402
-from otto_queue_support import set_columns
+from otto_queue_support import set_columns # noqa: E402
 
 ADDITIVE = re.compile(r"^(CREATE (TABLE|INDEX) IF NOT EXISTS|ALTER TABLE \w+ ADD COLUMN) ")
 

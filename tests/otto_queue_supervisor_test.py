@@ -115,7 +115,7 @@ def test_a_start_that_brings_up_nothing_is_reissued_then_given_up(stubs, platfor
     woke = otto_queue.supervisor.wake(
         otto_queue.paths.queue_root(), platform=platform, confirm_s=2.5, poll_s=0.05)
     assert not woke.alive and "did not start" in woke.reason
-    assert ("StartLimitBurst" in woke.reason) is burst
+    assert ("systemctl --user status" in woke.reason) is burst
     assert len(_calls(calls)) >= 2
 
 

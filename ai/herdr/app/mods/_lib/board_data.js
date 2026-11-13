@@ -48,6 +48,10 @@ const OUTDATED_RE = /invalid choice: 'board'|unsupported --schema-version|--sche
 
 export function classifyCode(result) {
   const stderr = result.stderr ?? '';
+  // A remote machine that has not synced: a stale workbench, not a missing tool.
+  if (result.code === 127 && stderr.includes(REMOTE_ENV_MISSING)) {
+    return { kind: 'outdated', message: stderr.trim() };
+  }
   if (result.code === 127) {
     return { kind: 'missing-tool', message: stderr || 'command not found' };
   }

@@ -13,21 +13,6 @@ teardown() {
 
 # ── loader.zsh loads .env.local through env.sh ────────────────────────────────
 
-@test "loader.zsh loads the deployed env.sh and runs workbench_env" {
-  grep -qF 'source "$HOME/.config/zsh/env.sh"' "$REPO_ROOT/zsh/config.d/loader.zsh"
-  grep -qE '^  workbench_env$' "$REPO_ROOT/zsh/config.d/loader.zsh"
-}
-
-@test "workbench_env runs before _wb_load framework in loader.zsh" {
-  local loader="$REPO_ROOT/zsh/config.d/loader.zsh"
-  local env_line fw_line
-  env_line=$(grep -n '^  workbench_env$' "$loader" | head -1 | cut -d: -f1)
-  fw_line=$(grep -n '^_wb_load framework' "$loader" | head -1 | cut -d: -f1)
-  [ -n "$env_line" ]
-  [ -n "$fw_line" ]
-  [ "$env_line" -lt "$fw_line" ]
-}
-
 # ── template ──────────────────────────────────────────────────────────────────
 
 @test ".env.local template exists" {

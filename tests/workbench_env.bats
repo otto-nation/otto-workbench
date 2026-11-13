@@ -120,6 +120,16 @@ _host_brew() {
   [[ "$stderr" == *"$FAKE_HOME/.env.local failed to load"* ]]
 }
 
+@test "workbench_env loads assignments once when ~/.env.local's last command returns non-zero" {
+  printf 'echo x >> "$HOME/runs"\nEARLY=kept\n[ -f /nonexistent ] && export LATE=1\n' > "$FAKE_HOME/.env.local"
+
+  run _in_sh /usr/bin:/bin 'workbench_env; sh -c "printf %s \"\$EARLY\""; echo; wc -l < "$HOME/runs"'
+
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "kept" ]
+  [ "$(tr -d ' ' <<<"${lines[1]}")" = "1" ]
+}
+
 @test "under set -e, workbench_env survives a failing command inside ~/.env.local and restores errexit" {
   printf 'false\nAFTER=reached\n' > "$FAKE_HOME/.env.local"
 

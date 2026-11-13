@@ -177,7 +177,7 @@ version_at_least() {
 # before the zsh step has deployed anything.
 ensure_tool_path() {
   # shellcheck source=../zsh/env.sh
-  . "$ZSH_ENV_SRC"
+  . "${ZSH_ENV_SRC:?ZSH_ENV_SRC unset — source lib/constants.sh first}"
   workbench_path
 }
 

@@ -62,10 +62,10 @@ workbench_path() {
 # ended by it.
 #
 # An interactive shell sources the file directly, so a mistake in it prints
-# where it is. A non-interactive one sources it only after a subshell has proved
-# it loads: sh exits on a failing `.`, which would end the caller before it ran
-# anything — a remote preamble before its `exec`, maintenance before its sync.
-# The proof runs the file twice, so it is not used where a person is watching.
+# where it is. A non-interactive one sources it only if `sh -n` accepts its
+# syntax: sh exits on a syntax error in a `.` file, which would end the caller
+# before it ran anything — a remote preamble before its `exec`, maintenance
+# before its sync. The file is sourced once; its last command's status is ignored.
 #
 # A caller under `set -e` is safe too: errexit is lifted around the source and
 # restored after, so a command in ~/.env.local that returns non-zero does not end
@@ -89,12 +89,12 @@ workbench_env() {
       . "$HOME/.env.local"
       ;;
     *)
-      if (. "$HOME/.env.local") >/dev/null 2>&1; then
+      if sh -n "$HOME/.env.local" >/dev/null 2>&1; then
         set -a
         # shellcheck disable=SC1091
         . "$HOME/.env.local" >/dev/null 2>&1
       else
-        echo "workbench: $HOME/.env.local failed to load (a syntax error, or its last command returned non-zero) — skipped" >&2
+        echo "workbench: $HOME/.env.local failed to load (a syntax error) — skipped" >&2
       fi
       ;;
   esac

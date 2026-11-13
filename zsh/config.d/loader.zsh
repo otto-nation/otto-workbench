@@ -64,6 +64,12 @@ if [[ -f "$HOME/.config/zsh/env.sh" ]]; then
   workbench_env
 else
   echo "⚠  ~/.config/zsh/env.sh is missing — run otto-workbench sync to restore PATH and ~/.env.local" >&2
+  [[ -d "$HOME/.local/bin" ]] && path=("$HOME/.local/bin" $path)
+  if [[ -r "$HOME/.env.local" ]]; then
+    set -a
+    source "$HOME/.env.local"
+    set +a
+  fi
 fi
 
 _wb_load framework

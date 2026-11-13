@@ -630,7 +630,7 @@ def test_only_the_listing_is_exempt_from_the_trail():
     target lock; `batch run` opens its own `pr-batch` trail.
     """
     for name, spec in cli.registry.COMMANDS.items():
-        if name in {"batch", "board"}:
+        if name in {"batch", "board", "models"}:
             assert not cli.registry.need_for(spec, []).records_a_trail, name
             continue
         assert cli.registry.need_for(spec, []).records_a_trail, name

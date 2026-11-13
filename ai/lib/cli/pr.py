@@ -231,6 +231,17 @@ def cmd_board(argv: list[str], ctx: pr.context.ResolvedContext, **kw) -> int:
     return cli.dispatch.resolve(COMMANDS["board"].handler)(argv, ctx, **kw)
 
 
+def cmd_models(argv: list[str], ctx: pr.context.ResolvedContext, **kw) -> int:
+    """Run `pr models`'s handler, imported only when models is dispatched.
+
+    A lazy hop rather than an import: `cli.pr_models` pulls in the catalogue,
+    and `pr --help` must load no delegate
+    (test_pr_help_imports_no_delegate). The registry's handler string is the
+    one name for it.
+    """
+    return cli.dispatch.resolve(COMMANDS["models"].handler)(argv, ctx, **kw)
+
+
 # ── CLI ─────────────────────────────────────────────────────────────────────
 
 # Custom handlers for commands that need more than passthrough.
@@ -243,6 +254,7 @@ _CUSTOM = {
     "batch":    cmd_batch,
     "gc":       cmd_gc,
     "board":    cmd_board,
+    "models":   cmd_models,
 }
 
 def build_global_parser() -> argparse.ArgumentParser:

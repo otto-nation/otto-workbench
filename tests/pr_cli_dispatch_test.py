@@ -415,7 +415,7 @@ def test_main_reports_contention_and_exits_75(mock_resolve, worktree, capsys):
 _RESOLVES_LOCALLY = {
     "create": False, "status": True, "ci": False, "review": False,
     "comments": False, "fix": False, "rebase": False, "push": True, "describe": False,
-    "stack": True, "board": False, "batch": False, "gc": False,
+    "stack": True, "board": False, "models": False, "batch": False, "gc": False,
 }
 
 # Which commands fetch and fast-forward the worktree first. The old
@@ -424,7 +424,7 @@ _RESOLVES_LOCALLY = {
 _FETCHES = {
     "create": False, "status": False, "ci": True, "review": True,
     "comments": True, "fix": True, "rebase": False, "push": False, "describe": True,
-    "stack": False, "board": False, "batch": False, "gc": False,
+    "stack": False, "board": False, "models": False, "batch": False, "gc": False,
 }
 
 # Which bare invocations may create a worktree. Flag variants that flip this
@@ -433,7 +433,7 @@ _FETCHES = {
 _CREATES_WORKTREE = {
     "create": False, "status": False, "ci": False, "review": False,
     "comments": False, "fix": True, "rebase": True, "push": False, "describe": False,
-    "stack": False, "board": False, "batch": False, "gc": False,
+    "stack": False, "board": False, "models": False, "batch": False, "gc": False,
 }
 
 
@@ -444,7 +444,7 @@ def test_axis_tables_cover_every_command():
         assert set(table) == set(cli.registry.COMMANDS)
 
 
-@pytest.mark.parametrize("command", sorted(c for c in _RESOLVES_LOCALLY if c not in {"batch", "board"}))
+@pytest.mark.parametrize("command", sorted(c for c in _RESOLVES_LOCALLY if c not in {"batch", "board", "models"}))
 def test_command_resolves_at_its_declared_depth(command, tmp_path):
     stage = _dispatch_stage(command, ctx=make_ctx(target_dir=tmp_path / "target"))
     local = _RESOLVES_LOCALLY[command]
@@ -452,9 +452,9 @@ def test_command_resolves_at_its_declared_depth(command, tmp_path):
     assert stage.remote.called is not local
 
 
-@pytest.mark.parametrize("command", ["batch", "board"])
+@pytest.mark.parametrize("command", ["batch", "board", "models"])
 def test_command_resolves_nothing_at_all(command, tmp_path):
-    """`pr batch` and `pr board` consult neither git nor gh to resolve a target."""
+    """`pr batch`, `pr board` and `pr models` consult neither git nor gh to resolve a target."""
     stage = _dispatch_stage(command, ctx=make_ctx(target_dir=tmp_path / "target"))
     assert not stage.local.called
     assert not stage.remote.called
@@ -508,6 +508,7 @@ _DECLARED_LOCKS = {
     ("describe", ()): _TC,
     ("stack", ()): _NO,
     ("board", ()): _NO,
+    ("models", ()): _NO,
     ("batch", ()): _NO,
     ("batch", ("run", "--checkout", "/r")): _NO,
     ("batch", ("resume",)): _NO,

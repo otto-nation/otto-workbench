@@ -1060,6 +1060,14 @@ Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [con
 
 Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [contract](ai-automation.md#pr-board-contract)
 
+**`pr models`** — Models a phase can be set to (JSON)
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Print the choices document. |
+
+Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [contract](ai-automation.md#pr-models-contract)
+
 **`pr batch plan`** — Show which PRs need which steps
 
 | Flag | Description |

@@ -22,9 +22,12 @@ Three checks, each against the live source of truth rather than a list kept here
                     a command a workbench hook answers, a harness built-in, or
                     a filesystem root (`/tmp`), which is a path and not a command.
   Rule pointers     A `` `name.md` § Heading `` span must sit on one line. When
-                    `name.md` lives under ai/guidelines/rules/, the heading must
-                    match a heading in that file at a boundary: end of the span,
-                    whitespace then a delimiter, or one of ) . , ; : | ` em dash.
+                    `name.md` lives under ai/guidelines/rules/ or docs/, the
+                    heading must match a heading in that file at a boundary: end
+                    of the span, whitespace then a delimiter, or one of
+                    ) . , ; : | ` em dash. A docs page is spelled `docs/x.md` or
+                    bare `x.md` when that basename is unique; composed pages are
+                    read from the committed `.md` so included sections count.
                     A `name.md` § span that names no file in the repo fails as
                     an unknown rule file.
 
@@ -237,6 +240,40 @@ def load_rule_headings(root: Path) -> dict[str, tuple[str, ...]]:
     return {path.name: _headings_of(path) for path in sorted(rules.glob("*.md"))}
 
 
+def load_doc_headings(root: Path) -> dict[str, tuple[str, ...]]:
+    """Each docs page's headings, keyed as `docs/x.md` and as `x.md` when unique.
+
+    Composed pages are read from the committed `.md`, not the `.src.md`, so a
+    heading an include produced is one a pointer can name.
+    """
+    docs = root / "docs"
+    if not docs.is_dir():
+        return {}
+    files = [
+        path for path in sorted(docs.rglob("*.md"))
+        if not path.name.endswith(".src.md")
+        and not path.name.endswith(".generated.md")
+    ]
+    counts: dict[str, int] = {}
+    for path in files:
+        counts[path.name] = counts.get(path.name, 0) + 1
+    out: dict[str, tuple[str, ...]] = {}
+    for path in files:
+        heads = _headings_of(path)
+        out[path.relative_to(root).as_posix()] = heads
+        if counts[path.name] == 1:
+            out[path.name] = heads
+    return out
+
+
+def load_headings(root: Path) -> dict[str, tuple[str, ...]]:
+    """Rule and docs headings; a colliding basename keeps the rules file."""
+    heads = dict(load_rule_headings(root))
+    for key, value in load_doc_headings(root).items():
+        heads.setdefault(key, value)
+    return heads
+
+
 def load_repo_basenames(root: Path) -> frozenset[str]:
     """Every file basename under *root*, used to tell unknown rule files from docs."""
     names: set[str] = set()
@@ -262,18 +299,22 @@ def _heading_held(text: str, head: str) -> bool:
 
 def check_pointer(line: str, headings: dict[str, tuple[str, ...]],
                   basenames: frozenset[str]) -> list[str]:
-    """Reasons a `name.md` § Heading pointer names no heading in that rules file."""
+    """Reasons a `name.md` § Heading pointer names no heading in that file."""
     reasons: list[str] = []
     for match in POINTER.finditer(line):
         name = match.group(1)
         base = Path(name).name
-        if base not in headings and base not in basenames:
+        if name in headings:
+            key = name
+        elif base in headings:
+            key = base
+        elif base not in basenames:
             reasons.append(f"`{name}`: unknown rule file")
             continue
-        if base not in headings:
+        else:
             continue
         text = line[match.end():].lstrip()
-        if not any(_heading_held(text, head) for head in headings[base]):
+        if not any(_heading_held(text, head) for head in headings[key]):
             shown = text.split(")", 1)[0].strip() or "(empty)"
             reasons.append(f"`{name}` § {shown}: no such heading")
     return reasons
@@ -366,7 +407,7 @@ def main(argv: list[str] | None = None) -> int:
 
     tools = load_tools(REPO_ROOT)
     names = load_slash_names(REPO_ROOT)
-    headings = load_rule_headings(REPO_ROOT)
+    headings = load_headings(REPO_ROOT)
     basenames = load_repo_basenames(REPO_ROOT)
     files = args.files or discover(REPO_ROOT)
     violations = [v for f in files for v in check_file(

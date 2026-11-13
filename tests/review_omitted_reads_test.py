@@ -136,15 +136,20 @@ def test_templates_do_not_name_files_not_pre_collected():
         assert "Files not pre-collected" not in path.read_text()
 
 
-@pytest.mark.parametrize("omitted", [[], ["big.go"]])
-def test_env_section_only_says_where_omitted_files_are(omitted):
+@pytest.mark.parametrize("drop_all", [True, False], ids=["dropped-everything", "partial"])
+def test_env_section_only_says_where_omitted_files_are(drop_all):
     """Neither omission branch of the env section instructs a read.
 
     `_build_omitted_guidance` owns what a phase does with omitted files; the
-    env section is phase-blind, so it may only say where they live. The empty
-    case drives the branch where the budget dropped every file.
+    env section is phase-blind, so it may only say where they live. A fit that
+    drops every file takes the dropped-everything branch; a preflight with a
+    never-collected file and no fit takes the partial one.
     """
-    pf = _make_preflight(file_contents={"a.py": "x", "b.py": "y"}, omitted_files=omitted)
-    env = _build_env_section("/wt", pf, files=_dropped(pf))
+    pf = _make_preflight(file_contents={"a.py": "x"}, omitted_files=["big.go"])
+    env = _build_env_section("/wt", pf, files=_dropped(pf) if drop_all else None)
+    if drop_all:
+        assert "file contents are not" in env
+    else:
+        assert "some file contents are pre-collected" in env
     assert 'Files listed under "Files not pre-collected" are at this path.' in env
     assert "Read every file" not in env

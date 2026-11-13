@@ -39,7 +39,7 @@ from review.store import read_review, update_review
 from review.verdict import resolve_review_verdict
 import review.claims
 import review.pipeline
-from review.types import DeltaAttribution, Pipeline, PreflightData
+from review.types import DeltaAttribution, Pipeline, PreflightData, ReviewJob
 from review_pipeline_support import BIG_PR, PRESET, Trail, orchestrate_args, pipeline_job
 from review_record_support import finding, record
 

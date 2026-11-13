@@ -99,7 +99,7 @@ _maint() {
   [ ! -e "$QUEUE_CALLS" ]
 }
 
-# _logs [ENV...] — otto-workbench maintenance logs under a stub HOME.
+# _logs — otto-workbench maintenance logs under a stub HOME.
 _logs() {
   mkdir -p "$TEST_HOME/.local/bin" "$TEST_HOME/Library/Logs/otto-workbench"
   printf '#!/usr/bin/env bash\necho JOURNAL\n' > "$TEST_HOME/.local/bin/journalctl"
@@ -107,7 +107,7 @@ _logs() {
   run env HOME="$TEST_HOME" PATH="$TEST_HOME/.local/bin:$PATH" NO_COLOR=1 \
     WORKBENCH_STATE_DIR="$WORKBENCH_STATE_DIR" WORKBENCH_CACHE_DIR="$WORKBENCH_CACHE_DIR" \
     WORKBENCH_CONFIG_DIR="$WORKBENCH_CONFIG_DIR" OTTO_QUEUE_BIN="$TEST_HOME/otto-queue" \
-    "$@" "$REPO_ROOT/bin/otto-workbench" --workbench-dir "$REPO_ROOT" maintenance logs
+    "$REPO_ROOT/bin/otto-workbench" --workbench-dir "$REPO_ROOT" maintenance logs
 }
 
 @test "maintenance logs tails the newest queued maintenance run" {

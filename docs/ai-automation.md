@@ -1373,7 +1373,7 @@ Rebase, CI, comments and (opt-in) self-review across my open PRs. A default run 
 |---|---|---|
 | `0` | the run is done or cancelled |  |
 | `1` | it stopped without settling | `pr batch resume` |
-| `2` | bad flags, missing --checkout/--plan, or resume --steps that widen |  |
+| `2` | bad flags, missing --checkout/--plan, resume --steps that widen, or a note naming a run, PR or finding the run does not have |  |
 
 **Examples**
 

@@ -90,7 +90,7 @@ def cmd_cancel(args, bin_dir: Path) -> int:
     return 1 if error else EXIT_OK
 
 
-def _resolve_item(run: Run, given: str) -> Item | str:
+def resolve_item(run: Run, given: str) -> Item | str:
     """The item *given* names, or an error to print."""
     if given.isdigit():
         matches = [i for i in run.items if i.pr == int(given)]
@@ -126,7 +126,7 @@ def cmd_release(args, bin_dir: Path) -> int:
         run = batch.store.load(run_id)
     except batch.store.RunNotFound:
         return cli.pr_batch_common.fail(f"no run {run_id}")
-    item = _resolve_item(run, args.pr)
+    item = resolve_item(run, args.pr)
     if isinstance(item, str):
         return cli.pr_batch_common.fail(item)
     try:

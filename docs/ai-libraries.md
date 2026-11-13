@@ -9181,6 +9181,7 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch status [RUN_ID] [--full] [--offline]   the run report (JSON)
     pr batch report [RUN_ID] [--offline] [--format json|md]         per-PR session commands
     pr batch session RUN_ID [--json]           open the run's pi session (--json prints how)
+    pr batch note RUN_ID PR --finding R:S --verdict V --reason TEXT   record a verdict in the run's history
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/report fall back to the newest run on the machine and say so on stderr.
 

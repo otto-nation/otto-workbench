@@ -8,6 +8,7 @@
     pr batch status [RUN_ID] [--full] [--offline]   the run report (JSON)
     pr batch report [RUN_ID] [--offline] [--format json|md]         per-PR session commands
     pr batch session RUN_ID [--json]           open the run's pi session (--json prints how)
+    pr batch note RUN_ID PR --finding R:S --verdict V --reason TEXT   record a verdict in the run's history
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/report fall back to the newest run on the machine and say so on stderr.
 
@@ -82,7 +83,9 @@ CONTRACT = core.command_contract.CommandContract(
                                "status --offline", "report run_id",
                                "report --format", "report --offline")),
         core.command_contract.FlagGroup(
-            "session", ("session run_id", "session --json")),
+            "session/note", ("session run_id", "session --json",
+                             "note run_id", "note pr", "note --finding",
+                             "note --verdict", "note --reason", "note --command")),
     ),
     remote_effects=(
         core.command_contract.RemoteEffect(
@@ -116,7 +119,8 @@ CONTRACT = core.command_contract.CommandContract(
             (core.command_contract.NextStep("", ("pr batch resume",)),)),
         core.command_contract.ExitOutcome(
             ExitCode.USAGE,
-            "bad flags, missing --checkout/--plan, or resume --steps that widen"),
+            "bad flags, missing --checkout/--plan, resume --steps that widen, or a "
+            "note naming a run, PR or finding the run does not have"),
     ),
     examples=(
         core.command_contract.Example(
@@ -281,6 +285,7 @@ def build_parser() -> argparse.ArgumentParser:
     cli.pr_batch_views.offline(p)
     import cli.pr_batch_session
     cli.pr_batch_session.add_session_parser(sub)
+    cli.pr_batch_session.add_note_parser(sub)
     return parser
 
 
@@ -695,6 +700,9 @@ def cmd_batch(argv: list[str], ctx, *, bin_dir: Path, schema_version: str | None
         if args.command == "session":
             import cli.pr_batch_session
             return cli.pr_batch_session.cmd_session(args)
+        if args.command == "note":
+            import cli.pr_batch_session
+            return cli.pr_batch_session.cmd_note(args)
         # status
         return cli.pr_batch_views.cmd_status(args)
     except batch.plan.PlanError as exc:

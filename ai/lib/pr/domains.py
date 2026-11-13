@@ -686,9 +686,10 @@ class RebaseSummary(Domain):
             desc += ", force-pushed"
         lines = [f"**Rebase**: {desc}"]
         if self.files_stale:
+            reason = "content is the incoming side, unmerged"
             lines.append(
                 f"**Rebase**: not regenerated: {', '.join(self.files_stale)} — "
-                "content is the incoming side, unmerged"
+                + reason
             )
         if self.files_one_sided:
             lines.append(

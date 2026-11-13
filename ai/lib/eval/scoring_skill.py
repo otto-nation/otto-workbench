@@ -57,8 +57,8 @@ repo exists, and a group naming a placeholder would grade against the literal
 token.
 
 Two limits worth naming. The trace cannot see obligations that are text-only,
-such as `pr-rebase`'s instruction to report `files_stale` and tell the user to
-regenerate those files by hand. And each case drives a single *user* turn, with
+such as `pr-rebase`'s instruction to report `files_stale` that remain after a
+completed rebase and tell the user to regenerate those files by hand. And each case drives a single *user* turn, with
 the user's side encoded in the scenario prompt — which covers both sides of the
 `pr-comments` approval gate as two cases, but does not exercise a real multi-turn
 exchange. Within that turn `SKILL_MAX_TURNS` and `SKILL_MAX_BUDGET` cap the

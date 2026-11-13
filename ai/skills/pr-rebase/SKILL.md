@@ -238,12 +238,19 @@ Every conflict is resolved by the run itself: git's rerere cache is held off, so
 no unreviewed resolution is recorded for a later rebase.
 
 Report commits replayed and any conflicts resolved. When `files_stale` is
-non-empty, those files were staged from the incoming side and never rebuilt —
-either the repo's regeneration command failed, the path has no `regenerate=`
-attribute and no declared `rebase.regenerate` / conventional `generate` task,
-or the rebuild was unknown. Regenerate them yourself — see *After the rebase*
-— then finish at step 3. A repo that keeps landing on unattributed generated
-files wants `regenerate=<command>` on those paths in `.gitattributes`.
+non-empty **after a completed rebase**, those files were staged from the
+incoming side and never rebuilt — the repo's regeneration command failed, the
+path has no `regenerate=` attribute and no declared `rebase.regenerate` /
+conventional `generate` task, or the rebuild was unknown. Regenerate them
+yourself — see *After the rebase* — then finish at step 3. A repo that keeps
+landing on unattributed generated files wants `regenerate=<command>` on those
+paths in `.gitattributes`.
+
+During a **paused** rebase (`status: conflicts`), queued generated files also
+land in `files_stale` because another file in the step is still unresolved.
+A later `pr rebase --fix` rebuilds them automatically once no unmerged
+hand-written file remains. Do not regenerate those by hand unless they are
+still listed after the rebase completes.
 
 **Exit 3 — conflicts a human must look at.** Parse the JSON. `aborted` and
 `tree` say whether the replay was thrown away (`tree: clean`) or left paused
@@ -399,9 +406,13 @@ rebase done and only the push outstanding — both end at step 3, never at a
 
 ### 2b. After the rebase: regenerate and fold
 
-A replay can leave generated files at the incoming side (`files_stale`), or
-miss what the combined code now needs (a main-side schema or proto change).
-Before pushing, from the worktree and as a background job when it is slow:
+A completed replay can leave generated files at the incoming side
+(`files_stale`) when the rebuild failed or no regenerator is declared, or miss
+what the combined code now needs (a main-side schema or proto change).
+Queued files deferred while a hand-written conflict was still open are rebuilt
+automatically on the next `pr rebase --fix` once that conflict is resolved —
+do not regenerate those by hand. For what remains in `files_stale` after the
+rebase completes, from the worktree and as a background job when it is slow:
 
 1. Build and vet the touched module, resolving compile errors from hand-merged
    files — a clean replay can still be semantically stale.

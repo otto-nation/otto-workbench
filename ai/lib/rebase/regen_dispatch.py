@@ -11,16 +11,21 @@ from __future__ import annotations
 from pathlib import Path
 
 import core.log
-from core.trail import Trail, tinfo
+from core.trail import Trail, terr, tinfo
 import git.regenerate
 
 from . import conflicts
+from . import inspect as rebase_inspect
 from . import repo_regen
 from . import types as rebase_types
 
+ConflictStrategy = rebase_types.ConflictStrategy
 GeneratedSignal = rebase_types.GeneratedSignal
 Regenerator = git.regenerate.Regenerator
 RegenQueue = git.regenerate.RegenQueue
+ResolutionTally = rebase_types.ResolutionTally
+
+_GENERATED = (ConflictStrategy.ACCEPT_THEIRS, ConflictStrategy.REGENERATE)
 
 
 def dispatch_regenerate(
@@ -81,3 +86,75 @@ def run_deferred_regenerations(
         if not git.regenerate.run_regeneration(job, cwd=cwd, trail=trail):
             failed.extend(job.files)
     return failed
+
+
+def _hand_written_unmerged(cwd: str) -> bool:
+    """True when an unmerged path is not generated-class.
+
+    Generators import hand-written code; conflict markers in one of those
+    files crash the rebuild. Generated unmerged paths are the ones being
+    rebuilt and do not block.
+    """
+    files = rebase_inspect.detect_conflicts(cwd)
+    if not files:
+        return False
+    for filepath in files:
+        plan = conflicts.classify_conflict(filepath, Path(cwd) / filepath, cwd)
+        if plan.strategy not in _GENERATED:
+            return True
+    return False
+
+
+def _queue_stale_path(
+    filepath: str, cwd: str, queue: RegenQueue, *, conventional: bool,
+) -> bool:
+    """Re-derive a regenerator for a persisted stale path. False if unknown."""
+    regenerator = git.regenerate.find_regenerator(filepath)
+    if regenerator is not None:
+        queue.add(
+            Path(cwd) / Path(filepath).parent, filepath,
+            regenerator.cmd, regenerator.stage_dir,
+        )
+        return True
+    return repo_regen.queue_repo_regeneration(
+        filepath, cwd, queue, conventional=conventional,
+    )
+
+
+def rebuild_stale(
+    cwd: str, tally: ResolutionTally, *,
+    trail: Trail | None, conventional: bool = True,
+    paths: list[str] | None = None,
+) -> None:
+    """Rebuild persisted ``files_stale`` once no hand-written file is unmerged.
+
+    Paths are the stop's ``RebaseSummary.files_stale`` (restored onto the
+    tally); regenerators are re-derived via ``find_regenerator`` / repo
+    regen rather than persisted as jobs. Successes drop off the tally;
+    failures stay in ``tally.stale`` with the real regeneration error.
+    """
+    pending = list(dict.fromkeys(paths if paths is not None else tally.stale))
+    if not pending:
+        return
+    if _hand_written_unmerged(cwd):
+        return
+    queue = RegenQueue()
+    unknown: list[str] = []
+    for filepath in pending:
+        if not _queue_stale_path(
+            filepath, cwd, queue, conventional=conventional,
+        ):
+            unknown.append(filepath)
+    failed = run_deferred_regenerations(queue, cwd, trail=trail)
+    if failed:
+        terr(trail, "regenerate", "regeneration failed", data={"files": failed})
+        core.log.warn(
+            f"Regeneration failed for: {', '.join(failed)} — lockfiles may be stale",
+        )
+    failed_set = set(failed)
+    unknown_set = set(unknown)
+    attempted = set(pending)
+    tally.stale[:] = [
+        path for path in tally.stale
+        if path not in attempted or path in failed_set or path in unknown_set
+    ]

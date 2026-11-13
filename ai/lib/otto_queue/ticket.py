@@ -63,7 +63,8 @@ import core.signal_relay
 import otto_queue.lease
 import otto_queue.ledger
 import otto_queue.slots
-from otto_queue.model import Entry, EntryClass, EntryKind, EntryState, NewEntry
+from otto_queue.model import (  # noqa: F401  LABEL_ENV and WAIT_ENV are re-exported
+    LABEL_ENV, WAIT_ENV, Entry, EntryClass, EntryKind, EntryState, NewEntry)
 
 # How long a ticket waits for a slot before ending as `tempfail`. A review takes
 # about ten minutes, so an hour is several heavy entries deep: long enough that
@@ -74,10 +75,6 @@ DEFAULT_WAIT_S = 3600.0
 POLL_S = 0.5
 
 ENTRY_ENV = "OTTO_QUEUE_ENTRY"
-
-# Read by `cli.queue_gate` (and set by `pr batch`); `run_ticket` does not.
-LABEL_ENV = "OTTO_QUEUE_LABEL"
-WAIT_ENV = "OTTO_QUEUE_WAIT_S"
 
 
 class TicketOutcome(StrEnum):

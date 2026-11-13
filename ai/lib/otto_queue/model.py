@@ -39,6 +39,12 @@ class EntryClass(StrEnum):
     LIGHT = "light"
 
 
+# Read by `cli.queue_gate` (and set by `pr batch`); `run_ticket` does not. Here rather than in
+# `ticket` so a caller that only names them does not import the whole ticket machinery.
+LABEL_ENV = "OTTO_QUEUE_LABEL"
+WAIT_ENV = "OTTO_QUEUE_WAIT_S"
+
+
 class EntryState(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"

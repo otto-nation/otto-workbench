@@ -181,22 +181,43 @@ export function readPages(text) {
   return { ok: true, value: pages };
 }
 
-export async function readReview(readTextFile, path, on, exec = null) {
+// Below herdr's 30 s exec cap so a hung remote read still settles.
+export const REVIEW_DEADLINE_MS = 20_000;
+
+function withDeadline(promise, deadlineMs) {
+  if (!(deadlineMs > 0)) return promise;
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      const err = new Error('timed out reading the review');
+      err.timedOut = true;
+      reject(err);
+    }, deadlineMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+export async function readReview(readTextFile, path, on, exec = null, opts = {}) {
+  const deadlineMs = opts.deadlineMs ?? REVIEW_DEADLINE_MS;
   const remote = on != null && on !== '';
   try {
     const direct = Promise.resolve().then(() => readTextFile(path, { on }));
-    let text;
+    let pending;
     if (remote && exec != null) {
       const viaCat = Promise.resolve().then(() => exec('cat', [path], { on })).then((r) => {
         if (r?.code !== 0) throw new Error(`cat exited ${r?.code}`);
         return r.stdout ?? '';
       });
-      text = await Promise.any([direct, viaCat]);
+      pending = Promise.any([direct, viaCat]);
     } else {
-      text = await direct;
+      pending = direct;
     }
+    const text = await withDeadline(pending, deadlineMs);
     return { ok: true, text: text ?? null };
   } catch (e) {
+    if (e && e.timedOut) {
+      return { ok: false, error: { kind: 'exec', message: 'timed out reading the review' } };
+    }
     const err = e instanceof AggregateError ? e.errors[0] : e;
     if (on != null && on !== '') {
       return { ok: false, error: { kind: 'exec', command: 'read review', message: execReason(err) } };

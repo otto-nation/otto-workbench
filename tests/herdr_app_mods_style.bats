@@ -91,6 +91,9 @@ teardown() {
   run grep -ln 'TextView.markdown(`output-\|TextView.markdown(`step-log' "$MODS"/prs/*.js
   [ "$status" -eq 1 ]
   grep -q 'selectableCode("output"' "$MODS/prs/detail.js"
+  grep -q 'card(`run-${r.key}`)' "$MODS/prs/detail.js"
+  run grep -F 'card(`run-${r.stamp}`)' "$MODS/prs/detail.js"
+  [ "$status" -eq 1 ]
   grep -q 'selectableCode(`step-log-' "$MODS/prs/workflows_view.js"
 }
 

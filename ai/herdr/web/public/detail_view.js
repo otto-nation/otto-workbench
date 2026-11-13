@@ -35,19 +35,19 @@ function reviewBody(body) {
   return trustedMarkdown(h('div', { class: 'inset body' }), renderMarkdown(body.text));
 }
 
-function history(pr, { openStamp, bodies, onToggleRun, now }) {
+function history(pr, { openKey, bodies, onToggleRun, now }) {
   const rows = historyRows((pr.reviewRuns ?? []).map((r) => r.run), now);
   if (!rows.length) return [h('div', { class: 'none' }, 'No reviews yet')];
   return rows.map((r) => {
-    const open = openStamp === r.stamp;
+    const open = openKey === r.key;
     return [
-      h('button', { class: 'card run', type: 'button', 'aria-expanded': open ? 'true' : 'false', onclick: () => onToggleRun(r.stamp) },
+      h('button', { class: 'card run', type: 'button', 'aria-expanded': open ? 'true' : 'false', onclick: () => onToggleRun(r.key) },
         h('div', { class: 'top' }, h('span', {}, r.verdict || 'review'), h('span', { class: 'meta-text' }, r.when), h('span', { class: 'code' }, r.shortSha)),
         h('div', {}, r.findingsText),
         h('div', { class: 'top' }, status(r.post.status, r.post.label), r.healthStatus ? status(r.healthStatus, r.health) : null,
           r.costText ? h('span', { class: 'meta-text' }, r.costText) : null),
         r.modelsText ? h('div', { class: 'meta-text' }, r.modelsText) : null),
-      open ? h('div', { onclick: (e) => e.stopPropagation() }, reviewBody(bodies.get(r.stamp))) : null,
+      open ? h('div', { onclick: (e) => e.stopPropagation() }, reviewBody(bodies.get(r.key))) : null,
     ];
   });
 }

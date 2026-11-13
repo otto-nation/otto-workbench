@@ -13,10 +13,10 @@ import { viewOf } from '../../app/mods/_lib/compact.js';
 import { cardId } from '../../app/mods/_lib/scope.js';
 import { patchRows } from '../../app/mods/_lib/diff.js';
 import { MONO } from '../../app/mods/_lib/tokens.js';
-import { relativeTime } from '../../app/mods/_lib/history.js';
+import { relativeTime, runKey, toggleOpen } from '../../app/mods/_lib/history.js';
 
 const $ = (s) => document.querySelector(s);
-const freshDetail = () => ({ tab: 'history', openStamp: null, bodies: new Map(), files: null, openFile: null, diff: null, slots: null });
+const freshDetail = () => ({ tab: 'history', openKey: null, bodies: new Map(), files: null, openFile: null, diff: null, slots: null });
 const S = { ui: loadUi(), snap: null, sel: null, collapsed: new Set(['landed', 'merged']), refreshing: false, loadSince: null, detail: freshDetail() };
 // Later phases register here: detailSlots (Phase 2/3/4), onBoard, onRun (Phase 2), headExtra, cardItem and
 // boardOverride (Phase 4: the Batch page replaces the Mine board).
@@ -93,13 +93,15 @@ async function pickFile(pr, path) {
   if (S.detail.openFile === path) render();
 }
 
-async function toggleRun(pr, stamp) {
-  S.detail.openStamp = S.detail.openStamp === stamp ? null : stamp;
+async function toggleRun(pr, key) {
+  const { open, load } = toggleOpen(S.detail.openKey, key);
+  S.detail.openKey = open;
   render();
-  if (!S.detail.openStamp || S.detail.bodies.get(stamp)?.ok) return;
-  S.detail.bodies.delete(stamp);
-  try { S.detail.bodies.set(stamp, await getJson(`/api/review?${q({ repo: pr.repoSlug, number: pr.number, stamp })}`)); }
-  catch (err) { S.detail.bodies.set(stamp, { ok: false, error: { message: err.message } }); }
+  if (!load || S.detail.bodies.get(key)?.ok) return;
+  const stamp = (pr.reviewRuns ?? []).map((r) => r.run).find((r) => r && runKey(r) === key)?.stamp ?? '';
+  S.detail.bodies.delete(key);
+  try { S.detail.bodies.set(key, await getJson(`/api/review?${q({ repo: pr.repoSlug, number: pr.number, stamp })}`)); }
+  catch (err) { S.detail.bodies.set(key, { ok: false, error: { message: err.message } }); }
   render();
 }
 
@@ -167,7 +169,7 @@ export function render() {
     renderDetail($('#detail'), pr, { ...S.detail, now }, {
       onClose: () => { location.hash = ''; },
       onTab: (tab) => { S.detail.tab = tab; S.detail.openFile = null; S.detail.diff = null; render(); },
-      onToggleRun: (stamp) => toggleRun(pr, stamp),
+      onToggleRun: (key) => toggleRun(pr, key),
       onPick: (path) => pickFile(pr, path),
       onBack: () => { S.detail.openFile = null; S.detail.diff = null; render(); },
       itemOf: hooks.cardItem,

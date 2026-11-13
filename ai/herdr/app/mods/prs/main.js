@@ -16,11 +16,12 @@ import { ModelPicker } from "./model_picker.js";
 import { actionLabel, writesGitHub } from "./_lib/batch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
 import { statsText } from "./_lib/pr_status.js";
+import { runKey, toggleOpen } from "./_lib/history.js";
 
 export default class PrsBoard extends Board {
   init(p, cx) {
     this.detail = null;
-    this.openStamp = null;
+    this.openKey = null;
     this.confirm = null;
     this.launching = false;
     this.live = null;
@@ -44,42 +45,44 @@ export default class PrsBoard extends Board {
     this.workflows.onTerminal = () => this.openTerminal();
   }
 
-  runOf(stamp) {
-    const run = (this.detail.runs ?? []).find((r) => (r.stamp ?? "") === stamp);
-    return run ? { reviewFile: run.review_file ?? "" } : undefined;
+  runOf(key) {
+    return (this.detail.runs ?? []).find((r) => runKey(r) === key);
   }
 
   cacheKey(run) {
-    return `${this.detail.on ?? ""}\0${run.reviewFile}`;
+    return `${this.detail.on ?? ""}\0${run.review_file ?? ""}\0${runKey(run)}`;
   }
 
-  bodyFor(stamp) {
-    const run = this.runOf(stamp);
+  bodyFor(key) {
+    const run = this.runOf(key);
     if (!run) return null;
-    const hit = this.reviews.get(this.cacheKey(run));
-    if (!hit || hit.stamp !== stamp) return null;
-    return hit.result;
+    return this.reviews.get(this.cacheKey(run))?.result ?? null;
   }
 
-  onToggle(stamp) {
-    this.openStamp = this.openStamp === stamp ? null : stamp;
-    if (this.openStamp) this.loadReview(this.openStamp);
+  onToggle(key) {
+    const { open, load } = toggleOpen(this.openKey, key);
+    this.openKey = open;
+    if (load) this.loadReview(key);
     this.acx.notify();
   }
 
-  loadReview(stamp) {
-    const run = this.runOf(stamp);
+  loadReview(key) {
+    const run = this.runOf(key);
     if (!run) return;
-    const key = this.cacheKey(run);
-    const hit = this.reviews.get(key);
-    if (hit && hit.stamp === stamp && hit.result !== undefined && hit.result.ok !== false) return;
-    if (hit && hit.stamp !== stamp) this.reviews.delete(key);
-    this.reviews.set(key, { stamp, result: undefined });
+    const ck = this.cacheKey(run);
+    const hit = this.reviews.get(ck);
+    if (hit && hit.result !== undefined && hit.result.ok !== false) return;
+    this.reviews.set(ck, { result: undefined });
     this.acx.spawn(async (cx) => {
-      const result = await readReview(readTextFile, run.reviewFile, this.detail.on, exec);
-      const cur = this.reviews.get(key);
-      if (!cur || cur.stamp !== stamp) return;
-      this.reviews.set(key, { stamp, result });
+      let result;
+      try {
+        result = await readReview(readTextFile, run.review_file, this.detail.on, exec);
+      } catch (err) {
+        result = { ok: false, error: { kind: "failed", message: String(err?.message ?? err) } };
+      }
+      const cur = this.reviews.get(ck);
+      if (!cur) return;
+      this.reviews.set(ck, { result });
       cx.notify();
     });
   }
@@ -325,7 +328,7 @@ export default class PrsBoard extends Board {
     const item = this.workflows.itemFor(pr.repoSlug, pr.number);
     this.detail = detailOf(pr, { item });
     if (prev && (prev.repo !== this.detail.repo || prev.number !== this.detail.number)) {
-      this.openStamp = null; this.confirm = null; this.note = null; this.live = null; this.finishedId = null;
+      this.openKey = null; this.confirm = null; this.note = null; this.live = null; this.finishedId = null;
       this.output = null; this.tab = "history"; this.openFile = null; this.diff = null; this.opening = false;
       this.models.clear();
     }
@@ -348,9 +351,9 @@ export default class PrsBoard extends Board {
     if (item && this.tab === "batch") this.workflows.openItem(item.key);
     return renderDetail(this.detail, {
       nowMs: Date.now(),
-      openStamp: this.openStamp,
-      bodyFor: (stamp) => this.bodyFor(stamp),
-      onToggle: (stamp) => this.onToggle(stamp),
+      openKey: this.openKey,
+      bodyFor: (key) => this.bodyFor(key),
+      onToggle: (key) => this.onToggle(key),
       actionBar: renderActionBar(this.actions(), {
         confirm: this.confirm,
         note: this.launching ? "Starting…" : this.note,

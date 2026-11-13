@@ -212,6 +212,37 @@ FAKE_DOM='class N {}
   [ "$output" = '[{"text":"keep"}]' ]
 }
 
+@test "view: a live run renders aria-expanded keyed by runKey" {
+  _web "$FAKE_DOM
+        const { runKey } = await import(L + '/history.js');
+        const { renderDetail } = await import(W + '/public/detail_view.js');
+        const presentation = {
+          ref: 'o/n#1', title: 't', author: 'a', branch: 'b', base_branch: '',
+          stats: { additions: '+0', deletions: '-0', files: '0 files' },
+          tags: [], badges: [], issues: [], detail_issues: [], row_badges: [],
+          ci: null, decision: null, review: null, busy: null,
+        };
+        const run = { stamp: '', reviewed_at: '2026-08-18T13:00:00Z', verdict: 'approve' };
+        const pr = { number: 1, repoSlug: 'o/n', title: 't', author: 'a', branch: 'b', presentation, reviewRuns: [{ run }] };
+        document.body = { classList: { toggle() {} } };
+        const el = document.createElement('div');
+        el.classList = { toggle() {} };
+        renderDetail(el, pr, { tab: 'history', openKey: runKey(run), bodies: new Map(), now: Date.parse('2026-08-18T14:00:00Z') }, {
+          onClose() {}, onTab() {}, onToggleRun() {}, onPick() {}, onBack() {},
+        });
+        const walk = (n, acc = []) => {
+          if (n == null) return acc;
+          if (Array.isArray(n)) { for (const x of n) walk(x, acc); return acc; }
+          acc.push(n);
+          for (const c of n.children ?? []) walk(c, acc);
+          return acc;
+        };
+        const btn = walk(el).find((n) => n.attrs && n.attrs['aria-expanded'] === 'true');
+        out({ key: runKey(run), expanded: btn && btn.attrs['aria-expanded'], empty: runKey(run) === '' });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"key":"live@2026-08-18T13:00:00Z","expanded":"true","empty":false}' ]
+}
+
 @test "view: history rows and files are buttons; the expanded body is a sibling" {
   DETAIL="$REPO_ROOT/ai/herdr/web/public/detail_view.js"
   run grep -F "h('button', { class: 'card run', type: 'button'" "$DETAIL"

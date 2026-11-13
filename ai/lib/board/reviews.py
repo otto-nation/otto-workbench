@@ -105,6 +105,11 @@ def _post_ref(post) -> RunPostRef | None:
 
 
 def _run_ref(run) -> ReviewRunRef:
+    """Map a listing row or archived run to the board's run ref.
+
+    ``stamp`` is the archive file name. Empty means the live run: a
+    ``ReviewRow`` has no stamp, so this emits ``""``.
+    """
     post = _field(run, "post")
     if post is None:
         posted_event = None

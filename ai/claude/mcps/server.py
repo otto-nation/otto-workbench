@@ -505,7 +505,7 @@ def _answer_tool_call(
         error_text = result.stderr.strip() or f"Exit code {result.returncode}"
         return _ToolAnswer(text=error_text, is_error=True)
 
-    if result.returncode != 0:
+    if result.returncode != 0 and schema.get("output_schema") is None:
         return _ToolAnswer(
             text=_joined_streams(result) or "(no output)", is_error=False)
 

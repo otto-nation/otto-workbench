@@ -2,10 +2,16 @@
 Description=otto-workbench maintenance timer
 
 [Timer]
-# OnUnitActiveSec counts from the service's last activation, which a restart of the
-# user manager forgets, and OnBootSec is a one-shot that has long elapsed by then.
-# OnStartupSec counts from the manager's start, so every restart re-arms the timer.
-OnStartupSec=5min
+# OnUnitActiveSec counts from the service's last activation, so until the service
+# has run once under the current user manager it schedules nothing, and a timer
+# with no trigger left goes elapsed: daemon-reload does not re-arm it, only a
+# restart does. OnActiveSec counts from the timer's own activation, which happens
+# on every manager start and every install (the installer restarts the timer), so
+# each schedules a first run five minutes out that gives OnUnitActiveSec its base.
+# Not OnStartupSec or OnBootSec: in a manager that has been up a while they have
+# already passed, and a restarted timer fires a passed trigger at once — a
+# maintenance run, which itself syncs, started from inside the sync installing it.
+OnActiveSec=5min
 OnUnitActiveSec=__INTERVAL__sec
 Persistent=true
 

@@ -47,8 +47,8 @@ _old_timer() {
   printf '[Timer]\nOnBootSec=5min\nOnUnitActiveSec=%ssec\nPersistent=true\n' "$1" > "$TIMER"
 }
 
-@test "the template arms from the manager's start" {
-  grep -q '^OnStartupSec=' "$TEMPLATE"
+@test "the template no longer arms from the machine's boot" {
+  ! grep -q '^OnBootSec=' "$TEMPLATE"
 }
 
 @test "an old timer is re-installed with its own interval" {

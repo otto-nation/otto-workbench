@@ -6,11 +6,12 @@
 # first has elapsed long before — so after such a restart nothing arms the timer
 # and maintenance silently stops. The template now uses OnStartupSec, which
 # counts from the manager's start; this is what gets it onto a machine that
-# installed the timer before it did.
+# installed the timer before it did. The template has since moved to
+# OnActiveSec, and sync's maintenance_refresh_schedule re-renders any timer that
+# differs from it, so a timer this migration skips still reaches the template.
 #
-# `otto-workbench sync` never re-renders the unit — only `maintenance start`
-# does — so nothing else would pick this up. The interval is read back first so
-# a machine running a non-default one keeps it.
+# The interval is read back first so a machine running a non-default one keeps
+# it.
 #
 # Idempotent: a timer that already has the key is left alone, and a machine that
 # never installed the timer has nothing to re-render.

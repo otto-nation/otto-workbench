@@ -333,6 +333,7 @@ class _PhasesRun:
     """What one run of every phase leaves: the pipeline it took and the fix-pass rc."""
 
     pipeline: Pipeline
+    selected: Pipeline = Pipeline.SINGLE
     fix_rc: int = 0
 
 
@@ -359,7 +360,7 @@ def _run_phases(trail, args, job) -> _PhasesRun:
             f"forward ({abbrev(job.preflight.prior_head_sha)}.."
             f"{abbrev(job.pr.head_sha)})")
         write_unchanged_review(job)
-        return _PhasesRun(pipeline=Pipeline.SINGLE)
+        return _PhasesRun(pipeline=Pipeline.SINGLE, selected=Pipeline.SINGLE)
 
     pipeline, scale, line_threshold, file_threshold = _choose_pipeline(job, args.effort)
 
@@ -390,6 +391,14 @@ def _run_phases(trail, args, job) -> _PhasesRun:
         with trail.span("single_agent"):
             run_single_agent(job, disprove=args.disprove)
 
+    ran = job.pipeline_run or pipeline
+    if ran is not pipeline:
+        trail.decision(
+            "pipeline_handoff", f"ran {ran}",
+            reason="one group covers the whole PR",
+            data={"selected": pipeline, "ran": ran},
+        )
+
     # Every agent of the review has finished and the fix pass has not
     # started, so the ledger's rows for this run are the review's.
     models = review.outcome.models_used(job)
@@ -415,7 +424,7 @@ def _run_phases(trail, args, job) -> _PhasesRun:
     elif args.fix:
         trail.decision("fix_pass", "skipping fix pass", reason="review file not found")
 
-    return _PhasesRun(pipeline=pipeline, fix_rc=rc)
+    return _PhasesRun(pipeline=ran, selected=pipeline, fix_rc=rc)
 
 
 def _resume_fix_pass(trail, args, job) -> _PhasesRun:
@@ -438,7 +447,7 @@ def _resume_fix_pass(trail, args, job) -> _PhasesRun:
     with trail.span("fix_pass"):
         rc = run_fix_pass(job, trail)
     _file_open_findings(args, job, trail)
-    return _PhasesRun(pipeline=Pipeline.SINGLE, fix_rc=rc)
+    return _PhasesRun(pipeline=Pipeline.SINGLE, selected=Pipeline.SINGLE, fix_rc=rc)
 
 
 def run_orchestrate(trail, args, repo, session_log) -> int:
@@ -538,6 +547,7 @@ def run_orchestrate(trail, args, repo, session_log) -> int:
         "review_file": job.review_file,
         "session_log": job.session_log,
         "mode": phases.pipeline,
+        "selected_pipeline": phases.selected,
     }
     json.dump(result, sys.stdout)
     print()

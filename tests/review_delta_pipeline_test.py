@@ -40,6 +40,7 @@ from review.paths import FILENAME_RECORD
 from review.store import read_review, update_review
 from review.verdict import resolve_review_verdict
 import review.claims
+import review.pipeline
 from review.types import DeltaAttribution, Pipeline, PreflightData, ReviewJob
 from review_record_support import finding, record
 
@@ -521,3 +522,34 @@ class TestSelfReviewIsUnaffected:
         _, called, _ = run_phases(job)
 
         assert called == ["multi"]
+
+
+class TestOneGroupHandoffReportsThePipelineRun:
+    def test_a_one_group_handoff_records_the_pipeline_that_ran(
+        self, tmp_path, monkeypatch,
+    ):
+        job = _job(tmp_path, **_BIG_PR)
+        job.preflight = _preflight()
+        monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
+        monkeypatch.setattr(
+            review.pipeline, "_resolve_recovery",
+            lambda j, groups: SimpleNamespace(
+                already_complete=False, cost_so_far=0.0, skip_groups=set(),
+                state=None, resume_at_gate=False),
+        )
+        monkeypatch.setattr(
+            review.pipeline, "_single_group_goes_single", lambda *a: True)
+
+        def _single(j, disprove=None):
+            Path(j.review_file).write_text(synthetic_review())
+
+        monkeypatch.setattr(review.pipeline, "run_single_agent", _single)
+        monkeypatch.setattr(
+            cli.review_orchestrate, "run_static_analysis", lambda *a, **k: [])
+
+        trail = _Trail()
+        with redirect_stdout(io.StringIO()):
+            result = cli.review_orchestrate._run_phases(trail, _args(), job)
+        assert trail.has("pipeline_handoff")
+        assert trail.named("pipeline_handoff")["ran"] == "single"
+        assert result.pipeline is Pipeline.SINGLE

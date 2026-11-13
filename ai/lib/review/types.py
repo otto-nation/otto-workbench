@@ -259,6 +259,19 @@ class FixInterruption:
 
 
 @dataclass(frozen=True)
+class PhaseRun:
+    """One phase of a review run, and whether it ran.
+
+    `phase` is a string so an unknown value cannot cost the sidecar. `reason`
+    is set when it did not run.
+    """
+
+    phase: str
+    ran: bool
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class ReviewMeta:
     """Everything `meta.json` records about a review — the whole file, typed.
 
@@ -720,6 +733,10 @@ class ReviewJob:
     # there dates the deliverable rather than the run that produced it. This is
     # what `started_at` in meta.json carries.
     started_at: str = field(default_factory=now_iso)
+    # Which phases ran, and which pipeline the run actually took after any
+    # one-group hand-off. Orchestrate reads these to emit the trail event.
+    phase_runs: list[PhaseRun] = field(default_factory=list)
+    pipeline_run: Pipeline | None = None
 
     @functools.cached_property
     def config(self) -> config.workbench_config.WorkbenchConfig:

@@ -23,7 +23,7 @@ from review.record import Disposition, ReviewRecord  # noqa: E402
 from review.state import PipelineState  # noqa: E402
 from review.store import StoredReview, read_review, write_review  # noqa: E402
 from review.types import (  # noqa: E402
-    ClaimAnswer, FindingOrigin, Group, PreflightData, ReviewMeta,
+    ClaimAnswer, FindingOrigin, Group, Pipeline, PreflightData, ReviewMeta,
 )
 from review.verdict import (  # noqa: E402
     BUDGET_SUMMARY, CLEAN_SUMMARY, SETTLED_SUMMARY,
@@ -372,6 +372,26 @@ def test_one_group_goes_to_the_single_agent_review(tmp_path, monkeypatch):
                         lambda *a: pytest.fail("a lone group ran as a group"))
     review.pipeline.run_multi_phase(job, max_parallel=1, disprove=True)
     assert seen == [True]
+
+
+def test_one_group_handoff_records_the_single_pipeline(tmp_path, monkeypatch):
+    job = review_job(tmp_path, tmp_path / "r", head_sha="h" * 40, files=["a.py"])
+    monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
+    monkeypatch.setattr(review.pipeline, "_resolve_recovery", lambda j, groups: SimpleNamespace(
+        already_complete=False, cost_so_far=0.0, skip_groups=set(), state=None,
+        resume_at_gate=False))
+    monkeypatch.setattr(review.pipeline, "_single_group_goes_single", lambda *a: True)
+    monkeypatch.setattr(review.pipeline, "run_single_agent", lambda j, disprove=None: None)
+    monkeypatch.setattr(review.pipeline, "_run_group_phase",
+                        lambda *a: pytest.fail("a lone group ran as a group"))
+    review.pipeline.run_multi_phase(job, max_parallel=1)
+    assert job.pipeline_run is Pipeline.SINGLE
+    skipped = [r for r in job.phase_runs if not r.ran]
+    assert {r.phase for r in skipped} >= {"group", "synthesis"}
+    assert all(
+        r.reason == "one group covers the PR"
+        for r in skipped if r.phase in {"group", "synthesis"}
+    )
 
 
 @pytest.mark.parametrize(("groups", "incremental", "skipped", "expected"), [

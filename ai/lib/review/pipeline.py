@@ -51,6 +51,7 @@ import core.log
 import review.behaviours
 import review.claims
 import review.focus
+import review.phase_runs
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.types import EFFORT_PRESETS
 from gh.types import PRContext, PRMetadata
@@ -413,6 +414,7 @@ def run_multi_phase(
         core.log.info(
             "One group covers the whole PR — running the single-agent review "
             "(claims check and disprove) instead of a lone group pass")
+        review.phase_runs.handed_to_single(job)
         run_single_agent(job, disprove=disprove)
         return
 

@@ -62,6 +62,8 @@ WORKBENCH_DIR="${WORKBENCH_DIR:-$(git -C "$(dirname "$_SELF")" rev-parse --show-
 # shellcheck source=/dev/null
 . "$WORKBENCH_DIR/lib/maintenance.sh"
 # shellcheck source=/dev/null
+. "$WORKBENCH_DIR/lib/queue_worker.sh"
+# shellcheck source=/dev/null
 . "$WORKBENCH_DIR/lib/overrides.sh"
 # shellcheck source=/dev/null
 . "$WORKBENCH_DIR/lib/discover.sh"
@@ -295,6 +297,7 @@ cmd_sync() {
   unset WORKBENCH_CURRENT_COMPONENT
 
   maintenance_refresh_schedule
+  queue_worker_refresh
 
   # shellcheck source=/dev/null
   . "$WORKBENCH_DIR/lib/summary.sh"
@@ -687,10 +690,16 @@ cmd_maintenance_status() {
 
 cmd_maintenance_run() {
   info "Running maintenance now"
-  "$MAINTENANCE_SRC_DIR/bin/otto-workbench-maintenance"
+  "$MAINTENANCE_SRC_DIR/bin/otto-workbench-maintenance" --ticket
 }
 
 cmd_maintenance_logs() {
+  local queued
+  queued=$(_maintenance_queue_log)
+  if [[ -n "$queued" && -f "$queued" ]]; then
+    tail -50 "$queued"
+    return
+  fi
   if [[ "$OSTYPE" == "darwin"* ]]; then
     local logfile="$_MAINTENANCE_LOG_DIR_MACOS/maintenance.log"
     if [[ -f "$logfile" ]]; then

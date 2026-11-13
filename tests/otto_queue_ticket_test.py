@@ -11,7 +11,6 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -28,8 +27,9 @@ import otto_queue.ticket  # noqa: E402
 import otto_queue.lease  # noqa: E402
 import otto_queue.slots  # noqa: E402
 from otto_queue.ledger import Ledger  # noqa: E402
-from otto_queue.model import LIVE_STATES, EntryState, NewEntry  # noqa: E402
+from otto_queue.model import LIVE_STATES, EntryKind, EntryState, NewEntry  # noqa: E402
 from otto_queue.ticket import TicketOutcome, TicketRequest, TicketResult  # noqa: E402
+from otto_queue_support import PEAK, Room, exit_argv, touch_argv
 
 PY = sys.executable
 
@@ -52,48 +52,6 @@ result = otto_queue.ticket.run_ticket(request, Room(), poll_s=0.05, notify=lambd
 sys.exit(result.exit_status)
 """
 
-# Records how many copies of itself run at once, under a flock.
-PEAK = """
-import fcntl, json, sys, time
-
-def bump(path, delta):
-    with open(path, "a+") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
-        f.seek(0)
-        state = json.loads(f.read() or '{"now": 0, "peak": 0}')
-        state["now"] += delta
-        state["peak"] = max(state["peak"], state["now"])
-        f.seek(0)
-        f.truncate()
-        f.write(json.dumps(state))
-
-bump(sys.argv[1], 1)
-time.sleep(1.0)
-bump(sys.argv[1], -1)
-"""
-
-
-class Room:
-    def __init__(self, admit=True, raises=None):
-        self._admit, self._raises = admit, raises
-
-    def limit(self, entry_class):
-        return 2
-
-    def verdict(self, entry_class, running):
-        if self._raises is not None:
-            raise self._raises
-        return SimpleNamespace(admit=self._admit, reason="room" if self._admit else "no room")
-
-
-def _touch(path):
-    return (PY, "-c", f"open({str(path)!r}, 'w').write('ran')")
-
-
-def _exit(code):
-    return (PY, "-c", f"raise SystemExit({code})")
-
-
 def _run(argv, policy=None, messages=None, **kw):
     request = TicketRequest(argv=tuple(argv), cwd=os.getcwd(), **kw)
     sink = messages if messages is not None else []
@@ -101,7 +59,7 @@ def _run(argv, policy=None, messages=None, **kw):
 
 
 def test_a_ticket_runs_its_command_and_records_done(tmp_path):
-    result = _run(_touch(tmp_path / "ran"))
+    result = _run(touch_argv(tmp_path / "ran"))
     assert (result.exit_status, result.outcome) == (0, TicketOutcome.RAN)
     assert (tmp_path / "ran").exists()
     assert Ledger.open().get(result.entry_id).state is EntryState.DONE
@@ -109,7 +67,7 @@ def test_a_ticket_runs_its_command_and_records_done(tmp_path):
 
 @pytest.mark.parametrize("code,state", [(os.EX_TEMPFAIL, EntryState.TEMPFAIL), (3, EntryState.FAILED)])
 def test_the_commands_status_is_returned_and_recorded(code, state):
-    result = _run(_exit(code))
+    result = _run(exit_argv(code))
     assert (result.exit_status, result.outcome) == (code, TicketOutcome.RAN)
     entry = Ledger.open().get(result.entry_id)
     assert (entry.state, entry.exit_status) == (state, code)
@@ -128,15 +86,15 @@ def test_the_command_sees_its_entry_id(tmp_path):
 
 
 def test_a_done_key_returns_its_status_without_running(tmp_path):
-    first = _run(_touch(tmp_path / "first"), idem_key="k")
-    second = _run(_touch(tmp_path / "second"), idem_key="k")
+    first = _run(touch_argv(tmp_path / "first"), idem_key="k")
+    second = _run(touch_argv(tmp_path / "second"), idem_key="k")
     assert second == TicketResult(0, TicketOutcome.REUSED, first.entry_id)
     assert not (tmp_path / "second").exists()
 
 
 def test_force_runs_even_when_the_key_is_done(tmp_path):
-    _run(_touch(tmp_path / "first"), idem_key="k")
-    forced = _run(_touch(tmp_path / "second"), idem_key="k", force=True)
+    _run(touch_argv(tmp_path / "first"), idem_key="k")
+    forced = _run(touch_argv(tmp_path / "second"), idem_key="k", force=True)
     assert forced.outcome is TicketOutcome.RAN and (tmp_path / "second").exists()
 
 
@@ -145,7 +103,7 @@ def test_a_live_key_is_joined_and_its_status_returned(tmp_path):
     held = ledger.resolve(NewEntry(argv=("x",), cwd="/", idem_key="k"), force=False, pid=os.getpid())
     ledger.mark_running(held.entry.id, os.getpid())
     threading.Timer(0.3, ledger.finish, (held.entry.id, 3)).start()
-    result = _run(_touch(tmp_path / "ran"), idem_key="k")
+    result = _run(touch_argv(tmp_path / "ran"), idem_key="k")
     held.lease.release()
     assert result == TicketResult(3, TicketOutcome.JOINED, held.entry.id)
     assert not (tmp_path / "ran").exists()
@@ -155,7 +113,7 @@ def test_a_joined_entry_whose_holder_dies_is_run_here(tmp_path):
     ledger = Ledger.open()
     held = ledger.resolve(NewEntry(argv=("x",), cwd="/", idem_key="k"), force=False, pid=os.getpid())
     threading.Timer(0.3, held.lease.release).start()
-    result = _run(_touch(tmp_path / "ran"), idem_key="k")
+    result = _run(touch_argv(tmp_path / "ran"), idem_key="k")
     assert result.outcome is TicketOutcome.RAN and result.entry_id != held.entry.id
     assert (tmp_path / "ran").exists()
 
@@ -164,7 +122,7 @@ def test_a_ticket_waits_behind_an_older_one_and_times_out_as_tempfail(tmp_path):
     ledger = Ledger.open()
     older = ledger.resolve(NewEntry(argv=("x",), cwd="/"), force=False, pid=os.getpid())
     messages = []
-    result = _run(_touch(tmp_path / "ran"), messages=messages, wait_s=0.3)
+    result = _run(touch_argv(tmp_path / "ran"), messages=messages, wait_s=0.3)
     older.lease.release()
     assert (result.exit_status, result.outcome) == (os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT)
     assert ledger.get(result.entry_id).state is EntryState.TEMPFAIL
@@ -180,21 +138,21 @@ def test_cancelling_a_waiting_ticket_ends_it_with_130(tmp_path):
         ledger.cancel(waiting[0].id)
 
     threading.Timer(0.3, cancel_waiting).start()
-    result = _run(_touch(tmp_path / "ran"), policy=Room(admit=False), wait_s=10)
+    result = _run(touch_argv(tmp_path / "ran"), policy=Room(admit=False), wait_s=10)
     assert (result.exit_status, result.outcome) == (core.proc.INTERRUPT_RETURNCODE, TicketOutcome.CANCELLED)
     assert ledger.get(result.entry_id).state is EntryState.CANCELLED
     assert not (tmp_path / "ran").exists()
 
 
 def test_ctrl_c_while_waiting_cancels_the_entry(tmp_path):
-    result = _run(_touch(tmp_path / "ran"), policy=Room(raises=KeyboardInterrupt()))
+    result = _run(touch_argv(tmp_path / "ran"), policy=Room(raises=KeyboardInterrupt()))
     assert result.outcome is TicketOutcome.CANCELLED
     assert Ledger.open().get(result.entry_id).state is EntryState.CANCELLED
 
 
 def test_a_ticket_inside_a_ticket_runs_directly(tmp_path, monkeypatch):
     monkeypatch.setenv(otto_queue.ticket.ENTRY_ENV, "41")
-    result = _run(_touch(tmp_path / "ran"), policy=Room(admit=False), wait_s=10)
+    result = _run(touch_argv(tmp_path / "ran"), policy=Room(admit=False), wait_s=10)
     assert result == TicketResult(0, TicketOutcome.NESTED)
     assert Ledger.open().entries() == []
 
@@ -202,7 +160,7 @@ def test_a_ticket_inside_a_ticket_runs_directly(tmp_path, monkeypatch):
 def test_an_unopenable_ledger_runs_the_command_unqueued(tmp_path):
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("")
-    request = TicketRequest(argv=_touch(tmp_path / "ran"), cwd=os.getcwd())
+    request = TicketRequest(argv=touch_argv(tmp_path / "ran"), cwd=os.getcwd())
     result = otto_queue.ticket.run_ticket(request, Room(), root=blocker / "queue", notify=list().append)
     assert result == TicketResult(0, TicketOutcome.UNQUEUED)
     assert (tmp_path / "ran").exists()
@@ -214,7 +172,7 @@ def test_a_busy_ledger_does_not_run_unqueued(tmp_path, monkeypatch):
     try:
         holder.execute("BEGIN EXCLUSIVE")
         monkeypatch.setattr(core.timeouts, "LOCAL", 0.2)
-        request = TicketRequest(argv=_touch(tmp_path / "ran"), cwd=os.getcwd())
+        request = TicketRequest(argv=touch_argv(tmp_path / "ran"), cwd=os.getcwd())
         result = otto_queue.ticket.run_ticket(request, Room(), root=tmp_path, notify=list().append)
         assert result.exit_status == os.EX_TEMPFAIL
         assert not (tmp_path / "ran").exists()
@@ -227,7 +185,7 @@ def test_interrupt_while_running_records_exit_130(tmp_path, monkeypatch):
         raise KeyboardInterrupt
 
     monkeypatch.setattr(core.signal_relay, "run_child", boom)
-    result = _run(_touch(tmp_path / "ran"))
+    result = _run(touch_argv(tmp_path / "ran"))
     assert result.exit_status == core.proc.INTERRUPT_RETURNCODE
     assert result.outcome is TicketOutcome.CANCELLED
     entry = Ledger.open().get(result.entry_id)
@@ -240,7 +198,7 @@ def test_a_crash_in_the_queue_is_recorded_failed(tmp_path, monkeypatch):
 
     monkeypatch.setattr(core.signal_relay, "run_child", boom)
     with pytest.raises(RuntimeError, match="queue crashed"):
-        _run(_touch(tmp_path / "ran"))
+        _run(touch_argv(tmp_path / "ran"))
     [entry] = Ledger.open().entries()
     assert (entry.state, entry.exit_status) == (EntryState.FAILED, None)
 
@@ -280,7 +238,7 @@ def test_the_row_is_terminal_before_lease_and_slot_release(
             raise KeyboardInterrupt
 
         monkeypatch.setattr(core.signal_relay, "run_child", boom)
-    result = _run(_touch(tmp_path / "ran"), **kwargs)
+    result = _run(touch_argv(tmp_path / "ran"), **kwargs)
     assert result.outcome is outcome
     assert seen
     assert all(state not in LIVE_STATES for state in seen)
@@ -293,3 +251,63 @@ def test_six_heavy_tickets_never_run_more_than_two_at_once(tmp_path):
     assert [p.wait(timeout=120) for p in procs] == [0] * 6
     assert json.loads(counter.read_text())["peak"] == 2
     assert [e.state for e in Ledger.open().entries()] == [EntryState.DONE] * 6
+
+
+def test_a_ticket_waits_behind_an_older_job_while_a_worker_is_alive(tmp_path):
+    root = otto_queue.paths.queue_root()
+    job = Ledger.open().resolve(NewEntry(argv=("true",), cwd="/", kind=EntryKind.JOB),
+                                force=False, pid=None).entry.id
+    worker = otto_queue.lease.take_worker(root)
+    messages = []
+    try:
+        result = _run(touch_argv(tmp_path / "ran"), messages=messages, wait_s=0.3)
+    finally:
+        worker.release()
+    assert result.outcome is TicketOutcome.TIMED_OUT
+    assert any(f"behind entry {job}" in m for m in messages)
+    assert not (tmp_path / "ran").exists()
+
+
+# passes-at-base: a job nobody will start must not block a ticket
+def test_a_ticket_ignores_a_queued_job_when_no_worker_is_alive(tmp_path):
+    Ledger.open().resolve(NewEntry(argv=("true",), cwd="/", kind=EntryKind.JOB), force=False, pid=None)
+    result = _run(touch_argv(tmp_path / "ran"), wait_s=0.3)
+    assert result.outcome is TicketOutcome.RAN
+
+
+def test_a_ticket_joining_an_unstarted_job_with_no_worker_runs_it(tmp_path):
+    marker = tmp_path / "ran"
+    job = Ledger.open().resolve(
+        NewEntry(argv=touch_argv(marker), cwd=os.getcwd(), kind=EntryKind.JOB, idem_key="K"),
+        force=False, pid=None)
+    result = _run(touch_argv(tmp_path / "ticket"), idem_key="K", wait_s=0.3)
+    assert (result.exit_status, result.outcome, result.entry_id) == (0, TicketOutcome.RAN, job.entry.id)
+    assert marker.exists()
+    assert not (tmp_path / "ticket").exists()
+    assert Ledger.open().get(job.entry.id).state is EntryState.DONE
+
+
+def test_a_ticket_joining_a_queued_job_with_a_worker_does_not_claim(tmp_path):
+    marker = tmp_path / "ran"
+    ledger = Ledger.open()
+    job = ledger.resolve(
+        NewEntry(argv=touch_argv(marker), cwd=os.getcwd(), kind=EntryKind.JOB, idem_key="K"),
+        force=False, pid=None)
+    worker = otto_queue.lease.take_worker(ledger.root)
+    try:
+        ran = otto_queue.ticket._run_unstarted(
+            ledger, job.entry, TicketRequest(argv=touch_argv(tmp_path / "ticket"), cwd=os.getcwd()),
+            Room(), 0.05, lambda _m: None)
+    finally:
+        worker.release()
+    assert ran is None
+    assert not marker.exists()
+    entry = Ledger.open().get(job.entry.id)
+    assert (entry.state, entry.kind) == (EntryState.QUEUED, EntryKind.JOB)
+
+
+def test_without_reuse_a_done_key_runs_again(tmp_path):
+    first = _run(exit_argv(0), idem_key="k")
+    second = _run(touch_argv(tmp_path / "again"), idem_key="k", reuse=False)
+    assert (second.outcome, (tmp_path / "again").exists()) == (TicketOutcome.RAN, True)
+    assert second.entry_id != first.entry_id

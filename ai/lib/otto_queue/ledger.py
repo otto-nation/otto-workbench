@@ -31,7 +31,17 @@ a live entry is JOINED. Anything else, or any request with `force`, is a new
 again. Orphans are reaped first, so a dead holder's row is not joined for
 long: the joiner reaps it and resolves again. An orphaned ticket becomes
 `failed` with no exit status, and an orphaned running job goes back to
-`queued` for the worker.
+`queued` for the worker, until it has run `MAX_JOB_ATTEMPTS` times, when it is
+`failed`. A job that exits 75 is put back by `requeue` with `not_before` set;
+`next_job` does not offer it before then.
+`resolve(reuse=False)` joins a live entry but never answers from a `done` one.
+`claim_as_ticket` converts a still-queued job into a ticket for the process
+that runs it.
+
+Compaction (`compact`, run by the worker) prunes terminal rows past a
+retention, keeping the newest `done` row of each key, and truncates the WAL
+with `wal_checkpoint(TRUNCATE)`, so the WAL does not grow without bound under
+readers that never let the last-close checkpoint run.
 """
 
 # doc-group: queue
@@ -52,7 +62,7 @@ import core.proc
 import core.timeouts
 import otto_queue.lease
 import otto_queue.paths
-from otto_queue.model import LIVE_STATES, Entry, EntryClass, EntryKind, EntryState, NewEntry, state_for_exit
+from otto_queue.model import MAX_JOB_ATTEMPTS, LIVE_STATES, Entry, EntryClass, EntryKind, EntryState, NewEntry, state_for_exit
 
 # Finished rows `entries()` returns beside the live ones: enough for `status` to
 # show what just ended without reading the whole history.
@@ -80,6 +90,7 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "CREATE INDEX IF NOT EXISTS entries_by_key ON entries (idem_key, state)",
         "CREATE INDEX IF NOT EXISTS entries_by_state ON entries (state, entry_class)",
     ),
+    ("ALTER TABLE entries ADD COLUMN not_before REAL",),
 )
 
 _VERSION_KEY = "schema_version"
@@ -87,6 +98,23 @@ _VERSION_KEY = "schema_version"
 # The live states as SQL parameters, and the placeholder list that takes them.
 _LIVE = tuple(sorted(state.value for state in LIVE_STATES))
 _LIVE_IN = "(" + ", ".join("?" for _ in _LIVE) + ")"
+
+# The terminal states as SQL parameters. Compaction prunes only these, never
+# "anything not live": a state newer code adds may be live, and this code must
+# not delete rows it does not understand.
+_TERMINAL = tuple(sorted(state.value for state in EntryState if not state.live))
+_TERMINAL_IN = "(" + ", ".join("?" for _ in _TERMINAL) + ")"
+
+# Finished rows older than the cutoff, except the newest `done` row of each key:
+# that row is what stops paid work running twice, and a key has no time window.
+_PRUNABLE = (f"SELECT id FROM entries WHERE state IN {_TERMINAL_IN} "
+             "AND COALESCE(finished_at, created_at) < ? AND id NOT IN ("
+             "SELECT MAX(id) FROM entries WHERE state = ? AND idem_key IS NOT NULL GROUP BY idem_key) "
+             "ORDER BY id")
+
+_COMPACTED_KEY = "compacted_at"
+_SET_META = ("INSERT INTO meta (name, value) VALUES (?, ?) "
+             "ON CONFLICT(name) DO UPDATE SET value = excluded.value")
 
 
 class LedgerError(RuntimeError):
@@ -160,9 +188,7 @@ def _apply_migrations(conn: sqlite3.Connection) -> None:
     for statement in itertools.chain.from_iterable(MIGRATIONS[stored:]):
         conn.execute(statement)
     if stored < len(MIGRATIONS):
-        conn.execute("INSERT INTO meta (name, value) VALUES (?, ?) "
-                     "ON CONFLICT(name) DO UPDATE SET value = excluded.value",
-                     (_VERSION_KEY, str(len(MIGRATIONS))))
+        conn.execute(_SET_META, (_VERSION_KEY, str(len(MIGRATIONS))))
 
 
 def _open_schema(conn: sqlite3.Connection) -> None:
@@ -221,7 +247,7 @@ def _entry(row: sqlite3.Row | None) -> Entry | None:
                  attempts=row["attempts"], exit_status=row["exit_status"],
                  log_path=row["log_path"], result=row["result"], pid=row["pid"],
                  created_at=row["created_at"], started_at=row["started_at"],
-                 finished_at=row["finished_at"])
+                 finished_at=row["finished_at"], not_before=row["not_before"])
 
 
 class Outcome(StrEnum):
@@ -241,9 +267,10 @@ class Resolution:
     lease: otto_queue.lease.Lease | None = None
 
 
-def _match(conn: sqlite3.Connection, key: str) -> Resolution | None:
-    done = conn.execute("SELECT * FROM entries WHERE idem_key = ? AND state = ? "
-                        "ORDER BY id DESC LIMIT 1", (key, EntryState.DONE.value)).fetchone()
+def _match(conn: sqlite3.Connection, key: str, reuse: bool) -> Resolution | None:
+    done = None if not reuse else conn.execute(
+        "SELECT * FROM entries WHERE idem_key = ? AND state = ? ORDER BY id DESC LIMIT 1",
+        (key, EntryState.DONE.value)).fetchone()
     if (entry := _entry(done)) is not None:
         return Resolution(Outcome.REUSED, entry)
     live = conn.execute(f"SELECT * FROM entries WHERE idem_key = ? AND state IN {_LIVE_IN} "
@@ -263,7 +290,7 @@ def _insert(conn: sqlite3.Connection, new: NewEntry, pid: int | None) -> int:
 
 
 def _end_orphan(conn: sqlite3.Connection, entry: Entry) -> None:
-    if entry.kind is EntryKind.JOB:
+    if entry.kind is EntryKind.JOB and entry.attempts < MAX_JOB_ATTEMPTS:
         conn.execute("UPDATE entries SET state = ?, pid = NULL WHERE id = ?",
                      (EntryState.QUEUED.value, entry.id))
         return
@@ -276,10 +303,11 @@ def _resolve_tx(
     conn: sqlite3.Connection,
     new: NewEntry,
     force: bool,
+    reuse: bool,
     pid: int | None,
     taken: list[otto_queue.lease.Lease],
 ) -> Resolution:
-    match = None if force or not new.idem_key else _match(conn, new.idem_key)
+    match = None if force or not new.idem_key else _match(conn, new.idem_key, reuse)
     if match is not None:
         return match
     entry_id = _insert(conn, new, pid)
@@ -288,6 +316,23 @@ def _resolve_tx(
     if lease is not None:
         taken.append(lease)
     return Resolution(Outcome.NEW, _entry(_row(conn, entry_id)), lease)
+
+
+def _remove_files(root: Path, entry_id: int) -> None:
+    """A pruned entry's lease and log; ids are never reused, so nothing else can own them."""
+    for path in (otto_queue.paths.lease_path(root, entry_id), otto_queue.paths.log_path(root, entry_id)):
+        with contextlib.suppress(OSError):
+            path.unlink(missing_ok=True)
+
+
+def _claim_tx(root: Path, conn: sqlite3.Connection, entry_id: int, pid: int,
+              taken: list[otto_queue.lease.Lease]) -> Resolution | None:
+    cur = conn.execute("UPDATE entries SET kind = ?, pid = ? WHERE id = ? AND kind = ? AND state = ?",
+                       (EntryKind.TICKET.value, pid, entry_id, EntryKind.JOB.value, EntryState.QUEUED.value))
+    if cur.rowcount != 1:
+        return None
+    taken.append(otto_queue.lease.take(root, entry_id))
+    return Resolution(Outcome.NEW, _entry(_row(conn, entry_id)), taken[0])
 
 
 class Ledger:
@@ -340,8 +385,12 @@ class Ledger:
         rows = sorted([*live, *ended], key=lambda r: r["id"])
         return [e for e in map(_entry, rows) if e is not None]
 
-    def resolve(self, new: NewEntry, *, force: bool, pid: int | None) -> Resolution:
-        """Accept *new*, or answer it from an entry with the same key; see the module docstring."""
+    def resolve(self, new: NewEntry, *, force: bool, pid: int | None, reuse: bool = True) -> Resolution:
+        """Accept *new*, or answer it from an entry with the same key; see the module docstring.
+
+        With *reuse* False a matching `done` entry is not an answer (a live one is
+        still joined): for work that recurs, such as scheduled maintenance.
+        """
         self.reap_orphans()
         # A ticket lease is taken inside the transaction. If anything after that
         # raises — including COMMIT when this `with` exits — the row rolls back
@@ -349,20 +398,37 @@ class Ledger:
         taken: list[otto_queue.lease.Lease] = []
         try:
             with self._write() as conn:
-                return _resolve_tx(self.root, conn, new, force, pid, taken)
+                return _resolve_tx(self.root, conn, new, force, reuse, pid, taken)
         except BaseException:
             for lease in taken:
                 lease.release()
             raise
 
-    def mark_running(self, entry_id: int, pid: int) -> bool:
+    def mark_running(self, entry_id: int, pid: int, *, log_path: str | None = None) -> bool:
         """Move a queued entry to running under *pid*; False if it is no longer queued."""
         with self._write() as conn:
             cur = conn.execute(
-                "UPDATE entries SET state = ?, attempts = attempts + 1, started_at = ?, pid = ? "
-                "WHERE id = ? AND state = ?",
-                (EntryState.RUNNING.value, time.time(), pid, entry_id, EntryState.QUEUED.value))
+                "UPDATE entries SET state = ?, attempts = attempts + 1, started_at = ?, pid = ?, "
+                "log_path = COALESCE(?, log_path) WHERE id = ? AND state = ?",
+                (EntryState.RUNNING.value, time.time(), pid, log_path, entry_id, EntryState.QUEUED.value))
             return cur.rowcount == 1
+
+    def claim_as_ticket(self, entry_id: int, pid: int) -> Resolution | None:
+        """Turn a queued job into a ticket *pid* runs, holding its lease; None once a worker has it.
+
+        `submit`'s fallback when no worker can be started. The row keeps its id and
+        key, so a request already joined to the job is joined to the ticket.
+        """
+        taken: list[otto_queue.lease.Lease] = []
+        try:
+            with self._write() as conn:
+                return _claim_tx(self.root, conn, entry_id, pid, taken)
+        except BaseException as exc:
+            for lease in taken:
+                lease.release()
+            if isinstance(exc, otto_queue.lease.LeaseHeld):
+                return None
+            raise
 
     def finish(self, entry_id: int, exit_status: int) -> EntryState | None:
         """Record *exit_status* and the state it implies; a cancelled entry stays `cancelled`."""
@@ -384,6 +450,32 @@ class Ledger:
                 "UPDATE entries SET state = ?, finished_at = ? "
                 f"WHERE id = ? AND state IN {_LIVE_IN}",
                 (EntryState.FAILED.value, time.time(), entry_id, *_LIVE))
+
+    def requeue(self, entry_id: int, exit_status: int, not_before: float) -> bool:
+        """Put a running job back in the queue to run again at *not_before*; False if it is no longer running."""
+        with self._write() as conn:
+            cur = conn.execute(
+                "UPDATE entries SET state = ?, exit_status = ?, pid = NULL, not_before = ? "
+                "WHERE id = ? AND kind = ? AND state = ?",
+                (EntryState.QUEUED.value, exit_status, not_before, entry_id,
+                 EntryKind.JOB.value, EntryState.RUNNING.value))
+            return cur.rowcount == 1
+
+    def next_job(self, entry_class: EntryClass, now: float) -> Entry | None:
+        """The oldest queued job of *entry_class* whose retry time has come, or None."""
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT * FROM entries WHERE kind = ? AND state = ? AND entry_class = ? "
+                "AND (not_before IS NULL OR not_before <= ?) ORDER BY id LIMIT 1",
+                (EntryKind.JOB.value, EntryState.QUEUED.value, entry_class.value, now)).fetchone()
+        return _entry(row)
+
+    def live_jobs(self) -> int:
+        """How many jobs are queued (retry pending included) or running."""
+        with self._conn() as conn:
+            row = conn.execute(f"SELECT COUNT(*) AS n FROM entries WHERE kind = ? AND state IN {_LIVE_IN}",
+                               (EntryKind.JOB.value, *_LIVE)).fetchone()
+        return row["n"]
 
     def cancel(self, entry_id: int) -> Entry | None:
         """Mark a live entry `cancelled`; return it as it was before, or None if there is none.
@@ -414,13 +506,52 @@ class Ledger:
                 otto_queue.lease.discard(self.root, entry.id)
         return [e.id for e in orphans]
 
-    def first_waiting(self, entry_class: EntryClass) -> int | None:
-        """The oldest ticket of *entry_class* still waiting for a slot, or None."""
-        # ceiling: tickets only, since a queued job has no worker to start it yet and
-        # would hold every ticket behind it forever. Upgrade trigger: once the worker
-        # claims slots for jobs, order jobs and tickets in one queue.
+    def first_waiting(self, entry_class: EntryClass, *, jobs: bool = False,
+                      now: float | None = None) -> int | None:
+        """The oldest entry of *entry_class* waiting for a slot, or None.
+
+        Tickets always count. With *jobs*, so do queued jobs whose retry time has
+        come: pass it only while a worker is alive to start them, or a job nobody
+        will start holds every ticket behind it.
+        """
+        moment = time.time() if now is None else now
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT MIN(id) AS id FROM entries WHERE kind = ? AND state = ? AND entry_class = ?",
-                (EntryKind.TICKET.value, EntryState.QUEUED.value, entry_class.value)).fetchone()
+                "SELECT MIN(id) AS id FROM entries WHERE state = ? AND entry_class = ? "
+                "AND (kind = ? OR (? AND kind = ? AND (not_before IS NULL OR not_before <= ?)))",
+                (EntryState.QUEUED.value, entry_class.value, EntryKind.TICKET.value, int(jobs),
+                 EntryKind.JOB.value, moment)).fetchone()
         return row["id"]
+
+    def compact(self, *, retention_s: float, now: float) -> list[int]:
+        """Prune finished entries older than *retention_s*, truncate the WAL, and return the pruned ids.
+
+        The newest `done` entry of each key stays whatever its age. The pruned
+        entries' lease and log files go with them.
+
+        Kept `done` rows grow with daily-keyed callers — about 4/day from
+        auto-tasks — which is accepted.
+        """
+        # ceiling: kept done rows grow ~4/day from daily-keyed auto-tasks;
+        # revisit if status or compaction slows once the kept set is in the thousands.
+        with self._write() as conn:
+            ids = [r["id"] for r in conn.execute(_PRUNABLE, (*_TERMINAL, now - retention_s,
+                                                             EntryState.DONE.value))]
+            conn.executemany("DELETE FROM entries WHERE id = ?", [(i,) for i in ids])
+            conn.execute(_SET_META, (_COMPACTED_KEY, repr(now)))
+        # Outside any transaction: a checkpoint cannot run inside one. A reader that
+        # is mid-read makes it partial, which is not an error and is retried next time.
+        with self._conn() as conn:
+            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        for entry_id in ids:
+            _remove_files(self.root, entry_id)
+        return ids
+
+    def compacted_at(self) -> float | None:
+        """When `compact` last ran, or None if never (or the record is unreadable)."""
+        with self._conn() as conn:
+            row = conn.execute("SELECT value FROM meta WHERE name = ?", (_COMPACTED_KEY,)).fetchone()
+        try:
+            return float(row["value"]) if row is not None else None
+        except ValueError:
+            return None

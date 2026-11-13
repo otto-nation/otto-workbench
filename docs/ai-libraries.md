@@ -4203,9 +4203,12 @@ Running steps are never paused or killed; admission only gates the next start.
 
 Free memory is the smaller of `MemAvailable` and the tightest headroom on the
 chain from this process's own cgroup (`/proc/self/cgroup`) up to the hierarchy
-root. Reading only `/sys/fs/cgroup/memory.max` saw nothing on a host whose cap
-sits on a nested user slice: the root cgroup has no limit file there, so a
-6.5 GiB `MemoryMax` was invisible to admission.
+root. Each cgroup's limit is the tighter of its `memory.max` and `memory.high`.
+A caller may name the chain to read (`read_host(cgroup=)`): the queue worker
+reads `workbench.slice`'s, found by `slice_cgroup`. Reading only
+`/sys/fs/cgroup/memory.max` saw nothing on a host whose cap sits on a nested
+user slice: the root cgroup has no limit file there, so a 6.5 GiB `MemoryMax`
+was invisible to admission.
 
 On macOS free memory comes from `vm_stat` (free, inactive and speculative
 pages); there is no pressure reading, so batch's `decide` still takes its
@@ -4656,6 +4659,36 @@ target: nothing can hold one for it, and its steps fail to resolve on their own.
 
 The machine-wide queue for background work: the ledger that records every entry, the leases that say an entry's process is alive, the slots admission hands out, tickets, and the keys that stop paid work running twice.
 
+### otto_queue/job.py
+
+The process that runs one job: `otto-queue job-exec ID --slot-fd N`, started by the worker.
+
+The worker admits the job and starts this process holding the admitted slot:
+the descriptor is inherited, so the slot stays held exactly as long as this
+process lives, whether or not the worker does. Here the job's lease is taken,
+then the row moves to `running`, so only one copy of this process ever runs a
+job — a second, started by a worker that restarted, finds the lease held or the
+row no longer `queued` and leaves. The command runs in its own session with
+stdin empty and its output appended to `queue/logs/<id>.log`. `otto-queue
+cancel` sends SIGTERM to this process, which forwards it to the command's group.
+
+When the command exits, this process records the result itself, so a worker
+that died meanwhile loses nothing:
+
+| Exit | Recorded |
+|---|---|
+| 75, before the job has run `MAX_JOB_ATTEMPTS` times | `queued` again, `not_before` = now + `retry_delay(attempts)`, the 75 kept as `exit_status` |
+| 75 on the last attempt | `tempfail` |
+| anything else | the state `state_for_exit` gives; a cancelled entry stays `cancelled` |
+
+ceiling: this process, not the command, holds the lease, so a SIGKILL of this
+process while its command runs leaves the command running untracked and the
+row re-queued: the job runs twice. An uncaught SIGTERM outside the relay
+window (after mark_running before forwarding_signals, or after run_child
+before _record) has the same effect — the row is re-queued and the job may
+run again. Upgrade trigger: if a job is seen running twice, have the command
+die with its runner (PR_SET_PDEATHSIG on Linux).
+
 ### otto_queue/keys.py
 
 Idempotency keys: the identity that makes two requests for paid work the same request.
@@ -4698,6 +4731,10 @@ therefore reads as orphaned. Anything else that stops the probe (permissions,
 a filesystem without flock) reads as held, because reaping on uncertainty
 would fail work that is still running.
 
+The worker holds `queue/worker.lock` the same way for its whole life
+(`take_worker`); `worker_alive` is how `submit` and tickets know one is
+running.
+
 ### otto_queue/ledger.py
 
 The per-machine ledger: one SQLite file holding every entry the queue has accepted.
@@ -4733,7 +4770,17 @@ a live entry is JOINED. Anything else, or any request with `force`, is a new
 again. Orphans are reaped first, so a dead holder's row is not joined for
 long: the joiner reaps it and resolves again. An orphaned ticket becomes
 `failed` with no exit status, and an orphaned running job goes back to
-`queued` for the worker.
+`queued` for the worker, until it has run `MAX_JOB_ATTEMPTS` times, when it is
+`failed`. A job that exits 75 is put back by `requeue` with `not_before` set;
+`next_job` does not offer it before then.
+`resolve(reuse=False)` joins a live entry but never answers from a `done` one.
+`claim_as_ticket` converts a still-queued job into a ticket for the process
+that runs it.
+
+Compaction (`compact`, run by the worker) prunes terminal rows past a
+retention, keeping the newest `done` row of each key, and truncates the WAL
+with `wal_checkpoint(TRUNCATE)`, so the WAL does not grow without bound under
+readers that never let the last-close checkpoint run.
 
 ### otto_queue/model.py
 
@@ -4745,7 +4792,7 @@ is added, never renamed or removed — the rule the schema follows too.
 
 | State | Meaning |
 |---|---|
-| `queued` | accepted; waiting for a slot (ticket) or a worker (job) |
+| `queued` | accepted; waiting for a slot (ticket), or for the worker or its retry time (job) |
 | `running` | admitted and started; its lease is held |
 | `done` | exited 0 |
 | `failed` | exited non-zero, could not start, or its holder died (no exit status) |
@@ -4754,7 +4801,7 @@ is added, never renamed or removed — the rule the schema follows too.
 
 ### otto_queue/paths.py
 
-Where the queue keeps its files: `state_dir()/queue/` holds the ledger, `leases/` and `slots/`.
+Where the queue keeps its files: `state_dir()/queue/` holds the ledger, `leases/`, `slots/`, `logs/` and `worker.lock`.
 
 Resolved per call, never at import, so a re-pointed `WORKBENCH_STATE_DIR` is
 seen by every reader.
@@ -4778,6 +4825,69 @@ still see the same free gigabyte. If that lock cannot be had within
 `ADMIT_LOCK_WAIT_S`, the claim goes ahead without it: the slot flocks still
 bound the count, and only the host check can race.
 
+### otto_queue/submit.py
+
+Submit: hand a command to the worker as a job, or run it here when no worker can be started.
+
+`otto-queue submit` returns as soon as the job is queued: unattended work
+(scheduled maintenance now, `pr batch` steps next) outlives the process that
+asked for it.
+
+1. `Ledger.resolve` records a `queued` job, or answers from an entry with the
+   same key as a ticket would: a `done` one is reused (unless `reuse` is off), a
+   live one joined.
+2. `otto_queue.supervisor.wake` starts the worker and confirms it.
+3. When no worker comes up (no supervisor installed, no user bus), the job is
+   claimed back as a ticket (`Ledger.claim_as_ticket`) and run here by
+   `otto_queue.ticket.run_claimed`, and the caller is told so. A job a worker
+   took in the meantime is left to it. Joining a live ticket waits for its
+   status, and re-runs the work if that ticket ends without one. The queue's
+   absence degrades to today's behaviour, never to work waiting for a worker
+   that will not come. With `run_here` off (`--queue-only`) a live entry is
+   joined at 0 without waiting or cancelling, a `done` entry's status is
+   returned, and a job this process created (`NEW`) is cancelled instead —
+   `submit` then returns 69 (EX_UNAVAILABLE) having run nothing. A job it only
+   joined stays queued for the next supervisor start. That is for a caller
+   that has its own way to run the command when there is no worker and must not
+   block on it, such as maintenance's auto-task agents
+   (`maintenance/bin/run-due-auto-tasks`). An unopenable ledger, or an entry
+   that ended without a result, answers such a caller the same way.
+
+A ledger that cannot be opened runs the command unqueued, as a ticket does; one
+that stays busy returns 75. Exit 75 from a command run here is returned, not
+retried: there is no worker to retry it.
+
+### otto_queue/supervisor.py
+
+The worker's supervisor, and the cgroup its jobs run in: systemd on Linux, launchd on macOS.
+
+`otto-workbench sync` installs the units (`lib/queue_worker.sh`); this module
+only starts the worker and wraps a job's command.
+
+| | Linux | macOS |
+|---|---|---|
+| Worker | `otto-queue-worker.service`, a systemd user service | `com.otto-workbench.queue`, a launchd agent |
+| Started by `wake` | `systemctl --user start --no-block` | `launchctl kickstart gui/<uid>/…` |
+| A job runs | in a transient scope in `workbench.slice` | as the worker's child, in its own session |
+
+`wake` confirms the worker by its lock (`otto_queue.lease.worker_alive`), not
+by the start command's exit status. Starting a unit that is still running out
+its idle exit is a no-op that exits 0, so the start is issued again every
+`RESTART_EVERY_S` until the lock is held or `confirm_s` has passed. A start
+still in flight at that deadline is waited out, so the worst case is
+`confirm_s` plus one start-command timeout (`core.timeouts.LOCAL`). A start
+command that fails outright (no unit installed, no user bus) is reported at
+once.
+
+A job's scope is `systemd-run --user --scope`, not a transient service: a
+scope's process is started by systemd-run itself, so the job runner inherits
+the admitted slot's descriptor, and stopping the worker unit does not stop it.
+`OOMPolicy=continue` keeps an OOM kill to the process the kernel chose, so the
+runner survives to record it. systemd 252 and older reject that assignment on
+a scope; those releases don't stop the scope on OOM anyway, so the wrapper
+omits the property when the probe rejects it. A slice name must not contain
+`-`: systemd reads `a-b.slice` as a child of `a.slice`.
+
 ### otto_queue/ticket.py
 
 Tickets: run a command in this process once the queue admits it.
@@ -4796,8 +4906,9 @@ the machine's budget, and runs once per idempotency key.
    result: the ticket resolves again and, finding nothing live, runs the work
    itself.
 2. **Wait.** Every `POLL_S`, orphans are reaped, and only the oldest waiting
-   ticket of the class asks `otto_queue.slots.try_admit`. Each new reason for
-   waiting is printed once. `cancel` or Ctrl-C while waiting ends the ticket
+   entry of the class (tickets, and while a worker is alive its ready jobs)
+   asks `otto_queue.slots.try_admit`. Each new reason for waiting is printed
+   once. `cancel` or Ctrl-C while waiting ends the ticket
    with 130. Reaching `wait_s` with no slot records `tempfail` and returns 75
    (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
 3. **Run.** The row moves to `running`, and the command runs through
@@ -4817,6 +4928,35 @@ ceiling: the ticket process, not its command, holds the lease and the slot, so
 a ticket killed with SIGKILL while its command runs leaves the command running
 untracked and its row `failed`. Upgrade trigger: if a command is seen outliving
 its killed ticket, have the child inherit the lease and slot descriptors.
+
+### otto_queue/worker.py
+
+The worker: starts queued jobs as slots free up, and exits once the queue has been idle a while.
+
+Started by its supervisor (`otto_queue.supervisor`): by `submit`, and at boot
+or login so jobs a crash left queued drain. One runs per machine: a second finds
+`queue/worker.lock` held (`otto_queue.lease.take_worker`) and leaves.
+
+Every `poll_s`:
+
+1. orphans are reaped: a job whose runner died goes back to the queue;
+2. runners that exited are checked. One that left its job `queued` with its
+   attempt count unchanged never started it (a missing interpreter, a refused
+   scope), and that job is failed rather than started again every poll;
+3. for each class, the oldest job whose retry time has come is started while it
+   is the class's oldest waiting entry (`first_waiting(jobs=True)`: an older
+   ticket goes first) and `otto_queue.slots.try_admit` grants a slot. The runner
+   (`otto_queue.job`) inherits the slot's descriptor and the worker closes its
+   own copy, so the slot is held exactly as long as the runner lives;
+4. the ledger is compacted when it has not been for `COMPACT_EVERY_S`.
+
+The worker leaves once no job has been queued (retry pending included) or
+running for `idle_s`. It releases its lock first and then looks once more: a job
+submitted between its last look and the release was handed to it by a `submit`
+that saw its lock held, and would otherwise wait for the next wake.
+
+Runners run in their own sessions (macOS) or scopes (Linux), so a worker that is
+stopped or crashes leaves them running, and each records its own result.
 
 ## Board
 
@@ -5867,6 +6007,14 @@ Nothing here raises. Registration is a side effect of a command that was run for
 some other reason, and a hook that failed because a state file was unwritable
 would cost the user their session for a bookkeeping entry.
 
+### core/cgroup.py
+
+This process's cgroup v2 path, and the user manager it sits under.
+
+`/proc/self/cgroup` is the one place the kernel writes that path. Admission
+walks it for `workbench.slice`; the queue worker walks it to check memory
+delegation. Two copies of the walk would drift, so both read here.
+
 ### core/children.py
 
 The long-lived children this process started, and stopping all of them.
@@ -6437,7 +6585,9 @@ makes the next contender's error message name a command rather than a pid.
 dead pid in one is the normal case rather than evidence of a crash. A released
 record carries a ``released`` timestamp, written under the flock just before
 it is dropped; a held one has ``released: null``. To ask the kernel rather
-than read the file, call ``is_held``.
+than read the file, call ``is_held`` for a target or ``tree_hold`` for a
+checkout; ``lib/run_lock_cli.py held-tree`` is the second for a caller that
+is not Python (``bin/wt-cleanup``).
 
 Which locks a run takes is not decided here. Every ``pr`` command declares its
 scopes on its ``Need`` in ``cli.registry``, and ``cli.locks`` takes them:
@@ -6644,6 +6794,9 @@ already present in both files in the same shape.
 A third caller, `otto_queue.ticket`, runs its command in the *foreground*
 instead: same process group as the terminal, Ctrl-C and hangup left to the
 terminal, SIGTERM forwarded to the child's pid.
+
+A fourth, `otto_queue.job`, runs a queued job in its own session with its
+output sent to the job's log.
 
 ### core/strict.py
 
@@ -8796,7 +8949,10 @@ answers no question anyone asks of it.
 The library is `otto_queue`; this module is the parser, the output and the exit
 codes. Flags, exit codes and examples are `CONTRACT` below. Admission is
 `batch.admission.QueuePolicy` under the machine-wide config (`batch.*`), never a
-repo's, because the budget belongs to the machine.
+repo's, because the budget belongs to the machine. Jobs are admitted against
+`workbench.slice`'s cgroup chain, or the worker's own chain when no slice is
+usable; tickets against their caller's. `worker` and `job-exec` are run by the
+supervisor and the worker, not by hand.
 
 ### cli/owners_check.py
 

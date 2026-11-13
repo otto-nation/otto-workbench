@@ -1,5 +1,5 @@
 import sys
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -214,6 +214,35 @@ def test_read_host_with_no_limit_on_the_chain_uses_meminfo(tmp_path):
     _self_cgroup(root, USER_SCOPE)
     _cgroup(root, USER_SCOPE.lstrip("/"), current=GiB)
     assert batch.admission.read_host(root).mem_available == 1_000_000 * 1024
+
+
+WORKBENCH_SLICE = "user.slice/user-1000.slice/user@1000.service/workbench.slice"
+
+
+def test_read_host_admits_below_memory_high_not_only_memory_max(tmp_path):
+    root = _proc(tmp_path)
+    _self_cgroup(root, "/workbench.slice/otto-queue-7-1.scope")
+    _cgroup(root, "workbench.slice", limit=int(2.5 * GiB), current=int(1.5 * GiB))
+    (root / "sys" / "fs" / "cgroup" / "workbench.slice" / "memory.high").write_text(f"{2 * GiB}\n")
+    assert batch.admission.read_host(root).mem_available == 2 * GiB - int(1.5 * GiB)
+
+
+def test_read_host_reads_the_named_cgroup_chain_rather_than_its_own(tmp_path):
+    root = _proc(tmp_path)
+    _self_cgroup(root, USER_SCOPE)
+    _cgroup(root, WORKBENCH_SLICE, limit=int(2.5 * GiB), current=2 * GiB)
+    sample = batch.admission.read_host(root, cgroup=PurePosixPath("/" + WORKBENCH_SLICE))
+    assert sample.mem_available == int(2.5 * GiB) - 2 * GiB
+
+
+def test_slice_cgroup_is_a_child_of_the_user_manager(tmp_path):
+    _self_cgroup(tmp_path, USER_SCOPE)
+    assert batch.admission.slice_cgroup("workbench.slice", tmp_path) == PurePosixPath("/" + WORKBENCH_SLICE)
+
+
+def test_slice_cgroup_outside_a_user_manager_is_none(tmp_path):
+    _self_cgroup(tmp_path, "/user.slice/user-1000.slice/session-3.scope")
+    assert batch.admission.slice_cgroup("workbench.slice", tmp_path) is None
 
 
 VM_STAT = """Mach Virtual Memory Statistics: (page size of 16384 bytes)

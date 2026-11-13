@@ -20,6 +20,9 @@ already present in both files in the same shape.
 A third caller, `otto_queue.ticket`, runs its command in the *foreground*
 instead: same process group as the terminal, Ctrl-C and hangup left to the
 terminal, SIGTERM forwarded to the child's pid.
+
+A fourth, `otto_queue.job`, runs a queued job in its own session with its
+output sent to the job's log.
 """
 
 # doc-group: platform
@@ -31,6 +34,7 @@ import os
 import signal
 import subprocess
 import sys
+from typing import IO
 
 import core.timeouts
 
@@ -143,6 +147,15 @@ def _swallowing(signals: tuple[int, ...]):
             signal.signal(signum, handler)
 
 
+def _cannot_run(origin: str, command: str, exc: OSError, output: IO[bytes] | None) -> None:
+    msg = f"{origin}: cannot run {command}: {exc}"
+    print(msg, file=sys.stderr)
+    if output is None:
+        return
+    output.write(f"{msg}\n".encode())
+    output.flush()
+
+
 def run_child(
     argv: list[str],
     *,
@@ -150,6 +163,7 @@ def run_child(
     origin: str = "run_child",
     cwd: str | None = None,
     foreground: bool = False,
+    output: IO[bytes] | None = None,
 ) -> int:
     """Run *argv* and wait for it; 127 with a one-line message when it cannot start.
 
@@ -161,14 +175,18 @@ def run_child(
     its pid. `otto_queue.ticket` runs commands this way. In both modes
     :func:`forwarding_signals` wraps the spawn, so no window exists in which a
     child runs and no handler does. *origin* prefixes the error message.
+    With *output*, the child's stdout and stderr go there and its stdin is
+    `/dev/null`: a job with no terminal (`otto_queue.job`).
     """
     forwarded = (signal.SIGTERM,) if foreground else FORWARDED
     swallowed = TERMINAL_SIGNALS if foreground else ()
     with forwarding_signals(forwarded, group=not foreground) as relay, _swallowing(swallowed):
+        redirect = {} if output is None else {
+            "stdin": subprocess.DEVNULL, "stdout": output, "stderr": subprocess.STDOUT}
         try:
-            proc = subprocess.Popen(argv, start_new_session=not foreground, env=env, cwd=cwd)
+            proc = subprocess.Popen(argv, start_new_session=not foreground, env=env, cwd=cwd, **redirect)
         except OSError as exc:
-            print(f"{origin}: cannot run {argv[0]}: {exc}", file=sys.stderr)
+            _cannot_run(origin, argv[0], exc, output)
             return 127
         relay.forward_to(proc)
         code = proc.wait(timeout=core.timeouts.UNBOUNDED)

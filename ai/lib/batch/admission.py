@@ -7,9 +7,12 @@ Running steps are never paused or killed; admission only gates the next start.
 
 Free memory is the smaller of `MemAvailable` and the tightest headroom on the
 chain from this process's own cgroup (`/proc/self/cgroup`) up to the hierarchy
-root. Reading only `/sys/fs/cgroup/memory.max` saw nothing on a host whose cap
-sits on a nested user slice: the root cgroup has no limit file there, so a
-6.5 GiB `MemoryMax` was invisible to admission.
+root. Each cgroup's limit is the tighter of its `memory.max` and `memory.high`.
+A caller may name the chain to read (`read_host(cgroup=)`): the queue worker
+reads `workbench.slice`'s, found by `slice_cgroup`. Reading only
+`/sys/fs/cgroup/memory.max` saw nothing on a host whose cap sits on a nested
+user slice: the root cgroup has no limit file there, so a 6.5 GiB `MemoryMax`
+was invisible to admission.
 
 On macOS free memory comes from `vm_stat` (free, inactive and speculative
 pages); there is no pressure reading, so batch's `decide` still takes its
@@ -43,6 +46,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
+import core.cgroup
 import core.job_slots
 import core.proc
 import core.serde
@@ -100,25 +104,19 @@ def _psi_some_avg10(text: str) -> float | None:
     return float(m.group(1)) if m else None
 
 
-def _own_cgroup(root: Path) -> PurePosixPath:
-    """This process's cgroup v2 path, from `/proc/self/cgroup`; `/` when there is none.
-
-    Only the unified hierarchy's `0::` line is read. A v1-only host has no
-    `memory.max` to find, and `/` keeps it on the root files as before.
-    """
-    for line in _read(root / "proc/self/cgroup").splitlines():
-        if line.startswith("0::"):
-            return PurePosixPath(line[3:].strip() or "/")
-    return PurePosixPath("/")
-
-
 def _node_free(node: Path) -> int | None:
-    """Headroom under one cgroup's `memory.max`, or None where it sets no limit."""
-    limit = _read(node / "memory.max").strip()
+    """Headroom under one cgroup's tighter limit, `memory.max` or `memory.high`; None where it sets neither.
+
+    `memory.high` is where the kernel starts reclaiming and throttling, so work
+    admitted past it runs slowly from its first page. `workbench.slice` sets it
+    below its `memory.max`.
+    """
     current = _read(node / "memory.current").strip()
-    if not limit.isdigit() or not current.isdigit():
+    limits = [int(value) for name in ("memory.max", "memory.high")
+              if (value := _read(node / name).strip()).isdigit()]
+    if not limits or not current.isdigit():
         return None
-    return max(0, int(limit) - int(current))
+    return max(0, min(limits) - int(current))
 
 
 def _vm_stat_available(text: str) -> int | None:
@@ -140,31 +138,45 @@ def _vm_stat() -> str:
     return result.stdout if result.ok else ""
 
 
-def _cgroup_free(root: Path) -> int | None:
-    """The tightest headroom from this process's own cgroup up to the hierarchy root.
+def _cgroup_free(root: Path, cgroup: PurePosixPath | None = None) -> int | None:
+    """The tightest headroom from *cgroup* (this process's own when None) up to the hierarchy root.
 
     The kernel enforces every ancestor's limit, so the binding one is the
     smallest headroom on the chain. That is the nearest limit when the nearest
     is the tightest, and a farther one when it is not.
     """
     base = root / "sys/fs/cgroup"
-    parts = _own_cgroup(root).parts[1:]
+    parts = (cgroup or core.cgroup.own_cgroup(root)).parts[1:]
     frees = [free for depth in range(len(parts), -1, -1)
              if (free := _node_free(base.joinpath(*parts[:depth]))) is not None]
     return min(frees) if frees else None
 
 
-def read_host(root: Path = Path("/")) -> HostSample:
+def read_host(root: Path = Path("/"), *, cgroup: PurePosixPath | None = None) -> HostSample:
+    """Free memory and pressure, for the cgroup chain the work will run in.
+
+    *cgroup* names that chain when it is not this process's own: the queue
+    worker admits jobs that run in `workbench.slice`, not in the worker's unit.
+    A ticket runs its command in its caller's cgroup, so it reads its own.
+    """
     if sys.platform == "darwin" and root == Path("/"):
         # macOS has no /proc and no PSI: free memory from vm_stat, pressure unknown.
         return HostSample(_vm_stat_available(_vm_stat()), None, None)
-    frees = [v for v in (_meminfo_available(_read(root / "proc/meminfo")), _cgroup_free(root))
+    frees = [v for v in (_meminfo_available(_read(root / "proc/meminfo")), _cgroup_free(root, cgroup))
              if v is not None]
     return HostSample(
         mem_available=min(frees) if frees else None,
         cpu_some_avg10=_psi_some_avg10(_read(root / "proc/pressure/cpu")),
         mem_some_avg10=_psi_some_avg10(_read(root / "proc/pressure/memory")),
     )
+
+
+def slice_cgroup(name: str, root: Path = Path("/")) -> PurePosixPath | None:
+    """The cgroup of the user manager's slice *name*, from this process's own path; None outside a user manager."""
+    manager = core.cgroup.user_manager_cgroup(root)
+    if manager is None:
+        return None
+    return manager / name
 
 
 def ceiling(requested: int | None, cfg: BatchConfig) -> int:

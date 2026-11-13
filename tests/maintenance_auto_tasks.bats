@@ -26,6 +26,9 @@ setup() {
   # The executor. The block skips whole without both of these.
   _stub_claude
   _stub_run_auto_task
+  QUEUE_CALLS="$TEST_HOME/queue-calls"
+  QUEUE_BIN="$STUB_BIN/otto-queue"
+  _stub_queue 69
 }
 
 teardown() {
@@ -45,6 +48,14 @@ _stub_run_auto_task() {
   printf '#!/usr/bin/env bash\nprintf "%%s %%s\\n" "$1" "$PWD" >> "%s"\nexit 0\n' \
     "$SPAWN_LOG" > "$TEST_HOME/.local/bin/run-auto-task"
   chmod +x "$TEST_HOME/.local/bin/run-auto-task"
+}
+
+# _stub_queue EXIT — an otto-queue that records "<cwd>|<argv>" per call and
+# answers EXIT: 0 is a job handed to the worker, 69 is no worker.
+_stub_queue() {
+  printf '#!/usr/bin/env bash\nprintf "%%s|%%s\\n" "$PWD" "$*" >> "%s"\nexit %s\n' \
+    "$QUEUE_CALLS" "$1" > "$STUB_BIN/otto-queue"
+  chmod +x "$STUB_BIN/otto-queue"
 }
 
 # _stub_gate SKILL EXIT — replace a gate with one that answers EXIT. The real
@@ -70,6 +81,7 @@ _run_tasks() {
     WORKBENCH_CONFIG_DIR="$WORKBENCH_CONFIG_DIR" \
     AUTO_TASK_SKILLS_DIR="$TEST_HOME/skills" \
     AUTO_TASK_BIN="$TEST_HOME/.local/bin/run-auto-task" \
+    OTTO_QUEUE_BIN="$QUEUE_BIN" \
     bash -c "cd / && '$RUNNER'"
 }
 
@@ -298,12 +310,73 @@ _run_tasks() {
 @test "the maintenance script bounds fetch and sync by tier and leaves the rest alone" {
   # The unit's KillMode=process signals only the script, so a unit timeout would
   # leave a hung git child running; the bound has to be on the command itself.
-  # run-due-auto-tasks must stay bare: a process-group kill would take the
-  # detached agents it spawns down with it. A grep because the tiers cannot be
+  # run-due-auto-tasks must stay bare: where no worker can start it spawns agents detached, and a process-group kill would take them down with it.
+  # A grep because the tiers cannot be
   # overridden from the environment, and a hung fetch cannot be staged in a test.
   local script="$REPO_ROOT/maintenance/bin/otto-workbench-maintenance"
   grep -q 'wb_run_bounded --tier TRANSFER --relay -- git .* fetch origin main' "$script"
   grep -q 'wb_run_bounded --tier SYNC --relay -- .*otto-workbench" sync' "$script"
   grep -q '^"\$MAIN_WORKTREE/maintenance/bin/run-due-auto-tasks"' "$script"
   ! grep -q 'wb_run_bounded.*run-due-auto-tasks' "$script"
+}
+
+# ── The queue ────────────────────────────────────────────────────────────────
+
+@test "a due task is queued as a heavy job keyed by task and day, not spawned" {
+  _stub_queue 0
+  _stub_gate dream 0
+  _stub_gate promote 1
+  _stub_gate retro 1
+  _stub_gate wiki-capture 1
+  _run_tasks
+  [ "$status" -eq 0 ]
+  [ "$(cat "$QUEUE_CALLS")" = "/|submit --class heavy --key auto-task:dream:$(date -u +%Y%m%d) --queue-only -- $TEST_HOME/.local/bin/run-auto-task --foreground dream" ]
+  [ ! -f "$SPAWN_LOG" ]
+}
+
+@test "with no worker the task is spawned detached, as before" {
+  _stub_gate dream 0
+  _stub_gate promote 1
+  _stub_gate retro 1
+  _stub_gate wiki-capture 1
+  _run_tasks
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SPAWN_LOG")" = "dream /" ]
+  [[ "$output" == *"otto-queue could not take dream (exit 69)"* ]]
+}
+
+@test "the wiki-capture job is queued from its repo, keyed by that repo" {
+  _stub_queue 0
+  _stub_gate dream 1
+  _stub_gate promote 1
+  _stub_gate retro 1
+  _stub_gate wiki-capture 0
+  local repo
+  repo="$(gate_repo "wiki-repo")"
+  _run_tasks
+  [ "$(cut -d'|' -f1 < "$QUEUE_CALLS")" = "$repo" ]
+  grep -qF -- "--key auto-task:wiki-capture:$repo:$(date -u +%Y%m%d) --queue-only" "$QUEUE_CALLS"
+}
+
+@test "a queued task still ends the cycle at one" {
+  _stub_queue 0
+  _stub_gate dream 0
+  _stub_gate promote 0
+  _stub_gate retro 0
+  _stub_gate wiki-capture 0
+  _run_tasks
+  [ "$(wc -l < "$QUEUE_CALLS" | tr -d ' ')" = "1" ]
+  grep -q -- '--foreground promote$' "$QUEUE_CALLS"
+}
+
+# passes-at-base: a machine without the queue must keep today's spawn
+@test "with no otto-queue the task is spawned detached" {
+  QUEUE_BIN="$TEST_HOME/no-such-otto-queue"
+  _stub_gate dream 0
+  _stub_gate promote 1
+  _stub_gate retro 1
+  _stub_gate wiki-capture 1
+  _run_tasks
+  [ "$status" -eq 0 ]
+  [ "$(cat "$SPAWN_LOG")" = "dream /" ]
 }

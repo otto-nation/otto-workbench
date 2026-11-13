@@ -872,6 +872,21 @@ Bash-only — `read -n 1` behaves differently in zsh.
 
 Loaded via `ui.sh`.
 
+### queue_worker.sh
+
+The otto-queue worker's supervisor units — a launchd agent on macOS; a systemd
+user service and the workbench.slice its jobs run in on Linux. The worker is
+`otto-queue worker` (ai/lib/otto_queue/worker.py): `otto-queue submit` starts
+it on demand and it exits when idle.
+
+Sourced by `bin/otto-workbench` after `lib/maintenance.sh`, whose stable
+checkout (`_maintenance_run_dir`), user unit directory and log directory it
+shares. Unit names match `ai/lib/otto_queue/supervisor.py`.
+
+| Function | Purpose |
+|----------|---------|
+| `queue_worker_refresh` | installs the otto-queue worker's supervisor units, or brings them to what the templates render for the stable checkout. Called by sync. Never starts, stops or restarts a running worker: maintenance runs as a queue job, so the sync calling this usually runs inside the worker. Linux: writes the service and workbench.slice, reloads the manager and enables the service for the boot drain. macOS: loads a missing agent, re-renders an unloaded one without starting it, and reloads a changed loaded one only while the worker is idle. Non-fatal: always returns 0. |
+
 ### replay_audit.sh
 
 Runs ai/lib/rebase/replay_audit.py for the global commit hooks.

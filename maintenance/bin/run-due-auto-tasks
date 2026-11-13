@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ask the four AI maintenance cooldowns and spawn at most one task that is due.
+# Ask the four AI maintenance cooldowns and start at most one task that is due, as an otto-queue job.
 #
 # Usage: run-due-auto-tasks
 #
@@ -17,6 +17,15 @@
 # own: the maintenance script fetches, syncs and sweeps worktrees before it gets
 # here, and none of that should have to happen to find out which tasks are due.
 #
+# The task runs as its own otto-queue job — heavy, inside workbench.slice on
+# Linux, admitted against the machine's budget — rather than as an agent
+# detached from the maintenance job and outliving it uncounted. Its key is the
+# task (and repo) plus the UTC day: a maintenance run while it is still queued
+# or running joins it, a failed run is tried again next cycle, and one that
+# finished is not run again the same day even if its stamp did not move.
+# --queue-only because maintenance must not wait out an agent: where no worker
+# can be started the task is spawned detached, as it was before the queue.
+#
 # Exit codes:
 #   0   A task was spawned, or none was due (both ordinary)
 #   69  EX_UNAVAILABLE (sysexits) — the executor is absent, nothing to run
@@ -30,6 +39,7 @@
 # Env:
 #   AUTO_TASK_SKILLS_DIR  — override the skills directory (default: ai/skills)
 #   AUTO_TASK_BIN         — override the run-auto-task path (default: $LOCAL_BIN_DIR/run-auto-task)
+#   OTTO_QUEUE_BIN        — override the otto-queue path (default: ai/bin/otto-queue)
 
 set -e
 
@@ -45,14 +55,15 @@ _WB="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 
 SKILLS_DIR="${AUTO_TASK_SKILLS_DIR:-$_WB/ai/skills}"
 AUTO_TASK_BIN="${AUTO_TASK_BIN:-$LOCAL_BIN_DIR/run-auto-task}"
+OTTO_QUEUE_BIN="${OTTO_QUEUE_BIN:-$_WB/ai/bin/otto-queue}"
 unset _WB
 
 usage() {
   cat <<EOF
 Usage: run-due-auto-tasks
 
-Ask the four AI maintenance cooldown gates and spawn at most one task that is
-due. Called by otto-workbench-maintenance on the 12h timer; the Stop hook asks
+Ask the four AI maintenance cooldown gates and start at most one due task, as an otto-queue job (detached where no worker can start).
+Called by otto-workbench-maintenance on the 12h timer; the Stop hook asks
 the same gates on every Claude Code session exit.
 
 Spawns the rarest cooldown first (promote 168h, retro 72h, dream 24h), then
@@ -65,6 +76,7 @@ Exit codes:
 Env:
   AUTO_TASK_SKILLS_DIR  override the skills directory (default: ai/skills)
   AUTO_TASK_BIN         override the run-auto-task path
+  OTTO_QUEUE_BIN        override the otto-queue path (default: ai/bin/otto-queue)
 EOF
 }
 
@@ -87,6 +99,21 @@ _gate_due() {
   return "$status"
 }
 
+# _spawn SKILL KEY — start SKILL's agent as an otto-queue job keyed KEY, in the
+# current directory; detached, as before the queue, when the queue will not
+# take it (69 no worker, 75 ledger busy, or anything else). Returns 0 having
+# started it one way or the other, so the caller's chain stops.
+_spawn() {
+  local skill="$1" key="$2" rc=0
+  if [[ -x "$OTTO_QUEUE_BIN" ]]; then
+    "$OTTO_QUEUE_BIN" submit --class heavy --key "$key" --queue-only \
+      -- "$AUTO_TASK_BIN" --foreground "$skill" || rc=$?
+    [[ $rc -eq 0 ]] && return 0
+    log "otto-queue could not take $skill (exit $rc); spawning it detached"
+  fi
+  "$AUTO_TASK_BIN" "$skill"
+}
+
 # The three registry-wide gates, longest cooldown first: at one spawn per cycle,
 # a 24h gate asked ahead of a 168h one would starve it. Returns 0 having
 # spawned, which stops the caller's chain.
@@ -95,7 +122,7 @@ _run_global_gates() {
   for skill in promote retro dream; do
     _gate_due "$skill" || continue
     log "Auto-task due: $skill"
-    "$AUTO_TASK_BIN" "$skill" || log "WARNING: run-auto-task $skill failed (non-fatal)"
+    _spawn "$skill" "auto-task:$skill:$period" || log "WARNING: run-auto-task $skill failed (non-fatal)"
     return 0
   done
   return 1
@@ -114,7 +141,7 @@ _run_wiki_capture_gate() {
     [[ -n "$leader" ]] || continue
     _gate_due wiki-capture "$leader" || continue
     log "Auto-task due: wiki-capture ($leader)"
-    (cd "$leader" && "$AUTO_TASK_BIN" wiki-capture) \
+    (cd "$leader" && _spawn wiki-capture "auto-task:wiki-capture:$leader:$period") \
       || log "WARNING: wiki-capture failed for $leader (cd or run-auto-task)"
     return 0
   done < <(project_repo_leaders)
@@ -129,6 +156,9 @@ _run_wiki_capture_gate() {
 if [[ ! -x "$AUTO_TASK_BIN" ]] || ! command -v claude > /dev/null 2>&1; then
   exit 69  # EX_UNAVAILABLE
 fi
+
+# The day a task's key is for; see the header.
+period="$(date -u +%Y%m%d)"
 
 # ceiling: one auto-task per cycle, so a machine with several repos due drains
 # its backlog over several cycles rather than spawning an agent per repo at

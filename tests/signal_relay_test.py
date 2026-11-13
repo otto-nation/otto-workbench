@@ -130,6 +130,25 @@ def test_a_foreground_run_restores_every_handler_it_touched():
     assert {signum: signal.getsignal(signum) for signum in watched} == before
 
 
+def test_output_takes_the_childs_stdout_and_stderr_and_stdin_is_empty(tmp_path):
+    log = tmp_path / "log"
+    script = ("import sys; print('out', flush=True); print('err', file=sys.stderr, flush=True); "
+              "print(repr(sys.stdin.read()), flush=True)")
+    with open(log, "wb") as out:
+        code = core.signal_relay.run_child([sys.executable, "-c", script], output=out)
+    assert code == 0
+    assert log.read_text().split() == ["out", "err", "''"]
+
+
+def test_output_also_gets_the_cannot_run_message(tmp_path, capsys):
+    log = tmp_path / "log"
+    with open(log, "wb") as out:
+        code = core.signal_relay.run_child(["no-such-command-xyz"], origin="otto-queue", output=out)
+    assert code == 127
+    assert "otto-queue: cannot run no-such-command-xyz" in log.read_text()
+    assert "otto-queue: cannot run no-such-command-xyz" in capsys.readouterr().err
+
+
 def _reap_foreground_driver(proc: subprocess.Popen) -> None:
     with contextlib.suppress(ProcessLookupError, PermissionError):
         os.killpg(proc.pid, signal.SIGKILL)

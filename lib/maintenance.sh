@@ -198,6 +198,38 @@ maintenance_refresh_schedule() {
   return 0
 }
 
+# _maintenance_queue_log — prints the log_path of the newest otto-queue entry
+# whose key is maintenance. Empty when otto-queue is missing, errors, or has
+# no such entry.
+_maintenance_queue_log() {
+  local queue="${OTTO_QUEUE_BIN:-$WORKBENCH_DIR/ai/bin/otto-queue}" json
+  [[ -x "$queue" ]] || return 0
+  json=$("$queue" status --json 2>/dev/null) || return 0
+  [[ -n "$json" ]] || return 0
+  python3 -c '
+import json, sys
+best_id, path = -1, ""
+for raw in sys.stdin.read().splitlines():
+    raw = raw.strip()
+    if not raw:
+        continue
+    try:
+        entry = json.loads(raw)
+    except json.JSONDecodeError:
+        continue
+    if entry.get("idem_key") != "maintenance":
+        continue
+    log = entry.get("log_path") or ""
+    ident = entry.get("id")
+    if not log or not isinstance(ident, int):
+        continue
+    if ident > best_id:
+        best_id, path = ident, log
+if path:
+    print(path)
+' <<<"$json"
+}
+
 _format_interval() {
   local seconds=$1
   if (( seconds >= 3600 )); then

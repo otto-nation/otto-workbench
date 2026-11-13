@@ -14,8 +14,9 @@ the machine's budget, and runs once per idempotency key.
    result: the ticket resolves again and, finding nothing live, runs the work
    itself.
 2. **Wait.** Every `POLL_S`, orphans are reaped, and only the oldest waiting
-   ticket of the class asks `otto_queue.slots.try_admit`. Each new reason for
-   waiting is printed once. `cancel` or Ctrl-C while waiting ends the ticket
+   entry of the class (tickets, and while a worker is alive its ready jobs)
+   asks `otto_queue.slots.try_admit`. Each new reason for waiting is printed
+   once. `cancel` or Ctrl-C while waiting ends the ticket
    with 130. Reaching `wait_s` with no slot records `tempfail` and returns 75
    (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
 3. **Run.** The row moves to `running`, and the command runs through
@@ -46,7 +47,7 @@ import os
 import signal
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import StrEnum
 from pathlib import Path
 
@@ -56,7 +57,7 @@ import core.signal_relay
 import otto_queue.lease
 import otto_queue.ledger
 import otto_queue.slots
-from otto_queue.model import Entry, EntryClass, EntryState, NewEntry
+from otto_queue.model import Entry, EntryClass, EntryKind, EntryState, NewEntry
 
 # How long a ticket waits for a slot before ending as `tempfail`. A review takes
 # about ten minutes, so an hour is several heavy entries deep: long enough that
@@ -88,11 +89,17 @@ class TicketRequest:
     entry_class: EntryClass = EntryClass.HEAVY
     idem_key: str | None = None
     force: bool = False
+    reuse: bool = True
     wait_s: float = DEFAULT_WAIT_S
 
     def entry(self) -> NewEntry:
         return NewEntry(argv=self.argv, cwd=self.cwd, entry_class=self.entry_class,
                         idem_key=self.idem_key)
+
+
+def claimed_request(entry: Entry, request: TicketRequest) -> TicketRequest:
+    """*request* running the claimed *entry*'s own command, so the ledger and the run agree."""
+    return replace(request, argv=entry.argv, cwd=entry.cwd, entry_class=entry.entry_class)
 
 
 @dataclass(frozen=True)
@@ -131,23 +138,32 @@ def run_ticket(request: TicketRequest, policy: otto_queue.slots.Policy, *,
         core.log.warn(f"otto-queue: running unqueued: {exc}")
         return TicketResult(_run(request, None), TicketOutcome.UNQUEUED)
     while True:
-        res = ledger.resolve(request.entry(), force=request.force, pid=os.getpid())
+        res = ledger.resolve(request.entry(), force=request.force, pid=os.getpid(),
+                             reuse=request.reuse)
         if res.outcome is otto_queue.ledger.Outcome.NEW:
-            return _run_new(ledger, res, request, policy, poll_s, notify)
+            return run_claimed(ledger, res, request, policy, poll_s=poll_s, notify=notify)
         if res.outcome is otto_queue.ledger.Outcome.REUSED:
             notify(f"otto-queue: entry {res.entry.id} already did this; not running it again")
             return TicketResult(res.entry.exit_status or 0, TicketOutcome.REUSED, res.entry.id)
-        joined = _join(ledger, res.entry, poll_s, notify)
+        joined = _join(ledger, res.entry, request, policy, poll_s, notify)
         if joined is not None:
             return joined
 
 
-def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, poll_s: float,
+def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest,
+          policy: otto_queue.slots.Policy, poll_s: float,
           notify: Callable[[str], None]) -> TicketResult | None:
-    """Wait for *entry* to end and return its status; None when it ended with none (orphaned)."""
+    """Wait for *entry* to end and return its status; None when it ended with none (orphaned).
+
+    A queued job nobody will start — no worker is alive — is claimed and run
+    here instead, so the wait cannot outlast every worker.
+    """
     entry_id = entry.id
     notify(f"otto-queue: joining entry {entry_id}, which is {entry.state.value}")
     while entry is not None and entry.state.live:
+        ran = _run_unstarted(ledger, entry, request, policy, poll_s, notify)
+        if ran is not None:
+            return ran
         time.sleep(poll_s)
         ledger.reap_orphans()
         entry = ledger.get(entry_id)
@@ -156,6 +172,22 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, poll_s: float,
         return None
     outcome = TicketOutcome.CANCELLED if entry.state is EntryState.CANCELLED else TicketOutcome.JOINED
     return TicketResult(entry.exit_status, outcome, entry_id)
+
+
+def _run_unstarted(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest,
+                   policy: otto_queue.slots.Policy, poll_s: float,
+                   notify: Callable[[str], None]) -> TicketResult | None:
+    """Run *entry* here when it is a queued job and no worker is alive to start it; else None."""
+    if entry.kind is not EntryKind.JOB or entry.state is not EntryState.QUEUED:
+        return None
+    if otto_queue.lease.worker_alive(ledger.root):
+        return None
+    claimed = ledger.claim_as_ticket(entry.id, os.getpid())
+    if claimed is None:
+        return None
+    notify(f"otto-queue: no worker is running; running entry {entry.id} here")
+    return run_claimed(ledger, claimed, claimed_request(claimed.entry, request), policy,
+                       poll_s=poll_s, notify=notify)
 
 
 def _record_crash(ledger: otto_queue.ledger.Ledger, entry_id: int, exc: BaseException) -> None:
@@ -168,9 +200,14 @@ def _record_crash(ledger: otto_queue.ledger.Ledger, entry_id: int, exc: BaseExce
     ledger.fail(entry_id)
 
 
-def _run_new(ledger: otto_queue.ledger.Ledger,
-             res: otto_queue.ledger.Resolution, request: TicketRequest,
-             policy: otto_queue.slots.Policy, poll_s: float, notify: Callable[[str], None]) -> TicketResult:
+def run_claimed(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolution,
+                request: TicketRequest, policy: otto_queue.slots.Policy, *,
+                poll_s: float = POLL_S, notify: Callable[[str], None] = core.log.info) -> TicketResult:
+    """Wait for a slot and run *request* for the NEW entry *res* this process holds the lease of.
+
+    `run_ticket` calls it for a ticket it recorded; `otto_queue.submit` for a job
+    it claimed back with `Ledger.claim_as_ticket` when no worker could start.
+    """
     entry_id = res.entry.id
     try:
         return _admit_and_run(ledger, entry_id, request, policy, poll_s, notify)
@@ -230,9 +267,12 @@ def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
 
 def _try_once(ledger: otto_queue.ledger.Ledger, entry_id: int, entry_class: EntryClass,
               policy: otto_queue.slots.Policy) -> otto_queue.slots.Admission:
-    """Ask for a slot, unless an older ticket of the class is still waiting."""
+    """Ask for a slot, unless an older entry of the class is still waiting.
+
+    An older entry is a ticket, or a ready job while a worker is alive.
+    """
     ledger.reap_orphans()
-    first = ledger.first_waiting(entry_class)
+    first = ledger.first_waiting(entry_class, jobs=otto_queue.lease.worker_alive(ledger.root))
     if first is not None and first != entry_id:
         return otto_queue.slots.Admission(None, f"behind entry {first}, which queued first")
     return otto_queue.slots.try_admit(ledger.root, policy, entry_class)

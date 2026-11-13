@@ -35,6 +35,10 @@
 # written to `~/.local/state/workbench/logs/wt-cleanup.log` with its reason, so a
 # removal this widens can be audited afterwards.
 #
+# A worktree a live `pr` run is working in — one whose checkout lock
+# (`core.run_lock`, asked through `lib/run_lock_cli.py held-tree`) is held —
+# is skipped, merged or not, and so is one the probe could not answer for.
+#
 # The worktree list comes from `wt list --format json`, whose payload carries a
 # `schema` number. The script reads schema 2 and refuses any other with an error
 # rather than reading fields that may have moved — a mismatch means worktrunk
@@ -56,6 +60,9 @@ GRACE_PERIOD_SECS=600
 WT_LIST_SCHEMA=2
 CLEANUP_LOG_DIR="${CLEANUP_LOG_DIR:-$WORKBENCH_STATE_DIR/logs}"
 CLEANUP_LOG="${CLEANUP_LOG:-$CLEANUP_LOG_DIR/wt-cleanup.log}"
+# The one prober of a checkout's run lock; see _tree_held. Overridable so a
+# test can stand in a prober that cannot answer.
+RUN_LOCK_CLI="${RUN_LOCK_CLI:-$WORKBENCH_DIR/lib/run_lock_cli.py}"
 
 usage() {
   cat <<EOF
@@ -69,6 +76,8 @@ nothing about whether the work landed.
 
 Worktrees created less than ${GRACE_PERIOD_SECS}s ago are always skipped to avoid
 removing worktrees that another session is actively using.
+
+Worktrees a live pr run holds (its checkout run lock is taken) are always skipped.
 
 A merged worktree holding uncommitted changes is reported rather than removed,
 but two kinds of residue do not count as changes: a file the default branch
@@ -342,6 +351,20 @@ _within_grace_period() {
   [[ $wt_age -lt $GRACE_PERIOD_SECS ]]
 }
 
+# _tree_held WT_PATH — whether a live `pr` run holds WT_PATH's checkout lock:
+# 0 held, 1 free, 2 when the question could not be asked. Asked of
+# core.run_lock through lib/run_lock_cli.py rather than probed here: run_lock
+# owns where the lock lives, and macOS has no flock(1).
+_tree_held() {
+  local rc=0
+  python3 "$RUN_LOCK_CLI" held-tree "$1" >/dev/null 2>&1 || rc=$?
+  case "$rc" in
+    0)  return 1 ;;
+    75) return 0 ;;
+  esac
+  return 2
+}
+
 _detect_reason() {
   local main_state="$1" symbols="$2" pr_state="$3" timestamp="$4"
   # Gated on _is_merged rather than acting on _git_signals_merged alone, so the
@@ -549,6 +572,26 @@ main() {
       # deletes the branch on its own ancestry check unless told otherwise, and
       # that check is the very signal the open-PR guard exists to second-guess.
       remove_flags+=(--no-delete-branch)
+    fi
+
+    # A live `pr` run in this tree — a review, a fix pass, a rebase — loses its
+    # working tree mid-run if it goes now, merged or not. An unanswered probe
+    # keeps it too: a removal cannot be taken back, and the next run asks again.
+    # ceiling: probe, then remove — a run that takes the tree in between loses
+    # it. The window is one `wt remove` long, and a run starts in a merged
+    # worktree only by accident. Upgrade trigger: once a removal is seen taking
+    # a tree a run took after the probe, hold the checkout lock across the
+    # removal instead.
+    lock_rc=0
+    _tree_held "$wt_path" || lock_rc=$?
+    if [[ $lock_rc -ne 1 ]]; then
+      lock_state=unknown
+      skip_why="could not ask whether a pr run holds it"
+      [[ $lock_rc -eq 0 ]] && lock_state=held && skip_why="a live pr run holds it"
+      _log "SKIP-HELD branch=$branch reason=$reason lock=$lock_state"
+      [[ "$quiet" != "true" && "$dry_run" == "true" ]] && \
+        echo "skipping: $branch ($skip_why)"
+      continue
     fi
 
     removed=$((removed + 1))

@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.otto-workbench.queue</string>
+	<!-- workbench_env gives the worker and its jobs the environment an
+	     interactive shell has (zsh/env.sh). -->
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/sh</string>
+		<string>-c</string>
+		<string>. "__WORKBENCH_DIR__/zsh/env.sh" &amp;&amp; workbench_env &amp;&amp; exec "__WORKBENCH_DIR__/ai/bin/otto-queue" worker</string>
+	</array>
+	<!-- Started at login so jobs a crash left queued drain; `otto-queue submit`
+	     kickstarts it on demand, and it exits when idle. -->
+	<key>RunAtLoad</key>
+	<true/>
+	<!-- Restarted after a crash, not after its idle exit. -->
+	<key>KeepAlive</key>
+	<dict>
+		<key>SuccessfulExit</key>
+		<false/>
+	</dict>
+	<key>ThrottleInterval</key>
+	<integer>30</integer>
+	<key>StandardOutPath</key>
+	<string>__LOG_DIR__/queue-worker.log</string>
+	<key>StandardErrorPath</key>
+	<string>__LOG_DIR__/queue-worker.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+	</dict>
+</dict>
+</plist>

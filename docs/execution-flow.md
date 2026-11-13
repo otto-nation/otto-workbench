@@ -35,10 +35,13 @@ What happens when you run `install.sh` or `otto-workbench sync`, step by step.
 2. State pruning    remove orphan entries for deleted components
 3. Component sync   discover all steps.sh, call sync_<name>() for each
 4. Schedule         re-install the maintenance schedule if it no longer matches its template
-5. Summary          print changes, detect uninstalled components
+5. Queue worker     install or refresh the otto-queue worker's supervisor units
+6. Summary          print changes, detect uninstalled components
 ```
 
-**The maintenance schedule follows the checkout:** `maintenance start` writes the launchd plist or systemd units once, naming the checkout it runs. A repo that moves, or a template that changes, would otherwise leave the schedule pointing at a script that is not there, and launchd reports that only as an exit code nobody reads. Sync compares an installed schedule with what the templates render for the stable checkout (the main worktree, never a feature worktree) and re-installs it, keeping its interval, when they differ. A machine with no schedule is left without one, and a sync running inside the launchd job skips the reload, which would end that run.
+**The maintenance schedule follows the checkout:** `maintenance start` writes the launchd plist or systemd units once, naming the checkout it runs. A repo that moves, or a template that changes, would otherwise leave the schedule pointing at a script that is not there, and launchd reports that only as an exit code nobody reads. Sync compares an installed schedule with what the templates render for the stable checkout (the main worktree, never a feature worktree) and re-installs it, keeping its interval, when they differ. A machine with no schedule is left without one. Reloading the maintenance agent is skipped only when this sync was started by that agent directly (no queue), because the reload would end that run; a queued run reloads the agent safely and never restarts the worker.
+
+**The queue worker is installed, never restarted:** sync renders the otto-queue worker's units for the stable checkout — on Linux a systemd user service plus `workbench.slice` (MemoryHigh 2G, MemoryMax 2.5G), enabled so the worker drains leftover jobs at boot; on macOS a launchd agent that loads at login. It never starts, stops or restarts a running worker: scheduled maintenance is a queue job, so the sync doing the refresh usually runs inside the worker. A machine without a systemd user manager gets no units, and `otto-queue submit` runs jobs as tickets there.
 
 **State gating:** sync only runs components that are recorded as installed, with one exception — infrastructure components (`bin`, `git`, `zsh`) always sync regardless of state.
 

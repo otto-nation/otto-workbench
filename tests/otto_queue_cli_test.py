@@ -5,6 +5,7 @@ import json
 import os
 import signal
 import sqlite3
+import stat
 import subprocess
 import sys
 import time
@@ -23,7 +24,7 @@ import core.timeouts  # noqa: E402
 import otto_queue.paths  # noqa: E402
 import otto_queue.ticket  # noqa: E402
 from otto_queue.ledger import Ledger  # noqa: E402
-from otto_queue.model import EntryClass, EntryState, NewEntry  # noqa: E402
+from otto_queue.model import EntryClass, EntryKind, EntryState, NewEntry  # noqa: E402
 
 SHIM = REPO_ROOT / "ai" / "bin" / "otto-queue"
 PY = sys.executable
@@ -31,6 +32,22 @@ PY = sys.executable
 
 def _shim(*args):
     return subprocess.run([str(SHIM), *args], capture_output=True, text=True, timeout=120)
+
+
+def _shim_env(args, env):
+    return subprocess.run([str(SHIM), *args], capture_output=True, text=True, timeout=120, env=env)
+
+
+def _no_supervisor_env(tmp_path):
+    stubs = tmp_path / "bin"
+    stubs.mkdir()
+    for name in ("systemctl", "launchctl"):
+        path = stubs / name
+        path.write_text(
+            '#!/usr/bin/env bash\necho "Could not find service otto-queue-worker" >&2\nexit 5\n'
+        )
+        path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return {**os.environ, "PATH": f"{stubs}{os.pathsep}{os.environ['PATH']}"}
 
 
 def _light(code):
@@ -158,3 +175,50 @@ def test_cancel_stops_a_running_ticket(tmp_path):
 def test_cancel_of_a_finished_entry_exits_1():
     _light(0)
     assert cli.otto_queue.main(["cancel", "1"]) == 1
+
+
+def test_run_no_reuse_runs_a_finished_key_again():
+    _shim("run", "--ticket", "--class", "light", "--key", "k", "--", PY, "-c", "pass")
+    _shim("run", "--ticket", "--class", "light", "--key", "k", "--no-reuse", "--", PY, "-c", "pass")
+    assert len([e for e in Ledger.open().entries() if e.state is EntryState.DONE]) == 2
+
+
+def test_job_exec_is_not_advertised():
+    proc = _shim("--help")
+    assert proc.returncode == 0
+    usage = proc.stdout.splitlines()[0]
+    assert "job-exec" not in proc.stdout
+    assert "job-exec" not in usage
+    assert "job-exec" not in SHIM.read_text()
+
+
+def test_job_exec_runs_a_queued_job():
+    entry_id = Ledger.open().resolve(NewEntry(argv=(PY, "-c", "raise SystemExit(4)"), cwd="/", kind=EntryKind.JOB),
+                                     force=False, pid=None).entry.id
+    assert _shim("job-exec", str(entry_id)).returncode == 4
+    assert Ledger.open().get(entry_id).state is EntryState.FAILED
+
+
+def test_submit_without_a_supervisor_runs_here_and_says_so(tmp_path):
+    result = _shim_env(["submit", "--", PY, "-c", "raise SystemExit(3)"], _no_supervisor_env(tmp_path))
+    assert result.returncode == 3
+    assert "as a ticket here" in result.stderr and "Could not find service" in result.stderr
+
+
+def test_submit_queue_only_without_a_supervisor_exits_69_and_runs_nothing(tmp_path):
+    ran = tmp_path / "ran"
+    result = _shim_env(["submit", "--queue-only", "--", PY, "-c", f"open({str(ran)!r}, 'w')"],
+                       _no_supervisor_env(tmp_path))
+    assert result.returncode == 69
+    assert "withdrew entry" in result.stderr
+    assert not ran.exists()
+
+
+def test_status_shows_a_jobs_kind_and_retry_time(capsys):
+    ledger = Ledger.open()
+    entry_id = ledger.resolve(NewEntry(argv=("true",), cwd="/", kind=EntryKind.JOB), force=False, pid=None).entry.id
+    ledger.mark_running(entry_id, os.getpid())
+    ledger.requeue(entry_id, os.EX_TEMPFAIL, time.time() + 600)
+    assert cli.otto_queue.main(["status"]) == 0
+    line = capsys.readouterr().out.splitlines()[1]
+    assert "job" in line and "retry in 10m, attempt 2" in line

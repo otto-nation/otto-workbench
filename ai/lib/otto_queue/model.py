@@ -6,7 +6,7 @@ is added, never renamed or removed — the rule the schema follows too.
 
 | State | Meaning |
 |---|---|
-| `queued` | accepted; waiting for a slot (ticket) or a worker (job) |
+| `queued` | accepted; waiting for a slot (ticket), or for the worker or its retry time (job) |
 | `running` | admitted and started; its lease is held |
 | `done` | exited 0 |
 | `failed` | exited non-zero, could not start, or its holder died (no exit status) |
@@ -63,6 +63,20 @@ def state_for_exit(exit_status: int) -> EntryState:
     return EntryState.FAILED
 
 
+# A job that exits 75 runs again after RETRY_BASE_S, doubling per run up to
+# RETRY_CAP_S, and ends `tempfail` once it has run MAX_JOB_ATTEMPTS times. An
+# orphaned job is re-queued under the same cap, so a job whose runner dies every
+# time ends `failed` rather than looping.
+MAX_JOB_ATTEMPTS = 10
+RETRY_BASE_S = 60.0
+RETRY_CAP_S = 1800.0
+
+
+def retry_delay(attempts: int) -> float:
+    """Seconds before a job that has run *attempts* times and exited 75 may run again."""
+    return min(RETRY_BASE_S * 2 ** max(0, attempts - 1), RETRY_CAP_S)
+
+
 @dataclass(frozen=True)
 class NewEntry:
     """A request to accept: what to run, where, and how to identify repeats of it."""
@@ -95,6 +109,7 @@ class Entry:
     created_at: float
     started_at: float | None
     finished_at: float | None
+    not_before: float | None = None
 
     @property
     def holds_lease(self) -> bool:

@@ -896,6 +896,8 @@ is in [AI Libraries](ai-libraries.md).
 | `--closes` `<id>` | Issue to close on merge (repeatable). |
 | `--skip-review` `<reason>` | Skip the self-review gate; REASON is recorded on the trail. |
 
+Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-create-contract)
+
 **`pr status`** — Show CI, review, and comment status dashboard
 
 Takes no flags.
@@ -914,11 +916,13 @@ Takes no flags.
 | `--no-rebase` | With --fix: do not rebase onto main before fixing. |
 | `--no-verify` | Skip the verify gate after --fix. The gate has an agent exercise each claimed fix against the tree and demotes the ones that do not hold up; without it every fix lands unverified. |
 
+Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-ci-contract)
+
 **`pr review`** — Run code review
 
 | Flag | Description |
 |------|-------------|
-| `--no-post` | Do not post the review to GitHub. |
+| `--no-post` | Do not post to GitHub and do not prompt (a plain run prompts before posting and before replacing a pending review). |
 | `--submit` | Submit the GitHub review after posting, as a COMMENT review (default: leave PENDING). |
 | `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
 | `--fix` | Apply findings after the review (requires --self). |
@@ -932,7 +936,7 @@ Takes no flags.
 | `--no-synthesis` | Skip the synthesis phase. |
 | `--no-disprove` | Skip the disprove gate phase. |
 | `--disprove` | Enable the disprove-it gate (default: effort-based). |
-| `--json-summary` | Print a machine-readable summary on stdout. |
+| `--json-summary` | Print one REVIEW_SUMMARY:{json} line on stdout (the only stdout). |
 | `--issue` `<url>` | Related issue to include in the review prompt. |
 | `--focus` `<text>` | An area the review must cover (repeatable; each text at most 4096 bytes; at most 5 texts). |
 | `--focus-file` `<path>` | A file whose contents are a focus area (repeatable; each file at most 4096 bytes; at most 5 texts). |
@@ -945,7 +949,7 @@ Takes no flags.
 | `--generated` | Include tier3-generated files (skipped by default). |
 | `-V`, `--version` | Print version and exit. |
 | `[<pr\|branch> ...]` | PR number, URL, or branch name. |
-| `--post` | Post an existing review to GitHub — a mode; excludes the other mode flags. |
+| `--post` | Post an EXISTING review to GitHub (under pr review this flag is a mode, not the review binary's post-after-run flag) — a mode; excludes the other mode flags. |
 | `--repair` | Repair broken review artifacts via summary or rebuild — a mode; excludes the other mode flags. |
 | `--summary` | Print a JSON summary of an existing review — a mode; excludes the other mode flags. |
 | `--dismiss` | Record the latest review as dismissed, posting nothing — a mode; excludes the other mode flags. |
@@ -954,11 +958,13 @@ Takes no flags.
 | `--event` `<comment\|approve\|request_changes>` | With --post: what the review says on GitHub (default: comment). |
 | `--if-changed` `<stamp>` | With --list --schema-version: answer {"unchanged": true} when no review changed since the document carrying this stamp. |
 
+Exit codes: `0` ok · `1` failure · `2` usage · `4` refused · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-review-contract)
+
 **`pr comments`** — Fetch and manage PR review threads
 
 | Flag | Description |
 |------|-------------|
-| `--triage` | Phase: classify threads via AI and auto-resolve verified. |
+| `--triage` | Phase: classify threads via AI; each verified thread needs --post to resolve on GitHub (without it the resolutions are drafted). |
 | `--fix` | Phase: triage threads and apply mechanical fixes via Claude agent. |
 | `--resume` | Require an interrupted --fix pass to resume (exit 1 if none). Only with --fix. Not with `--no-resume`. |
 | `--no-resume` | Discard an interrupted --fix pass and start over. Only with --fix. Not with `--resume`. |
@@ -975,12 +981,16 @@ Takes no flags.
 | `--reason` `<text>` | Why, for --settle --as dismissed — it becomes the reply the reviewer reads. |
 | `--commit` `<sha>` | The commit carrying a --settle --as fixed change, for a fix that landed away from the line the thread is anchored to (default: inferred from that line). Applies to every --settle in the run, so a batch where only some threads need it takes two runs. |
 
+Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-comments-contract)
+
 **`pr fix`** — Fix CI + review + comments
 
 | Flag | Description |
 |------|-------------|
 | `--post` | Publish what the passes produce, the revised PR description included (default: print drafts and post nothing). |
 | `[<review-or-ci-flag> ...]` | Any other flag is forwarded to the review pass and the CI pass; see `pr review` and `pr ci`. |
+
+Exit codes: `0` ok · `1` failure · `2` usage · `4` refused · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-fix-contract)
 
 **`pr rebase`** — Rebase onto the branch's base
 
@@ -1019,6 +1029,8 @@ Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remot
 | `--body` `<text>` | Replace the PR body instead of revising it. Not with `--body-file`. |
 | `--body-file` `<path>` | Read the replacement body from this file. Not with `--body`. |
 | `--closes` `<id>` | Issue to close on merge (repeatable). |
+
+Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-describe-contract)
 
 **`pr stack`** — Show the repo's PR stack graph (JSON)
 
@@ -1219,7 +1231,7 @@ resolution, model selection, and Vertex quota preflight are in
 
 | Flag | Description |
 |------|-------------|
-| `--no-post` | Do not post the review to GitHub. |
+| `--no-post` | Do not post to GitHub and do not prompt (a plain run prompts before posting and before replacing a pending review). |
 | `--post` | Post the review to GitHub when it finishes. |
 | `--submit` | Submit the GitHub review after posting, as a COMMENT review (default: leave PENDING). |
 | `--self` | Review a local checkout of the current branch, or of the branch or PR ref given. |
@@ -1235,7 +1247,7 @@ resolution, model selection, and Vertex quota preflight are in
 | `--no-synthesis` | Skip the synthesis phase. |
 | `--no-disprove` | Skip the disprove gate phase. |
 | `--disprove` | Enable the disprove-it gate (default: effort-based). |
-| `--json-summary` | Print a machine-readable summary on stdout. |
+| `--json-summary` | Print one REVIEW_SUMMARY:{json} line on stdout (the only stdout). |
 | `--issue` `<url>` | Related issue to include in the review prompt. |
 | `--focus` `<text>` | An area the review must cover (repeatable; each text at most 4096 bytes; at most 5 texts). |
 | `--focus-file` `<path>` | A file whose contents are a focus area (repeatable; each file at most 4096 bytes; at most 5 texts). |

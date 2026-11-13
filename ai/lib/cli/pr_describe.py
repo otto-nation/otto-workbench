@@ -36,19 +36,7 @@ work (not under `--dry-run`, which publishes nothing), falling back to the
 interactive `gh` login; `--closes` is checked ahead of it, so a
 ref nothing can close is refused without a token lookup.
 
-Exit codes:
-  0  Success (description current, revised, or no PR and nothing asked of one)
-  1  Error (no PR for --title/--body/--closes, gh failure, unusable AI output,
-     refused --closes or --body, no publishing token under --post)
-  2  Usage error (bad flags, unreadable --body-file)
-
-Usage:
-  pr-describe                         # revise if HEAD moved since the last pass
-  pr-describe --force                 # revise regardless of HEAD
-  pr-describe --dry-run               # print the revision, do not push it
-  pr-describe --closes 941 --post     # link an issue for auto-close on merge
-  pr-describe --title "feat: x" --body-file body.md --post
-  pr-describe --repo-dir <path>       # specify worktree directory
+Exit codes, remote writes and examples are `CONTRACT` below.
 """
 
 # doc-group: cli
@@ -58,15 +46,82 @@ import sys
 
 import cli.boundary
 import cli.locks
+import core.command_contract
 import core.log
 import core.publishing
 import pr.close_refs
 import pr.context
 import pr.describe
 import pr.gh_token
-from pr.domains import DescribeSummary
+from core.exit_codes import ExitCode
 from core.tool_parser import EXIT_USAGE, ToolParser, read_file_arg
 from core.trail import Trail, add_trail_args
+from pr.domains import DescribeSummary
+
+_POST_HOW = (
+    "gh pr edit <n> --repo <repo> --body-file - via pr.describe._apply_body "
+    "(the revision, and a follow-up projection ahead of the HEAD gate when "
+    "follow-ups are filed). With --title, a second call: gh pr edit <n> "
+    "--repo <repo> --title <title> via _apply_title. Gated by "
+    "core.publishing.enabled(); --dry-run never writes."
+)
+_POST_REFUSED = (
+    "gh failure: exit 1. A write that already landed (a follow-up projection, "
+    "or a body edit before a failed title edit) is not rolled back."
+)
+
+CONTRACT = core.command_contract.CommandContract(
+    summary="Revise a PR description against the repo's PR template. Without "
+            "--post the edit is drafted; --post applies it on GitHub.",
+    groups=(
+        core.command_contract.FlagGroup(
+            "Revise", ("--force", "--dry-run")),
+        core.command_contract.FlagGroup(
+            "Replace", ("--title", "--body", "--body-file", "--closes")),
+        core.command_contract.FlagGroup(
+            "Publish", ("--post",)),
+    ),
+    remote_effects=(
+        core.command_contract.RemoteEffect(
+            "--post",
+            "the PR body (and title with --title)",
+            "GitHub", _POST_HOW, _POST_REFUSED),
+    ),
+    exits=(
+        core.command_contract.ExitOutcome(
+            ExitCode.OK,
+            "description current, revised, or no PR and nothing asked of one"),
+        core.command_contract.ExitOutcome(
+            ExitCode.FAILURE,
+            "no PR for --title/--body/--closes, no worktree, gh failure, "
+            "could not read the PR body or fetch the PR base, unusable AI "
+            "output, refused --closes or --body, no publishing token under "
+            "--post"),
+        core.command_contract.ExitOutcome(
+            ExitCode.USAGE,
+            "bad flags, unreadable --body-file"),
+        core.command_contract.ExitOutcome(
+            ExitCode.TEMPFAIL,
+            "another pr run holds this branch or checkout; retry once it "
+            "finishes"),
+    ),
+    examples=(
+        core.command_contract.Example(
+            "pr describe",
+            "revise if HEAD moved since the last published pass; draft only"),
+        core.command_contract.Example(
+            "pr describe --force --post",
+            "revise regardless of HEAD and apply it on GitHub"),
+        core.command_contract.Example(
+            "pr describe --post --closes 941",
+            "apply the revision and link issue 941 to close on merge"),
+    ),
+    notes=(
+        "Without --post the edit is drafted to stderr; the bare invocation "
+        "writes nothing on GitHub.",
+        "--dry-run prints the revision and records nothing, even with --post.",
+    ),
+)
 
 
 def build_parser() -> ToolParser:
@@ -77,7 +132,7 @@ def build_parser() -> ToolParser:
     number or a branch.
     """
     parser = ToolParser(
-        prog=pr.describe.SCRIPT,
+        prog="pr describe",
         description="Revise the PR description against the repo's PR template",
         output_schema=DescribeSummary,
     )

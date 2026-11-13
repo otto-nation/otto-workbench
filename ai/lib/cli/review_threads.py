@@ -24,13 +24,7 @@ phases too: `closeout.finish_deferred_work` reports a refused `--track` rather
 than exiting from under this module. A contended run lock exits 75
 (EX_TEMPFAIL) rather than 1 — retry once the holder finishes.
 
-Usage:
-  review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
-  review-threads --triage
-  review-threads --fix [--resume | --no-resume]
-  review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
-  review-threads --finish [--no-push-verify]
-  review-threads --reply THREAD_COMMENT_OR_REVIEW_ID --body-file PATH [--post]
+Exit codes, remote writes and examples are `CONTRACT` below.
 """
 
 # doc-group: cli
@@ -43,8 +37,10 @@ import sys
 import cli.boundary
 import cli.locks
 import cli.needs
+import core.command_contract
 import core.log
 import core.publishing
+from core.exit_codes import ExitCode
 from core.trail import Trail, add_trail_args
 import gh.pr_data
 import fix.resume
@@ -62,6 +58,123 @@ import review.review_body_reply
 # the command is `review-threads`, and the trail records the command.
 SCRIPT = "review-threads"
 
+_POST_HOW = (
+    "REST via pr.comments._gh_post -> gh.client.api (thread replies, "
+    "issue-comment summary, PR body PATCH); GraphQL via "
+    "pr.comments.resolve_thread -> gh.client.graphql (resolutions). "
+    "A --track/--track-all tracking issue at --finish is "
+    "review.issue.create_issue (GitHub through gh.client; Linear through "
+    "the linear CLI). Gated by core.publishing.enabled()."
+)
+_POST_REFUSED = (
+    "a failed write is reported per thread (resolve_verified_threads "
+    "and reply drains continue); nothing already posted is rolled back"
+)
+_FINISH_POST_HOW = (
+    "review.closeout.push_held_commit -> git.push.push(gated=True), "
+    "plain, never forced; args=('--no-verify',) when --no-push-verify. "
+    "unpublished_commit runs that before any GitHub write; then the "
+    "--post GitHub writes."
+)
+_FINISH_POST_REFUSED = (
+    "the summary is not posted (run_threads returns 1). git.push.report "
+    "prints Resume on REFUSED/LOST; a HELD push prints none. "
+    "PushBlock.message names pr push --expect then "
+    "pr comments --finish --post"
+)
+_FIX_POST_HOW = (
+    "fix.engine._land -> git.land.land(gated=True) -> git.push.push, "
+    "plain, never forced. A publishing hold "
+    "(pr.triage_round.hold_after_verify / TriagedRound) drafts the push; "
+    "--finish --post is what lands a held commit."
+)
+_FIX_POST_REFUSED = (
+    "a refused or held push leaves the commit local (not exit 1 unless "
+    "the commit itself failed); --finish --post lands a held one"
+)
+
+CONTRACT = core.command_contract.CommandContract(
+    summary="Fetch and manage PR review threads. Phase flags pick the "
+            "work; --post publishes it. Without --post, GitHub writes "
+            "and the held-commit push are drafted.",
+    groups=(
+        core.command_contract.FlagGroup(
+            "Phases",
+            ("--triage", "--fix", "--finish", "--reply", "--settle")),
+        core.command_contract.FlagGroup(
+            "Resume (with --fix)", ("--resume", "--no-resume")),
+        core.command_contract.FlagGroup(
+            "Deferral", ("--track", "--track-all")),
+        core.command_contract.FlagGroup(
+            "Settle details",
+            ("--as", "--reason", "--commit", "--body-file")),
+        core.command_contract.FlagGroup(
+            "Gates", ("--post", "--no-verify", "--no-push-verify")),
+    ),
+    remote_effects=(
+        core.command_contract.RemoteEffect(
+            "--post",
+            "thread replies, thread resolutions, the round summary "
+            "comment, and (with --track/--track-all at --finish) the "
+            "tracking issue",
+            "GitHub", _POST_HOW, _POST_REFUSED),
+        core.command_contract.RemoteEffect(
+            "--finish --post",
+            "a held fix commit pushed to refs/heads/<branch>",
+            "origin", _FINISH_POST_HOW, _FINISH_POST_REFUSED),
+        core.command_contract.RemoteEffect(
+            "--fix --post",
+            "the fix commit pushed to refs/heads/<branch> when "
+            "publishing is still enabled; a hold (discussion still "
+            "open) leaves it local for --finish --post",
+            "origin", _FIX_POST_HOW, _FIX_POST_REFUSED),
+    ),
+    exits=(
+        core.command_contract.ExitOutcome(
+            ExitCode.OK,
+            "dashboard printed; the chosen phase completed (draft or "
+            "published); --settle recorded locally"),
+        core.command_contract.ExitOutcome(
+            ExitCode.FAILURE,
+            "no PR; --settle/--reply flag conflicts; missing --reply "
+            "body; no worktree; unpublished held commit; --finish on "
+            "an incomplete fetch; finish_deferred_work refused (bad "
+            "--track, summary refused); fix commit failed; owner "
+            "boundary"),
+        core.command_contract.ExitOutcome(
+            ExitCode.USAGE,
+            "bad flags"),
+        core.command_contract.ExitOutcome(
+            ExitCode.TEMPFAIL,
+            "another pr run holds this branch or checkout; retry once "
+            "it finishes"),
+    ),
+    examples=(
+        core.command_contract.Example(
+            "pr comments --triage --post",
+            "classify threads and resolve verified ones on GitHub"),
+        core.command_contract.Example(
+            "pr comments --fix --post",
+            "triage, apply mechanical fixes, push if publishing is "
+            "still enabled"),
+        core.command_contract.Example(
+            "pr comments --finish --post",
+            "push a held fix commit, then replies, resolutions, "
+            "summary"),
+        core.command_contract.Example(
+            "pr comments --reply <id> --body-file reply.md --post",
+            "post one thread reply"),
+    ),
+    notes=(
+        "Without --post, GitHub writes and the held-commit push are "
+        "drafted.",
+        "--settle writes local state only and refuses --post.",
+        "--no-verify skips the verify gate after --fix, not git's "
+        "pre-push hook.",
+        "--fix --post does not land a held commit; --finish --post "
+        "does.",
+    ),
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -71,13 +184,16 @@ def build_parser() -> argparse.ArgumentParser:
     # and the pair gets typed as one unit — which is how a bare --finish stops
     # being the way to preview a closeout.
     parser = argparse.ArgumentParser(
+        prog="pr comments",
         description="PR review threads. Phase flags (--triage/--fix/--finish/"
                     "--reply/--settle) pick the work; --post publishes it.")
     parser.add_argument("--pr", metavar="NUM|URL", help="PR number or URL")
     parser.add_argument("--branch", metavar="NAME",
                         help="Branch name (resolved via resolve-branch)")
     parser.add_argument("--triage", action="store_true",
-                        help="Phase: classify threads via AI and auto-resolve verified")
+                        help="Phase: classify threads via AI; each verified "
+                             "thread needs --post to resolve on GitHub "
+                             "(without it the resolutions are drafted)")
     parser.add_argument("--fix", action="store_true",
                         help="Phase: triage threads and apply mechanical fixes via "
                              "Claude agent")

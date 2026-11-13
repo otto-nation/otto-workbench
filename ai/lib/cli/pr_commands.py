@@ -40,9 +40,10 @@ from pathlib import Path
 import batch.gc
 import cli.dispatch
 from cli.registry import COMMANDS
-import core.exit_codes
+import core.command_contract
 import core.log
 import core.publishing
+from core.exit_codes import ExitCode
 from core.trail import Trail
 import gh.budget
 import pr.context
@@ -64,7 +65,7 @@ import review.gc
 # Lives here, next to `cmd_gc`, the only Python producer. The binary re-exports
 # it so `pr_cli.EXIT_BUDGET_EXHAUSTED` in the tests keeps reading the same
 # object; the maintenance script cannot import it and compares against 75.
-EXIT_BUDGET_EXHAUSTED = core.exit_codes.ExitCode.TEMPFAIL
+EXIT_BUDGET_EXHAUSTED = ExitCode.TEMPFAIL
 
 
 def _run_pass(command: str, argv: list[str], ctx: pr.context.ResolvedContext, *,
@@ -226,6 +227,85 @@ def _worth_running(domain: pr.domains.Domain, head_sha: str, *,
     return True
 
 
+_POST_HOW = (
+    "forwards --post to the review binary as --self --fix --post (not the "
+    "pr review --post mode; same land as --self --fix --push in "
+    "docs/ai-automation.md#pr-review-contract): git.land.land(gated=True) "
+    "-> git.push.push, plain. Then pr ci --fix --post "
+    "(docs/ai-automation.md#pr-ci-contract). Then pr describe --post "
+    "(docs/ai-automation.md#pr-describe-contract). The comments pass is "
+    "never run; a hint says to run pr comments --fix."
+)
+_POST_REFUSED = (
+    "a refused or held push leaves that pass's commit local; a failed "
+    "describe leaves earlier writes in place. Review exit 4 (superseded) "
+    "stops before CI and describe."
+)
+
+FIX_CONTRACT = core.command_contract.CommandContract(
+    summary="Run the review and CI fix passes from cached state, then "
+            "revise the PR description. --post publishes what they "
+            "produce. The comments pass is never run, only hinted.",
+    groups=(
+        core.command_contract.FlagGroup("Publish", ("--post",)),
+        core.command_contract.FlagGroup("Forwarded", ("pass_flags",)),
+    ),
+    remote_effects=(
+        core.command_contract.RemoteEffect(
+            "--post",
+            "the review fix commit, the CI fix, then the PR description",
+            "origin and GitHub", _POST_HOW, _POST_REFUSED),
+    ),
+    exits=(
+        core.command_contract.ExitOutcome(
+            ExitCode.OK,
+            "passes ran or were skipped from cache; the description pass "
+            "ran"),
+        core.command_contract.ExitOutcome(
+            ExitCode.FAILURE,
+            "any pass failed, or there is no state yet",
+            (
+                core.command_contract.NextStep("", (
+                    "no state: run pr ci, pr review or pr comments first",
+                )),
+            ),
+        ),
+        core.command_contract.ExitOutcome(
+            ExitCode.USAGE,
+            "bad pr-level flags; a bad forwarded flag fails its pass (exit 1)"),
+        core.command_contract.ExitOutcome(
+            ExitCode.REFUSED,
+            "the review pass refused the branch as superseded; the "
+            "remaining passes did not run",
+            (
+                core.command_contract.NextStep("", (
+                    "re-run with --force to override",
+                )),
+            ),
+        ),
+        core.command_contract.ExitOutcome(
+            ExitCode.TEMPFAIL,
+            "another pr run holds this branch or checkout; retry once "
+            "it finishes"),
+    ),
+    examples=(
+        core.command_contract.Example(
+            "pr fix",
+            "run the passes; draft the review, CI, and description"),
+        core.command_contract.Example(
+            "pr fix --post",
+            "publish the review fix commit, CI fix, and PR description"),
+    ),
+    notes=(
+        "--post is forwarded to the review binary and to ci, not through "
+        "cmd_review, so it is the binary's publish flag (may_publish), "
+        "not the pr review --post mode.",
+        "A self-review files no GitHub review. argv other than --post is "
+        "not forwarded to describe.",
+    ),
+)
+
+
 def cmd_fix(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     """Run fix passes for CI, review, and comments.
 
@@ -234,6 +314,8 @@ def cmd_fix(argv: list[str], ctx: pr.context.ResolvedContext, **_kw) -> int:
     publishing gate is not an authorisation for the describe pass to edit the
     PR body, and a pass that ends by calling `sys.exit` ends itself rather
     than the two after it.
+
+    Exit codes, remote writes and examples are `FIX_CONTRACT`.
     """
     wt = ctx.require_worktree()
     state = pr.state.load_state(ctx.target_dir)

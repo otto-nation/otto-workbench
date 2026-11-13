@@ -44,6 +44,204 @@
       ],
       "type": "object",
       "x-contracts": {
+        "ci": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "report printed; with --fix the fixes landed or there was nothing to fix. Without --fix, 0 even when CI failed \u2014 read the JSON. A held or refused push of the fix commit is still 0",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "no run to report on, --fix without a worktree, a paused rebase in the worktree, a refused commit, or the fix pass failed",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "bad flags",
+              "name": "usage"
+            },
+            {
+              "code": 75,
+              "meaning": "another pr run holds this branch or checkout; retry once it finishes",
+              "name": "tempfail"
+            }
+          ],
+          "remote_effects": [
+            {
+              "how": "unless --no-rebase, and only when the branch is behind origin/main: rebase.commands.cmd_start(..., RunMode.FIX) \u2014 the same force-push as pr rebase --fix, git push --force-with-lease=refs/heads/<branch>:<expect> (docs/ai-automation.md#pr-rebase-contract). Then git.land.land -> git.push.push of the fix commit (plain, never forced), gated by --post via core.publishing.enabled().",
+              "on_refusal": "A paused conflicted rebase skips the fix pass (exit 1). A refused, failed, or aborted rebase continues the fix pass on the current base. A refused or held push leaves the fix commit local (not exit 1 unless the commit itself failed).",
+              "trigger": "--fix --post",
+              "where": "origin",
+              "writes": "a rebase force-push of refs/heads/<branch> (as pr rebase --fix) when behind and not --no-rebase, then the fix commit pushed to refs/heads/<branch>"
+            },
+            {
+              "how": "skips the verify gate (an agent exercising each claimed fix against the tree); every fix lands unverified; not git's pre-push hook",
+              "on_refusal": "n/a \u2014 the flag does not write remotely",
+              "trigger": "--no-verify",
+              "where": "this machine",
+              "writes": "nothing extra: changes how --fix lands locally"
+            }
+          ]
+        },
+        "comments": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "dashboard printed; the chosen phase completed (draft or published); --settle recorded locally",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "no PR; --settle/--reply flag conflicts; missing --reply body; no worktree; unpublished held commit; --finish on an incomplete fetch; finish_deferred_work refused (bad --track, summary refused); fix commit failed; owner boundary",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "bad flags",
+              "name": "usage"
+            },
+            {
+              "code": 75,
+              "meaning": "another pr run holds this branch or checkout; retry once it finishes",
+              "name": "tempfail"
+            }
+          ],
+          "remote_effects": [
+            {
+              "how": "REST via pr.comments._gh_post -> gh.client.api (thread replies, issue-comment summary, PR body PATCH); GraphQL via pr.comments.resolve_thread -> gh.client.graphql (resolutions). A --track/--track-all tracking issue at --finish is review.issue.create_issue (GitHub through gh.client; Linear through the linear CLI). Gated by core.publishing.enabled().",
+              "on_refusal": "a failed write is reported per thread (resolve_verified_threads and reply drains continue); nothing already posted is rolled back",
+              "trigger": "--post",
+              "where": "GitHub",
+              "writes": "thread replies, thread resolutions, the round summary comment, and (with --track/--track-all at --finish) the tracking issue"
+            },
+            {
+              "how": "review.closeout.push_held_commit -> git.push.push(gated=True), plain, never forced; args=('--no-verify',) when --no-push-verify. unpublished_commit runs that before any GitHub write; then the --post GitHub writes.",
+              "on_refusal": "the summary is not posted (run_threads returns 1). git.push.report prints Resume on REFUSED/LOST; a HELD push prints none. PushBlock.message names pr push --expect then pr comments --finish --post",
+              "trigger": "--finish --post",
+              "where": "origin",
+              "writes": "a held fix commit pushed to refs/heads/<branch>"
+            },
+            {
+              "how": "fix.engine._land -> git.land.land(gated=True) -> git.push.push, plain, never forced. A publishing hold (pr.triage_round.hold_after_verify / TriagedRound) drafts the push; --finish --post is what lands a held commit.",
+              "on_refusal": "a refused or held push leaves the commit local (not exit 1 unless the commit itself failed); --finish --post lands a held one",
+              "trigger": "--fix --post",
+              "where": "origin",
+              "writes": "the fix commit pushed to refs/heads/<branch> when publishing is still enabled; a hold (discussion still open) leaves it local for --finish --post"
+            }
+          ]
+        },
+        "create": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "PR created (its URL on stdout), or the --dry-run preview printed",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "refused in preflight (a PR already exists for the branch \u2014 use pr describe; run from the default branch; origin/<base> missing or unfetched; no commits ahead of the base; a --closes the tracker refuses), no checkout, the self-review gate (no self-review covers HEAD), the publishing token, the nesting gate, the push (including behind/diverged), content generation, or gh pr create",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "bad flags, unreadable --body-file, empty --skip-review reason",
+              "name": "usage"
+            },
+            {
+              "code": 75,
+              "meaning": "another pr run holds this branch or checkout; retry once it finishes",
+              "name": "tempfail"
+            }
+          ],
+          "remote_effects": [
+            {
+              "how": "plain git push (never forced) via pr.branch_sync.sync_branch / git.push.push: git push --set-upstream origin <branch> [--no-verify] when origin has no refs/heads/<branch>; otherwise git push [--no-verify] origin <branch>. Then gh pr create --title \u2026 --body-file - --assignee @me --base <base> [--draft].",
+              "on_refusal": "a refused push stops before any AI call or PR; git.push.report prints the Resume line. A refused gh pr create leaves the branch already on origin.",
+              "trigger": "",
+              "where": "origin and GitHub",
+              "writes": "refs/heads/<branch> on origin, then a new pull request"
+            },
+            {
+              "how": "adds --no-verify to git push, skipping the git pre-push hook; the self-review gate and the workbench owner check still run",
+              "on_refusal": "as for the push",
+              "trigger": "--no-verify",
+              "where": "origin",
+              "writes": "nothing extra: changes how the push runs"
+            }
+          ]
+        },
+        "describe": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "description current, revised, or no PR and nothing asked of one",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "no PR for --title/--body/--closes, no worktree, gh failure, could not read the PR body or fetch the PR base, unusable AI output, refused --closes or --body, no publishing token under --post",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "bad flags, unreadable --body-file",
+              "name": "usage"
+            },
+            {
+              "code": 75,
+              "meaning": "another pr run holds this branch or checkout; retry once it finishes",
+              "name": "tempfail"
+            }
+          ],
+          "remote_effects": [
+            {
+              "how": "gh pr edit <n> --repo <repo> --body-file - via pr.describe._apply_body (the revision, and a follow-up projection ahead of the HEAD gate when follow-ups are filed). With --title, a second call: gh pr edit <n> --repo <repo> --title <title> via _apply_title. Gated by core.publishing.enabled(); --dry-run never writes.",
+              "on_refusal": "gh failure: exit 1. A write that already landed (a follow-up projection, or a body edit before a failed title edit) is not rolled back.",
+              "trigger": "--post",
+              "where": "GitHub",
+              "writes": "the PR body (and title with --title)"
+            }
+          ]
+        },
+        "fix": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "passes ran or were skipped from cache; the description pass ran",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "any pass failed, or there is no state yet",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "bad pr-level flags; a bad forwarded flag fails its pass (exit 1)",
+              "name": "usage"
+            },
+            {
+              "code": 4,
+              "meaning": "the review pass refused the branch as superseded; the remaining passes did not run",
+              "name": "refused"
+            },
+            {
+              "code": 75,
+              "meaning": "another pr run holds this branch or checkout; retry once it finishes",
+              "name": "tempfail"
+            }
+          ],
+          "remote_effects": [
+            {
+              "how": "forwards --post to the review binary as --self --fix --post (not the pr review --post mode; same land as --self --fix --push in docs/ai-automation.md#pr-review-contract): git.land.land(gated=True) -> git.push.push, plain. Then pr ci --fix --post (docs/ai-automation.md#pr-ci-contract). Then pr describe --post (docs/ai-automation.md#pr-describe-contract). The comments pass is never run; a hint says to run pr comments --fix.",
+              "on_refusal": "a refused or held push leaves that pass's commit local; a failed describe leaves earlier writes in place. Review exit 4 (superseded) stops before CI and describe.",
+              "trigger": "--post",
+              "where": "origin and GitHub",
+              "writes": "the review fix commit, the CI fix, then the PR description"
+            }
+          ]
+        },
         "push": {
           "exit_codes": [
             {
@@ -152,6 +350,65 @@
               "trigger": "--no-verify",
               "where": "origin",
               "writes": "nothing extra: changes how the push above runs"
+            }
+          ]
+        },
+        "review": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "review completed (a partial run included), --version printed, a mode succeeded, or --track drafted/filed",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "flag conflicts (--fix without --self, --push without --fix, --recover with --force, --no-post with --post, --track with a mode or without --self); no target; a removed subcommand; bad --focus; unresolvable --base; every agent failed; no PR/review file for a mode; --fix on a drifted recover; owner boundary",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "bad flags; --if-changed without --schema-version",
+              "name": "usage"
+            },
+            {
+              "code": 4,
+              "meaning": "the branch looks superseded; refused before reviewing; JSON names override --force",
+              "name": "refused"
+            },
+            {
+              "code": 75,
+              "meaning": "another pr run holds this branch or checkout; retry once it finishes",
+              "name": "tempfail"
+            }
+          ],
+          "remote_effects": [
+            {
+              "how": "review.publish.resolve prompts unless --no-post (or the review binary's --post, which pr review does not reach); then review.publish.post -> cli.review_post -> review.posting.post_review, a PENDING review with inline comments. --submit then review.publish.submit_pending as a COMMENT review. A self-review files no GitHub review (review.run.run_self_review).",
+              "on_refusal": "declining a prompt leaves the review on disk, unposted; a failed post is not rolled back",
+              "trigger": "",
+              "where": "GitHub",
+              "writes": "a PENDING review with inline comments; --submit submits it as a COMMENT review"
+            },
+            {
+              "how": "review.invoke.run forwards --post to orchestrate when may_publish (--push or the binary's --post). fix.engine._land -> git.land.land(gated=True) -> git.push.push, plain, never forced.",
+              "on_refusal": "a refused or held push leaves the commit local; git.push.report prints Resume on REFUSED/LOST, nothing on HELD",
+              "trigger": "--self --fix --push",
+              "where": "origin",
+              "writes": "the fix commit pushed to refs/heads/<branch>"
+            },
+            {
+              "how": "cli.review_modes.post -> core.publishing.call_entry_point(cli.review_post:main). --event picks comment/approve/request_changes; approve and request_changes imply --submit.",
+              "on_refusal": "no PR number or no review file: exit 1, GitHub unchanged; a failed post is not rolled back",
+              "trigger": "--post",
+              "where": "GitHub",
+              "writes": "posts an existing review; --event picks comment/approve/request_changes"
+            },
+            {
+              "how": "review.file_tracked.run -> review.finding_issue.file_and_link -> review.issue.create_issue (GitHub through gh.client; Linear through the linear CLI), gated by core.publishing.enabled(). Under pr review, --post is a mode and cannot combine with --track; the publishing spelling is review --self --track ID --post.",
+              "on_refusal": "without the publishing gate the filing is drafted; a failed create leaves the findings unfiled",
+              "trigger": "--track",
+              "where": "GitHub or Linear",
+              "writes": "files the finding on the tracker (GitHub or Linear issue)"
             }
           ]
         }

@@ -130,13 +130,15 @@ _SPECS: tuple[CommandSpec, ...] = (
     # Its need varies by flag, like review's: a preview holds no run lock.
     CommandSpec("create",   "Create a PR, or preview it with --dry-run",
                 _create_need, takes_target=False,
-                handler="cli.pr_create:cmd_create"),
+                handler="cli.pr_create:cmd_create",
+                contract="cli.pr_create:CONTRACT"),
     CommandSpec("status",   "Show CI, review, and comment status dashboard",
                 Need(LOCAL,  update=False, locks=NO_LOCK),
                 handler="cli.pr_commands:cmd_status"),
     CommandSpec("ci",       "Check CI failures",
                 ci_need,  script="ci-check",
-                handler="cli.ci_check:main"),
+                handler="cli.ci_check:main",
+                contract="cli.ci_check:CONTRACT"),
     # Like create, a spec whose declaration its own argv resolves. `cli.review_modes`
     # owns the table the resolver reads, so this is an ordinary import rather
     # than something the entry point has to supply from above.
@@ -147,14 +149,17 @@ _SPECS: tuple[CommandSpec, ...] = (
     # performs the command.
     CommandSpec("review",   "Run code review",
                 cli.review_modes.need_for,              script="review",
-                handler="cli.review_entry:main"),
+                handler="cli.review_entry:main",
+                contract="cli.review_entry:CONTRACT"),
     CommandSpec("comments", "Fetch and manage PR review threads",
                 comments_need,  script="review-threads",
-                handler="cli.review_threads:main"),
+                handler="cli.review_threads:main",
+                contract="cli.review_threads:CONTRACT"),
     CommandSpec("fix",      "Fix CI + review + comments",
                 Need(REMOTE, update=True,  locks=TARGET_AND_CHECKOUT,
                      worktree=pr.context.WorktreeNeed.CREATE),
-                handler="cli.pr_commands:cmd_fix"),
+                handler="cli.pr_commands:cmd_fix",
+                contract="cli.pr_commands:FIX_CONTRACT"),
     CommandSpec("rebase",   "Rebase onto the branch's base",
                 rebase_need,  script="pr-rebase",
                 handler="cli.pr_rebase:main",
@@ -168,7 +173,8 @@ _SPECS: tuple[CommandSpec, ...] = (
                 contract="cli.pr_push:CONTRACT"),
     CommandSpec("describe", "Revise the PR description",
                 Need(REMOTE, update=True,  locks=TARGET_AND_CHECKOUT),  script="pr-describe",
-                handler="cli.pr_describe:main"),
+                handler="cli.pr_describe:main",
+                contract="cli.pr_describe:CONTRACT"),
     # A read of GitHub and the local refs; no lock, no fetch of its own.
     CommandSpec("stack",    "Show the repo's PR stack graph (JSON)",
                 Need(LOCAL,  update=False, locks=NO_LOCK),

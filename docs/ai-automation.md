@@ -957,6 +957,161 @@ the same text). Lease semantics for `pr rebase` and `pr push` live here and nowh
 To finish a rebase `pr rebase` completed but did not push, run `pr rebase --push-only`;
 for one finished outside `pr`, add `--expect <full SHA>` as its `Next:` block says.
 
+#### pr create contract
+
+Create a pull request for the current branch, or preview it with --dry-run. Pushes HEAD (plain, never forced) then opens a PR; refuses if one already exists.
+
+**Writes remotely**
+
+| Trigger | Writes | Where | How | If refused |
+|---|---|---|---|---|
+| `(bare invocation)` | refs/heads/<branch> on origin, then a new pull request | origin and GitHub | plain git push (never forced) via pr.branch_sync.sync_branch / git.push.push: git push --set-upstream origin <branch> [--no-verify] when origin has no refs/heads/<branch>; otherwise git push [--no-verify] origin <branch>. Then gh pr create --title … --body-file - --assignee @me --base <base> [--draft]. | a refused push stops before any AI call or PR; git.push.report prints the Resume line. A refused gh pr create leaves the branch already on origin. |
+| `--no-verify` | nothing extra: changes how the push runs | origin | adds --no-verify to git push, skipping the git pre-push hook; the self-review gate and the workbench owner check still run | as for the push |
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | PR created (its URL on stdout), or the --dry-run preview printed |  |
+| `1` | refused in preflight (a PR already exists for the branch — use pr describe; run from the default branch; origin/<base> missing or unfetched; no commits ahead of the base; a --closes the tracker refuses), no checkout, the self-review gate (no self-review covers HEAD), the publishing token, the nesting gate, the push (including behind/diverged), content generation, or gh pr create |  |
+| `2` | bad flags, unreadable --body-file, empty --skip-review reason |  |
+| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+
+**Examples**
+
+- `pr create --draft` — push the branch and open a draft PR
+- `pr create --draft --closes 941` — the same, closing issue 941 on merge
+- `pr create --draft --dry-run` — print title and body; push nothing, create nothing
+- `pr create --draft --skip-review "user asked to skip"` — skip the self-review gate; the reason is recorded on the trail
+
+> --dry-run takes no lock, pushes nothing and never calls gh.
+
+#### pr ci contract
+
+Report CI failures for the branch. --fix diagnoses and applies fixes; --post pushes them. Without --fix, exit 0 even when CI failed — read the JSON.
+
+**Writes remotely**
+
+| Trigger | Writes | Where | How | If refused |
+|---|---|---|---|---|
+| `--fix --post` | a rebase force-push of refs/heads/<branch> (as pr rebase --fix) when behind and not --no-rebase, then the fix commit pushed to refs/heads/<branch> | origin | unless --no-rebase, and only when the branch is behind origin/main: rebase.commands.cmd_start(..., RunMode.FIX) — the same force-push as pr rebase --fix, git push --force-with-lease=refs/heads/<branch>:<expect> (docs/ai-automation.md#pr-rebase-contract). Then git.land.land -> git.push.push of the fix commit (plain, never forced), gated by --post via core.publishing.enabled(). | A paused conflicted rebase skips the fix pass (exit 1). A refused, failed, or aborted rebase continues the fix pass on the current base. A refused or held push leaves the fix commit local (not exit 1 unless the commit itself failed). |
+| `--no-verify` | nothing extra: changes how --fix lands locally | this machine | skips the verify gate (an agent exercising each claimed fix against the tree); every fix lands unverified; not git's pre-push hook | n/a — the flag does not write remotely |
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | report printed; with --fix the fixes landed or there was nothing to fix. Without --fix, 0 even when CI failed — read the JSON. A held or refused push of the fix commit is still 0 |  |
+| `1` | no run to report on, --fix without a worktree, a paused rebase in the worktree, a refused commit, or the fix pass failed |  |
+| `2` | bad flags |  |
+| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+
+**Examples**
+
+- `pr ci` — print the latest run for the branch
+- `pr ci --wait` — poll until the run finishes
+- `pr ci --fix --post` — rebase if behind, fix, and push the fix commit
+- `pr ci --fix --no-rebase --post` — fix and push without rebasing first
+
+> --no-verify here skips the verify gate (an agent exercising each fix), not git's pre-push hook.
+> --fix without --post still rebases locally when behind and commits; both pushes are drafted.
+> --fix may gh run rerun --failed once when every remaining failure is transient rate-limit infra (not gated by --post).
+
+#### pr review contract
+
+Run the configured review agent on a PR, or handle a mode (--post an existing review, --repair, --summary, --dismiss, --recover, --list). A plain PR run prompts before posting.
+
+**Writes remotely**
+
+| Trigger | Writes | Where | How | If refused |
+|---|---|---|---|---|
+| `(bare invocation)` | a PENDING review with inline comments; --submit submits it as a COMMENT review | GitHub | review.publish.resolve prompts unless --no-post (or the review binary's --post, which pr review does not reach); then review.publish.post -> cli.review_post -> review.posting.post_review, a PENDING review with inline comments. --submit then review.publish.submit_pending as a COMMENT review. A self-review files no GitHub review (review.run.run_self_review). | declining a prompt leaves the review on disk, unposted; a failed post is not rolled back |
+| `--self --fix --push` | the fix commit pushed to refs/heads/<branch> | origin | review.invoke.run forwards --post to orchestrate when may_publish (--push or the binary's --post). fix.engine._land -> git.land.land(gated=True) -> git.push.push, plain, never forced. | a refused or held push leaves the commit local; git.push.report prints Resume on REFUSED/LOST, nothing on HELD |
+| `--post` | posts an existing review; --event picks comment/approve/request_changes | GitHub | cli.review_modes.post -> core.publishing.call_entry_point(cli.review_post:main). --event picks comment/approve/request_changes; approve and request_changes imply --submit. | no PR number or no review file: exit 1, GitHub unchanged; a failed post is not rolled back |
+| `--track` | files the finding on the tracker (GitHub or Linear issue) | GitHub or Linear | review.file_tracked.run -> review.finding_issue.file_and_link -> review.issue.create_issue (GitHub through gh.client; Linear through the linear CLI), gated by core.publishing.enabled(). Under pr review, --post is a mode and cannot combine with --track; the publishing spelling is review --self --track ID --post. | without the publishing gate the filing is drafted; a failed create leaves the findings unfiled |
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | review completed (a partial run included), --version printed, a mode succeeded, or --track drafted/filed |  |
+| `1` | flag conflicts (--fix without --self, --push without --fix, --recover with --force, --no-post with --post, --track with a mode or without --self); no target; a removed subcommand; bad --focus; unresolvable --base; every agent failed; no PR/review file for a mode; --fix on a drifted recover; owner boundary |  |
+| `2` | bad flags; --if-changed without --schema-version |  |
+| `4` | the branch looks superseded; refused before reviewing; JSON names override --force | `pr review --force … to review it anyway` |
+| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+
+**Examples**
+
+- `pr review --no-post 42` — review PR 42; do not post and do not prompt
+- `pr review --self --fix --push` — self-review, apply findings, push the fix commit
+- `pr review --post --event comment` — post an existing review as a COMMENT review
+- `pr review --json-summary 42` — review PR 42; stdout is one REVIEW_SUMMARY:{json} line
+
+> Under `pr review`, `--post` names a mode that posts an existing review; the `review` binary's own `--post` (post after running) is not reachable through `pr`.
+> A plain PR run prompts before posting and before replacing a pending review; --no-post skips both. --force skips the stale/pending prompts, not the post prompts, and overrides the superseded refusal.
+> A self-review files no GitHub review.
+
+#### pr comments contract
+
+Fetch and manage PR review threads. Phase flags pick the work; --post publishes it. Without --post, GitHub writes and the held-commit push are drafted.
+
+**Writes remotely**
+
+| Trigger | Writes | Where | How | If refused |
+|---|---|---|---|---|
+| `--post` | thread replies, thread resolutions, the round summary comment, and (with --track/--track-all at --finish) the tracking issue | GitHub | REST via pr.comments._gh_post -> gh.client.api (thread replies, issue-comment summary, PR body PATCH); GraphQL via pr.comments.resolve_thread -> gh.client.graphql (resolutions). A --track/--track-all tracking issue at --finish is review.issue.create_issue (GitHub through gh.client; Linear through the linear CLI). Gated by core.publishing.enabled(). | a failed write is reported per thread (resolve_verified_threads and reply drains continue); nothing already posted is rolled back |
+| `--finish --post` | a held fix commit pushed to refs/heads/<branch> | origin | review.closeout.push_held_commit -> git.push.push(gated=True), plain, never forced; args=('--no-verify',) when --no-push-verify. unpublished_commit runs that before any GitHub write; then the --post GitHub writes. | the summary is not posted (run_threads returns 1). git.push.report prints Resume on REFUSED/LOST; a HELD push prints none. PushBlock.message names pr push --expect then pr comments --finish --post |
+| `--fix --post` | the fix commit pushed to refs/heads/<branch> when publishing is still enabled; a hold (discussion still open) leaves it local for --finish --post | origin | fix.engine._land -> git.land.land(gated=True) -> git.push.push, plain, never forced. A publishing hold (pr.triage_round.hold_after_verify / TriagedRound) drafts the push; --finish --post is what lands a held commit. | a refused or held push leaves the commit local (not exit 1 unless the commit itself failed); --finish --post lands a held one |
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | dashboard printed; the chosen phase completed (draft or published); --settle recorded locally |  |
+| `1` | no PR; --settle/--reply flag conflicts; missing --reply body; no worktree; unpublished held commit; --finish on an incomplete fetch; finish_deferred_work refused (bad --track, summary refused); fix commit failed; owner boundary |  |
+| `2` | bad flags |  |
+| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+
+**Examples**
+
+- `pr comments --triage --post` — classify threads and resolve verified ones on GitHub
+- `pr comments --fix --post` — triage, apply mechanical fixes, push if publishing is still enabled
+- `pr comments --finish --post` — push a held fix commit, then replies, resolutions, summary
+- `pr comments --reply <id> --body-file reply.md --post` — post one thread reply
+
+> Without --post, GitHub writes and the held-commit push are drafted.
+> --settle writes local state only and refuses --post.
+> --no-verify skips the verify gate after --fix, not git's pre-push hook.
+> --fix --post does not land a held commit; --finish --post does.
+
+#### pr fix contract
+
+Run the review and CI fix passes from cached state, then revise the PR description. --post publishes what they produce. The comments pass is never run, only hinted.
+
+**Writes remotely**
+
+| Trigger | Writes | Where | How | If refused |
+|---|---|---|---|---|
+| `--post` | the review fix commit, the CI fix, then the PR description | origin and GitHub | forwards --post to the review binary as --self --fix --post (not the pr review --post mode; same land as --self --fix --push in docs/ai-automation.md#pr-review-contract): git.land.land(gated=True) -> git.push.push, plain. Then pr ci --fix --post (docs/ai-automation.md#pr-ci-contract). Then pr describe --post (docs/ai-automation.md#pr-describe-contract). The comments pass is never run; a hint says to run pr comments --fix. | a refused or held push leaves that pass's commit local; a failed describe leaves earlier writes in place. Review exit 4 (superseded) stops before CI and describe. |
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | passes ran or were skipped from cache; the description pass ran |  |
+| `1` | any pass failed, or there is no state yet | `no state: run pr ci, pr review or pr comments first` |
+| `2` | bad pr-level flags; a bad forwarded flag fails its pass (exit 1) |  |
+| `4` | the review pass refused the branch as superseded; the remaining passes did not run | `re-run with --force to override` |
+| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+
+**Examples**
+
+- `pr fix` — run the passes; draft the review, CI, and description
+- `pr fix --post` — publish the review fix commit, CI fix, and PR description
+
+> --post is forwarded to the review binary and to ci, not through cmd_review, so it is the binary's publish flag (may_publish), not the pr review --post mode.
+> A self-review files no GitHub review. argv other than --post is not forwarded to describe.
+
 #### pr rebase contract
 
 Rebase the branch onto its base, handle conflicts, and force-push the result under an explicit lease. Never edits the PR on GitHub.
@@ -1043,6 +1198,34 @@ Push HEAD to origin under a lease on the remote tip you planned from. Never reba
 
 - `pr push --expect 0123456789abcdef0123456789abcdef01234567` — push HEAD if origin still holds that commit, or an ancestor of it
 - `pr push --expect <sha> --no-verify` — the same, skipping the pre-push hook
+
+#### pr describe contract
+
+Revise a PR description against the repo's PR template. Without --post the edit is drafted; --post applies it on GitHub.
+
+**Writes remotely**
+
+| Trigger | Writes | Where | How | If refused |
+|---|---|---|---|---|
+| `--post` | the PR body (and title with --title) | GitHub | gh pr edit <n> --repo <repo> --body-file - via pr.describe._apply_body (the revision, and a follow-up projection ahead of the HEAD gate when follow-ups are filed). With --title, a second call: gh pr edit <n> --repo <repo> --title <title> via _apply_title. Gated by core.publishing.enabled(); --dry-run never writes. | gh failure: exit 1. A write that already landed (a follow-up projection, or a body edit before a failed title edit) is not rolled back. |
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | description current, revised, or no PR and nothing asked of one |  |
+| `1` | no PR for --title/--body/--closes, no worktree, gh failure, could not read the PR body or fetch the PR base, unusable AI output, refused --closes or --body, no publishing token under --post |  |
+| `2` | bad flags, unreadable --body-file |  |
+| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+
+**Examples**
+
+- `pr describe` — revise if HEAD moved since the last published pass; draft only
+- `pr describe --force --post` — revise regardless of HEAD and apply it on GitHub
+- `pr describe --post --closes 941` — apply the revision and link issue 941 to close on merge
+
+> Without --post the edit is drafted to stderr; the bare invocation writes nothing on GitHub.
+> --dry-run prints the revision and records nothing, even with --post.
 
 ### Running a branch's own libraries
 

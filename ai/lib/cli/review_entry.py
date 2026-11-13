@@ -12,13 +12,7 @@ chaining and nothing restores it. The run lock is claimed between resolving the
 self-review target and switching the checkout to it — a resolver that did both
 would take a process-lifetime lock from inside the library.
 
-Usage:
-  review <pr_url_or_number>
-  review --no-post <pr_url_or_number>
-  review --self [<pr_url_or_number>]
-  review --self --track ID [--track ID ...] [--post]
-  review [--self] --recover [<pr_url_or_number>]
-  review [--self] [--focus TEXT]... [--focus-file PATH]... [<pr_url_or_number>]
+Exit codes, remote writes and examples are `CONTRACT` below.
 """
 
 # doc-group: cli
@@ -34,12 +28,14 @@ from pathlib import Path
 from agent.registry import add_phase_skip_flags, phase_skips
 import cli.boundary
 import cli.locks
+import core.command_contract
 import core.log
 import core.proc
 import core.publishing
 import core.run_lock
 import core.version
 import core.workbench_paths
+from core.exit_codes import ExitCode
 from core.trail import Trail, add_trail_args
 import pr.context
 import pr.state
@@ -67,6 +63,154 @@ _REMOVED = {
     "threads": "pr comments",
 }
 
+_PR_POST_HOW = (
+    "review.publish.resolve prompts unless --no-post (or the review "
+    "binary's --post, which pr review does not reach); then "
+    "review.publish.post -> cli.review_post -> review.posting.post_review, "
+    "a PENDING review with inline comments. --submit then "
+    "review.publish.submit_pending as a COMMENT review. A self-review "
+    "files no GitHub review (review.run.run_self_review)."
+)
+_PR_POST_REFUSED = (
+    "declining a prompt leaves the review on disk, unposted; a failed "
+    "post is not rolled back"
+)
+_FIX_PUSH_HOW = (
+    "review.invoke.run forwards --post to orchestrate when may_publish "
+    "(--push or the binary's --post). fix.engine._land -> "
+    "git.land.land(gated=True) -> git.push.push, plain, never forced."
+)
+_FIX_PUSH_REFUSED = (
+    "a refused or held push leaves the commit local; git.push.report "
+    "prints Resume on REFUSED/LOST, nothing on HELD"
+)
+_MODE_POST_HOW = (
+    "cli.review_modes.post -> core.publishing.call_entry_point("
+    "cli.review_post:main). --event picks comment/approve/"
+    "request_changes; approve and request_changes imply --submit."
+)
+_MODE_POST_REFUSED = (
+    "no PR number or no review file: exit 1, GitHub unchanged; a "
+    "failed post is not rolled back"
+)
+_TRACK_HOW = (
+    "review.file_tracked.run -> review.finding_issue.file_and_link -> "
+    "review.issue.create_issue (GitHub through gh.client; Linear "
+    "through the linear CLI), gated by core.publishing.enabled(). "
+    "Under pr review, --post is a mode and cannot combine with "
+    "--track; the publishing spelling is review --self --track ID --post."
+)
+_TRACK_REFUSED = (
+    "without the publishing gate the filing is drafted; a failed "
+    "create leaves the findings unfiled"
+)
+
+CONTRACT = core.command_contract.CommandContract(
+    summary="Run the configured review agent on a PR, or handle a mode "
+            "(--post an existing review, --repair, --summary, --dismiss, "
+            "--recover, --list). A plain PR run prompts before posting.",
+    groups=(
+        core.command_contract.FlagGroup(
+            "Target",
+            ("args", "--base", "--self", "--skip-user-verification")),
+        core.command_contract.FlagGroup(
+            "Publish", ("--no-post", "--submit", "--force")),
+        core.command_contract.FlagGroup(
+            "Fix", ("--fix", "--push", "--track")),
+        core.command_contract.FlagGroup(
+            "Phases",
+            ("--no-holistic", "--no-scout", "--no-group",
+             "--no-synthesis", "--no-disprove", "--disprove")),
+        core.command_contract.FlagGroup(
+            "Budget",
+            ("--max-parallel", "--max-cost", "--model", "--effort",
+             "--max-groups", "--generated")),
+        core.command_contract.FlagGroup(
+            "Steering", ("--issue", "--focus", "--focus-file")),
+        core.command_contract.FlagGroup(
+            "Output", ("--json-summary", "-V")),
+        core.command_contract.FlagGroup(
+            "Modes",
+            ("--post", "--repair", "--summary", "--dismiss",
+             "--recover", "--list", "--event", "--if-changed")),
+    ),
+    remote_effects=(
+        core.command_contract.RemoteEffect(
+            "",
+            "a PENDING review with inline comments; --submit submits it "
+            "as a COMMENT review",
+            "GitHub", _PR_POST_HOW, _PR_POST_REFUSED),
+        core.command_contract.RemoteEffect(
+            "--self --fix --push",
+            "the fix commit pushed to refs/heads/<branch>",
+            "origin", _FIX_PUSH_HOW, _FIX_PUSH_REFUSED),
+        core.command_contract.RemoteEffect(
+            "--post",
+            "posts an existing review; --event picks "
+            "comment/approve/request_changes",
+            "GitHub", _MODE_POST_HOW, _MODE_POST_REFUSED),
+        core.command_contract.RemoteEffect(
+            "--track",
+            "files the finding on the tracker (GitHub or Linear issue)",
+            "GitHub or Linear", _TRACK_HOW, _TRACK_REFUSED),
+    ),
+    exits=(
+        core.command_contract.ExitOutcome(
+            ExitCode.OK,
+            "review completed (a partial run included), --version "
+            "printed, a mode succeeded, or --track drafted/filed"),
+        core.command_contract.ExitOutcome(
+            ExitCode.FAILURE,
+            "flag conflicts (--fix without --self, --push without "
+            "--fix, --recover with --force, --no-post with --post, "
+            "--track with a mode or without --self); no target; a "
+            "removed subcommand; bad --focus; unresolvable --base; "
+            "every agent failed; no PR/review file for a mode; --fix "
+            "on a drifted recover; owner boundary"),
+        core.command_contract.ExitOutcome(
+            ExitCode.USAGE,
+            "bad flags; --if-changed without --schema-version"),
+        core.command_contract.ExitOutcome(
+            ExitCode.REFUSED,
+            "the branch looks superseded; refused before reviewing; "
+            "JSON names override --force",
+            (
+                core.command_contract.NextStep("", (
+                    "pr review --force … to review it anyway",
+                )),
+            ),
+        ),
+        core.command_contract.ExitOutcome(
+            ExitCode.TEMPFAIL,
+            "another pr run holds this branch or checkout; retry once "
+            "it finishes"),
+    ),
+    examples=(
+        core.command_contract.Example(
+            "pr review --no-post 42",
+            "review PR 42; do not post and do not prompt"),
+        core.command_contract.Example(
+            "pr review --self --fix --push",
+            "self-review, apply findings, push the fix commit"),
+        core.command_contract.Example(
+            "pr review --post --event comment",
+            "post an existing review as a COMMENT review"),
+        core.command_contract.Example(
+            "pr review --json-summary 42",
+            "review PR 42; stdout is one REVIEW_SUMMARY:{json} line"),
+    ),
+    notes=(
+        "Under `pr review`, `--post` names a mode that posts an "
+        "existing review; the `review` binary's own `--post` (post "
+        "after running) is not reachable through `pr`.",
+        "A plain PR run prompts before posting and before replacing a "
+        "pending review; --no-post skips both. --force skips the "
+        "stale/pending prompts, not the post prompts, and overrides "
+        "the superseded refusal.",
+        "A self-review files no GitHub review.",
+    ),
+)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -75,7 +219,9 @@ def build_parser() -> argparse.ArgumentParser:
         add_help=True,
     )
     parser.add_argument("--no-post", action="store_true",
-                        help="Do not post the review to GitHub")
+                        help="Do not post to GitHub and do not prompt (a plain "
+                             "run prompts before posting and before replacing "
+                             "a pending review)")
     parser.add_argument("--post", action="store_true",
                         help="Post the review to GitHub when it finishes")
     parser.add_argument("--submit", action="store_true",
@@ -103,7 +249,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disprove", action="store_true", default=None,
                         help="Enable the disprove-it gate (default: effort-based)")
     parser.add_argument("--json-summary", action="store_true",
-                        help="Print a machine-readable summary on stdout")
+                        help="Print one REVIEW_SUMMARY:{json} line on stdout "
+                             "(the only stdout)")
     parser.add_argument("--issue", metavar="URL",
                         help="Related issue to include in the review prompt")
     review.focus.add_focus_args(parser)

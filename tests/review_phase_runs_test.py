@@ -15,11 +15,16 @@ from agent.types import EFFORT_PRESETS
 import cli.review_orchestrate
 from core.phases import Effort, Phase
 from gh.types import PRContext, PRMetadata
+import review.phase_runs
 import review.phases
 import review.pipeline
-from review.paths import read_review_meta
+import review.steps
+from review.paths import phase_output_path, read_review_meta
+from review.phases import PhaseResult
+from review.state import PipelineState
 from review.types import (
-    PhaseRun, Pipeline, PreflightData, ReviewJob, ReviewMeta, review_meta_from_dict,
+    GroupSkip, PhaseRun, Pipeline, PreflightData, ReviewJob, ReviewMeta,
+    review_meta_from_dict,
 )
 from review_focus_support import DERIVED_FOCUS
 from review_record_support import record, store_record
@@ -156,3 +161,119 @@ class TestHandoffPersistsPhases:
         assert phases[Phase.GROUP.value].ran is False
         assert phases[Phase.SYNTHESIS.value].reason == "one group covers the PR"
         assert job.pipeline_run is Pipeline.SINGLE
+
+
+def _by_phase(job):
+    return {r.phase: r for r in job.phase_runs}
+
+
+def _stub_multi_tail(monkeypatch):
+    monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
+    monkeypatch.setattr(review.pipeline, "_single_group_goes_single", lambda *a: False)
+    monkeypatch.setattr(review.pipeline, "_write_pipeline_state", lambda *a: None)
+    monkeypatch.setattr(review.pipeline, "_run_holistic_phase", lambda *a: PhaseResult())
+    monkeypatch.setattr(
+        review.pipeline, "hold_group_workers", lambda *a: __import__("contextlib").nullcontext(1))
+    monkeypatch.setattr(
+        review.pipeline, "_run_synthesis_or_fallback", lambda *a, **k: PhaseResult())
+    monkeypatch.setattr(
+        review.pipeline, "_run_disprove_gate", lambda *a, **k: PhaseResult())
+    monkeypatch.setattr(review.pipeline, "_consolidate_logs", lambda *a, **k: None)
+    monkeypatch.setattr(
+        review.pipeline, "_merge_round", lambda *a, **k: SimpleNamespace(
+            record=SimpleNamespace(visible=False), fresh=0, carry=lambda r: r))
+    monkeypatch.setattr(review.pipeline, "_nothing_new", lambda *a: False)
+
+
+class TestScanRecordsPhases:
+    def test_an_incremental_scan_records_the_skip_reason(self, tmp_path, monkeypatch):
+        job = _job(tmp_path)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+        state = PipelineState(head_sha="abc", group_names=["g"])
+        review.steps._run_holistic_phase(job, 4, state, incremental=True)
+        scan = _by_phase(job)[Phase.SCOUT.value]
+        assert scan.ran is False
+        assert scan.reason == "incremental review"
+
+    def test_a_reused_scan_records_exists(self, tmp_path, monkeypatch):
+        job = _job(tmp_path)
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "reuse_scan", lambda *a: PhaseResult())
+        Path(phase_output_path(job.review_file, Phase.SCOUT)).write_text("{}")
+        state = PipelineState(
+            head_sha="abc", group_names=["g"], done={Phase.SCOUT})
+        review.steps._run_holistic_phase(job, 4, state, incremental=False)
+        scan = _by_phase(job)[Phase.SCOUT.value]
+        assert scan.ran is True
+        assert scan.reason == "exists"
+
+
+class TestGroupRecordsPhases:
+    def test_no_group_records_the_skip(self, tmp_path, monkeypatch):
+        job = _job(tmp_path, **_BIG_PR)
+        job.skip_phases = frozenset({Phase.GROUP})
+        job.preflight = PreflightData(
+            diff="", commit_log="", file_contents={}, file_permissions={},
+            instructions_md="", architecture_md="",
+        )
+        _stub_multi_tail(monkeypatch)
+        monkeypatch.setattr(
+            review.pipeline, "_resolve_recovery",
+            lambda j, groups: SimpleNamespace(
+                already_complete=False, cost_so_far=0.0, skip_groups=set(),
+                state=None, resume_at_gate=False),
+        )
+        monkeypatch.setattr(
+            review.pipeline, "_run_group_phase",
+            lambda *a: (_ for _ in ()).throw(AssertionError("groups ran")))
+        review.pipeline.run_multi_phase(job, max_parallel=1)
+        group = _by_phase(job)[Phase.GROUP.value]
+        assert group.ran is False
+        assert group.reason == "--no-group"
+
+    def test_recovery_groups_record_resumed(self, tmp_path, monkeypatch):
+        job = _job(tmp_path, **_BIG_PR)
+        job.preflight = PreflightData(
+            diff="", commit_log="", file_contents={}, file_permissions={},
+            instructions_md="", architecture_md="",
+        )
+        _stub_multi_tail(monkeypatch)
+        monkeypatch.setattr(
+            review.pipeline, "_resolve_recovery",
+            lambda j, groups: SimpleNamespace(
+                already_complete=False, cost_so_far=0.0, skip_groups={1},
+                state=PipelineState(head_sha=job.pr.head_sha, group_names=["g"]),
+                resume_at_gate=False),
+        )
+        monkeypatch.setattr(
+            review.pipeline, "_run_group_phase",
+            lambda *a: SimpleNamespace(outputs=[], failures=[], cost=0.0))
+        review.pipeline.run_multi_phase(job, max_parallel=1)
+        group = _by_phase(job)[Phase.GROUP.value]
+        assert group.ran is True
+        assert group.reason == "resumed from prior attempt"
+
+    def test_carried_groups_name_the_count(self):
+        assert review.phase_runs.group_ran_reason(
+            {1: GroupSkip.CARRIED, 2: GroupSkip.CARRIED},
+        ) == "2 groups carried forward"
+        assert review.phase_runs.group_ran_reason(
+            {1: GroupSkip.CARRIED},
+        ) == "1 group carried forward"
+        assert review.phase_runs.group_ran_reason(
+            {1: GroupSkip.RECOVERY, 2: GroupSkip.CARRIED},
+        ) == "resumed from prior attempt"
+
+
+class TestDisproveGateRecordsPhases:
+    def test_gate_off_records_the_reason(self, tmp_path, monkeypatch):
+        job = _job(tmp_path)
+        job.skip_phases = frozenset({Phase.DISPROVE})
+        state = PipelineState(head_sha="abc", group_names=["g"])
+        monkeypatch.setattr(review.steps, "_write_pipeline_state", lambda *a: None)
+        monkeypatch.setattr(review.steps, "_inject_failures_and_status", lambda *a: None)
+        review.steps._run_disprove_gate(job, state, None, 0.0, 20.0)
+        gate = _by_phase(job)[Phase.DISPROVE.value]
+        assert gate.ran is False
+        assert gate.reason == "gate off"
+

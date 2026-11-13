@@ -478,6 +478,9 @@ def run_multi_phase(
             group_outputs, failed_groups = group_phase.outputs, group_phase.failures
             cost_so_far += group_phase.cost
 
+    review.phase_runs.record_group_phase(
+        job, unrun=unrun, group_skips=group_skips)
+
     # ── Phase 3: Merge ───────────────────────────────────────────────────────
     merged = _merge_round(job, group_outputs[:], failed_groups,
                           tuple(g.name for g in groups),
@@ -497,6 +500,8 @@ def run_multi_phase(
         # the review on disk is the one this run would write again. Re-checking
         # the file keeps the plan honest about a review deleted between runs.
         core.log.info("Phase 4: Synthesis — the prior run's review stands, resuming at the gate")
+        review.phase_runs.record(
+            job, Phase.SYNTHESIS, ran=True, reason="resumed from prior attempt")
         synthesis = PhaseResult()
     else:
         synthesis = _run_synthesis_or_fallback(

@@ -441,6 +441,9 @@ def test_nothing_new_skips_synthesis_and_states_a_verdict(tmp_path, monkeypatch)
     assert "**Verdict: Needs discussion.**" in Path(job.review_file).read_text()
     assert reconciled, "reconciliation did not run"
     assert [f.id for f in stored.record.findings] == ["S1"]
+    by_phase = {r.phase: r for r in job.phase_runs}
+    assert by_phase[Phase.SYNTHESIS.value].ran is False
+    assert by_phase[Phase.SYNTHESIS.value].reason == "settled"
 
 
 def test_a_settled_over_budget_round_still_ships_settled(tmp_path, monkeypatch):
@@ -474,6 +477,9 @@ def test_a_settled_round_skips_the_disprove_gate(tmp_path, monkeypatch):
     result = review.steps._run_disprove_gate(job, state, True, 0.0, 20.0, settled=True)
     assert result.cost == 0.0
     assert Phase.DISPROVE in state.done and Phase.DISPROVE not in state.failed
+    by_phase = {r.phase: r for r in job.phase_runs}
+    assert by_phase[Phase.DISPROVE.value].ran is False
+    assert by_phase[Phase.DISPROVE.value].reason == "settled"
 
 
 @pytest.mark.parametrize("nothing_new", [True, False], ids=["settled", "unsettled"])

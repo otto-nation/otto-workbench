@@ -283,6 +283,17 @@ _bd() {
   [ "$output" = '["sh",true,false,["sh","pr","batch","status","--full","--offline"],true]' ]
 }
 
+@test "classifyCode files the missing-env.sh preamble failure as outdated" {
+  _rr '
+    console.log(JSON.stringify([
+      m.classifyCode({ code: 127, stdout: "", stderr: m.REMOTE_ENV_MISSING + "\n" }).kind,
+      m.classifyCode({ code: 127, stdout: "", stderr: "gh: not found" }).kind,
+    ]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["outdated","missing-tool"]' ]
+}
+
 @test "classifyCode treats exit 124 as timeout" {
   _rr '
     process.stdout.write(JSON.stringify([

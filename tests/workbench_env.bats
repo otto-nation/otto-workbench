@@ -164,7 +164,7 @@ _host_brew() {
     'source "$HOME/.config/zsh/config.d/loader.zsh"'
 
   [ "$status" -eq 0 ]
-  [[ "$stderr" == *"env.sh is missing"*"otto-workbench sync"* ]]
+  [[ "$stderr" == *"env.sh is missing"*"~/.local/bin/otto-workbench sync"* ]]
 }
 
 # ── one definition: constants and the herdr preamble agree with env.sh ────────

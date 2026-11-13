@@ -63,13 +63,10 @@ if [[ -f "$HOME/.config/zsh/env.sh" ]]; then
   source "$HOME/.config/zsh/env.sh"
   workbench_env
 else
-  echo "⚠  ~/.config/zsh/env.sh is missing — run otto-workbench sync to restore PATH and ~/.env.local" >&2
-  [[ -d "$HOME/.local/bin" ]] && path=("$HOME/.local/bin" $path)
-  if [[ -r "$HOME/.env.local" ]]; then
-    set -a
-    source "$HOME/.env.local"
-    set +a
-  fi
+  # No fallback copy of env.sh's PATH and ~/.env.local handling here: a second
+  # copy is what drifted before. ~/.local/bin is not on PATH in this state, so
+  # the fix is named by its absolute path.
+  echo "⚠  ~/.config/zsh/env.sh is missing — run ~/.local/bin/otto-workbench sync to restore PATH and ~/.env.local" >&2
 fi
 
 _wb_load framework

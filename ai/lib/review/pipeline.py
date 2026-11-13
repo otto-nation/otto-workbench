@@ -233,6 +233,7 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         sys.exit(1)
     if outcome.errors:
         core.log.warn(review.claims.check_warning(outcome.errors, job))
+    review.phase_runs.record(job, Phase.SINGLE, ran=True)
     # A carried decline is believed only for a finding the prior round held (D19).
     record = outcome.artifact.to_record(
         checkbox=job.mode is Mode.SELF, declinable=declinable_sids(job.prior),
@@ -253,6 +254,8 @@ def run_single_agent(job: ReviewJob, disprove: bool | None = None):
         record = run.record
         if run.result.log:
             _write_session_log(job, [job.session_log, run.result.log])
+    else:
+        review.phase_runs.record(job, Phase.DISPROVE, ran=False, reason="gate off")
     _post_process_review(job, record)
 
 

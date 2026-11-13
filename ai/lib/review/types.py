@@ -400,6 +400,10 @@ class ReviewMeta:
     skipped_groups: int = 0
     total_groups: int = 0
     status: ReviewStatus | None = None
+    # The phases this run recorded as ran or skipped, written by orchestrate
+    # from `job.phase_runs` once the agents finish (`review.phase_runs`). Empty
+    # is a sidecar written before the field, and reads as "not recorded".
+    phases: tuple[PhaseRun, ...] = ()
 
     @property
     def unpushed_fix_commit(self) -> str:

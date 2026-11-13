@@ -402,8 +402,13 @@ def _run_phases(trail, args, job) -> _PhasesRun:
     # Every agent of the review has finished and the fix pass has not
     # started, so the ledger's rows for this run are the review's.
     models = review.outcome.models_used(job)
+    updates = {}
     if models:
-        update_review(Path(job.review_file), models=models)
+        updates["models"] = models
+    if job.phase_runs:
+        updates["phases"] = tuple(job.phase_runs)
+    if updates:
+        update_review(Path(job.review_file), **updates)
 
     if job.verification:
         v = job.verification

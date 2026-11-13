@@ -21,6 +21,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import core.log
+import review.phase_runs
 from agent.diagnosis import Diagnosis, DiagnosisKind
 from agent.registry import PHASES, SCAN_PHASES, phase_skip_argv
 from core.phases import Mode, Phase
@@ -625,6 +626,8 @@ def _phase_disprove(job: ReviewJob, record: ReviewRecord) -> DisproveRun:
     label = PHASES[Phase.DISPROVE].label
     if ms_count == 0:
         core.log.info(f"{label} skipped — no must-fix or should-fix findings")
+        review.phase_runs.record(
+            job, Phase.DISPROVE, ran=False, reason="no must-fix or should-fix finding")
         return DisproveRun(PhaseResult(), record)
     # The gate reads the record rendered with its evidence: the findings it
     # challenges, their locations, and the code each one quotes. Disprove judges
@@ -635,6 +638,7 @@ def _phase_disprove(job: ReviewJob, record: ReviewRecord) -> DisproveRun:
                            record, evidence=True,
                            omit=NON_FINDING_SECTIONS,
                        ))
+    review.phase_runs.record(job, Phase.DISPROVE, ran=True)
     if result.artifact is None:
         return DisproveRun(result, record)
     applied = apply_disprove(record, result.artifact)

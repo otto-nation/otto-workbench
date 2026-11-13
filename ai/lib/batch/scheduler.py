@@ -296,7 +296,7 @@ class Scheduler:
             rec.exit_code, rec.ended_at, rec.status = (
                 code, batch.store.now_iso(), StepStatus.INTERRUPTED)
             self._emit("step_finished", run=self.run.id, item=item.key, step=rec.step.value,
-                       status=rec.status.value, exit_code=code)
+                       status=rec.status.value, exit_code=code, log_path=rec.log_path)
             return
         # The HEAD the step's first attempt started from: trailers and movement
         # are read across every attempt, so a retry that commits nothing cannot
@@ -332,7 +332,7 @@ class Scheduler:
         for draft in result.decisions:
             _decide(self.run, item, rec.step.value, draft.kind, draft.payload, emit=self._emit)
         self._emit("step_finished", run=self.run.id, item=item.key, step=rec.step.value,
-                   status=rec.status.value, exit_code=code)
+                   status=rec.status.value, exit_code=code, log_path=rec.log_path)
 
     def _record_commits(self, item: Item, rec: StepRecord, before: str, head: str) -> None:
         """Add the commits this attempt made to *rec*, for publish to check are kept.

@@ -158,7 +158,7 @@ def record(run: Run, item: Item, step: str, kind: DecisionKind, payload: dict, *
         finding.created_at = at
         item.findings.append(finding)
         emit("finding_created", run=run.id, item=item.key,
-             reason=finding.reason.value, step=finding.step)
+             reason=finding.reason.value, step=finding.step, detail=finding.detail)
     if any(severity_of(f) is not Severity.ACT for f in found):
         item.status = ItemStatus.NEEDS_SESSION
     return found

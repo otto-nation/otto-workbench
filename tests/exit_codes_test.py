@@ -34,7 +34,7 @@ EXEMPT = {
 def test_the_codes_and_their_values():
     assert [(c.name, int(c)) for c in ExitCode] == [
         ("OK", 0), ("FAILURE", 1), ("USAGE", 2), ("CONFLICTS", 3),
-        ("REFUSED", 4), ("TEMPFAIL", 75),
+        ("REFUSED", 4), ("TEMPFAIL", 75), ("CANCELLED", 130),
     ]
 
 

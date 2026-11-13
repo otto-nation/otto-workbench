@@ -330,6 +330,17 @@ def test_contracts_render_every_contracted_command():
     assert core.cli_reference.contracts(_shape_with_contract()).startswith("#### t a contract")
 
 
+def test_contracts_render_a_cli_level_contract():
+    shape = core.cli_reference.CLIShape(prog="q", contract=_C)
+    assert core.cli_reference.contracts(shape).startswith("#### q contract")
+
+
+def test_tables_point_a_cli_level_contract_at_its_heading():
+    text = core.cli_reference.tables(core.cli_reference.CLIShape(prog="q", contract=_C))
+    assert "Exit codes: `0` ok · `1` failure · `2` usage" in text
+    assert "(ai-automation.md#q-contract)" in text
+
+
 def test_contracts_refuse_a_shape_with_none():
     p = argparse.ArgumentParser(prog="t a", add_help=False)
     shape = core.cli_reference.CLIShape(prog="t", commands=(

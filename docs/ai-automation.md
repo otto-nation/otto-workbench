@@ -1365,6 +1365,41 @@ Deletes stale review and PR-state artifacts on this machine. Reads GitHub (gh pr
 
 - `pr gc` — sweep this machine's stale PR artifacts
 
+### otto-queue contract
+
+What `otto-queue` writes (nothing remotely), what each exit means, and the next
+step after one, rendered from `cli.otto_queue.CONTRACT` (`otto-queue --help`
+prints the same text).
+
+#### otto-queue contract
+
+Run background work through this machine's queue, so it waits for room instead of overloading the host.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | status listed the ledger; cancel stopped a waiting or running entry; run's command succeeded |  |
+| `1` | cancel named no live entry (unknown id, or already finished); the ledger could not be opened | `otto-queue status` → `cancel a live id from that list` |
+| `2` | no subcommand, run without --ticket, or run with no command after -- |  |
+| `75` | no slot before --wait, or another process holds the ledger; retry | `otto-queue status` → `retry once a slot or the ledger is free` |
+| `130` | the entry was cancelled before it ran, or Ctrl-C interrupted the CLI |  |
+
+**Examples**
+
+- `otto-queue run --ticket --class light -- pytest tests/foo_test.py` — wait for a light slot, then run pytest here
+- `otto-queue run --ticket --key review:main -- pr review --self` — join a live review with that key, or reuse a done one's status
+- `otto-queue status` — list live entries and recent finished ones
+- `otto-queue status --json` — the same, one JSON object per entry
+- `otto-queue cancel 12` — stop waiting entry 12, or SIGTERM a running one
+
+> run also exits with COMMAND's own status when the command ran.
+> --key is idempotent: a live match is joined, a done match returns its status, --force runs regardless.
+> Admission is machine-wide `batch.admission.QueuePolicy` (`batch.*` in the workbench config), never a repo's.
+> The ledger is queue/queue.db under WORKBENCH_STATE_DIR (default ~/.local/state/workbench).
+
 ### Running a branch's own libraries
 
 The Python entry points take their own pin, since `~/.local/bin/pr` is a symlink into

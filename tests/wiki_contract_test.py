@@ -66,7 +66,7 @@ def test_reference_shape_emits_the_cli_contract():
     assert text.startswith("#### wiki contract")
 
 
-def test_every_example_parses_and_runs_a_real_command():
+def test_every_example_parses_as_a_real_command():
     """An example that does not parse is a lie in --help."""
     parser = cli.wiki.build_parser()
     for example in cli.wiki.CONTRACT.examples:

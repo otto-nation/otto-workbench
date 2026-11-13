@@ -74,7 +74,7 @@ CONTRACT = core.command_contract.CommandContract(
             "wiki backup --list", "list snapshots instead of making one"),
         core.command_contract.Example(
             "wiki link",
-            "create or remove the browsing symlink this repo's wiki.link setting names"),
+            "create or remove the browsing symlink named by wiki.link"),
         core.command_contract.Example(
             "wiki ingest --stage ./notes.md --title Notes",
             "copy a source into raw/ with frontmatter and a real hash"),
@@ -87,7 +87,7 @@ CONTRACT = core.command_contract.CommandContract(
         "Writes stay on this machine: the knowledge base tree (init, ingest, "
         "archive, index), wiki.root via set_value when init --vault adopts a "
         "vault, the vault folder, backup snapshots, and the browsing symlink "
-        "link (and init --vault) may place.",
+        "that link and init --vault may create.",
         "lint and index --check exit 1 when they have findings, not only when "
         "the write failed.",
     ),

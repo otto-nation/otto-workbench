@@ -3,6 +3,9 @@
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -10,6 +13,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from core.phases import Phase  # noqa: E402
+import review.pipeline  # noqa: E402
 from review.prompt_stats import log_prompt_size  # noqa: E402
 from review.registry import build_prompt  # noqa: E402
 from review.store import StoredReview  # noqa: E402
@@ -17,6 +21,10 @@ from review.types import ReviewMeta  # noqa: E402
 from conftest import TEST_MODEL  # noqa: E402
 from review_prompt_support import _make_job, _make_preflight  # noqa: E402
 from review_record_support import finding, record  # noqa: E402
+
+
+class _StopBeforeAgent(Exception):
+    """Sentinel: the overflow path is stubbed so no agent runs."""
 
 
 def _job(tmp_path, *, started_at=None):
@@ -50,3 +58,53 @@ class TestPromptStatsStampTheRun:
         build_prompt(Phase.SINGLE, job, max_turns=10)
         row = _stats(tmp_path)[-1]
         assert row["sections"]["prior_section"] > 0
+
+
+def _stop_after_prompt(monkeypatch):
+    seen = []
+
+    def stop(prompt, **_kwargs):
+        seen.append(prompt)
+        raise _StopBeforeAgent
+
+    monkeypatch.setattr(review.pipeline, "run_with_overflow_recovery", stop)
+    return seen
+
+
+def _fresh_recovery(monkeypatch):
+    monkeypatch.setattr(review.pipeline, "_group_merge_cap", lambda j: 10 ** 9)
+    monkeypatch.setattr(
+        review.pipeline, "_resolve_recovery",
+        lambda j, groups: SimpleNamespace(
+            already_complete=False, cost_so_far=0.0, skip_groups=set(),
+            state=None, resume_at_gate=False),
+    )
+
+
+def test_a_handoff_run_logs_exactly_one_prompt_stats_row(tmp_path, monkeypatch):
+    job = _make_job(_make_preflight(prior_head_sha=""))
+    job.review_file = str(tmp_path / "review.md")
+    _fresh_recovery(monkeypatch)
+    seen = _stop_after_prompt(monkeypatch)
+    with pytest.raises(_StopBeforeAgent):
+        review.pipeline.run_multi_phase(job, max_parallel=1)
+    rows = _stats(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["template"].startswith("single-agent")
+    prompt_file = tmp_path / f"prompt-{rows[0]['template']}"
+    assert seen == [prompt_file.read_text()]
+
+
+# passes-at-base: pins that the plain single path still builds its own prompt once
+def test_the_plain_single_path_logs_exactly_one_prompt_stats_row(
+    tmp_path, monkeypatch,
+):
+    job = _job(tmp_path)
+    seen = _stop_after_prompt(monkeypatch)
+    with pytest.raises(_StopBeforeAgent):
+        review.pipeline.run_single_agent(job)
+    rows = _stats(tmp_path)
+    assert len(rows) == 1
+    assert rows[0]["template"].startswith("single-agent")
+    prompt_file = tmp_path / f"prompt-{rows[0]['template']}"
+    assert seen == [prompt_file.read_text()]

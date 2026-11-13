@@ -1534,7 +1534,7 @@ read as a clean review of nothing. ``review.outcome`` and ``review.verdict``
 word that header; this module is the path that takes it.
 
 A first-round PR that groups into one group runs the single-agent review
-instead (`_single_group_goes_single`): a lone group has no scan before it and,
+instead (`_single_group_prompt`): a lone group has no scan before it and,
 when clean, no synthesis or disprove after it, so it would be one pass with none
 of the checks the single path always runs. With two or more groups the
 whole-PR scan always runs, and a clean group result still reaches synthesis when

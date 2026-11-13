@@ -1445,11 +1445,11 @@ Mechanical operations over a compiled knowledge base: locate it, report on it, a
 - `wiki sources --new` — raw sources that are new or changed
 - `wiki index --check` — report whether the master index is stale
 - `wiki backup --list` — list snapshots instead of making one
-- `wiki link` — create or remove the browsing symlink this repo's wiki.link setting names
+- `wiki link` — create or remove the browsing symlink named by wiki.link
 - `wiki ingest --stage ./notes.md --title Notes` — copy a source into raw/ with frontmatter and a real hash
 - `wiki archive old-article` — retire an article to archive/, keeping it readable
 
-> Writes stay on this machine: the knowledge base tree (init, ingest, archive, index), wiki.root via set_value when init --vault adopts a vault, the vault folder, backup snapshots, and the browsing symlink link (and init --vault) may place.
+> Writes stay on this machine: the knowledge base tree (init, ingest, archive, index), wiki.root via set_value when init --vault adopts a vault, the vault folder, backup snapshots, and the browsing symlink that link and init --vault may create.
 > lint and index --check exit 1 when they have findings, not only when the write failed.
 
 ### Running a branch's own libraries

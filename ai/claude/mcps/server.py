@@ -397,19 +397,37 @@ async def _poll_once(tools: dict[str, dict], notify, ready: asyncio.Event,
 
 
 def _args_to_cli(arguments: dict, input_schema: dict) -> list[str]:
-    """Convert MCP tool arguments to CLI flags."""
+    """Convert MCP tool arguments to CLI argv.
+
+    Properties marked ``x-positional`` are emitted first as bare values, in
+    the schema's property order. A positional whose value is None is skipped.
+    Every other argument keeps the flag mapping: ``--key value``, or a bare
+    ``--key`` for a true boolean. The schema, not the tool name, decides
+    which keys are positional.
+    """
     cli_args = []
     props = input_schema.get("properties", {})
+
+    for key, prop in props.items():
+        if not prop.get("x-positional"):
+            continue
+        value = arguments.get(key)
+        if value is None:
+            continue
+        cli_args.append(str(value))
 
     for key, value in arguments.items():
         if value is None:
             continue
+        if props.get(key, {}).get("x-positional"):
+            continue
         flag = f"--{key.replace('_', '-')}"
         prop_type = props.get(key, {}).get("type", "string")
+        is_bool = prop_type == "boolean" or isinstance(value, bool)
 
-        if prop_type == "boolean" and value:
+        if is_bool and value:
             cli_args.append(flag)
-        elif prop_type != "boolean":
+        elif not is_bool:
             cli_args.extend([flag, str(value)])
 
     return cli_args

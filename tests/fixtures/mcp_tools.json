@@ -26,7 +26,8 @@
             "batch",
             "gc"
           ],
-          "type": "string"
+          "type": "string",
+          "x-positional": true
         },
         "pr": {
           "description": "PR number or URL",

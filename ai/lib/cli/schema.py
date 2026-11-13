@@ -64,7 +64,9 @@ def tool_schema() -> dict:
     order `pr --help` lists and the registry's tuple fixes.
 
     The MCP server forwards only ``inputSchema``, so contract data rides
-    there as an ``x-`` extension that validators ignore.
+    there as an ``x-`` extension that validators ignore. ``command`` is
+    ``x-positional``: the server emits it as the first argv token, not as
+    ``--command``.
     """
     doc = {
         "name": SCRIPT,
@@ -76,6 +78,7 @@ def tool_schema() -> dict:
                     "type": "string",
                     "enum": list(COMMANDS),
                     "description": "Subcommand to run",
+                    "x-positional": True,
                 },
                 "repo_dir": {"type": "string", "description": "Git worktree directory", "x-context": True},
                 "branch": {"type": "string", "description": "Branch name", "x-context": True},

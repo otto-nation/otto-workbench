@@ -4316,14 +4316,25 @@ files an issue.
 
 ### batch/events.py
 
-NDJSON progress events for live consumers of `pr batch run`.
+NDJSON progress events for live consumers of `pr batch run`, and the run's history.
 
 The state file is authoritative; events only save a consumer from polling it.
+Every event `emit` prints is also appended, as the identical JSON line, to the
+run's `events.jsonl` through `core.run_events`. That history is what a run
+session shows; nothing reads it to decide what a run does. An append that fails
+warns once per run on stderr and never fails the run. An event naming no run
+(`item_skipped_held`, printed before the run exists) is printed only.
+`run_summary`'s `run` is the run view, filed under its `id`.
+
 `step_log` is emitted only under `--verbose`; `run_summary` is the last line of every `run`/`resume` that settles.
+`step_started` and `step_finished` carry the attempt's `log_path`.
 `generated_dirt_restored` names tracked generated files the batch restored rather than raising `dirty_worktree`.
 `item_skipped_held` is a PR a new `run` left out because an unfinished run still holds it.
-`finding_created` is a schema-2 recording (`run`, `item`, `reason`, `step`).
+`finding_created` is a schema-2 recording (`run`, `item`, `reason`, `step`, `detail`).
 `commits_unrecorded` is a step whose new commits git would not list; the attempt's tip is stored instead.
+`decision` is an operator verdict `pr batch note` appends to the history (`item`,
+`finding` as `<reason>:<step>`, `verdict`, `reason`, `commands`); it is never
+printed by a run and changes no item state. The latest per (`item`, `finding`) wins.
 
 ### batch/findings.py
 
@@ -4653,10 +4664,11 @@ reach a terminal, whether the batch runs under a server or in a shell.
 
 ### batch/store.py
 
-Where a `pr batch` run lives on disk; the only module that touches it.
+Where a `pr batch` run lives on disk; the only module that touches its state.
 
     <state_dir>/batch/<run-id>/state.json       authoritative run state
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
+    <state_dir>/batch/<run-id>/events.jsonl     the run's event history (core.run_events, via batch.events); not state
     <state_dir>/batch/claims/<hex>.json         in-flight refs/pr-batch/<hex> ownership (plan.py)
     <state_dir>/batch/<run-id>/requests/*.json  the inbox: cancels and releases waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)

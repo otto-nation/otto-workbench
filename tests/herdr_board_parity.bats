@@ -138,6 +138,14 @@ LANE_EXEMPT='/prs/batch_page.js:|/web/public/batch_page.js:'
   [ "$status" -ne 0 ]
 }
 
+@test "parity: both views open a review run through toggleOpen, never a truthiness test on the open key" {
+  grep -q 'toggleOpen' "$MODS/prs/main.js"
+  grep -q 'toggleOpen' "$WEB/public/app.js"
+  run grep -nE 'if \(this\.openStamp\)|!S\.detail\.openStamp|if \(this\.openKey\)|!S\.detail\.openKey' \
+    "$MODS/prs/main.js" "$WEB/public/app.js"
+  [ "$status" -eq 1 ]
+}
+
 @test "parity: the two batch_page.js exemptions still hold" {
   [[ "$LANE_EXEMPT" == *"/prs/batch_page.js:"* ]]
   [[ "$LANE_EXEMPT" == *"/web/public/batch_page.js:"* ]]

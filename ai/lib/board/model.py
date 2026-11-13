@@ -137,6 +137,12 @@ class RunPostRef:
 
 @dataclass(frozen=True)
 class ReviewRunRef:
+    """One review run on a board PR.
+
+    ``stamp`` is the archive file name. Empty means the live run: a
+    listing ``ReviewRow`` has no stamp, and ``_run_ref`` emits ``""``.
+    """
+
     posted_event: str | None = None
     head_sha: str = ""
     status: str = ""

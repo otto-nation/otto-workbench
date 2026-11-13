@@ -23,6 +23,20 @@ const FINDING_PARTS = [
   ['idiom', 'idiom'],
 ];
 
+// The live run has stamp ""; identity is its reviewed_at (or started_at), never empty.
+export function runKey(run) {
+  const stamp = run?.stamp ?? '';
+  if (stamp !== '') return stamp;
+  const at = run?.reviewed_at || run?.started_at;
+  return at ? `live@${at}` : 'live';
+}
+
+// Open sentinel is null. load is true when this click opens a run (cache skip is the view's).
+export function toggleOpen(currentKey, key) {
+  if (currentKey === key) return { open: null, load: false };
+  return { open: key, load: true };
+}
+
 export function relativeTime(iso, nowMs) {
   const t = Date.parse(iso);
   if (Number.isNaN(t)) return '';
@@ -84,6 +98,7 @@ export function historyRows(runs, nowMs) {
     const health = healthOf(run);
     return {
       stamp: run.stamp ?? '',
+      key: runKey(run),
       when: relativeTime(run.reviewed_at, nowMs) || run.stamp || '',
       verdict: structured ? (run.verdict ?? '') : '',
       findingsText: findingsText(run),

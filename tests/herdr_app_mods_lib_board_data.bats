@@ -216,6 +216,29 @@ _bd() {
   [[ "$output" != *"unrecognized option"* ]]
 }
 
+@test "readReview times out a hung readTextFile with rejecting exec within the deadline" {
+  _rr '
+    const hang = () => new Promise(() => {});
+    const boom = async () => { throw new Error("cat down"); };
+    const t0 = Date.now();
+    const r = await m.readReview(hang, "/r.md", "agent", boom, { deadlineMs: 40 });
+    process.stdout.write(JSON.stringify({ r, ms: Date.now() - t0 }));
+  '
+  [ "$status" -eq 0 ]
+  jq -e '.r.ok==false and .r.error.kind=="exec" and (.r.error.message|test("timed out")) and .ms<2000' <<<"$output"
+}
+
+@test "readReview times out when both readTextFile and exec never settle" {
+  _rr '
+    const hang = () => new Promise(() => {});
+    const t0 = Date.now();
+    const r = await m.readReview(hang, "/r.md", "agent", hang, { deadlineMs: 40 });
+    process.stdout.write(JSON.stringify({ r, ms: Date.now() - t0 }));
+  '
+  [ "$status" -eq 0 ]
+  jq -e '.r.ok==false and .r.error.kind=="exec" and (.r.error.message|test("timed out")) and .ms<2000' <<<"$output"
+}
+
 @test "readReview on a remote answers from exec cat when readTextFile never settles" {
   _rr '
     const readTextFile = () => new Promise(() => {});

@@ -10,7 +10,7 @@ teardown() { common_teardown; }
 _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/history.js');
-    const { historyRows, relativeTime, formatTokens } = m;
+    const { historyRows, relativeTime, formatTokens, runKey, toggleOpen } = m;
     const now = Date.parse('2026-08-18T14:00:00Z');
     const iso = (ms) => new Date(ms).toISOString();
     const run = (over={}) => ({
@@ -70,6 +70,18 @@ _js() {
   _js '({a:historyRows([run({status:"partial"})],now)[0].health,b:historyRows([run({status:"error"})],now)[0].health,c:historyRows([run()],now)[0].health,d:historyRows([run({post:undefined})],now)[0].post.label,e:historyRows([run()],now)[0].when})'
   [ "$status" -eq 0 ]
   jq -e '.a=="Partial" and .b=="Error" and .c=="ok" and .d=="unposted" and .e=="1h ago"' <<<"$output"
+}
+
+@test "runKey of a live run is non-empty and changes with reviewed_at; archived is stamp" {
+  _js '({live:runKey(run({stamp:"",reviewed_at:"2026-08-18T13:00:00Z"})),later:runKey(run({stamp:"",reviewed_at:"2026-08-18T14:00:00Z"})),none:runKey(run({stamp:"",reviewed_at:"",started_at:""})),started:runKey(run({stamp:"",reviewed_at:"",started_at:"2026-08-18T12:00:00Z"})),archived:runKey(run({stamp:"s1"}))})'
+  [ "$status" -eq 0 ]
+  jq -e '.live=="live@2026-08-18T13:00:00Z" and .later=="live@2026-08-18T14:00:00Z" and .live!=.later and (.live|length)>0 and .none=="live" and .started=="live@2026-08-18T12:00:00Z" and .archived=="s1"' <<<"$output"
+}
+
+@test "toggleOpen opens with load, same key closes; rows carry key" {
+  _js '({a:toggleOpen(null,"live@t"),b:toggleOpen("live@t","live@t"),c:toggleOpen("a","b"),keys:historyRows([run({stamp:"",reviewed_at:"2026-08-18T13:00:00Z"}),run({stamp:"arch",reviewed_at:"2026-08-17T13:00:00Z"})],now).map(r=>r.key)})'
+  [ "$status" -eq 0 ]
+  jq -e '.a.open=="live@t" and .a.load==true and .b.open==null and .b.load==false and .c.open=="b" and .c.load==true and .keys==["live@2026-08-18T13:00:00Z","arch"]' <<<"$output"
 }
 
 @test "modelsText carries the models a run recorded, blank when none or not structured" {

@@ -11,15 +11,15 @@ import {
   badgeRow, statsRow, tag,
 } from "./_ui/ui.js";
 
-function reviewBody(stamp, body) {
+function reviewBody(id, body) {
   if (body == null) return placeholder("Loading…");
   if (body.ok === false) return errorLine(body.error?.message ?? "Could not read the review");
   if (body.text == null) return placeholder("Review file not found — it may have been pruned");
-  return TextView.markdown("review-" + stamp, body.text).selectable();
+  return TextView.markdown("review-" + id, body.text).selectable();
 }
 
-function reviewInset(stamp, body) {
-  return inset().mt(SP.sm).child(reviewBody(stamp, body));
+function reviewInset(id, body) {
+  return inset().mt(SP.sm).child(reviewBody(id, body));
 }
 
 // Enabled actions as buttons; when none is enabled, the first reason says why. A post action
@@ -105,9 +105,9 @@ export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewStat
     .when(marks.length > 0, (e) => e.child(badgeRow(marks)));
 }
 
-function runCard(r, { openStamp, bodyFor, onToggle }) {
-  return card(`run-${r.stamp}`).gap(SP.xs)
-    .on_click(() => onToggle(r.stamp))
+function runCard(r, { openKey, bodyFor, onToggle }) {
+  return card(`run-${r.key}`).gap(SP.xs)
+    .on_click(() => onToggle(r.key))
     .child(h_flex().gap(SP.sm).items_center()
       .child(text("body", r.verdict || "review"))
       .child(caption(r.when))
@@ -117,11 +117,11 @@ function runCard(r, { openStamp, bodyFor, onToggle }) {
       .when(Boolean(r.healthStatus), (e) => e.child(statusText(r.healthStatus, r.health)))
       .when(Boolean(r.costText), (e) => e.child(caption(r.costText))))
     .when(Boolean(r.modelsText), (e) => e.child(caption(r.modelsText)))
-    .when(openStamp === r.stamp, (e) => e.child(reviewInset(r.stamp, bodyFor(r.stamp))));
+    .when(openKey === r.key, (e) => e.child(reviewInset(r.key, bodyFor(r.key))));
 }
 
 export function renderDetail(d, {
-  onClose, onOpenUrl, onReview, reviewState, nowMs, openStamp, bodyFor, onToggle, actionBar, outputPanel,
+  onClose, onOpenUrl, onReview, reviewState, nowMs, openKey, bodyFor, onToggle, actionBar, outputPanel,
   tab, onTab, filesBody, batchBody,
 }) {
   const rows = historyRows(d.runs ?? [], nowMs);
@@ -142,5 +142,5 @@ export function renderDetail(d, {
     .when(tab !== "files" && tab !== "batch", (e) => e.child(scrollBody().px(SP.lg).pb(SP.lg)
       .pt(SP.sm).gap(SP.sm)
       .when(!rows.length, (x) => x.child(placeholder("No reviews yet")))
-      .children(rows.map((r) => runCard(r, { openStamp, bodyFor, onToggle })))));
+      .children(rows.map((r) => runCard(r, { openKey, bodyFor, onToggle })))));
 }

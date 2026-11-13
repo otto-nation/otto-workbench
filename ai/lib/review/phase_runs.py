@@ -12,15 +12,20 @@ the pipeline that actually ran.
 
 from __future__ import annotations
 
+from core.phases import Phase
 from review.types import PhaseRun, Pipeline, ReviewJob
 
-_HANDOFF_SKIPPED = ("scout", "holistic", "group", "synthesis")
+_HANDOFF_SKIPPED = (Phase.SCOUT, Phase.HOLISTIC, Phase.GROUP, Phase.SYNTHESIS)
 _HANDOFF_REASON = "one group covers the PR"
 
 
-def record(job: ReviewJob, phase: str, *, ran: bool, reason: str = "") -> None:
-    """Append one phase outcome onto the job."""
-    job.phase_runs.append(PhaseRun(phase=phase, ran=ran, reason=reason))
+def record(job: ReviewJob, phase: Phase, *, ran: bool, reason: str = "") -> None:
+    """Append one phase outcome onto the job.
+
+    `phase` is the enum; storage keeps the member value so an unknown string
+    in a sidecar cannot cost the whole meta.
+    """
+    job.phase_runs.append(PhaseRun(phase=phase.value, ran=ran, reason=reason))
 
 
 def handed_to_single(job: ReviewJob) -> None:

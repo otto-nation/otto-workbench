@@ -333,7 +333,7 @@ class _PhasesRun:
     """What one run of every phase leaves: the pipeline it took and the fix-pass rc."""
 
     pipeline: Pipeline
-    selected: Pipeline = Pipeline.SINGLE
+    selected: Pipeline
     fix_rc: int = 0
 
 

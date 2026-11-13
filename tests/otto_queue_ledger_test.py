@@ -191,8 +191,9 @@ def test_compaction_truncates_the_wal(tmp_path):
     # it on the last close, and there would be nothing to measure.
     keeper = _sql(tmp_path)
     try:
-        # sqlite3.connect is lazy; a statement is what actually holds the file.
-        keeper.execute("SELECT 1")
+        # sqlite3.connect is lazy, and a statement that reads no table (SELECT 1)
+        # never opens the file on some SQLite builds; reading a table holds it.
+        keeper.execute("SELECT count(*) FROM entries").fetchone()
         for _ in range(50):
             _row(tmp_path, state="done")
         wal = otto_queue.paths.db_path(tmp_path).with_name(otto_queue.paths.DB_NAME + "-wal")

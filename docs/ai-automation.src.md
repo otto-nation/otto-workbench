@@ -744,6 +744,14 @@ rendered from `cli.otto_log.CONTRACT` (`otto-log --help` prints the same text).
 
 <!-- include: bin/local/generate-cli-reference --tool otto-log --emit contract -->
 
+### workbench-rules contract
+
+What `workbench-rules` writes (nothing remotely), what each exit means, and the next
+step after one, rendered from `cli.workbench_rules.CONTRACT` (`workbench-rules --help`
+prints the same text).
+
+<!-- include: bin/local/generate-cli-reference --tool workbench-rules --emit contract -->
+
 ### Running a branch's own libraries
 
 The Python entry points take their own pin, since `~/.local/bin/pr` is a symlink into

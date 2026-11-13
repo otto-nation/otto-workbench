@@ -1,21 +1,19 @@
 #!/usr/bin/env bats
-# Tests for workbench-rules — domain normalization, add/list/status commands,
-# the generated layer, and project-level rule management.
+# Tests for workbench-rules — add/list/status commands, the generated layer,
+# and project-level rule management. Domain aliases are pytest
+# (tests/workbench_rules_test.py) now that the CLI is Python.
 
 setup() {
   load 'test_helper'
   common_setup
   WORKBENCH_RULES="$REPO_ROOT/ai/bin/workbench-rules"
 
-  # Source for function-level tests
   export HOME="$TMPDIR"
   export WORKBENCH_CONFIG_DIR="$TMPDIR/config"
   export WORKBENCH_STATE_DIR="$TMPDIR/state"
   export NO_COLOR=1
   OVERRIDE_RULES="$WORKBENCH_CONFIG_DIR/overrides/ai/guidelines/rules"
   GENERATED_RULES="$WORKBENCH_STATE_DIR/rules"
-  # shellcheck source=/dev/null
-  source "$WORKBENCH_RULES"
 
   # Fake source tree for cmd_sync tests — modeled on skills_install.bats.
   FAKE_WORKBENCH="$TMPDIR/workbench"
@@ -49,54 +47,13 @@ _make_repo() {
   git -C "$1" commit -q --allow-empty -m init
 }
 
-# ── _normalize_domain ────────────────────────────────────────────────────────
-
-@test "_normalize_domain: ts maps to typescript" {
-  result=$(_normalize_domain "ts")
-  [ "$result" = "typescript" ]
-}
-
-@test "_normalize_domain: js maps to typescript" {
-  result=$(_normalize_domain "js")
-  [ "$result" = "typescript" ]
-}
-
-@test "_normalize_domain: py maps to python" {
-  result=$(_normalize_domain "py")
-  [ "$result" = "python" ]
-}
-
-@test "_normalize_domain: sh maps to bash" {
-  result=$(_normalize_domain "sh")
-  [ "$result" = "bash" ]
-}
-
-@test "_normalize_domain: shell maps to bash" {
-  result=$(_normalize_domain "shell")
-  [ "$result" = "bash" ]
-}
-
-@test "_normalize_domain: yml maps to yaml" {
-  result=$(_normalize_domain "yml")
-  [ "$result" = "yaml" ]
-}
-
-@test "_normalize_domain: unknown domain passes through" {
-  result=$(_normalize_domain "go")
-  [ "$result" = "go" ]
-}
-
-@test "_normalize_domain: custom domain passes through" {
-  result=$(_normalize_domain "kubernetes")
-  [ "$result" = "kubernetes" ]
-}
-
 # ── CLI: --help ──────────────────────────────────────────────────────────────
 
 @test "workbench-rules --help exits 0" {
   _run_rules --help
   [ "$status" -eq 0 ]
   [[ "$output" == *"workbench-rules"* ]]
+  [[ "$output" == *"Exit codes:"* ]]
 }
 
 @test "workbench-rules -h exits 0" {
@@ -104,9 +61,9 @@ _make_repo() {
   [ "$status" -eq 0 ]
 }
 
-@test "workbench-rules no args exits non-zero" {
+@test "workbench-rules no args exits 2" {
   _run_rules
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 2 ]
 }
 
 # ── CLI: add ─────────────────────────────────────────────────────────────────
@@ -135,15 +92,15 @@ _make_repo() {
   [ "$count" -eq 2 ]
 }
 
-@test "add: missing domain exits non-zero" {
+@test "add: missing domain exits 2" {
   _run_rules add
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 2 ]
   [[ "$output" == *"Usage"* ]]
 }
 
-@test "add: missing rule text exits non-zero" {
+@test "add: missing rule text exits 2" {
   _run_rules add go
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 2 ]
   [[ "$output" == *"Usage"* ]]
 }
 
@@ -226,7 +183,7 @@ EOF
   printf '# My Project\n\n## Conventions\n' > "$repo/CLAUDE.md"
   cd "$repo"
   _run_rules project add "legacy rule"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]
   [[ "$output" == *"No AGENTS.md found"* ]]
   [[ "$output" == *"git mv CLAUDE.md AGENTS.md"* ]]
   run grep -q "legacy rule" "$repo/CLAUDE.md"
@@ -258,36 +215,30 @@ EOF
   grep -q "first convention" "$repo/AGENTS.md"
 }
 
+@test "project add: missing rule exits 2" {
+  _run_rules project add
+  [ "$status" -eq 2 ]
+  [[ "$output" == *"Usage"* ]]
+}
+
+@test "project: unknown subcommand exits 2" {
+  _run_rules project nope
+  [ "$status" -eq 2 ]
+}
+
 @test "project add: fails without an instructions file" {
   local repo="$TMPDIR/myrepo"
   _make_repo "$repo"
   cd "$repo"
   _run_rules project add "some rule"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]
   [[ "$output" == *"No AGENTS.md"* ]]
-}
-
-@test "project add: reports a python3 failure distinctly from no file" {
-  local repo="$TMPDIR/myrepo"
-  _make_repo "$repo"
-  cd "$repo"
-  local fakebin="$TMPDIR/fakebin"
-  mkdir -p "$fakebin"
-  cat > "$fakebin/python3" <<'SH'
-#!/usr/bin/env bash
-exit 1
-SH
-  chmod +x "$fakebin/python3"
-  PATH="$fakebin:$PATH" _run_rules project add "some rule"
-  [ "$status" -ne 0 ]
-  [[ "$output" != *"No AGENTS.md"* ]]
-  [[ "$output" == *"Could not determine the instructions file"* ]]
 }
 
 @test "project add: fails outside git repo" {
   cd "$TMPDIR"
   _run_rules project add "some rule"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]
   [[ "$output" == *"Not inside a git"* ]]
 }
 
@@ -328,7 +279,7 @@ SH
 
   cd "$container"
   _run_rules project add "new rule"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]
   [[ "$output" == *"No worktree resolved"* ]]
   [ ! -e "$container/AGENTS.md" ]
 }
@@ -365,6 +316,6 @@ SH
 @test "sync: fails when the workbench has no rules tree" {
   rm -rf "$FAKE_WORKBENCH/ai/guidelines/rules"
   _run_sync
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 1 ]
   [[ "$output" == *"Rules not found"* ]]
 }

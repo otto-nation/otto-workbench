@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 920 -->
+<!-- doc-budget: 925 -->
 
 # AI Automation
 

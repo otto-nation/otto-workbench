@@ -41,6 +41,7 @@ from review.prompt_prior import (
     _build_prior_section, _build_unaccounted_section,
 )
 import review.behaviours
+import review.document
 from review.claims import has_claim_source
 from review.focus import areas_for_group, needs_derived, user_areas
 from review.grouping import hint_subjects, unpaired_subjects
@@ -512,10 +513,20 @@ def _fit_budget(
     )
 
 
-def _incremental_prior_ctx(job: ReviewJob, base_ctx: str) -> str:
-    """Return incremental-aware prior context when delta data is available."""
+def _incremental_prior_ctx(
+    job: ReviewJob, base_ctx: str, independent_ctx: str,
+) -> str:
+    """Preamble for a prior section: independent framing, or the incremental note.
+
+    A prior on a full (non-incremental) review is continuity, not evidence.
+    The incremental path appends a delta note onto the re-review preamble.
+    """
     if not _is_incremental(job):
-        return base_ctx
+        if job.prior is None:
+            return base_ctx
+        if review.document.covers(job.prior.meta.head_sha, job.pr.head_sha):
+            return f"{independent_ctx} {_SAME_HEAD_CLAUSE}"
+        return independent_ctx
     pf = job.preflight
     prior_sha = git.client.abbrev(pf.prior_head_sha)
     head_sha = git.client.abbrev(job.pr.head_sha)
@@ -557,6 +568,43 @@ _REREVIEW_CTX: dict[Mode, str] = {
         "- Add any new findings from changes since the last review"
     ),
 }
+
+# The independent-review preamble a full-review prior opens with. Same-HEAD,
+# focus-changed, and unreachable-prior runs are all full reviews: the earlier
+# review's checks are not evidence. Spelled out per mode, plus a group variant,
+# for the same reason `_REREVIEW_CTX` is.
+_INDEPENDENT_CTX: dict[Mode, str] = {
+    Mode.PR: (
+        "This is an independent full review. The findings below are from an earlier "
+        "review and are listed for continuity only, so their IDs, sids and declines "
+        "carry over. Do not cite that review's checks or conclusions as evidence: "
+        "re-verify each finding against the code, carry forward the ones still present, "
+        "leave fixed ones out of `findings`, and review every changed file as if no "
+        "earlier review existed."
+    ),
+    Mode.SELF: (
+        "This is an independent full review of your own code. The findings below are "
+        "from an earlier self-review and are listed for continuity only, so their IDs, "
+        "sids and declines carry over. Do not cite that review's checks or conclusions "
+        "as evidence: re-verify each finding against the code, carry forward the ones "
+        "still present, leave fixed ones out of `findings`, and review every changed "
+        "file as if no earlier review existed."
+    ),
+}
+
+_INDEPENDENT_GROUP_CTX = (
+    "This is an independent full review. The findings below are from an earlier "
+    "review and are listed for continuity only, so their IDs, sids and declines "
+    "carry over. Do not cite that review's checks or conclusions as evidence: "
+    "re-verify each finding against the code, carry forward the ones still present, "
+    "leave fixed ones out of `findings`, and review every file in this group as if "
+    "no earlier review existed."
+)
+
+_SAME_HEAD_CLAUSE = (
+    "The earlier review read this same commit; its conclusions are not a "
+    "substitute for reading it again."
+)
 
 # Which numbered step adds cross-cutting findings, per synthesis template. The
 # execution-claim guard names it, and the two templates number their task
@@ -607,7 +655,9 @@ def _prompt_single(job, common, extra, output):
     """
     prior_section = _build_prior_section(
         job.prior,
-        _incremental_prior_ctx(job, _REREVIEW_CTX[job.mode]),
+        _incremental_prior_ctx(
+            job, _REREVIEW_CTX[job.mode], _INDEPENDENT_CTX[job.mode],
+        ),
         reply_threads=job.reply_threads,
     )
     b = PromptBuilder(common)
@@ -702,7 +752,7 @@ def _prompt_group(job, common, extra, output):
     prior_ctx = _incremental_prior_ctx(job, (
         "This is a re-review. Below are the prior findings for YOUR files. "
         "Carry forward the ones still present; leave fixed ones out of `findings`."
-    ))
+    ), _INDEPENDENT_GROUP_CTX)
     prior_section = _build_prior_section(
         job.prior, prior_ctx,
         file_filter=file_filter,

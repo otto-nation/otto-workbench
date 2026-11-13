@@ -159,7 +159,11 @@ class JsonOutput:
 
 @dataclass(frozen=True)
 class CommandContract:
-    """Everything a reader needs to run one command without reading its source."""
+    """Everything a reader needs to run one command without reading its source.
+
+    ``mcp_exclude`` names subcommands left out of the MCP union's command
+    enum and of ``x-contracts``. Only the union-schema builder reads it.
+    """
 
     summary: str
     groups: tuple[FlagGroup, ...]
@@ -169,6 +173,7 @@ class CommandContract:
     json_output: JsonOutput | None = None
     notes: tuple[str, ...] = ()
     reference: str = REFERENCE_ANCHOR
+    mcp_exclude: tuple[str, ...] = ()
 
     def outcome(self, code: int) -> ExitOutcome | None:
         """The declared outcome for *code*, or None when the contract is silent."""
@@ -360,6 +365,61 @@ def schema(contract: CommandContract) -> dict:
                            for e in contract.remote_effects],
         "ok_exit_codes": sorted({int(o.code) for o in contract.exits if o.ok}),
     }
+
+
+def union_schema(
+    name: str,
+    description: str,
+    commands: Sequence[str],
+    contracts: Mapping[str, CommandContract],
+    *,
+    context_properties: Mapping[str, dict] | None = None,
+) -> dict:
+    """The MCP input schema for a command that dispatches to named subcommands.
+
+    ``command`` is the positional selector (enum of *commands*,
+    ``x-positional``). *context_properties* are extra input fields such as
+    the worktree globals. Each entry in *contracts* is rendered with
+    `schema` and stored under ``input_schema.x-contracts``.
+    """
+    for command, contract in contracts.items():
+        unknown = [n for n in contract.mcp_exclude if n not in commands]
+        if unknown:
+            raise ValueError(
+                f"{name}: mcp_exclude on {command!r} names unknown commands {unknown}")
+    # A contract excludes only its own command: unioning across contracts let
+    # one per-subcommand contract hide another command globally.
+    excluded = frozenset(
+        command for command, contract in contracts.items()
+        if command in contract.mcp_exclude
+    )
+    properties: dict = {
+        "command": {
+            "type": "string",
+            "enum": [command for command in commands if command not in excluded],
+            "description": "Subcommand to run",
+            "x-positional": True,
+        },
+    }
+    if context_properties:
+        properties.update(context_properties)
+    doc = {
+        "name": name,
+        "description": description,
+        "input_schema": {
+            "type": "object",
+            "properties": properties,
+            "required": ["command"],
+        },
+    }
+    advertised = {
+        command: schema(contract)
+        for command, contract in contracts.items()
+        if command not in excluded
+    }
+    if advertised:
+        doc["input_schema"]["x-contracts"] = advertised
+    return doc
 
 
 def print_next(contract: CommandContract, code: int, *, when: str = "", **fields: str) -> None:

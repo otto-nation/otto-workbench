@@ -118,6 +118,7 @@ def _pr_checkout(root: Path) -> Path:
 
         tools:
           - name: pr
+            parser: cli.pr:reference_shape
             permission: false
             visibility: brief
             description: "The watched tool"

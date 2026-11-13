@@ -800,8 +800,10 @@ path to its entry; the Python server (`ai/claude/mcps/server.py`) reads that
 mapping.
 
 There is no configuration file. The server hosts the workbench's own tools, so
-what to offer is a fact about the checkout's registries. Adding a tool means
-registering it in a component's `registry.yml`.
+what to offer is a fact about the checkout's registries. A registered script
+is served when its `parser:` shape carries a CommandContract and at least one
+subcommand the flag-only mapping can run (`mcp_exclude` drops the rest).
+Adding a contracted tool means registering it in a component's `registry.yml`.
 
 The launcher runs `uv run --no-project --with mcp`. A client spawns the server
 with its own project as the working directory, and without `--no-project` uv

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import json
 import logging
 import stat
@@ -16,9 +17,13 @@ from conftest import load_script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "claude" / "mcps"))
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import cli.otto_log
+import cli.schema
+import core.cli_reference
+import core.command_contract
 import core.proc
 import server
-import cli.schema
+from config.tool_registry import RegistryEntry, Visibility, load_registry_entries
 from server import (
     WORKBENCH_DIR,
     _answer_tool_call,
@@ -29,7 +34,6 @@ from server import (
     _tool_schema,
     discover_tools,
 )
-from config.tool_registry import RegistryEntry, Visibility
 
 
 # ── JSON Extraction ───────────────────────────────────────────────────────
@@ -359,18 +363,41 @@ def _schema_for(script: Path, name: str = "", description: str = "from the schem
 class TestToolSchema:
     """The import that replaced the probe. None is how a non-tool is declined."""
 
-    def test_pr_is_the_one_script_that_has_a_schema(self):
-        schema = _tool_schema(Path("/does/not/need/to/exist/pr"))
+    def test_pr_is_served_from_its_per_command_contracts(self):
+        script = WORKBENCH_DIR / "ai" / "bin" / "pr"
+        if not script.exists():
+            pytest.skip("scripts not found")
+        schema = _tool_schema(script, load_registry_entries(WORKBENCH_DIR)[script])
 
         assert schema is not None
         assert schema["name"] == "pr"
         assert schema["_script"].endswith("/pr")
         assert "input_schema" in schema
+        assert "repo_dir" in schema["input_schema"]["properties"]
 
-    def test_a_registered_non_tool_returns_none_rather_than_raising(self):
-        """wt and otto-log are in the registry; they are not MCP tools."""
-        assert _tool_schema(Path("/usr/bin/wt")) is None
-        assert _tool_schema(Path("/usr/bin/otto-log")) is None
+    def test_a_script_with_no_contract_returns_none_rather_than_raising(self):
+        """ceiling-scan has a parser; it is not an MCP tool without a contract."""
+        script = WORKBENCH_DIR / "ai" / "bin" / "ceiling-scan"
+        if not script.exists():
+            pytest.skip("scripts not found")
+        entry = load_registry_entries(WORKBENCH_DIR)[script]
+        assert _tool_schema(script, entry) is None
+        assert _tool_schema(Path("/usr/bin/wt")) is None  # no entry at all
+
+    def test_a_parser_that_fails_to_load_is_skipped_not_raised(self, monkeypatch):
+        def boom(*a, **k):
+            raise ImportError("broken parser")
+        monkeypatch.setattr(core.cli_reference, "load", boom)
+        entry = RegistryEntry(
+            name="toy", description="toy", visibility=Visibility.BRIEF,
+            parser="cli.toy:reference_shape",
+        )
+        assert _tool_schema(Path("/bin/toy"), entry) is None
+
+    def test_fingerprint_watches_parser_modules(self):
+        from server import discovery_fingerprint  # noqa: PLC0415
+        paths = {path for path, _ in discovery_fingerprint()}
+        assert str(WORKBENCH_DIR / "ai" / "lib" / "cli" / "otto_log.py") in paths
 
 
 class TestDescribed:
@@ -410,7 +437,7 @@ class TestDiscovery:
     def test_discovers_an_offered_pr(self, monkeypatch):
         script = Path("/bin/pr")
         monkeypatch.setattr(server, "_tool_schema",
-                            lambda s: _schema_for(s, name="pr"))
+                            lambda s, e=None: _schema_for(s, name="pr"))
 
         tools = discover_tools(_registered(script))
 
@@ -424,7 +451,7 @@ class TestDiscovery:
     def test_a_hidden_entry_is_not_offered(self, monkeypatch):
         script = Path("/bin/pr")
         monkeypatch.setattr(server, "_tool_schema",
-                            lambda s: _schema_for(s, name="pr"))
+                            lambda s, e=None: _schema_for(s, name="pr"))
 
         tools = discover_tools(_registered(script, visibility=Visibility.HIDDEN))
 
@@ -434,7 +461,7 @@ class TestDiscovery:
         """visibility is decided before the import, so a hidden pr is never read."""
         asked: list[Path] = []
 
-        def tracking(script: Path):
+        def tracking(script: Path, entry=None):
             asked.append(script)
             return _schema_for(script, name="pr")
 
@@ -447,15 +474,15 @@ class TestDiscovery:
         assert asked == []
 
     def test_a_registered_non_tool_is_skipped_rather_than_raising(self):
-        """Most registered scripts are not tools — wt, otto-log, the scans."""
-        registry = _registered(Path("/usr/bin/wt"), Path("/usr/bin/otto-log"))
+        """Most registered scripts are not tools — no parser, no contract."""
+        registry = _registered(Path("/usr/bin/wt"), Path("/usr/bin/ceiling-scan"))
 
         assert discover_tools(registry) == {}
 
     def test_discovery_does_not_spawn_a_script(self, monkeypatch):
         """The probe is gone: an offered pr is an import, not a subprocess."""
         monkeypatch.setattr(server, "_tool_schema",
-                            lambda s: _schema_for(s, name="pr"))
+                            lambda s, e=None: _schema_for(s, name="pr"))
         with mock.patch.object(server, "_run_script") as run:
             discover_tools(_registered(Path("/bin/pr")))
 
@@ -465,7 +492,7 @@ class TestDiscovery:
         script = Path("/bin/pr")
         monkeypatch.setattr(
             server, "_tool_schema",
-            lambda s: _schema_for(s, name="pr", description="schema line"))
+            lambda s, e=None: _schema_for(s, name="pr", description="schema line"))
 
         tools = discover_tools(_registered(script, description="registry line"))
 
@@ -475,7 +502,7 @@ class TestDiscovery:
         script = Path("/bin/pr")
         monkeypatch.setattr(
             server, "_tool_schema",
-            lambda s: _schema_for(s, name="pr", description="schema line"))
+            lambda s, e=None: _schema_for(s, name="pr", description="schema line"))
 
         tools = discover_tools(_registered(
             script, visibility=Visibility.FULL, description="what it is for",
@@ -496,6 +523,15 @@ class TestWorkbenchDiscovery:
 
         assert "pr" in tools
         assert "input_schema" in tools["pr"]
+
+    def test_the_workbench_offers_every_contracted_tool(self):
+        if not (WORKBENCH_DIR / "ai" / "bin" / "pr").exists():
+            pytest.skip("scripts not found")
+
+        tools = discover_tools()
+
+        assert {"pr", "otto-log", "otto-queue", "wiki", "workbench-rules"} <= set(tools)
+        assert "ceiling-scan" not in tools
 
     def test_pr_declares_no_output_schema(self):
         """Declaring one made eight of nine subcommands come back `isError`.
@@ -536,7 +572,7 @@ class TestDuplicateNames:
         first = Path("/a/pr")
         second = Path("/b/pr")
         monkeypatch.setattr(server, "_tool_schema",
-                            lambda s: _schema_for(s, name="pr"))
+                            lambda s, e=None: _schema_for(s, name="pr"))
 
         tools = discover_tools(_registered(first, second))
 
@@ -547,7 +583,7 @@ class TestDuplicateNames:
         first = Path("/a/pr")
         second = Path("/b/pr")
         monkeypatch.setattr(server, "_tool_schema",
-                            lambda s: _schema_for(s, name="pr"))
+                            lambda s, e=None: _schema_for(s, name="pr"))
 
         with caplog.at_level(logging.ERROR, logger="otto-mcp"):
             discover_tools(_registered(first, second))
@@ -586,3 +622,58 @@ class TestServedSchemas:
             WORKBENCH_DIR / "bin" / "local" / "generate-mcp-tools-fixture",
         )
         assert json.loads(fixture.render()) == json.loads(GOLDEN_TOOLS.read_text())
+
+
+class TestContractedTools:
+    """Registry tools with a CLI-wide contract, minus mcp_exclude."""
+
+    def test_an_offered_contracted_tool_omits_excluded_subcommands(self):
+        if not (WORKBENCH_DIR / "ai" / "bin" / "otto-log").exists():
+            pytest.skip("scripts not found")
+
+        enum = discover_tools()["otto-log"]["input_schema"]["properties"]["command"]["enum"]
+        excluded = set(cli.otto_log.CONTRACT.mcp_exclude)
+
+        assert excluded == {"show", "record"}
+        assert excluded.isdisjoint(enum)
+        assert "recent" in enum
+        assert "show" not in enum
+
+    def test_a_tool_with_only_excluded_subcommands_is_not_served(self, monkeypatch):
+        contract = core.command_contract.CommandContract(
+            summary="none",
+            groups=(),
+            exits=(),
+            examples=(),
+            mcp_exclude=("only",),
+        )
+        shape = core.cli_reference.CLIShape(
+            prog="toy",
+            commands=(core.cli_reference.Command(
+                "only", "", argparse.ArgumentParser()),),
+            contract=contract,
+        )
+        monkeypatch.setattr(core.cli_reference, "load", lambda *a, **k: shape)
+        entry = RegistryEntry(
+            name="toy", description="toy", visibility=Visibility.BRIEF,
+            parser="cli.toy:reference_shape",
+        )
+
+        assert _tool_schema(Path("/bin/toy"), entry) is None
+
+    def test_unknown_mcp_exclude_name_is_an_error(self):
+        contract = core.command_contract.CommandContract(
+            summary="x", groups=(), exits=(), examples=(), mcp_exclude=("typo",))
+        with pytest.raises(ValueError):
+            core.command_contract.union_schema("toy", "d", ["a"], {"a": contract})
+
+    def test_a_served_non_pr_subcommand_argv_is_positional_then_flags(self):
+        if not (WORKBENCH_DIR / "ai" / "bin" / "otto-log").exists():
+            pytest.skip("scripts not found")
+
+        schema = discover_tools()["otto-log"]
+        argv = _args_to_cli(
+            {"command": "recent", "since": "1d"}, schema["input_schema"])
+
+        assert argv == ["recent", "--since", "1d"]
+        assert Path(schema["_script"]) == WORKBENCH_DIR / "ai" / "bin" / "otto-log"

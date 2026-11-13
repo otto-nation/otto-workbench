@@ -1,4 +1,207 @@
 {
+  "otto-log": {
+    "_script": "ai/bin/otto-log",
+    "description": "Query the unified trail root and AI usage across otto-workbench scripts \u2014 audit trail plus cost and token stats\n\nWhen to use: Tracing what an AI script did (recent, query, show, list), seeing what AI calls cost across scripts, tasks, models, and days (stats), or reclaiming the trail root ahead of its retention horizon (prune). One user command spans several processes; show takes any of their invocation IDs and renders the whole command\n\nUsage: otto-log recent [--since <since>] [--repo <repo>] [--json]  |  otto-log query [--script <script>] [--level <level>] [--event-type <event-type>] [--invocation <invocation>] [--root <root>] [--pr <pr>] [--repo <repo>] [--since <since>] [--json]  |  otto-log show [--only] [--json] <invocation>  |  otto-log list [--script <script>] [--since <since>] [--repo <repo>] [--json]  |  otto-log record --script <script> --action <action> [--detail <detail>] [--level <info|warn|error>] [--data <key=value>] [--repo <repo>] [--pr <pr>]  |  otto-log prune [--keep <keep>]  |  otto-log stats [--since <since>] [--by <script|task|model|provider|day|phase>] [--json]",
+    "input_schema": {
+      "properties": {
+        "command": {
+          "description": "Subcommand to run",
+          "enum": [
+            "recent",
+            "query",
+            "list",
+            "prune",
+            "stats"
+          ],
+          "type": "string",
+          "x-positional": true
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object",
+      "x-contracts": {
+        "list": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "recent, query, show, list or stats printed; record wrote an event; prune dropped expired months",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "the trail files or the usage ledger could not be opened",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, unknown flags, a missing required flag, or --data without key=value",
+              "name": "usage"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "prune": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "recent, query, show, list or stats printed; record wrote an event; prune dropped expired months",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "the trail files or the usage ledger could not be opened",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, unknown flags, a missing required flag, or --data without key=value",
+              "name": "usage"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "query": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "recent, query, show, list or stats printed; record wrote an event; prune dropped expired months",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "the trail files or the usage ledger could not be opened",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, unknown flags, a missing required flag, or --data without key=value",
+              "name": "usage"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "recent": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "recent, query, show, list or stats printed; record wrote an event; prune dropped expired months",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "the trail files or the usage ledger could not be opened",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, unknown flags, a missing required flag, or --data without key=value",
+              "name": "usage"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "stats": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "recent, query, show, list or stats printed; record wrote an event; prune dropped expired months",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "the trail files or the usage ledger could not be opened",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, unknown flags, a missing required flag, or --data without key=value",
+              "name": "usage"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        }
+      }
+    },
+    "name": "otto-log"
+  },
+  "otto-queue": {
+    "_script": "ai/bin/otto-queue",
+    "description": "Machine-wide queue for background work \u2014 admits a command against the heavy/light budget or queues it as a job for an on-demand worker, de-duplicates it by key, and records it in a per-machine ledger\n\nUsage: otto-queue run --ticket [--class <heavy|light>] [--key <key>] [--force] [--no-reuse] [--wait <wait>] ...  |  otto-queue submit [--class <heavy|light>] [--key <key>] [--force] [--no-reuse] [--queue-only] ...  |  otto-queue worker [--idle <idle>]  |  otto-queue status [--json]  |  otto-queue cancel <id>",
+    "input_schema": {
+      "properties": {
+        "command": {
+          "description": "Subcommand to run",
+          "enum": [
+            "status"
+          ],
+          "type": "string",
+          "x-positional": true
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object",
+      "x-contracts": {
+        "status": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "status listed the ledger; cancel stopped a waiting or running entry; run's command succeeded; submit queued or joined the job, or ran it here and it succeeded",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "cancel named no live entry (unknown id, or already finished); the ledger could not be opened",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, run without --ticket, or run with no command after --",
+              "name": "usage"
+            },
+            {
+              "code": 69,
+              "meaning": "submit --queue-only: no worker could take the job, so it was withdrawn and nothing ran",
+              "name": "unavailable"
+            },
+            {
+              "code": 75,
+              "meaning": "no slot before --wait, or another process holds the ledger; retry",
+              "name": "tempfail"
+            },
+            {
+              "code": 130,
+              "meaning": "the entry was cancelled before it ran, or Ctrl-C interrupted the CLI",
+              "name": "cancelled"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        }
+      }
+    },
+    "name": "otto-queue"
+  },
   "pr": {
     "_script": "ai/bin/pr",
     "description": "Unified PR lifecycle CLI \u2014 creation, CI failures, code review, and review comments\n\nWhen to use: Managing PR lifecycle: opening a PR, checking CI status, running reviews, addressing comments, or viewing unified PR status. Across many open PRs at once (rebase, fix CI, comments, self-review): `pr batch run --checkout DIR`; `pr batch report` prints per-PR session commands; see `pr batch run --help`\n\nUsage: pr create [--draft] [--no-verify] [--dry-run] [--base <branch>] [--title <text>] [--body <text> | --body-file <path>] [--issue <id>] [--closes <id>] [--skip-review <reason>]  |  pr status  |  pr ci [--run <id>] [--fix] [--post] [--wait] [--wait-timeout <sec>] [--wait-interval <sec>] [--head-sha <head-sha>] [--no-rebase] [--no-verify]  |  pr review [--no-post] [--submit] [--self] [--fix] [--track <finding-id>] [--push] [--skip-user-verification] [--force] [--force-superseded] [--no-holistic] [--no-scout] [--no-group] [--no-synthesis] [--no-disprove] [--disprove] [--json-summary] [--issue <url>] [--focus <text>] [--focus-file <path>] [--base|--onto <base>] [--max-parallel <n>] [--max-cost <usd>] [--model <name>] [--effort <low|medium|high>] [--max-groups <n>] [--generated] [-V|--version] [--post] [--repair] [--summary] [--dismiss] [--recover] [--list] [--event <comment|approve|request_changes>] [--if-changed <stamp>] [<pr|branch> ...]  |  pr comments [--triage] [--fix] [--resume | --no-resume] [--no-verify] [--no-push-verify] [--finish] [--track <thread-id>] [--track-all] [--post] [--reply <thread-comment-or-review-id>] [--body-file <path>] [--settle <thread-id>] [--as <fixed|dismissed|already_addressed>] [--reason <text>] [--commit <sha>]  |  pr fix [--post] [--force-superseded] [<review-or-ci-flag> ...]  |  pr rebase [--onto|--base <ref>] [--fork-point <ref>] [--fix] [--stop-on-conflict] [--no-push] [--push-only] [--expect <sha>] [--no-verify] [--force-landed] [--abort]  |  pr push --expect <sha> [--no-verify]  |  pr describe [--force] [--dry-run] [--post] [--title <text>] [--body <text> | --body-file <path>] [--closes <id>]  |  pr stack  |  pr board --checkout <dir> --phase <phase> [--prs <n,n>] [--if-changed <stamp>] [--offline]  |  pr batch plan --checkout <dir> [--needs <steps>]  |  pr batch run --checkout <dir> | --plan <file> [--steps <steps>] [--with-ai <steps>] [--with-review] [--pool <pool>] [--auto-publish <ff>] [--rebase <conflicts|behind>] [--prs <prs>] [--select <key=steps>] [--no-verify] [--focus <text>] [--focus-file <path>] [--verbose]  |  pr batch resume [--steps <steps>] [--verbose] [<run-id>]  |  pr batch cancel [--kill] [<run-id>]  |  pr batch release [--kill] <run-id> <pr>  |  pr batch status [--full] [--list] [--offline] [<run-id>]  |  pr batch report [--format <json|md>] [--offline] [<run-id>]  |  pr gc",
@@ -586,5 +789,411 @@
       }
     },
     "name": "pr"
+  },
+  "wiki": {
+    "_script": "ai/bin/wiki",
+    "description": "Mechanical operations over a compiled knowledge base \u2014 status, lint, signals, archive, source hashes, index, browsing link, snapshots\n\nUsage: wiki init [--wiki <dir>] [--domain <domain>] [--audience <audience>] [--vault | --in-repo] [<dir>]  |  wiki path [--wiki <dir>] [<dir>]  |  wiki status [--wiki <dir>] [--json] [<dir>]  |  wiki lint [--wiki <dir>] [--json] [--signals] [<dir>]  |  wiki signals [--wiki <dir>] [--json] [<dir>]  |  wiki sources [--wiki <dir>] [--json] [--new] [<dir>]  |  wiki index [--wiki <dir>] [--check] [<dir>]  |  wiki backup [--wiki <dir>] [--list] [--restore <name>] [--keep <keep>] [<dir>]  |  wiki link [--wiki <dir>] [<dir>]  |  wiki ingest [--wiki <dir>] --stage <src> [--type <type>] [--title <title>] [<dir>]  |  wiki archive [--wiki <dir>] [--force] <slug> [<dir>]",
+    "input_schema": {
+      "properties": {
+        "command": {
+          "description": "Subcommand to run",
+          "enum": [
+            "init",
+            "path",
+            "status",
+            "lint",
+            "signals",
+            "sources",
+            "index",
+            "backup",
+            "link",
+            "ingest"
+          ],
+          "type": "string",
+          "x-positional": true
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object",
+      "x-contracts": {
+        "backup": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the subcommand succeeded; lint and index --check also mean no findings",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "a finding was reported (lint findings, stale index), or the operation failed",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, a required flag or argument is missing, no knowledge base found from DIR/--wiki, or init could not tell where to create one",
+              "name": "usage"
+            },
+            {
+              "code": 130,
+              "meaning": "Ctrl-C interrupted the CLI",
+              "name": "cancelled"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "index": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the subcommand succeeded; lint and index --check also mean no findings",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "a finding was reported (lint findings, stale index), or the operation failed",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, a required flag or argument is missing, no knowledge base found from DIR/--wiki, or init could not tell where to create one",
+              "name": "usage"
+            },
+            {
+              "code": 130,
+              "meaning": "Ctrl-C interrupted the CLI",
+              "name": "cancelled"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "ingest": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the subcommand succeeded; lint and index --check also mean no findings",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "a finding was reported (lint findings, stale index), or the operation failed",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, a required flag or argument is missing, no knowledge base found from DIR/--wiki, or init could not tell where to create one",
+              "name": "usage"
+            },
+            {
+              "code": 130,
+              "meaning": "Ctrl-C interrupted the CLI",
+              "name": "cancelled"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "init": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the subcommand succeeded; lint and index --check also mean no findings",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "a finding was reported (lint findings, stale index), or the operation failed",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, a required flag or argument is missing, no knowledge base found from DIR/--wiki, or init could not tell where to create one",
+              "name": "usage"
+            },
+            {
+              "code": 130,
+              "meaning": "Ctrl-C interrupted the CLI",
+              "name": "cancelled"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "link": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the subcommand succeeded; lint and index --check also mean no findings",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "a finding was reported (lint findings, stale index), or the operation failed",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, a required flag or argument is missing, no knowledge base found from DIR/--wiki, or init could not tell where to create one",
+              "name": "usage"
+            },
+            {
+              "code": 130,
+              "meaning": "Ctrl-C interrupted the CLI",
+              "name": "cancelled"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "lint": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the subcommand succeeded; lint and index --check also mean no findings",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "a finding was reported (lint findings, stale index), or the operation failed",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, a required flag or argument is missing, no knowledge base found from DIR/--wiki, or init could not tell where to create one",
+              "name": "usage"
+            },
+            {
+              "code": 130,
+              "meaning": "Ctrl-C interrupted the CLI",
+              "name": "cancelled"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "path": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the subcommand succeeded; lint and index --check also mean no findings",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "a finding was reported (lint findings, stale index), or the operation failed",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, a required flag or argument is missing, no knowledge base found from DIR/--wiki, or init could not tell where to create one",
+              "name": "usage"
+            },
+            {
+              "code": 130,
+              "meaning": "Ctrl-C interrupted the CLI",
+              "name": "cancelled"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "signals": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the subcommand succeeded; lint and index --check also mean no findings",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "a finding was reported (lint findings, stale index), or the operation failed",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, a required flag or argument is missing, no knowledge base found from DIR/--wiki, or init could not tell where to create one",
+              "name": "usage"
+            },
+            {
+              "code": 130,
+              "meaning": "Ctrl-C interrupted the CLI",
+              "name": "cancelled"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "sources": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the subcommand succeeded; lint and index --check also mean no findings",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "a finding was reported (lint findings, stale index), or the operation failed",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, a required flag or argument is missing, no knowledge base found from DIR/--wiki, or init could not tell where to create one",
+              "name": "usage"
+            },
+            {
+              "code": 130,
+              "meaning": "Ctrl-C interrupted the CLI",
+              "name": "cancelled"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "status": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the subcommand succeeded; lint and index --check also mean no findings",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "a finding was reported (lint findings, stale index), or the operation failed",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no subcommand, a required flag or argument is missing, no knowledge base found from DIR/--wiki, or init could not tell where to create one",
+              "name": "usage"
+            },
+            {
+              "code": 130,
+              "meaning": "Ctrl-C interrupted the CLI",
+              "name": "cancelled"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        }
+      }
+    },
+    "name": "wiki"
+  },
+  "workbench-rules": {
+    "_script": "ai/bin/workbench-rules",
+    "description": "Manages this machine's own coding-rule layers \u2014 local additions and overrides, for whichever harnesses are installed\n\nUsage: workbench-rules sync  |  workbench-rules add [<domain>] [<rule>]  |  workbench-rules list  |  workbench-rules status  |  workbench-rules open [<domain>]  |  workbench-rules project add [<rule>]  |  workbench-rules project show",
+    "input_schema": {
+      "properties": {
+        "command": {
+          "description": "Subcommand to run",
+          "enum": [
+            "sync",
+            "list",
+            "status"
+          ],
+          "type": "string",
+          "x-positional": true
+        }
+      },
+      "required": [
+        "command"
+      ],
+      "type": "object",
+      "x-contracts": {
+        "list": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "sync wrote workbench.md; add/list/status/open/project ran",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "the rules tree is missing, AGENTS.md is missing, the cwd is not a repo, no worktree resolved, the instructions resolver failed, or $EDITOR could not be started",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no command, unknown command, missing args to add or project add, or unknown project subcommand",
+              "name": "usage"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "status": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "sync wrote workbench.md; add/list/status/open/project ran",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "the rules tree is missing, AGENTS.md is missing, the cwd is not a repo, no worktree resolved, the instructions resolver failed, or $EDITOR could not be started",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no command, unknown command, missing args to add or project add, or unknown project subcommand",
+              "name": "usage"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        },
+        "sync": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "sync wrote workbench.md; add/list/status/open/project ran",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "the rules tree is missing, AGENTS.md is missing, the cwd is not a repo, no worktree resolved, the instructions resolver failed, or $EDITOR could not be started",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "no command, unknown command, missing args to add or project add, or unknown project subcommand",
+              "name": "usage"
+            }
+          ],
+          "ok_exit_codes": [
+            0
+          ],
+          "remote_effects": []
+        }
+      }
+    },
+    "name": "workbench-rules"
   }
 }

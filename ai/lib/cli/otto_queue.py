@@ -107,6 +107,12 @@ CONTRACT = core.command_contract.CommandContract(
         "(default ~/.local/state/workbench).",
     ),
     reference="docs/ai-automation.md#otto-queue-contract",
+    # MCP's flag-only mapping cannot express remainder argv or a required
+    # positional, and worker is a long-running supervisor process:
+    #   run, submit — nargs=REMAINDER after -- (`--argv` is not a flag)
+    #   cancel — required positional id (`--id` is unrecognized)
+    #   worker — started by the supervisor, not a request/response call
+    mcp_exclude=("run", "submit", "worker", "cancel"),
 )
 
 

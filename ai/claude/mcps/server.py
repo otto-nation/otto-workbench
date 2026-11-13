@@ -14,11 +14,15 @@ what to offer is a fact about the checkout's registries. An earlier design read
 ``tool_dirs`` / ``plugin_dirs`` from ``~/.config/workbench/mcp-tools.json``; no
 setup step ever wrote that file, and the keys were removed rather than carried
 into ``config.yml``. Adding a tool means registering it in a component's
-``registry.yml``; the schema comes from ``_tool_schema()``, which imports
-``cli.schema.tool_schema``.
+``registry.yml``; the schema comes from ``_tool_schema()``, which builds a
+union from the entry's ``parser:`` shape when that shape carries a
+``CommandContract``. ``pr`` is the one CLI whose contracts are per
+subcommand, and still uses ``cli.schema.tool_schema`` for that union.
 
-Today only ``pr`` is offered — ``ci-check``, ``pr-describe``, and ``pr-rebase``
-are registered hidden because they are what ``pr ci``, ``pr describe``, and
+A registered script is offered when it is ``full`` or ``brief`` *and* its
+parser shape has a contract with at least one subcommand the flag-only
+mapping can run. ``ci-check``, ``pr-describe``, and ``pr-rebase`` are
+registered hidden because they are what ``pr ci``, ``pr describe``, and
 ``pr rebase`` run, and offering them beside ``pr`` asks a client to choose
 between a tool and its own internals. The description a client reads is the
 registry's, not the script's: a ``full`` entry's ``when_to_use`` and ``usage``
@@ -98,6 +102,8 @@ WORKBENCH_DIR = Path(__file__).resolve().parents[3]
 # project as the working directory, so the workbench's Python has to be named
 # before it can be imported.
 sys.path.insert(0, str(WORKBENCH_DIR / "ai" / "lib"))
+import core.cli_reference  # noqa: E402
+import core.command_contract  # noqa: E402
 import core.proc  # noqa: E402
 import core.timeouts  # noqa: E402
 from config.tool_registry import RegistryEntry, load_registry_entries, registry_files  # noqa: E402
@@ -152,28 +158,51 @@ def _run_script(argv: list[str], timeout: float) -> core.proc.CmdResult:
 # ── Tool Discovery ────────────────────────────────────────────────────────
 
 
-def _tool_schema(script: Path) -> dict | None:
+def _tool_schema(script: Path, entry: RegistryEntry | None = None) -> dict | None:
     """The schema *script* declares, read in this process.
 
-    `pr` is the one tool the workbench offers, and the document it serves is
-    now a function in `ai/lib` rather than a string only the binary can
-    print. Reading it directly is what removed the last of #909's three
-    cross-process introspection protocols: discovery used to glob nine
-    directories, byte-grep each executable for a marker, and spawn every
-    match with `--tool-schema` under a timeout, to learn something an import
-    answers.
+    A registry ``parser:`` whose shape carries a CLI-wide ``CommandContract``
+    becomes a union schema: one ``command`` enum, that contract under every
+    subcommand, ``mcp_exclude`` dropping the ones the flag-only mapping
+    cannot run. A shape whose commands each carry a contract still uses
+    ``cli.schema.tool_schema`` — those contracts are per-subcommand and the
+    union also names worktree context properties this path does not invent.
+    ``pr`` is the only such CLI today.
 
-    None for a registered script this server has no schema for. Most
-    registered scripts are not tools — `wt`, `otto-log`, the scans — and a
-    registry entry is not a claim to be one. Returning None rather than
-    raising keeps a component's registry free to list whatever it documents.
+    None when there is no parser, no contract, or no subcommand left after
+    exclusions. Returning None rather than raising keeps a component's
+    registry free to list whatever it documents.
     """
-    if script.name != "pr":
+    if entry is None or not entry.parser:
         return None
-    from cli.schema import tool_schema
-    schema = dict(tool_schema())
+    try:
+        shape = core.cli_reference.load(entry.parser, entry.name, WORKBENCH_DIR)
+        schema = _schema_from_shape(entry, shape)
+    except Exception as exc:  # noqa: BLE001 - one bad parser must not drop every tool
+        logger.error("Skipping %s: its schema could not be read: %s", entry.name, exc)
+        return None
+    if schema is None:
+        return None
     schema["_script"] = str(script)
     return schema
+
+
+def _schema_from_shape(
+    entry: RegistryEntry, shape: core.cli_reference.CLIShape,
+) -> dict | None:
+    """The MCP document for *entry*, or None when it should not be offered."""
+    if shape.contract is not None:
+        commands = [command.name for command in shape.commands]
+        contracts = {name: shape.contract for name in commands}
+        doc = core.command_contract.union_schema(
+            entry.name, entry.description, commands, contracts)
+        if not doc["input_schema"]["properties"]["command"]["enum"]:
+            return None
+        return doc
+    if any(command.contract is not None for command in shape.commands):
+        from cli.schema import tool_schema
+        return dict(tool_schema())
+    return None
 
 
 def _described(schema: dict, entry: RegistryEntry) -> dict:
@@ -234,7 +263,7 @@ def discover_tools(registry: dict[Path, RegistryEntry] | None = None) -> dict[st
     for script, entry in sorted(registry.items()):
         if not entry.offered:
             continue
-        schema = _tool_schema(script)
+        schema = _tool_schema(script, entry)
         if schema is None:
             continue
         name = schema["name"]
@@ -277,6 +306,11 @@ def discovery_fingerprint(root: Path | None = None) -> tuple:
     base = WORKBENCH_DIR if root is None else Path(root)
     lib = base / "ai" / "lib" / "cli"
     watched = [*registry_files(base), lib / "schema.py", lib / "registry.py"]
+    # Parser modules decide which tools and subcommands are served (mcp_exclude).
+    for entry in load_registry_entries(base).values():
+        module = entry.parser.partition(":")[0] if entry.parser else ""
+        if module:
+            watched.append(base / "ai" / "lib" / Path(*module.split(".")).with_suffix(".py"))
     return tuple(sorted((str(path), _stamp(path)) for path in watched))
 
 
@@ -488,9 +522,11 @@ class _ToolAnswer:
 def _ok_codes(schema: dict, arguments: dict) -> set[int]:
     """Exit codes this call treats as an answer, not a tool error.
 
-    The `pr` tool is one schema with a ``command`` argument; each subcommand's
-    codes live in ``input_schema["x-contracts"]``. A schema without that
-    extension keeps the top-level ``ok_exit_codes`` union.
+    One schema with a ``command`` argument; each subcommand's codes live in
+    ``input_schema["x-contracts"]``. A CLI-wide contract is stored under
+    every subcommand name, so the same lookup works for those tools. A
+    schema without that extension keeps the top-level ``ok_exit_codes``
+    union.
     """
     contracts = (schema.get("input_schema") or {}).get("x-contracts") or {}
     sub = arguments.get("command")

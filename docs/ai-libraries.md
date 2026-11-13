@@ -5886,11 +5886,13 @@ and a ``usage`` line. ``visibility`` is the field that says who a tool is for �
 nowhere.
 
 The MCP server reads the same field, so a tool hidden from a reader is also
-absent from ``tools/list``. Registering a script is the act that offers it. The
-alternative — every marker-bearing script exposed — puts ``ci-check``,
-``pr-rebase`` and ``pr-describe`` in front of a client as peers of ``pr``, the
-CLI whose subcommands run them, and a client picking between them is choosing
-between a tool and its own internals.
+absent from ``tools/list``. A ``full`` or ``brief`` entry is offered only when
+its ``parser:`` shape carries a ``CommandContract`` with at least one
+subcommand the flag-only mapping can run. The alternative — every
+marker-bearing script exposed — puts ``ci-check``, ``pr-rebase`` and
+``pr-describe`` in front of a client as peers of ``pr``, the CLI whose
+subcommands run them, and a client picking between them is choosing between a
+tool and its own internals.
 
 Only ``meta.validation: bindir`` registries are read. That value is the
 declaration that ``meta.source`` is a directory of executables with one

@@ -19,6 +19,17 @@ and test specifics live with their owners (pointers below).
   first edit
 - End the prompt with the exact verification command and ask for its output. A
   subagent given the check reports its own result, which makes review faster
+- Split a feature across dispatches by commit, not by phase. Observed 2026-11
+  (grok through pi's `subagent` tool): a single prompt covering the wiring, CLI,
+  docs and four test files for one commit hit `Request timed out` with most of the
+  work uncommitted in the worktree; the retry, told to inspect `git diff` and
+  finish, completed it. Brief a continuation with what is already done and what is
+  missing. Revisit when the stall timeout or the model changes
+- Never put a bare coreutils `timeout` around a long `pr review --self --fix`: a
+  3000s bound killed one mid-fix, and a rerun was owed. Start it with `job_start`
+  under Pi (`run_in_background` under Claude Code; see `general.md`) and a
+  generous `timeout_minutes` (observed 2026-11: 10 to 35 minutes per
+  run, longer when the repo's checks are slow)
 - Retry a stalled or aborted call on the same model before changing models —
   the stall is usually the call, not the model. A killed or timed-out child can
   leave uncommitted partial files in the worktree; before retrying, read
@@ -35,6 +46,13 @@ and test specifics live with their owners (pointers below).
   statement that `pr rebase` pushing the result is expected and needs no
   confirmation. Which tool a rebase request uses is
   `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts
+- Two changes to the same subsystem can land in parallel under the same module
+  name. Before a long rebase, `git diff <merge-base> origin/main --stat` over the
+  directories the branch touches: a same-named module on main (observed 2026-11:
+  `fix/resume.py`) is a design conflict that no conflict resolver, human or AI,
+  settles by merging text. Decide the roles first, rename one side, then rebase
+  by hand hunk by hunk. `pr rebase --fix` aborted on baseline.py and its earlier
+  resolutions of settlement.py left dead code and a double settle
 
 ## Concurrency
 

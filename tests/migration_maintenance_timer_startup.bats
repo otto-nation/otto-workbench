@@ -72,6 +72,13 @@ _old_timer() {
   [ ! -f "$TMPDIR/args" ]
 }
 
+@test "a timer already on OnActiveSec is left alone" {
+  printf '[Timer]\nOnActiveSec=5min\nOnUnitActiveSec=7200sec\n' > "$TIMER"
+  _run_migration
+  [ "$status" -eq 3 ]
+  [ ! -f "$TMPDIR/args" ]
+}
+
 @test "no installed timer is a no-op" {
   _run_migration
   [ "$status" -eq 3 ]

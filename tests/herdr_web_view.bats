@@ -404,3 +404,31 @@ FAKE_DOM='class N {}
   [ "$status" -eq 0 ]
   [ "$output" = '{"slotClass":"status running","aria":"Loading comments…","body":"Loading comments…","count":false}' ]
 }
+
+@test "view: filter bar draws author count as meta and a Bots group from barModel" {
+  _web "$FAKE_DOM
+        globalThis.document.addEventListener = () => {};
+        const { renderFilterBar } = await import(W + '/public/filter_bar.js');
+        const txt = (n) => n.text ?? (n.children ?? []).map(txt).join('');
+        const cam = { value: 'cam', label: 'cam', state: null, include: 'author:cam', exclude: 'not-author:cam', count: 5 };
+        const bot = { value: 'dependabot[bot]', label: 'dependabot[bot]', state: null, include: 'author:dependabot[bot]', exclude: 'not-author:dependabot[bot]', count: 2 };
+        const model = { facets: [{ key: 'authors', label: 'Author', active: false, search: false,
+          options: [cam, bot], groups: [{ label: null, options: [cam] }, { label: 'Bots', options: [bot] }] }], tags: [], clear: null, count: 0 };
+        const el = document.createElement('div');
+        el.contains = () => false;
+        el.querySelector = () => null;
+        renderFilterBar(el, model, { onAction: () => {} });
+        const open = el.children[0].children[0].listeners.find((l) => l[0] === 'click')[1];
+        open();
+        const pop = el.children[0].children[1];
+        const list = pop.children[0];
+        const rows = list.children.filter((c) => c.className === 'frow' || c.className === 'frow ex').map((row) => {
+          const label = row.children[0];
+          const name = label.children.find((x) => x.className === 'name trunc');
+          const meta = label.children.filter((x) => x.className === 'meta-text').map(txt);
+          return { name: txt(name), meta, hide: txt(row.children[1]) };
+        });
+        out({ pop: pop.className, classes: list.children.map((c) => c.className), rows, bots: txt(list.children.find((c) => c.className === 'section-label')) });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"pop":"fpop","classes":["frow","fsep","section-label","frow"],"rows":[{"name":"cam","meta":["5"],"hide":"Hide"},{"name":"dependabot[bot]","meta":["2"],"hide":"Hide"}],"bots":"Bots"}' ]
+}

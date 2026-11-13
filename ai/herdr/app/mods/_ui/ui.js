@@ -1,10 +1,10 @@
 // Shared pieces for the mods, each one a DESIGN.md component: buttons (outline, solid, ghost,
-// icon), checkbox, popover surface, tag, status glyph, section label, segmented control, card,
-// list row. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
+// icon), checkbox, checkRow, popover surface, tag, status glyph, section label, segmented control,
+// card, list row. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
 import { div, svg } from "gpui-kit";
-import { h_flex, v_flex, TextView } from "gpui-base";
+import { h_flex, v_flex, TextView, Checkbox } from "gpui-base";
 import { theme, settings } from "herdr";
-import { SP, TYPE, RADIUS, CONTROL, LAYOUT } from "../_lib/tokens.js";
+import { SP, TYPE, RADIUS, CONTROL, LAYOUT, ROW_H } from "../_lib/tokens.js";
 import { STATUS, DIFF, statusOf } from "../_lib/status.js";
 
 export function mono() {
@@ -223,6 +223,31 @@ export function checkbox(on) {
   return type(div().flex_none().size(SP.lg).flex().items_center().justify_center()
     .rounded(RADIUS.tag).border_1().border_color(t.input).bg(t.background), "meta")
     .when(on, (e) => e.bg(t.ring).border_color(t.ring).text_color(t.background).child("✓"));
+}
+
+// A filter/option row: checkbox indicator and truncated label on one line, optional hint or
+// meta count, optional trailing control (Hide/Unhide). Hover fills; the border does not change.
+// gpui-base Checkbox is an unstyled block, so the indicator and label live in an h_flex child
+// rather than as stacked Checkbox children.
+export function checkRow(id, { on, label, hint, count, muted, onToggle, trailing } = {}) {
+  const t = theme();
+  const ink = muted ? t.muted : t.foreground;
+  return h_flex().min_h(ROW_H.list).px(SP.xs).gap(SP.sm).items_center().rounded(RADIUS.control)
+    .hover((s) => s.bg(t.hover))
+    .child(
+      Checkbox.new(id)
+        .checked(Boolean(on))
+        .on_change(() => onToggle?.())
+        .flex_1().min_w(0)
+        .child(
+          h_flex().items_center().gap(SP.sm).flex_1().min_w(0)
+            .child(checkbox(Boolean(on)))
+            .child(text("label", label, ink).flex_1().min_w(0).truncate())
+            .when(Boolean(hint), (e) => e.child(caption(hint)))
+            .when(count != null, (e) => e.child(caption(String(count)))),
+        ),
+    )
+    .when(trailing != null, (e) => e.child(trailing));
 }
 
 // Anchored menu surface: popover fill, input edge, card radius and padding.

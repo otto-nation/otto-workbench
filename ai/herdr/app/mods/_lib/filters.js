@@ -142,15 +142,16 @@ function dropExcluded(prs, exclude, field) {
   return prs.filter((p) => !drop.has(fold(p[field])));
 }
 
-function authorNames(prs, me) {
+function authorStats(prs, me) {
   const who = fold(me);
-  const seen = new Set();
+  const counts = new Map();
   for (const pr of prs ?? []) {
     const a = fold(pr?.author);
     if (!a || a === who) continue;
-    seen.add(a);
+    counts.set(a, (counts.get(a) ?? 0) + 1);
   }
-  return [...seen].sort((a, b) => a.localeCompare(b));
+  const authors = [...counts.keys()].sort((a, b) => a.localeCompare(b));
+  return { authors, authorCounts: Object.fromEntries(counts) };
 }
 
 export function facetView(base, filters, {
@@ -161,7 +162,7 @@ export function facetView(base, filters, {
   authorsFrom,
 } = {}) {
   const f = normalizeFilters(filters);
-  const authors = authorNames(authorsFrom ?? base, me);
+  const { authors, authorCounts } = authorStats(authorsFrom ?? base, me);
   let list = filterRepos(base ?? [], f.repos, loadedRepos);
   list = dropExcluded(list, f.excludeRepos, 'repoSlug');
   const offered = filterFacets(list).labels;
@@ -180,7 +181,7 @@ export function facetView(base, filters, {
       list = list.filter((p) => !isBot(p.author));
     }
   }
-  return { list, options: { labels: offered, authors } };
+  return { list, options: { labels: offered, authors, authorCounts } };
 }
 
 function repoLabel(slug) {
@@ -188,37 +189,65 @@ function repoLabel(slug) {
   return parts[parts.length - 1] || String(slug ?? '');
 }
 
-function facetOptions(prefix, offered, includes, excludes, labelOf) {
+function facetOptions(prefix, offered, includes, excludes, labelOf, counts) {
   const includeSet = new Set(includes);
   const excludeSet = new Set(excludes);
   const rows = [];
   const seen = new Set();
+  const counted = counts != null;
   for (const raw of offered ?? []) {
     const value = fold(raw);
     if (!value || seen.has(value)) continue;
     seen.add(value);
     const state = excludeSet.has(value) ? 'exclude' : includeSet.has(value) ? 'include' : null;
-    rows.push({
+    const row = {
       value,
       label: labelOf(raw),
       state,
       include: `${prefix}:${value}`,
       exclude: `not-${prefix}:${value}`,
-    });
+    };
+    if (counted) row.count = counts[value] ?? 0;
+    rows.push(row);
   }
   for (const value of excludes) {
     if (seen.has(value)) continue;
     seen.add(value);
-    rows.push({
+    const row = {
       value,
       label: labelOf(value),
       state: 'exclude',
       include: `${prefix}:${value}`,
       exclude: `not-${prefix}:${value}`,
-    });
+    };
+    if (counted) row.count = counts[value] ?? 0;
+    rows.push(row);
   }
-  rows.sort((a, b) => Number(Boolean(b.state)) - Number(Boolean(a.state)));
+  rows.sort((a, b) => compareOption(a, b, counted));
   return rows;
+}
+
+function compareOption(a, b, counted) {
+  const pin = Number(Boolean(b.state)) - Number(Boolean(a.state));
+  if (pin) return pin;
+  if (!counted) return 0;
+  const byCount = (b.count ?? 0) - (a.count ?? 0);
+  if (byCount) return byCount;
+  return fold(a.label).localeCompare(fold(b.label)) || a.value.localeCompare(b.value);
+}
+
+function authorGroups(rows, counted) {
+  const people = [];
+  const bots = [];
+  for (const row of rows) {
+    (isBot(row.value) ? bots : people).push(row);
+  }
+  people.sort((a, b) => compareOption(a, b, counted));
+  bots.sort((a, b) => compareOption(a, b, counted));
+  const groups = [];
+  if (people.length) groups.push({ label: null, options: people });
+  if (bots.length) groups.push({ label: 'Bots', options: bots });
+  return groups;
 }
 
 function showRows(f, tab) {
@@ -253,6 +282,7 @@ export function barModel(filters, { tab = 'team', options = {} } = {}) {
   const reposOffered = options.repos ?? [];
   const labelsOffered = options.labels ?? [];
   const authorsOffered = options.authors ?? [];
+  const authorCounts = options.authorCounts ?? null;
   const rows = showRows(f, tab);
   const bots = tab === 'team'
     ? {
@@ -271,7 +301,17 @@ export function barModel(filters, { tab = 'team', options = {} } = {}) {
   }];
   const repoOpts = facetOptions('repo', reposOffered, f.repos, f.excludeRepos, repoLabel);
   const labelOpts = facetOptions('label', labelsOffered, f.labels, f.excludeLabels, (v) => String(v));
-  const authorOpts = facetOptions('author', authorsOffered, f.authors, f.excludeAuthors, (v) => String(v));
+  const authorCounted = authorCounts != null;
+  const authorOpts = facetOptions(
+    'author',
+    authorsOffered,
+    f.authors,
+    f.excludeAuthors,
+    (v) => String(v),
+    authorCounts,
+  );
+  const authorFacetGroups = authorGroups(authorOpts, authorCounted);
+  const authorOptsGrouped = authorFacetGroups.flatMap((g) => g.options);
   if (reposOffered.length > 1) {
     facets.push({
       key: 'repos',
@@ -292,9 +332,10 @@ export function barModel(filters, { tab = 'team', options = {} } = {}) {
     facets.push({
       key: 'authors',
       label: 'Author',
-      active: authorOpts.some((o) => o.state),
-      search: authorOpts.length > SEARCH_MIN,
-      options: authorOpts,
+      active: authorOptsGrouped.some((o) => o.state),
+      search: authorOptsGrouped.length > SEARCH_MIN,
+      options: authorOptsGrouped,
+      groups: authorFacetGroups,
     });
   }
   const tags = [
@@ -302,7 +343,7 @@ export function barModel(filters, { tab = 'team', options = {} } = {}) {
     ...valueTags(labelOpts, 'not '),
   ];
   if (tab === 'team') {
-    tags.push(...valueTags(authorOpts, 'not '));
+    tags.push(...valueTags(authorOptsGrouped, 'not '));
     if (bots?.on) tags.push({ text: 'Bots hidden', action: 'hideBots', excluded: false });
   }
   const clear = tags.length > 0 ? `clear:${tab}` : null;

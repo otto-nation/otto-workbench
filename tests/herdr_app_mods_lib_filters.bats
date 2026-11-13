@@ -241,6 +241,11 @@ _f() {
     for (const f of dirty.facets) {
       labels.push(f.label);
       for (const r of f.rows ?? []) labels.push(r.label);
+      for (const o of f.options ?? []) labels.push(o.label);
+      for (const g of f.groups ?? []) {
+        if (g.label) labels.push(g.label);
+        for (const o of g.options ?? []) labels.push(o.label);
+      }
     }
     return {
       tags: dirty.tags.map((t) => t.text),
@@ -253,6 +258,25 @@ _f() {
   })()'
   [ "$status" -eq 0 ]
   [ "$output" = '{"tags":["box","not bug","ann","Bots hidden"],"clear":"clear:team","count":5,"cleanClear":null,"cleanCount":0,"digits":false}' ]
+}
+
+@test "barModel: author counts are a field, unpinned order is count then name, bots group last" {
+  _f '(() => {
+    const authors = ["ann", "cam", "dependabot[bot]", "bob"];
+    const authorCounts = { ann: 1, cam: 5, "dependabot[bot]": 9, bob: 3 };
+    const model = m.barModel(
+      { authors: ["bob"] },
+      { tab: "team", options: { repos: [], labels: [], authors, authorCounts } },
+    );
+    const f = model.facets.find((x) => x.key === "authors");
+    return {
+      options: f.options.map((o) => [o.value, o.count, o.state, o.label]),
+      groups: f.groups.map((g) => [g.label, g.options.map((o) => o.value)]),
+      digits: [...f.options, ...f.groups.flatMap((g) => g.options)].some((o) => /[0-9]/.test(o.label)),
+    };
+  })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"options":[["bob",3,"include","bob"],["cam",5,null,"cam"],["ann",1,null,"ann"],["dependabot[bot]",9,null,"dependabot[bot]"]],"groups":[[null,["bob","cam","ann"]],["Bots",["dependabot[bot]"]]],"digits":false}' ]
 }
 
 @test "searchOptions: keeps pinned rows that miss the query" {

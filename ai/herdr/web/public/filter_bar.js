@@ -1,5 +1,5 @@
 // Compact filter bar: facets, tags, Clear. State lives in _lib/filters.js; this file only draws.
-import { h, setChildren } from './dom.js';
+import { h, setChildren, sectionLabel } from './dom.js';
 import { searchOptions } from '../../app/mods/_lib/filters.js';
 
 const state = { open: null, query: '', focusSearch: false };
@@ -32,9 +32,10 @@ function closePopover(refocus) {
   if (refocus && key) last.el.querySelector(`[data-facet="${key}"] .facet-btn`)?.focus();
 }
 
-function row(onAction, { name, on, action, option = null, hint = null }) {
+function row(onAction, { name, on, action, option = null, hint = null, count = null }) {
   const excluded = option?.state === 'exclude';
   const checked = option ? option.state === 'include' : on;
+  const n = count ?? option?.count;
   return h('div', { class: excluded ? 'frow ex' : 'frow' },
     h('label', {},
       h('input', {
@@ -44,6 +45,7 @@ function row(onAction, { name, on, action, option = null, hint = null }) {
         onchange: () => onAction(option ? option.include : action),
       }),
       h('span', { class: 'name trunc' }, name),
+      n != null ? h('span', { class: 'meta-text' }, String(n)) : null,
       hint ? h('span', { class: 'meta-text' }, hint) : null),
     option
       ? h('button', {
@@ -84,13 +86,28 @@ function valueBody(f, onAction) {
       },
     }));
   }
-  kids.push(h('div', { class: 'flist' },
-    searchOptions(f.options, state.query).map((o) => row(onAction, {
-      name: o.label,
-      on: o.state === 'include',
-      action: o.include,
-      option: o,
-    }))));
+  const groups = f.groups?.length
+    ? f.groups
+    : [{ label: null, options: f.options ?? [] }];
+  const listKids = [];
+  for (const g of groups) {
+    const opts = searchOptions(g.options, state.query);
+    if (!opts.length) continue;
+    if (g.label) {
+      listKids.push(h('div', { class: 'fsep' }));
+      listKids.push(sectionLabel(g.label));
+    }
+    for (const o of opts) {
+      listKids.push(row(onAction, {
+        name: o.label,
+        on: o.state === 'include',
+        action: o.include,
+        option: o,
+        count: o.count,
+      }));
+    }
+  }
+  kids.push(h('div', { class: 'flist' }, ...listKids));
   return kids;
 }
 

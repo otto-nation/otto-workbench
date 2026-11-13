@@ -83,18 +83,7 @@ def _config_subparser_params():
     for name in _config_subparser_names():
         if name in {"pi-catalogue", "run-bounded"}:
             continue
-        if name == "model":
-            params.append(
-                pytest.param(
-                    name,
-                    marks=pytest.mark.xfail(
-                        strict=True,
-                        reason="added by the live-drift PR",
-                    ),
-                )
-            )
-        else:
-            params.append(name)
+        params.append(name)
     return params
 
 

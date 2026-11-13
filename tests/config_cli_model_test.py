@@ -69,6 +69,19 @@ def test_a_model_xor_unset_is_required(argv):
     assert config_cli.main(argv) == 2
 
 
+def test_a_tier_name_is_refused_as_a_tier_value(capsys):
+    assert config_cli.main(["model", "standard", "light"]) == 1
+    assert "tier name" in capsys.readouterr().err
+
+
+def test_unset_prunes_emptied_parents_in_one_write():
+    config_cli.main(["model", "scout", GEMINI])
+    path = config.workbench_config.global_config_path()
+    assert config_cli.main(["model", "scout", "--unset"]) == 0
+    assert "scout" not in path.read_text()
+    assert not list(path.parent.glob(".*.tmp"))
+
+
 def test_unset_without_yq_refuses_rather_than_rewriting_the_file(monkeypatch):
     config_cli.main(["model", "scout", GEMINI])
     before = config.workbench_config.global_config_path().read_text()

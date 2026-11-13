@@ -364,11 +364,30 @@ def help_parser(name: str) -> argparse.ArgumentParser:
 
 
 def documented_flag_keys(name: str) -> list[str]:
-    """The flag keys `pr <name>`'s contract must group: documented, globals excluded."""
+    """The flag keys `pr <name>`'s contract must group: documented, globals excluded.
+
+    A command with subparsers (batch) prefixes each key with the subcommand
+    so groups can name ``run --auto-publish`` rather than a flag the parent
+    does not declare.
+    """
     hidden = frozenset(s for a in core.cli_reference.documented(build_global_parser())
                        for s in a.option_strings)
-    return [core.command_contract.flag_key(a)
-            for a in core.cli_reference.documented(help_parser(name), hidden)]
+    parser = help_parser(name)
+    nested = core.tool_parser.subparsers(parser)
+    if not nested:
+        return [core.command_contract.flag_key(a)
+                for a in core.cli_reference.documented(parser, hidden)]
+    keys: list[str] = []
+    seen: set[int] = set()
+    for sub, subparser in nested.items():
+        if id(subparser) in seen:
+            continue
+        seen.add(id(subparser))
+        keys.extend(
+            f"{sub} {core.command_contract.flag_key(a)}"
+            for a in core.cli_reference.documented(subparser, hidden)
+        )
+    return keys
 
 
 def _accepted_value_flags(spec: CommandSpec) -> frozenset[str]:

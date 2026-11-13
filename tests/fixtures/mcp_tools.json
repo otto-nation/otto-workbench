@@ -44,6 +44,48 @@
       ],
       "type": "object",
       "x-contracts": {
+        "batch": {
+          "exit_codes": [
+            {
+              "code": 0,
+              "meaning": "the run is done or cancelled",
+              "name": "ok"
+            },
+            {
+              "code": 1,
+              "meaning": "it stopped without settling",
+              "name": "failure"
+            },
+            {
+              "code": 2,
+              "meaning": "bad flags, missing --checkout/--plan, or resume --steps that widen",
+              "name": "usage"
+            }
+          ],
+          "remote_effects": [
+            {
+              "how": "every step runs drafted \u2014 nothing is pushed or posted",
+              "on_refusal": "n/a",
+              "trigger": "",
+              "where": "nowhere",
+              "writes": "nothing"
+            },
+            {
+              "how": "pr push --expect <remote_sha> (docs/ai-automation.md#pr-push-contract). Never a force push, never a closeout.",
+              "on_refusal": "a refused push leaves the item unpushed; the run continues",
+              "trigger": "run --auto-publish",
+              "where": "origin",
+              "writes": "a clean fast-forward of refs/heads/<branch> when an item closes with no findings"
+            },
+            {
+              "how": "skips the pre-push hook on every publish push; persisted so resume honours it",
+              "on_refusal": "as for the push",
+              "trigger": "run --no-verify",
+              "where": "origin",
+              "writes": "nothing extra: changes how those publish pushes run"
+            }
+          ]
+        },
         "board": {
           "exit_codes": [
             {

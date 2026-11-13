@@ -228,11 +228,19 @@ def _regroup(parser: argparse.ArgumentParser, groups: Sequence[FlagGroup]) -> No
 
 
 def attach_help(parser: argparse.ArgumentParser, contract: CommandContract) -> None:
-    """Make *parser*'s help show *contract*: grouped flags, then the epilog verbatim."""
+    """Make *parser*'s help show *contract*: grouped flags, then the epilog verbatim.
+
+    An epilog the parser already carries (the rest of `pr batch`'s docstring)
+    stays above the contract so the command keeps its own prose.
+    """
     _regroup(parser, contract.groups)
     if not parser.description:
         parser.description = contract.summary
-    parser.epilog = render_help(contract)
+    rendered = render_help(contract)
+    if parser.epilog:
+        parser.epilog = parser.epilog.rstrip() + "\n\n" + rendered
+    else:
+        parser.epilog = rendered
     parser.formatter_class = argparse.RawDescriptionHelpFormatter
 
 
@@ -294,11 +302,10 @@ def print_next(contract: CommandContract, code: int, *, when: str = "", **fields
 
 
 def _undeclared_trigger_keys(trigger: str, declared: set[str]) -> list[str]:
-    problems: list[str] = []
-    for key in trigger.split():
-        if key not in declared:
-            problems.append(f"remote effect trigger {key} is not a declared flag")
-    return problems
+    if not trigger or trigger in declared:
+        return []
+    return [f"remote effect trigger {key} is not a declared flag"
+            for key in trigger.split() if key not in declared]
 
 
 def _undeclared_triggers(

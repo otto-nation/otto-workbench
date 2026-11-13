@@ -8862,11 +8862,7 @@ Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 
 `pr board`: the PR board document as versioned JSON.
 
-Usage:
-  pr board --schema-version 1 --checkout DIR --phase listing|status|owed
-  pr board --schema-version 1 --checkout DIR --phase status --prs N,N
-  pr board --schema-version 1 --checkout DIR --phase listing --offline
-  pr board --schema-version 1 --checkout DIR --phase listing --if-changed STAMP
+Exit codes, remote writes and examples are `CONTRACT` below.
 
 ### cli/pr_commands.py
 
@@ -9005,9 +9001,7 @@ Exit codes, remote writes and examples are `CONTRACT` below, rendered into
 
 `pr stack`: the repo's open PRs as a stack graph, as versioned JSON.
 
-Usage:
-  pr --schema-version 1 stack            # the whole repo's graph
-  pr --schema-version 1 stack --pr 42    # PR 42's ladder, bottom first
+Exit codes, remote writes and examples are `CONTRACT` below.
 
 ### cli/promote_scan.py
 

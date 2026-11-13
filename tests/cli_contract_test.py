@@ -21,7 +21,7 @@ import core.command_contract  # noqa: E402
 from core.exit_codes import ExitCode  # noqa: E402
 from core.tool_parser import ToolParser  # noqa: E402
 
-UNMIGRATED = frozenset({"batch"})
+UNMIGRATED = frozenset()
 # (command, trigger) pairs known to write outside the machine. A pinned list on
 # purpose: which flags touch the remote cannot be read off a parser.
 KNOWN_REMOTE = {
@@ -33,8 +33,13 @@ KNOWN_REMOTE = {
     "comments": {"--post", "--finish --post", "--fix --post"},
     "review": {"", "--self --fix --push", "--post", "--track"},
     "fix": {"--post"},
+    "batch": {"run --auto-publish", "run --no-verify"},
 }
 MIGRATED = sorted(set(COMMANDS) - UNMIGRATED)
+
+
+def test_batch_flag_keys_include_run_auto_publish():
+    assert "run --auto-publish" in cli.pr.documented_flag_keys("batch")
 
 
 def test_the_allow_lists_name_real_commands():
@@ -84,7 +89,8 @@ def test_help_names_the_command_as_typed(name):
 
 @pytest.mark.parametrize("name", MIGRATED)
 def test_help_shows_the_rendered_contract(name):
-    assert cli.pr.help_parser(name).epilog == core.command_contract.render_help(contract_for(COMMANDS[name]))
+    rendered = core.command_contract.render_help(contract_for(COMMANDS[name]))
+    assert cli.pr.help_parser(name).epilog.endswith(rendered)
 
 
 @pytest.mark.parametrize("name", ["status", "gc", "fix"])

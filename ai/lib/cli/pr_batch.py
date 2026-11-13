@@ -40,6 +40,7 @@ import batch.scheduler
 import batch.store
 import batch.targets
 import config.workbench_config
+import core.command_contract
 import core.log
 import core.run_lock
 import core.serde
@@ -48,9 +49,86 @@ from batch.model import (FINISHED_RUN, STEP_ORDER, Item, RebaseWhen, Run, RunSta
                          StepStatus)
 from batch.requests import Outcome
 from batch.store import Role
+from core.exit_codes import ExitCode
 from core.trail import TRAIL_ROOT_ENV, Trail
 
 EXIT_OK = batch.report.EXIT_OK
+
+CONTRACT = core.command_contract.CommandContract(
+    summary="Rebase, CI, comments and (opt-in) self-review across my open PRs. "
+            "A default run never opens a decision.",
+    groups=(
+        core.command_contract.FlagGroup(
+            "plan", ("plan --checkout", "plan --needs")),
+        core.command_contract.FlagGroup(
+            "run scope", ("run --checkout", "run --plan", "run --prs",
+                           "run --select", "run --rebase")),
+        core.command_contract.FlagGroup(
+            "run steps", ("run --steps", "run --with-ai", "run --with-review",
+                           "run --focus", "run --focus-file")),
+        core.command_contract.FlagGroup(
+            "run publishing", ("run --auto-publish", "run --no-verify")),
+        core.command_contract.FlagGroup(
+            "run output", ("run --pool", "run --verbose")),
+        core.command_contract.FlagGroup(
+            "resume", ("resume run_id", "resume --steps", "resume --verbose")),
+        core.command_contract.FlagGroup(
+            "cancel/release", ("cancel run_id", "cancel --kill",
+                                "release run_id", "release pr", "release --kill")),
+        core.command_contract.FlagGroup(
+            "status/report", ("status run_id", "status --full", "status --list",
+                               "status --offline", "report run_id",
+                               "report --format", "report --offline")),
+    ),
+    remote_effects=(
+        core.command_contract.RemoteEffect(
+            "",
+            "nothing",
+            "nowhere",
+            "every step runs drafted — nothing is pushed or posted",
+            "n/a"),
+        core.command_contract.RemoteEffect(
+            "run --auto-publish",
+            "a clean fast-forward of refs/heads/<branch> when an item closes "
+            "with no findings",
+            "origin",
+            "pr push --expect <remote_sha> "
+            "(docs/ai-automation.md#pr-push-contract). Never a force push, "
+            "never a closeout.",
+            "a refused push leaves the item unpushed; the run continues"),
+        core.command_contract.RemoteEffect(
+            "run --no-verify",
+            "nothing extra: changes how those publish pushes run",
+            "origin",
+            "skips the pre-push hook on every publish push; persisted so "
+            "resume honours it",
+            "as for the push"),
+    ),
+    exits=(
+        core.command_contract.ExitOutcome(
+            ExitCode.OK, "the run is done or cancelled"),
+        core.command_contract.ExitOutcome(
+            ExitCode.FAILURE, "it stopped without settling",
+            (core.command_contract.NextStep("", ("pr batch resume",)),)),
+        core.command_contract.ExitOutcome(
+            ExitCode.USAGE,
+            "bad flags, missing --checkout/--plan, or resume --steps that widen"),
+    ),
+    examples=(
+        core.command_contract.Example(
+            "pr batch run --checkout DIR",
+            "rebase, ci, comments; drafted; no AI, no review"),
+        core.command_contract.Example(
+            "pr batch run --checkout DIR --auto-publish ff",
+            "the same, fast-forwarding a clean close"),
+        core.command_contract.Example(
+            "pr batch resume", "continue this checkout's covering run"),
+    ),
+    notes=(
+        "Batch declares NO_LOCK; 75 is not an exit. LockBusy on an item is "
+        "exit 1 (fail), not TEMPFAIL. A default run never opens a decision.",
+    ),
+)
 
 
 def _steps(text: str) -> list[Step]:
@@ -112,7 +190,12 @@ _DEFAULT_RUN_REFUSES = (
 
 def build_parser() -> argparse.ArgumentParser:
     import cli.pr_batch_views
-    parser = argparse.ArgumentParser(prog="pr batch", description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(
+        prog="pr batch",
+        description=__doc__.split("\n")[0],
+        epilog="\n".join(__doc__.split("\n")[1:]).strip(),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("plan", help="Show which PRs need which steps")

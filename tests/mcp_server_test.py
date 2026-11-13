@@ -533,6 +533,16 @@ class TestWorkbenchDiscovery:
         assert {"pr", "otto-log", "otto-queue", "wiki", "workbench-rules"} <= set(tools)
         assert "ceiling-scan" not in tools
 
+    def test_otto_queue_tells_an_agent_to_run_as_a_ticket(self):
+        if not (WORKBENCH_DIR / "ai" / "bin" / "otto-queue").exists():
+            pytest.skip("scripts not found")
+
+        description = discover_tools()["otto-queue"]["description"]
+
+        assert "When to use:" in description
+        assert "otto-queue run --ticket --class heavy -- CMD" in description
+        assert "Never use `submit` for interactive work" in description
+
     def test_pr_declares_no_output_schema(self):
         """Declaring one made eight of nine subcommands come back `isError`.
 

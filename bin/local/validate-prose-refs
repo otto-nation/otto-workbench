@@ -174,8 +174,9 @@ def _tokens(text: str) -> list[str]:
 
 def _flags(tokens: list[str]) -> list[str]:
     """The long flags among *tokens*, `--a=1` as `--a` and `--a/--b` as both."""
+    # A bare `--` is argparse's remainder separator, not a flag named `--`.
     return [part.split("=", 1)[0]
-            for token in tokens if token.startswith("--")
+            for token in tokens if token.startswith("--") and token != "--"
             for part in token.split("/") if part.startswith("--")]
 
 

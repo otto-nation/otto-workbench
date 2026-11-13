@@ -634,6 +634,10 @@ _emit_workbench_commands() {
     cmd=$(reg_get "$BIN_REGISTRY" tools "$tool_i" commands "$i" name)
     scope=$(reg_get "$BIN_REGISTRY" tools "$tool_i" commands "$i" scope)
     desc=$(reg_get "$BIN_REGISTRY" tools "$tool_i" commands "$i" description)
+    # A `|` inside a cell ends it, backticks or not; escape it as the flag
+    # tables do so an alternation like PHASE|TIER stays in its cell.
+    cmd=${cmd//|/\\|}
+    desc=${desc//|/\\|}
     # shellcheck disable=SC2016  # backticks are markdown literals
     printf '| `otto-workbench %s` | %s | %s |\n' "$cmd" "$scope" "$desc"
   done

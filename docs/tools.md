@@ -269,7 +269,7 @@ than restated here:
 | `otto-workbench config set KEY VALUE --project` | Project | Write one key into the current repo's .workbench.yml instead |
 | `otto-workbench config set KEY VALUE --container` | Container | Write one key into the .workbench.yml above a bare repo's worktrees |
 | `otto-workbench config get KEY [DIR ...]` | Project | Resolve one key for this repo, or for each named one, with the scope that answered |
-| `otto-workbench config model PHASE|TIER MODEL [--unset] [--project|--container]` | Machine | Set or clear the model for one phase or tier, checked |
+| `otto-workbench config model PHASE\|TIER MODEL [--unset] [--project\|--container]` | Machine | Set or clear the model for one phase or tier, checked |
 | `otto-workbench config models` | Machine | Show, as JSON, the model settings sync writes for Claude Code and Pi |
 | `otto-workbench config phases [--json] [DIR]` | Project | Show each phase's tier, model and thinking level, and the setting behind each |
 | `otto-workbench config context [--pi-listing FILE]` | Machine | Show, as JSON, the compaction settings sync writes for Claude Code and Pi |
@@ -980,7 +980,7 @@ Exit codes: `0` ok · `1` failure · `2` usage · `4` refused · `75` tempfail �
 | `--settle` `<thread-id>` | Phase: record that you settled this thread by hand (repeatable). An id on the PR but not in the fix snapshot is recorded from the PR rather than refused. Writes local state and nothing else; --finish then replies, resolves and reports it like any other settled thread. |
 | `--as` `<fixed\|dismissed\|already_addressed>` | What --settle records (default: fixed). |
 | `--reason` `<text>` | Why, for --settle --as dismissed — it becomes the reply the reviewer reads. |
-| `--commit` `<sha>` | The commit carrying a --settle --as fixed change, for a fix that landed away from the line the thread is anchored to (default: inferred from that line). Applies to every --settle in the run, so a batch where only some threads need it takes two runs. |
+| `--commit` `<sha>` | The commit carrying a --settle --as fixed change, for a fix that landed away from the line the thread is anchored to. Without it nothing is inferred and the row is recorded with no commit cited. Applies to every --settle in the run, so a batch where only some threads need it takes two runs. |
 
 Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-comments-contract)
 

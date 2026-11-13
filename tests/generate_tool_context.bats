@@ -732,3 +732,26 @@ _write_agent() {
   [ "$status" -eq 0 ]
   [[ "$output" == *'`foo`, `foo-bar`'* ]]
 }
+
+@test "a | in an otto-workbench command stays inside its table cell" {
+  cat > "$BIN_REGISTRY" << 'EOF2'
+meta:
+  section: "Workbench Scripts"
+  validation: none
+
+tools:
+  - name: otto-workbench
+    permission: false
+    visibility: full
+    description: "Workbench"
+    when_to_use: "Always"
+    commands:
+      - name: "config model PHASE|TIER MODEL"
+        scope: Machine
+        description: "Set a or|b"
+EOF2
+
+  run main --emit workbench-commands
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'| `otto-workbench config model PHASE\|TIER MODEL` | Machine | Set a or\|b |'* ]]
+}

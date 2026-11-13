@@ -10,7 +10,7 @@ teardown() { common_teardown; }
 _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/model_overrides.js');
-    const { REVIEW_PHASES, BATCH_PHASES, overrideEntries, phaseModelFlags, withPhaseModels, overrideSummary } = m;
+    const { REVIEW_PHASES, BATCH_PHASES, RUNS_MODELS, overrideEntries, phaseModelFlags, withPhaseModels, overrideSummary } = m;
     process.stdout.write(JSON.stringify(eval(process.argv[1])));
   " -- "$1"
 }
@@ -51,6 +51,12 @@ _js() {
   offered="$output"
   known="$(PYTHONPATH="$REPO_ROOT/ai/lib" python3 -c 'import json; from core.phases import Phase; print(json.dumps([p.value for p in Phase]))')"
   jq -en --argjson offered "$offered" --argjson known "$known" '($offered - $known) == []'
+}
+
+@test "RUNS_MODELS is exactly review/rerun/recover and has no post or dismiss" {
+  _js '[[...RUNS_MODELS].sort(), ["post","dismiss"].filter(a => RUNS_MODELS.has(a))]'
+  [ "$status" -eq 0 ]
+  jq -e '.==[["recover","rerun","review"],[]]' <<<"$output"
 }
 
 @test "every phase in the review list is a review-domain phase" {

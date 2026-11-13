@@ -241,7 +241,7 @@ are never committed; commit or stash those, or re-run so the interrupted edits
 resume. An empty round will not commit those leftovers.
 
 A dirty or unpushed worktree demotes `already_addressed` and `invalid` triage
-verdicts to `needs_human` until the tree is on the remote. Push first, then
+verdicts to `needs_discussion` until the tree is on the remote. Push first, then
 re-run; `--finish --post` also refuses while HEAD is unpublished, so those
 verdicts cannot be published against local-only code.
 

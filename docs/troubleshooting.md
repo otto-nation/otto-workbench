@@ -112,7 +112,7 @@ A repo-local `core.hooksPath` shadows that global directory for every git comman
 
 Without `--fix`, `pr rebase` classifies the stop and **aborts** (`tree: clean`, exit 3) unless every conflicted file is generated-class and a `regenerate=` gitattributes attribute, a declared `rebase.regenerate`, or a lockfile regenerator rebuilt it. An unattributed generated file with no declared fallback is reported stale and aborts, the same as a missing declaration. `mise run generate` as a conventional fallback does not qualify — that stays `--fix`-only. Pass `--stop-on-conflict` to keep the paused tree and held stash; `--fix` resolves with AI. A resumed rebase never aborts: a further stop pauses, because aborting would discard earlier resolutions. `--fix --stop-on-conflict` is a parser error.
 
-`pr rebase` skips a landed prefix rather than replaying it. Those skipped commits have no rewrite record, so a `pr batch` publish then refuses `not_incorporated_remote` and names them. Confirm the skip is what you wanted before pushing; `--force` on the rebase replays the prefix in full.
+`pr rebase` skips a landed prefix rather than replaying it. Those skipped commits have no rewrite record, so a `pr batch` publish then refuses `not_incorporated_remote` and names them. Confirm the skip is what you wanted before pushing; `--force-landed` on the rebase replays the prefix in full.
 
 ## `pr rebase` squashed my commits and I wanted them
 
@@ -254,12 +254,7 @@ A refusal naming a `checkout` means two different targets met in one working tre
 
 The lock is an advisory `flock`, so the kernel releases it whenever the holder exits — including `kill -9`. There is no stale lock to clear by hand; if the message names a pid that is gone, the next run will take the lock regardless.
 
-Two scopes, two paths — the target lock is rooted at `WORKBENCH_STATE_DIR` (default `~/.local/state/workbench`), while the checkout lock `<git-dir>/workbench-run-tree.lock` lives in the worktree's git dir:
-
-- **target** — `~/.local/state/workbench/pr/<repo-key>-<branch-slug>/run.lock`, beside that target's `state.json`. The two path components come from `git remote get-url origin` and the branch, so every worktree of one PR resolves the same directory — that is what lets the target lock reach across checkouts. `wt remove` leaves the target's state alone; `pr gc` prunes it once the PR is merged or closed.
-- **checkout** — `<git-dir>/workbench-run-tree.lock`, keyed on the checkout's `--absolute-git-dir`.
-
-None of these is a file in the working tree, so there is no `.gitignore` entry to maintain.
+The two scopes (`target` and `checkout`) and the lock files they name are owned by `Scope` in [`ai/lib/core/run_lock.py`](ai-libraries.md#corerun_lockpy). None of these is a file in the working tree, so there is no `.gitignore` entry to maintain.
 
 A batch run's `run.lock` is a `core.run_lock.Resource`, not a target. It lives at `~/.local/state/workbench/batch/<run-id>/run.lock`, is taken only by `batch.store` (`session` / `create` / `reap`), and carries no `WORKBENCH_RUN_LOCK` marker — a child neither inherits it nor passes through it. A refusal is not `owns this target`; it is:
 

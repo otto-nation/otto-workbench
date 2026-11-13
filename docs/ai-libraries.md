@@ -2806,13 +2806,12 @@ is indistinguishable from one the pass settled: `--finish` replies on it,
 resolves it, and gives it a summary row attributed to the commit that carries
 the change. `--as dismissed` requires `--reason <text>`, which becomes the body
 of the reply; the other two outcomes render no reason and refuse the flag rather
-than swallowing it. `--as fixed` finds the commit from the branch history of the
-line the thread is anchored to, and cites it only once the remote has it — a
-link to a commit still sitting on the machine 404s for the reviewer it was
-written for. Pass `--commit <sha>` when the fix landed somewhere else; a
-`--commit` the remote does not hold is an error rather than a dropped citation.
-When neither resolves, the row reads `Addressed outside the fix pass` and the
-run says so. Naming an id no fix pass recorded is an error listing the threads
+than swallowing it. `--as fixed` cites a commit only when `--commit <sha>`
+names one; without it, nothing is inferred from line history. A `--commit` the
+remote does not hold is an error rather than a dropped citation — a link to a
+commit still sitting on the machine 404s for the reviewer it was written for.
+When no commit is named, the row reads `Addressed outside the fix pass` and
+the run says so. Naming an id no fix pass recorded is an error listing the threads
 that are waiting on a person, unless that id is still open on the PR — then
 it is recorded from the PR rather than refused. Recording the outcome a
 thread already carries is a no-op that says so; recording a different

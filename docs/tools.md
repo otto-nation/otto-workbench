@@ -269,6 +269,7 @@ than restated here:
 | `otto-workbench config set KEY VALUE --project` | Project | Write one key into the current repo's .workbench.yml instead |
 | `otto-workbench config set KEY VALUE --container` | Container | Write one key into the .workbench.yml above a bare repo's worktrees |
 | `otto-workbench config get KEY [DIR ...]` | Project | Resolve one key for this repo, or for each named one, with the scope that answered |
+| `otto-workbench config model PHASE|TIER MODEL [--unset] [--project|--container]` | Machine | Set or clear the model for one phase or tier, checked |
 | `otto-workbench config models` | Machine | Show, as JSON, the model settings sync writes for Claude Code and Pi |
 | `otto-workbench config phases [--json] [DIR]` | Project | Show each phase's tier, model and thinking level, and the setting behind each |
 | `otto-workbench config context [--pi-listing FILE]` | Machine | Show, as JSON, the compaction settings sync writes for Claude Code and Pi |

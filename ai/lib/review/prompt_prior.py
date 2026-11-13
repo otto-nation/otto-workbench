@@ -29,8 +29,8 @@ from dataclasses import replace
 import core.serde
 
 from review.document import (
-    NON_FINDING_SECTIONS, SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS,
-    SECTION_STATIC_ANALYSIS,
+    NON_FINDING_SECTIONS, SECTION_FAILURES, SECTION_FILE_TRIAGE,
+    SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS, SECTION_SUMMARY,
 )
 from review.grammar import BOLD_FINDING_ID_RE, SID_MARKER_RE
 from review.record import LedgerLine, RecordFinding, ReviewRecord
@@ -64,10 +64,12 @@ def _scoped(record: ReviewRecord, files: list[str]) -> ReviewRecord:
     )
 
 
-# Coverage bookkeeping and machine-generated output, not prior reviewer claims.
-# Questions are the round's own (until #1895 adds them).
+# Coverage bookkeeping, machine-generated output, and the prior run's account
+# of itself (Summary, Agent Failures) — not findings. Questions are the
+# round's own.
 _PRIOR_EXCLUDED_SECTIONS = NON_FINDING_SECTIONS | {
     SECTION_FILE_TRIAGE, SECTION_PRIOR_FINDINGS, SECTION_STATIC_ANALYSIS,
+    SECTION_SUMMARY, SECTION_FAILURES,
 }
 
 

@@ -110,7 +110,15 @@ _plist() {
   [ "$status" -eq 0 ]
   grep -q "$STABLE/maintenance/bin/otto-workbench-maintenance" "$SERVICE"
   grep -qx 'OnUnitActiveSec=7200sec' "$TIMER"
-  grep -q "systemctl --user enable --now otto-workbench-maintenance.timer" "$CALLS"
+  grep -qx "systemctl --user enable otto-workbench-maintenance.timer" "$CALLS"
+  grep -qx "systemctl --user restart otto-workbench-maintenance.timer" "$CALLS"
+}
+
+# A timer installed into a user manager that has been up a while has no trigger
+# left unless something counts from the install itself.
+@test "the systemd timer template arms from its own activation" {
+  grep -qx 'OnActiveSec=5min' "$REPO_ROOT/maintenance/systemd/otto-workbench-maintenance.timer.template"
+  ! grep -q '^On\(Startup\|Boot\)Sec=' "$REPO_ROOT/maintenance/systemd/otto-workbench-maintenance.timer.template"
 }
 
 @test "systemd units that match their templates are left alone" {

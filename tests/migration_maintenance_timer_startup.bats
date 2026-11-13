@@ -47,8 +47,8 @@ _old_timer() {
   printf '[Timer]\nOnBootSec=5min\nOnUnitActiveSec=%ssec\nPersistent=true\n' "$1" > "$TIMER"
 }
 
-@test "the template arms from the manager's start" {
-  grep -q '^OnStartupSec=' "$TEMPLATE"
+@test "the template no longer arms from the machine's boot" {
+  ! grep -q '^OnBootSec=' "$TEMPLATE"
 }
 
 @test "an old timer is re-installed with its own interval" {
@@ -67,6 +67,13 @@ _old_timer() {
 
 @test "a timer that already has the key is left alone" {
   printf '[Timer]\nOnStartupSec=5min\nOnUnitActiveSec=7200sec\n' > "$TIMER"
+  _run_migration
+  [ "$status" -eq 3 ]
+  [ ! -f "$TMPDIR/args" ]
+}
+
+@test "a timer already on OnActiveSec is left alone" {
+  printf '[Timer]\nOnActiveSec=5min\nOnUnitActiveSec=7200sec\n' > "$TIMER"
   _run_migration
   [ "$status" -eq 3 ]
   [ ! -f "$TMPDIR/args" ]

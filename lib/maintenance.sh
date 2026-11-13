@@ -110,7 +110,13 @@ _systemd_install() {
 _systemd_start() {
   local interval="$1"
   _systemd_install "$interval"
-  systemctl --user enable --now "${_SYSTEMD_UNIT}.timer"
+  systemctl --user enable "${_SYSTEMD_UNIT}.timer"
+  # Every call, including an operator's `maintenance start`, resets the 5min
+  # first-run countdown; that is intended.
+  # Restart, not `start`: starting an active timer is a no-op, and only a fresh
+  # activation re-bases the template's OnActiveSec, the trigger that schedules a
+  # first run when the service has not run under this manager.
+  systemctl --user restart "${_SYSTEMD_UNIT}.timer"
 }
 
 _systemd_stop() {

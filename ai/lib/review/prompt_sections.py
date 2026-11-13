@@ -263,7 +263,7 @@ def _build_env_section(
         return f"""
 ## Environment
 PR branch checked out at: {wt_path}
-Diffs are pre-collected; file contents are not. Read every file listed under "Files not pre-collected" directly from this path."""
+Diffs are pre-collected; file contents are not. Files listed under "Files not pre-collected" are at this path."""
     has_omissions = bool(preflight and preflight.omitted_files) or bool(files and files.omitted)
     if preflight and not has_omissions:
         return f"""

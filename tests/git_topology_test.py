@@ -574,7 +574,7 @@ def test_create_worktree_for_branch_survives_malformed_json(mock_run):
 def test_create_worktree_warns_once_when_wt_is_missing(_mock_run, mock_log):
     assert git.topology.create_worktree_for_branch("feat/x") is None
     assert mock_log.warn.call_count == 1
-    assert "not installed" in mock_log.warn.call_args.args[0]
+    assert "not found on PATH" in mock_log.warn.call_args.args[0]
 
 
 @pytest.mark.usefixtures("no_fetch")
@@ -611,11 +611,14 @@ def _stub_raise(monkeypatch, exc):
     monkeypatch.setattr(git.topology.subprocess, "run", boom)
 
 
-def test_wt_switch_says_not_installed_when_wt_is_missing(monkeypatch, capsys):
+def test_wt_switch_names_the_path_it_searched_when_wt_is_missing(monkeypatch, capsys):
     _stub_raise(monkeypatch, FileNotFoundError(2, "No such file or directory", "wt"))
+    monkeypatch.setenv("PATH", "/only/system/bin")
 
     assert git.topology.wt_switch("feat/x") is None
-    assert "not installed" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "not found on PATH" in err
+    assert "PATH=/only/system/bin" in err
 
 
 def test_wt_switch_does_not_call_a_permission_error_a_missing_binary(monkeypatch, capsys):
@@ -624,7 +627,7 @@ def test_wt_switch_does_not_call_a_permission_error_a_missing_binary(monkeypatch
 
     assert git.topology.wt_switch("feat/x") is None
     err = capsys.readouterr().err
-    assert "not installed" not in err
+    assert "not found on PATH" not in err
     assert "Permission denied" in err
 
 

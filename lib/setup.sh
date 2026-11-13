@@ -160,24 +160,25 @@ version_at_least() {
   return 0
 }
 
-# ensure_tool_path — appends the directories user-installed tools live in to
-# PATH, each only if it exists and is not already there.
+# ensure_tool_path — puts the directories user-installed tools live in at the
+# head of PATH, in the precedence an interactive shell resolves them
+# (`workbench_path` in zsh/env.sh, which owns the list and the order).
 #
 # Sync decides which zsh snippets to deploy by `command -v` on each snippet's
 # requires-cmd, and removes a snippet whose command it cannot find. Its PATH is
-# whatever launched it: an interactive shell has these dirs from ~/.zshrc and
-# the loader, but launchd, systemd, ssh, or `sudo -i` hand over a system PATH
-# without them — and a sync from there deletes mise.zsh, pi.zsh and the rest
-# for tools that are installed. Appended, not prepended, so a PATH that already
-# orders these dirs keeps its order and only gains what it was missing.
+# whatever launched it: an interactive shell has these dirs from the loader, but
+# launchd, systemd, ssh, or `sudo -i` hand over a system PATH without them — and
+# a sync from there deletes mise.zsh, pi.zsh and the rest for tools that are
+# installed. Ahead of the inherited PATH rather than behind it so a sync from
+# there also runs the binaries the interactive shell does: behind it, a
+# maintenance sync ran Homebrew's python3 where the shell ran mise's.
+#
+# Sources the repo's copy, not the deployed one: a first install runs this
+# before the zsh step has deployed anything.
 ensure_tool_path() {
-  local dir
-  for dir in "$LOCAL_BIN_DIR" "$PI_BIN_DIR" "$MISE_SHIMS_DIR" \
-             "$HOMEBREW_BIN_DIR_MACOS" "$HOMEBREW_BIN_DIR_LINUX"; do
-    [[ -d "$dir" ]] || continue
-    [[ ":$PATH:" == *":$dir:"* ]] || PATH="$PATH:$dir"
-  done
-  export PATH
+  # shellcheck source=../zsh/env.sh
+  . "$ZSH_ENV_SRC"
+  workbench_path
 }
 
 # _cmd_runnable CMD — succeeds when CMD resolves on PATH to something that can

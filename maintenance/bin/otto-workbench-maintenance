@@ -20,14 +20,21 @@ WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 # shellcheck source=../../lib/config.sh
 . "$WORKBENCH_DIR/lib/config.sh"
 
-# launchd and systemd both hand this script a PATH without ~/.local/bin, where
-# every workbench symlink lives. What this script calls, it calls by absolute
-# path; this is for what its children look up by name — should-wiki-capture.sh
-# resolves `wiki`, and a 127 there is swallowed by its `|| exit 1` and reads as
-# "this repo has no knowledge base", so the gate never fires and looks right.
+# launchd and systemd both hand this script a system PATH and none of
+# ~/.env.local. What this script calls, it calls by absolute path; this is for
+# what its children look up by name and read from the environment —
+# should-wiki-capture.sh resolves `wiki`, and a 127 there is swallowed by its
+# `|| exit 1` and reads as "this repo has no knowledge base", so the gate never
+# fires and looks right; the auto-task agents run `pr` and `wt` (a mise shim on
+# Linux) and need GOOGLE_CLOUD_PROJECT for Pi's Vertex provider. env.sh is the
+# environment an interactive shell has, from the repo's copy so a sync that has
+# not deployed it yet still gets it. It lifts this script's errexit around
+# ~/.env.local, so a command there returning non-zero cannot end the run.
 # Ordering matters beyond the symlinks: lib/roots.sh uses `declare -g`, so the
 # Homebrew bash ahead of /bin on the plist PATH is load-bearing too.
-export PATH="$LOCAL_BIN_DIR:$PATH"
+# shellcheck source=../../zsh/env.sh
+. "$ZSH_ENV_SRC"
+workbench_env
 
 mkdir -p "$WORKBENCH_STATE_DIR"
 

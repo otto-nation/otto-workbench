@@ -75,6 +75,7 @@ These are owned by the workbench and updated every time you sync. Do not edit di
 | `~/.local/bin/*` | `bin/` | symlinked |
 | `~/.config/zsh/config.d/*/` | `zsh/config.d/*/` | copied |
 | `~/.config/zsh/config.d/loader.zsh` | `zsh/config.d/loader.zsh` | copied |
+| `~/.config/zsh/env.sh` | `zsh/env.sh` (PATH and `~/.env.local` for the shell, sync, maintenance and herdr remotes) | copied |
 | `~/.config/starship.toml` | `zsh/starship.toml` | copied |
 | `~/.gitconfig` | includes `git/gitconfig.shared` | include stanza |
 | `~/.git-hooks/*` | `git/hooks/` | symlinked |

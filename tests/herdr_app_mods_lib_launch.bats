@@ -13,11 +13,13 @@ teardown() {
   common_teardown
 }
 
-# Evaluate EXPR against launch.js as m; print JSON.stringify(EXPR).
+# Evaluate EXPR against launch.js as m; print JSON.stringify(EXPR), with the
+# remote preamble (board_data.js's, tested there) shown as <PREAMBLE>.
 _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/launch.js');
-    process.stdout.write(JSON.stringify($1));
+    const { REMOTE_PREAMBLE } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js');
+    process.stdout.write(JSON.stringify($1).replaceAll(JSON.stringify(REMOTE_PREAMBLE), '\"<PREAMBLE>\"'));
   "
 }
 
@@ -39,10 +41,10 @@ _js() {
   [ "$output" = '["run","--bg","--json","--cwd","/w","--label","otto.pr=o/n#7","--label","otto.action=review","--label","otto.app=pr","--","pr","review"]' ]
 }
 
-@test "hcRunArgv with on places --on right after --cwd value, labels have no prefix, and the command runs with the workbench bin on PATH" {
+@test "hcRunArgv with on places --on right after --cwd value, labels have no prefix, and the command runs inside the workbench env preamble" {
   _js 'm.hcRunArgv({repo:"o/n",number:7,action:"review",cwd:"/w",on:"homelab",argv:["pr","review"]})'
   [ "$status" -eq 0 ]
-  [ "$output" = '["run","--bg","--json","--cwd","/w","--on","homelab","--label","otto.pr=o/n#7","--label","otto.action=review","--label","otto.app=pr","--","sh","-c","PATH=\"$HOME/.local/bin:$PATH\"; if [ -r \"$HOME/.env.local\" ] && ( . \"$HOME/.env.local\" ) >/dev/null 2>&1; then set -a; . \"$HOME/.env.local\" >/dev/null 2>&1; set +a; fi; exec \"$@\"","sh","pr","review"]' ]
+  [ "$output" = '["run","--bg","--json","--cwd","/w","--on","homelab","--label","otto.pr=o/n#7","--label","otto.action=review","--label","otto.app=pr","--","sh","-c","<PREAMBLE>","sh","pr","review"]' ]
 }
 
 @test "hcBatchArgv local exact" {
@@ -51,10 +53,10 @@ _js() {
   [ "$output" = '["run","--bg","--json","--cwd","/w","--label","otto.repo=o/n","--label","otto.action=batch","--label","otto.app=pr","--","pr","batch","run"]' ]
 }
 
-@test "hcBatchArgv with on places --on right after --cwd value, labels have no prefix, and the command runs with the workbench bin on PATH" {
+@test "hcBatchArgv with on places --on right after --cwd value, labels have no prefix, and the command runs inside the workbench env preamble" {
   _js 'm.hcBatchArgv({repo:"o/n",cwd:"/w",on:"homelab",argv:["pr","batch","run"]})'
   [ "$status" -eq 0 ]
-  [ "$output" = '["run","--bg","--json","--cwd","/w","--on","homelab","--label","otto.repo=o/n","--label","otto.action=batch","--label","otto.app=pr","--","sh","-c","PATH=\"$HOME/.local/bin:$PATH\"; if [ -r \"$HOME/.env.local\" ] && ( . \"$HOME/.env.local\" ) >/dev/null 2>&1; then set -a; . \"$HOME/.env.local\" >/dev/null 2>&1; set +a; fi; exec \"$@\"","sh","pr","batch","run"]' ]
+  [ "$output" = '["run","--bg","--json","--cwd","/w","--on","homelab","--label","otto.repo=o/n","--label","otto.action=batch","--label","otto.app=pr","--","sh","-c","<PREAMBLE>","sh","pr","batch","run"]' ]
 }
 
 @test "machineOf splits host prefix and returns null without one" {

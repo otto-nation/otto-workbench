@@ -365,6 +365,13 @@ PROJECT_CONTEXT_PY="$WORKBENCH_DIR/ai/lib/core/project_context.py"
 CLAUDE_CODE_MIN_VERSION="2.1.277"
 ZSH_LOADER_SRC="$ZSH_CONFIG_SRC_DIR/loader.zsh"
 ZSH_LOADER_DST="$ZSH_CONFIG_DIR/loader.zsh"
+# The environment every non-interactive caller loads (zsh/env.sh). The
+# destination is HOME-fixed, not under ZSH_CONFIG_DIR's layers or an XDG root:
+# herdr-app's remote preamble names the same path on a machine whose roots it
+# cannot resolve (ai/herdr/app/mods/_lib/board_data.js), and
+# tests/workbench_env.bats holds the two together.
+ZSH_ENV_SRC="$ZSH_SRC_DIR/env.sh"
+ZSH_ENV_DST="$HOME/.config/zsh/env.sh"
 ZSH_SNIPPET_GLOB="*.zsh"
 
 # ─── Workbench source — AI ────────────────────────────────────────────────────

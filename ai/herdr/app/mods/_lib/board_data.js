@@ -77,18 +77,20 @@ export function classifyCode(result) {
   return null;
 }
 
-// A command exec'd on another machine runs without a login shell, so ~/.local/bin (the workbench's
-// `pr`) is missing from PATH and `pr` resolves to coreutils' pagination tool of the same name.
-// Prefixing the workbench bin dir for remote calls makes the right `pr` win; local calls keep the
-// app's own PATH.
-// A remote terminal is started by the machine's core, not by a login shell, so it lacks what the
-// shell's startup files export: the workbench bin dir and ~/.env.local (GOOGLE_CLOUD_PROJECT and
-// the like, without which pi never registers its Vertex provider). ~/.env.local is sourced only
-// after a subshell proves it parses under sh — a syntax error in a sourced file would otherwise
-// end this shell before `exec`.
-const REMOTE_ENV = 'PATH="$HOME/.local/bin:$PATH"; '
-  + 'if [ -r "$HOME/.env.local" ] && ( . "$HOME/.env.local" ) >/dev/null 2>&1; '
-  + 'then set -a; . "$HOME/.env.local" >/dev/null 2>&1; set +a; fi; ';
+// A command exec'd on another machine is started by its herdr core with the system PATH, not by a
+// login shell, so it lacks everything the shell's startup files provide: ~/.local/bin (without it
+// `pr` resolves to coreutils' pagination tool of the same name), mise's shims (`wt`, go, node on a
+// host without Homebrew), and ~/.env.local (GOOGLE_CLOUD_PROJECT and the like, without which pi
+// never registers its Vertex provider). The workbench's zsh/env.sh is the one definition of that
+// environment, deployed to a HOME-fixed path (ZSH_ENV_DST in lib/constants.sh;
+// tests/workbench_env.bats holds the two together); `workbench_env` loads it and never ends this
+// shell. A machine that has not synced since env.sh existed has no copy, and fails here, loudly,
+// rather than running coreutils' `pr` or a half-set environment. Local calls keep the app's own PATH.
+export const REMOTE_ENV_FILE = '.config/zsh/env.sh';
+export const REMOTE_ENV_MISSING = 'workbench env (~/' + REMOTE_ENV_FILE + ') is missing on this machine '
+  + '— run otto-workbench sync there';
+const REMOTE_ENV = 'if [ -r "$HOME/' + REMOTE_ENV_FILE + '" ]; then . "$HOME/' + REMOTE_ENV_FILE + '"; workbench_env; '
+  + 'else echo "' + REMOTE_ENV_MISSING + '" >&2; exit 127; fi; ';
 
 export const REMOTE_PREAMBLE = REMOTE_ENV + 'exec "$@"';
 

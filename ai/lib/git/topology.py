@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import functools
 import json
+import os
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -211,7 +212,12 @@ def wt_switch(ref: str, cwd: str | None = None) -> str | None:
             capture_output=True, text=True, timeout=core.timeouts.UNBOUNDED,
         )
     except FileNotFoundError:
-        core.log.warn("worktrunk (wt) is not installed — cannot switch worktrees")
+        # Not "not installed": wt is often installed behind a shim directory
+        # this process's PATH lacks, so the PATH is the diagnostic that matters.
+        core.log.warn(
+            "worktrunk (wt) not found on PATH — cannot switch worktrees"
+            f" (PATH={os.environ.get('PATH', '')})"
+        )
         return None
     except OSError as e:
         core.log.warn(f"Cannot run worktrunk (wt) — cannot switch worktrees: {e}")

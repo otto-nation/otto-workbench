@@ -1001,7 +1001,7 @@ Bash-only. Used primarily by `install.sh` and component setup scripts.
 | `install_cask CMD CASK LABEL MANUAL_URL` | installs CASK through Homebrew when CMD is not already in PATH, announcing it as LABEL and returning non-zero with a pointer to MANUAL_URL when Homebrew is missing or the install fails. |
 | `install_via_installer CMD URL LABEL` | installs LABEL by running the vendor's own install script at URL, announcing it as LABEL and returning non-zero with a pointer to URL when curl is missing or the installer fails. The install is skipped when CMD is already in PATH. |
 | `version_at_least HAVE WANT` | succeeds when dotted version HAVE is WANT or newer, comparing numeric fields left to right; a missing field counts as 0. Pure bash: `sort -V` is GNU-only, and BSD sort has no version ordering. |
-| `ensure_tool_path` | appends the directories user-installed tools live in to PATH, each only if it exists and is not already there. |
+| `ensure_tool_path` | puts the directories user-installed tools live in at the head of PATH, in the precedence an interactive shell resolves them (`workbench_path` in zsh/env.sh, which owns the list and the order). |
 | `run_migrations DIR` | DEPRECATED: Use run_component_migrations from lib/migrations.sh instead. This function sources a single migrations.sh file with no state tracking. Kept for backward compatibility until all callers are migrated. |
 
 Loaded via `ui.sh`.

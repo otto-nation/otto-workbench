@@ -88,7 +88,7 @@ def _config_subparser_params():
                 pytest.param(
                     name,
                     marks=pytest.mark.xfail(
-                        strict=False,
+                        strict=True,
                         reason="added by the live-drift PR",
                     ),
                 )

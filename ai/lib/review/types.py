@@ -271,6 +271,30 @@ class PhaseRun:
     reason: str = ""
 
 
+class CoverageGapKind(StrEnum):
+    """Why a PR review cannot vouch for complete coverage.
+
+    Values are persisted on `ReviewMeta.coverage_gaps`; keep them stable.
+    Compare a stored `CoverageGap.kind` against these members rather than
+    storing the enum itself, so an unknown kind cannot cost the sidecar.
+    """
+
+    UNTRIAGED = "untriaged"
+    FOCUS_UNASSESSED = "focus_unassessed"
+
+
+@dataclass(frozen=True)
+class CoverageGap:
+    """One coverage miss: a required file with no triage, or a requested area left empty.
+
+    `kind` is stored as a string so an unknown value cannot cost the sidecar.
+    Compare it against `CoverageGapKind`.
+    """
+
+    kind: str
+    subject: str
+
+
 @dataclass(frozen=True)
 class ReviewMeta:
     """Everything `meta.json` records about a review — the whole file, typed.
@@ -404,6 +428,10 @@ class ReviewMeta:
     # from `job.phase_runs` once the agents finish (`review.phase_runs`). Empty
     # is a sidecar written before the field, and reads as "not recorded".
     phases: tuple[PhaseRun, ...] = ()
+    # Coverage misses computed once at publish (`review.coverage.coverage_gaps`)
+    # and judged by the verdict. Empty is a sidecar written before the field,
+    # a self-review, or a PR review whose triage and requested focus were complete.
+    coverage_gaps: tuple[CoverageGap, ...] = ()
 
     @property
     def unpushed_fix_commit(self) -> str:

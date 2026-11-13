@@ -25,6 +25,7 @@ import core.trail
 import git.client
 import review.behaviours
 import review.claims
+import review.coverage
 from core.phases import Mode
 from pr.domains import ReviewStatus
 from review.convergence import (
@@ -39,7 +40,7 @@ from review.record import ReviewRecord
 from review.state import PipelineState, apply_failures, pipeline_status
 from review.worktree_delta import uncommitted_files
 from review.store import StoredReview, read_review, write_review
-from review.types import ReviewJob, ReviewMeta, ReviewType
+from review.types import CoverageGap, ReviewJob, ReviewMeta, ReviewType
 from review.verdict import (
     CLEAN_SUMMARY, FALLBACK_SUMMARY, NO_CHANGES_SUMMARY, SETTLED_SUMMARY,
     build_mechanical_record,
@@ -111,7 +112,8 @@ def _review_meta(job: ReviewJob, *, skipped_groups: int = 0, total_groups: int =
 
 
 def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
-             total_groups: int = 0, status: ReviewStatus | None = None) -> None:
+             total_groups: int = 0, status: ReviewStatus | None = None,
+             coverage: tuple[CoverageGap, ...] | None = None) -> None:
     """Write `record` and this run's sidecar, and render review.md from both.
 
     Every review leaves with the run's areas, covered or not. Cited tests
@@ -119,6 +121,8 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
     fixed note.
     """
     record = with_run_focus(record, job.focus)
+    if coverage is None:
+        coverage = review.coverage.coverage_gaps(job, record)
     if record.claims is None and not review.claims.has_claim_source(job):
         record = replace(record, claims=())
     if record.behaviours is None and not review.behaviours.has_behaviour_source(job):
@@ -133,6 +137,7 @@ def _publish(job: ReviewJob, record: ReviewRecord, *, skipped_groups: int = 0,
         held_nits=held_nits(job, incremental=_is_incremental(job)),
         head_moved_to=_head_moved_to(job),
         dirty_files=_dirty_files(job),
+        coverage_gaps=coverage,
         claims_input_sha=review.claims.input_sha(job) if record.claims is not None else ""))
 
 
@@ -375,7 +380,7 @@ def write_unchanged_review(job: ReviewJob) -> None:
         _carried_record(job.prior), group_count=0, summary_note=NO_CHANGES_SUMMARY,
         file_count=job.pr.changed_files,
     )
-    _publish(job, record)
+    _publish(job, record, coverage=job.prior.meta.coverage_gaps)
 
 
 def _write_settled_review(job: ReviewJob, group_count: int, merged: ReviewRecord,

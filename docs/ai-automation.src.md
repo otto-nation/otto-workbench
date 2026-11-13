@@ -756,21 +756,22 @@ Flags, remote writes and exits: [`pr batch` contract](#pr-batch-contract).
 Every step is a child `pr` (CI: `ci-check`) in a new session with stdin closed.
 `run` plans for itself. Default steps are `rebase`, `ci`, `comments` (`review`
 needs `--with-review`), each only where needed. `run --prs` reads named PRs by
-number, ten to a request; without it the plan searches every open PR of yours,
-ten to a page. A PR that needs no step is still planned when its saved `pr`
-state owes a closeout, but only when `comments` is one of the run's steps and
-there is no `--select`. `rebase` is needed only when the branch conflicts with
-its PR's base: `git merge-tree` over fetched objects (a run keeps them in
-`refs/pr-batch/`), falling back to GitHub's merge state, where only `DIRTY`
-counts. `--rebase behind` takes every branch behind its base instead (fallback:
-`BEHIND`, `DIRTY` and `UNKNOWN`); the run records the choice so `resume` keeps
-it. `comments` is needed when `pr comments` would find something to answer
-(`pr.owed_feedback`). `ci` runs `ci-check --no-rebase --head-sha <planned remote
-head>` (not `pr ci`) when the rollup failed, with `--wait` if still running;
-`--fix` and the rate-limit rerun only under `--with-ai=ci`. Fork heads skip
-both. A stacked PR records `stack_wait_base` and is not rebased. One fetching
-rebase or CI step per repo at a time per run; several runs may share a repo.
-No start in a dirty worktree except restoring generated files.
+number in pages sized to stay inside GitHub's request budget; without it the
+plan searches every open PR of yours the same way. A PR that needs no step is
+still planned when its saved `pr` state owes a closeout, but only when
+`comments` is one of the run's steps and there is no `--select`. `rebase` is
+needed only when the branch conflicts with its PR's base: `git merge-tree` over
+fetched objects (a run keeps them in `refs/pr-batch/`), falling back to GitHub's
+merge state, where only `DIRTY` counts. `--rebase behind` takes every branch
+behind its base instead (fallback: `BEHIND`, `DIRTY` and `UNKNOWN`); the run
+records the choice so `resume` keeps it. `comments` is needed when `pr comments`
+would find something to answer (`pr.owed_feedback`). `ci` runs `ci-check
+--no-rebase --head-sha <planned remote head>` (not `pr ci`) when the rollup
+failed, with `--wait` if still running; `--fix` and the rate-limit rerun only
+under `--with-ai=ci`. Fork heads skip both. A stacked PR records
+`stack_wait_base` and is not rebased. One fetching rebase or CI step per repo at
+a time per run; several runs may share a repo. No start in a dirty worktree
+except restoring generated files.
 
 Items end `done` or `needs_session` with `findings` (`batch/findings.py`). A
 stored waiting v1 run converts on `resume` (one-way). Report keys: `run` (`id`,

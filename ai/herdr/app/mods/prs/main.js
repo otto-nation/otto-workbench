@@ -11,14 +11,11 @@ import { readReview, loadFilesIncremental, loadPatch } from "./_lib/board_data.j
 import { patchRows, summarize } from "./_lib/diff.js";
 import { switchArgv, parseSwitch, openForReviewState, spaceFor } from "./_lib/worktree.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
-import { REVIEW_PHASES, withPhaseModels } from "./_lib/model_overrides.js";
+import { REVIEW_PHASES, RUNS_MODELS, withPhaseModels } from "./_lib/model_overrides.js";
 import { ModelPicker } from "./model_picker.js";
 import { actionLabel, writesGitHub } from "./_lib/batch.js";
 import { getArgv, terminalsOf } from "./_lib/busy.js";
 import { statsText } from "./_lib/pr_status.js";
-
-// The detail actions that run agents; posting and dismissing only talk to GitHub.
-const RUNS_MODELS = new Set(["review", "rerun", "recover"]);
 
 export default class PrsBoard extends Board {
   init(p, cx) {

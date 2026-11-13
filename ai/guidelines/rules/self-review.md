@@ -42,7 +42,7 @@ When running from a different directory than the target repo, use `--repo-dir`:
 `pr review --self --fix --repo-dir /path/to/worktree` — the flag is `--repo-dir`, not
 `--repo`.
 
-Skip only when the user explicitly asks ("skip the review", "just create the PR"). A task that lists steps ending in `pr create` without a review step is not a skip request — run the review, or ask. `pr create` enforces this (refuses when no self-review covers HEAD — § The Review Covers One Commit) and proceeds only with `pr create --draft --skip-review "<reason>"`. The reason is required, recorded on the trail; quote the user's words, never pass it on your own judgement. `--dry-run` reports without refusing. `--no-verify` does not skip it.
+Skip only when the user explicitly asks ("skip the review", "just create the PR"). A task that lists steps ending in `pr create` without a review step is not a skip request — run the review, or ask. `pr create` enforces this (refuses when no self-review covers HEAD — § The Review Covers One Commit) and proceeds only with `pr create --draft --skip-review "<their reason>"`. The reason is required, recorded on the trail; quote the user's words, never pass it on your own judgement. `--dry-run` reports without refusing. `--no-verify` does not skip it.
 
 ## The Summary Is a Claim About the Tree
 

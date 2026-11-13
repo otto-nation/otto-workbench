@@ -11,6 +11,7 @@ if str(LIB_DIR) not in sys.path:
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
 from review_threads_support import _no_published_summary, _published_summary  # noqa: E402
+from conftest import git_in, git_out  # noqa: E402
 import core.markdown
 import pr.attribution
 import pr.summary_model
@@ -134,3 +135,28 @@ class TestPipesStayInTheirCell:
         assert pr.summary_scope.row_key(deferred) == pr.summary_scope.row_key(fixed)
         assert pr.summary_scope.carried_over_rows(
             _published_summary(deferred), _published_summary(fixed)) == []
+
+
+class TestSuffixPathCitationRendersAsRepoPath:
+    """A reviewer-relative path in a summary row still names the repo file."""
+
+    def test_a_unique_suffix_becomes_the_repo_path_in_the_row(self, worktree):
+        git_in(worktree, "config", "user.email", "t@example.com")
+        git_in(worktree, "config", "user.name", "T")
+        git_in(worktree, "config", "commit.gpgsign", "false")
+        rel = "dev-tooling/tasks/tests/a.py"
+        path = worktree / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("1\n")
+        git_in(worktree, "add", "-A")
+        git_in(worktree, "commit", "-qm", "c", "--no-verify")
+        sha = git_out(worktree, "rev-parse", "HEAD").strip()
+        entry = CommentItem(
+            id="t1", summary="fix", reviewer="kgn", file="tasks/tests/a.py",
+        )
+        row = pr.summary_row.render_row(
+            pr.summary_row.row_cells_for(
+                entry, "Fixed", {}, "owner/repo", 1, sha, worktree,
+            )
+        )
+        assert "dev-tooling/tasks/tests/a.py" in row

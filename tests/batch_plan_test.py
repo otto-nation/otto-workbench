@@ -429,7 +429,8 @@ def test_by_number_reads_at_most_a_page_of_prs_per_request(monkeypatch):
     monkeypatch.setattr(batch.plan, "_graphql", lambda q, v: sizes.append(
         q.count("pullRequest(number:")) or {"viewer": {"login": "me"}, "repository": {}})
     batch.plan._by_number([f"o/a#{n}" for n in range(1, 24)], {"o/a": "/repos/a"})
-    assert sizes == [10, 10, 3]
+    page = batch.plan._SEARCH_PAGE
+    assert sizes == [page, page, 23 - 2 * page]
 
 
 def test_the_bulk_read_never_asks_github_for_merge_state():

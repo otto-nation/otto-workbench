@@ -14,6 +14,9 @@ export const BATCH_PHASES = [
   'comments_triage', 'comments_fix', 'comments_verify', 'ci_fix', 'ci_verify', 'rebase',
 ];
 
+// The detail actions that run agents; posting and dismissing only talk to GitHub.
+export const RUNS_MODELS = new Set(['review', 'rerun', 'recover']);
+
 // [phase, model] for each phase in *order* with a non-blank value in *values*.
 export function overrideEntries(values, order) {
   const out = [];

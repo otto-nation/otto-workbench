@@ -13,6 +13,8 @@ into the context — create declares no positional and no target flag.
 and never reaches `run_create`. The self-review gate is built here from
 the resolved repo and branch so `pr.create` never imports the review
 pipeline.
+
+Exit codes, remote writes and examples are `CONTRACT` below.
 """
 
 # doc-group: cli
@@ -23,13 +25,86 @@ import argparse
 import functools
 import sys
 
+import core.command_contract
 import pr.context
 import pr.create
 import review.currency
 import review.paths
+from core.exit_codes import ExitCode
 from core.tool_parser import EXIT_USAGE, ToolParser, read_file_arg
 
 SCRIPT = "pr create"
+
+_PUSH_HOW = (
+    "plain git push (never forced) via pr.branch_sync.sync_branch / git.push.push: "
+    "git push --set-upstream origin <branch> [--no-verify] when origin has no "
+    "refs/heads/<branch>; otherwise git push [--no-verify] origin <branch>. Then "
+    "gh pr create --title … --body-file - --assignee @me --base <base> [--draft]."
+)
+_PUSH_REFUSED = (
+    "a refused push stops before any AI call or PR; git.push.report prints the "
+    "Resume line. A refused gh pr create leaves the branch already on origin."
+)
+
+CONTRACT = core.command_contract.CommandContract(
+    summary="Create a pull request for the current branch, or preview it with "
+            "--dry-run. Pushes HEAD (plain, never forced) then opens a PR; refuses "
+            "if one already exists.",
+    groups=(
+        core.command_contract.FlagGroup(
+            "Publish", ("--draft", "--base", "--closes", "--issue")),
+        core.command_contract.FlagGroup(
+            "Content", ("--title", "--body", "--body-file")),
+        core.command_contract.FlagGroup(
+            "Gates", ("--no-verify", "--skip-review", "--dry-run")),
+    ),
+    remote_effects=(
+        core.command_contract.RemoteEffect(
+            "", "refs/heads/<branch> on origin, then a new pull request",
+            "origin and GitHub", _PUSH_HOW, _PUSH_REFUSED),
+        core.command_contract.RemoteEffect(
+            "--no-verify", "nothing extra: changes how the push runs", "origin",
+            "adds --no-verify to git push, skipping the git pre-push hook; the "
+            "self-review gate and the workbench owner check still run",
+            "as for the push"),
+    ),
+    exits=(
+        core.command_contract.ExitOutcome(
+            ExitCode.OK,
+            "PR created (its URL on stdout), or the --dry-run preview printed"),
+        core.command_contract.ExitOutcome(
+            ExitCode.FAILURE,
+            "refused in preflight (a PR already exists for the branch — use pr "
+            "describe; run from the default branch; origin/<base> missing or "
+            "unfetched; no commits ahead of the base; a --closes the tracker "
+            "refuses), no checkout, the self-review gate (no self-review covers "
+            "HEAD), the publishing token, the nesting gate, the push (including "
+            "behind/diverged), content generation, or gh pr create",
+        ),
+        core.command_contract.ExitOutcome(
+            ExitCode.USAGE,
+            "bad flags, unreadable --body-file, empty --skip-review reason"),
+        core.command_contract.ExitOutcome(
+            ExitCode.TEMPFAIL,
+            "another pr run holds this branch or checkout; retry once it finishes"),
+    ),
+    examples=(
+        core.command_contract.Example(
+            "pr create --draft", "push the branch and open a draft PR"),
+        core.command_contract.Example(
+            "pr create --draft --closes 941",
+            "the same, closing issue 941 on merge"),
+        core.command_contract.Example(
+            "pr create --draft --dry-run",
+            "print title and body; push nothing, create nothing"),
+        core.command_contract.Example(
+            'pr create --draft --skip-review "user asked to skip"',
+            "skip the self-review gate; the reason is recorded on the trail"),
+    ),
+    notes=(
+        "--dry-run takes no lock, pushes nothing and never calls gh.",
+    ),
+)
 
 
 def build_parser() -> ToolParser:
@@ -108,4 +183,5 @@ def cmd_create(
         review.currency.self_review_verdict,
         review.paths.self_review_file_path(ctx.repo, ctx.branch),
     )
-    return pr.create.run_create(ctx, opts, trail=trail, self_review=self_review)
+    rc = pr.create.run_create(ctx, opts, trail=trail, self_review=self_review)
+    return rc

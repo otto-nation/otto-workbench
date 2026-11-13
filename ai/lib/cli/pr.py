@@ -49,6 +49,7 @@ from cli.pr_commands import (
     # to bind this module's exit code to the maintenance script's bash
     # comparison. See the constant's own comment in cli/pr_commands.py.
     EXIT_BUDGET_EXHAUSTED,  # noqa: F401
+    FIX_CONTRACT,
     cmd_fix,
     cmd_gc,
     cmd_status,
@@ -309,7 +310,8 @@ def _fix_reference_parser() -> argparse.ArgumentParser:
     those parsers accept is accepted here; only `--post` is also read by `fix`
     itself, which forwards it to the description pass.
     """
-    parser = argparse.ArgumentParser(prog=f"{SCRIPT} fix", add_help=False)
+    parser = argparse.ArgumentParser(
+        prog=f"{SCRIPT} fix", description=FIX_CONTRACT.summary, add_help=False)
     parser.add_argument("--post", action="store_true",
                         help="Publish what the passes produce, the revised PR "
                              "description included (default: print drafts and "

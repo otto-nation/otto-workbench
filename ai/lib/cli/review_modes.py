@@ -233,7 +233,10 @@ def _if_changed_from_argv(argv: Sequence[str]) -> str | None:
 # `cmd_review` routes through it, and the two MCP schema helpers derive the
 # versioned invocations from it — none of them restates the set of flags.
 MODES: dict[str, ReviewMode] = {
-    "--post":    ReviewMode(post, help="Post an existing review to GitHub"),
+    "--post":    ReviewMode(
+        post,
+        help="Post an EXISTING review to GitHub (under pr review this "
+             "flag is a mode, not the review binary's post-after-run flag)"),
     "--repair":  ReviewMode(repair, help="Repair broken review artifacts via summary or rebuild"),
     "--summary": ReviewMode(summary, help="Print a JSON summary of an existing review"),
     "--dismiss": ReviewMode(dismiss, help="Record the latest review as dismissed, posting nothing"),

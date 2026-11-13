@@ -1,7 +1,7 @@
 """Every `pr` command declares a CommandContract, and the contract agrees with its parser.
 
-UNMIGRATED and WRONG_PROG only ever shrink: each phase of the contracts plan
-removes the commands it migrates, and phase 4 deletes both.
+UNMIGRATED only ever shrinks: each phase of the contracts plan
+removes the commands it migrates, and phase 4 deletes it.
 """
 
 import sys
@@ -21,21 +21,24 @@ import core.command_contract  # noqa: E402
 from core.exit_codes import ExitCode  # noqa: E402
 from core.tool_parser import ToolParser  # noqa: E402
 
-UNMIGRATED = frozenset({"create", "status", "ci", "review", "comments", "fix",
-                        "describe", "stack", "board", "batch", "gc"})
-WRONG_PROG = frozenset({"ci", "comments", "describe"})
+UNMIGRATED = frozenset({"status", "stack", "board", "batch", "gc"})
 # (command, trigger) pairs known to write outside the machine. A pinned list on
 # purpose: which flags touch the remote cannot be read off a parser.
 KNOWN_REMOTE = {
     "rebase": {"", "--fix", "--push-only", "--push-only --expect", "--no-verify"},
     "push": {"", "--no-verify"},
+    "create": {"", "--no-verify"},
+    "describe": {"--post"},
+    "ci": {"--fix --post", "--no-verify"},
+    "comments": {"--post", "--finish --post", "--fix --post"},
+    "review": {"", "--self --fix --push", "--post", "--track"},
+    "fix": {"--post"},
 }
 MIGRATED = sorted(set(COMMANDS) - UNMIGRATED)
 
 
 def test_the_allow_lists_name_real_commands():
     assert UNMIGRATED <= set(COMMANDS)
-    assert WRONG_PROG <= set(COMMANDS)
 
 
 @pytest.mark.parametrize("name", sorted(COMMANDS))
@@ -74,7 +77,7 @@ def test_known_remote_triggers_have_an_effect(name):
     assert KNOWN_REMOTE[name] <= triggers
 
 
-@pytest.mark.parametrize("name", sorted(set(COMMANDS) - WRONG_PROG))
+@pytest.mark.parametrize("name", sorted(COMMANDS))
 def test_help_names_the_command_as_typed(name):
     assert cli.pr.help_parser(name).prog == f"pr {name}"
 

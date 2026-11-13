@@ -8595,16 +8595,7 @@ finishes, whether it failed or not.
 Manages local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
 on the run's target rather than on the checkout it was invoked from.
 
-Usage:
-  ci-check                      # latest run for current branch
-  ci-check --branch <name>      # specific branch (works from bare repos)
-  ci-check --run <run_id>       # specific run
-  ci-check --pr <number_or_url> # discover branch from PR
-  ci-check --repo-dir <path>    # specify worktree directory
-  ci-check --fix                # diagnose then invoke AI to fix failures
-  ci-check --head-sha <sha>     # runs and checks of this commit, not local HEAD
-  ci-check --fix --no-rebase    # fix without rebasing first (pr batch rebases itself)
-  ci-check --fix --no-verify    # fix without running the verify gate
+Exit codes, remote writes and examples are `CONTRACT` below.
 
 ### cli/dispatch.py
 
@@ -8928,6 +8919,8 @@ and never reaches `run_create`. The self-review gate is built here from
 the resolved repo and branch so `pr.create` never imports the review
 pipeline.
 
+Exit codes, remote writes and examples are `CONTRACT` below.
+
 ### cli/pr_describe.py
 
 Revise a PR description against the repo's PR template.
@@ -8968,19 +8961,7 @@ work (not under `--dry-run`, which publishes nothing), falling back to the
 interactive `gh` login; `--closes` is checked ahead of it, so a
 ref nothing can close is refused without a token lookup.
 
-Exit codes:
-  0  Success (description current, revised, or no PR and nothing asked of one)
-  1  Error (no PR for --title/--body/--closes, gh failure, unusable AI output,
-     refused --closes or --body, no publishing token under --post)
-  2  Usage error (bad flags, unreadable --body-file)
-
-Usage:
-  pr-describe                         # revise if HEAD moved since the last pass
-  pr-describe --force                 # revise regardless of HEAD
-  pr-describe --dry-run               # print the revision, do not push it
-  pr-describe --closes 941 --post     # link an issue for auto-close on merge
-  pr-describe --title "feat: x" --body-file body.md --post
-  pr-describe --repo-dir <path>       # specify worktree directory
+Exit codes, remote writes and examples are `CONTRACT` below.
 
 ### cli/pr_push.py
 
@@ -9138,13 +9119,7 @@ chaining and nothing restores it. The run lock is claimed between resolving the
 self-review target and switching the checkout to it — a resolver that did both
 would take a process-lifetime lock from inside the library.
 
-Usage:
-  review <pr_url_or_number>
-  review --no-post <pr_url_or_number>
-  review --self [<pr_url_or_number>]
-  review --self --track ID [--track ID ...] [--post]
-  review [--self] --recover [<pr_url_or_number>]
-  review [--self] [--focus TEXT]... [--focus-file PATH]... [<pr_url_or_number>]
+Exit codes, remote writes and examples are `CONTRACT` below.
 
 ### cli/review_modes.py
 
@@ -9259,13 +9234,7 @@ phases too: `closeout.finish_deferred_work` reports a refused `--track` rather
 than exiting from under this module. A contended run lock exits 75
 (EX_TEMPFAIL) rather than 1 — retry once the holder finishes.
 
-Usage:
-  review-threads [--pr NUMBER] [--branch NAME] [--repo-dir PATH]
-  review-threads --triage
-  review-threads --fix [--resume | --no-resume]
-  review-threads --settle THREAD_ID [--as fixed|dismissed|already_addressed]
-  review-threads --finish [--no-push-verify]
-  review-threads --reply THREAD_COMMENT_OR_REVIEW_ID --body-file PATH [--post]
+Exit codes, remote writes and examples are `CONTRACT` below.
 
 ### cli/rules_canary.py
 

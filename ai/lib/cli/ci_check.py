@@ -8,16 +8,7 @@ finishes, whether it failed or not.
 Manages local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, keyed
 on the run's target rather than on the checkout it was invoked from.
 
-Usage:
-  ci-check                      # latest run for current branch
-  ci-check --branch <name>      # specific branch (works from bare repos)
-  ci-check --run <run_id>       # specific run
-  ci-check --pr <number_or_url> # discover branch from PR
-  ci-check --repo-dir <path>    # specify worktree directory
-  ci-check --fix                # diagnose then invoke AI to fix failures
-  ci-check --head-sha <sha>     # runs and checks of this commit, not local HEAD
-  ci-check --fix --no-rebase    # fix without rebasing first (pr batch rebases itself)
-  ci-check --fix --no-verify    # fix without running the verify gate
+Exit codes, remote writes and examples are `CONTRACT` below.
 """
 
 # doc-group: cli
@@ -29,9 +20,11 @@ import sys
 import cli.boundary
 import cli.locks
 import cli.needs
+import core.command_contract
 import core.log
 import core.proc
 import core.publishing
+from core.exit_codes import ExitCode
 from core.tool_parser import ToolParser
 from core.trail import Trail, add_trail_args
 import pr.ci_check
@@ -39,6 +32,91 @@ import pr.ci_runs
 import pr.context
 import pr.domains
 import rebase.ci_fix
+
+_FIX_POST_HOW = (
+    "unless --no-rebase, and only when the branch is behind origin/main: "
+    "rebase.commands.cmd_start(..., RunMode.FIX) — the same force-push as "
+    "pr rebase --fix, git push --force-with-lease=refs/heads/<branch>:<expect> "
+    "(docs/ai-automation.md#pr-rebase-contract). Then git.land.land -> "
+    "git.push.push of the fix commit (plain, never forced), gated by --post "
+    "via core.publishing.enabled()."
+)
+_FIX_POST_REFUSED = (
+    "A paused conflicted rebase skips the fix pass (exit 1). A refused, "
+    "failed, or aborted rebase continues the fix pass on the current base. "
+    "A refused or held push leaves the fix commit local (not exit 1 unless "
+    "the commit itself failed)."
+)
+
+CONTRACT = core.command_contract.CommandContract(
+    summary="Report CI failures for the branch. --fix diagnoses and applies "
+            "fixes; --post pushes them. Without --fix, exit 0 even when CI "
+            "failed — read the JSON.",
+    groups=(
+        core.command_contract.FlagGroup(
+            "Report",
+            ("--run", "--head-sha", "--wait", "--wait-timeout",
+             "--wait-interval")),
+        core.command_contract.FlagGroup(
+            "Fix", ("--fix", "--no-rebase", "--no-verify")),
+        core.command_contract.FlagGroup(
+            "Publish", ("--post",)),
+    ),
+    remote_effects=(
+        core.command_contract.RemoteEffect(
+            "--fix --post",
+            "a rebase force-push of refs/heads/<branch> (as pr rebase --fix) "
+            "when behind and not --no-rebase, then the fix commit pushed to "
+            "refs/heads/<branch>",
+            "origin", _FIX_POST_HOW, _FIX_POST_REFUSED),
+        core.command_contract.RemoteEffect(
+            "--no-verify",
+            "nothing extra: changes how --fix lands locally",
+            "this machine",
+            "skips the verify gate (an agent exercising each claimed fix "
+            "against the tree); every fix lands unverified; not git's "
+            "pre-push hook",
+            "n/a — the flag does not write remotely"),
+    ),
+    exits=(
+        core.command_contract.ExitOutcome(
+            ExitCode.OK,
+            "report printed; with --fix the fixes landed or there was nothing "
+            "to fix. Without --fix, 0 even when CI failed — read the JSON. A "
+            "held or refused push of the fix commit is still 0"),
+        core.command_contract.ExitOutcome(
+            ExitCode.FAILURE,
+            "no run to report on, --fix without a worktree, a paused rebase "
+            "in the worktree, a refused commit, or the fix pass failed"),
+        core.command_contract.ExitOutcome(
+            ExitCode.USAGE,
+            "bad flags"),
+        core.command_contract.ExitOutcome(
+            ExitCode.TEMPFAIL,
+            "another pr run holds this branch or checkout; retry once it "
+            "finishes"),
+    ),
+    examples=(
+        core.command_contract.Example(
+            "pr ci", "print the latest run for the branch"),
+        core.command_contract.Example(
+            "pr ci --wait", "poll until the run finishes"),
+        core.command_contract.Example(
+            "pr ci --fix --post",
+            "rebase if behind, fix, and push the fix commit"),
+        core.command_contract.Example(
+            "pr ci --fix --no-rebase --post",
+            "fix and push without rebasing first"),
+    ),
+    notes=(
+        "--no-verify here skips the verify gate (an agent exercising each "
+        "fix), not git's pre-push hook.",
+        "--fix without --post still rebases locally when behind and commits; "
+        "both pushes are drafted.",
+        "--fix may gh run rerun --failed once when every remaining failure "
+        "is transient rate-limit infra (not gated by --post).",
+    ),
+)
 
 
 def build_parser() -> ToolParser:
@@ -49,7 +127,7 @@ def build_parser() -> ToolParser:
     number or a branch.
     """
     parser = ToolParser(
-        prog=pr.ci_check.SCRIPT,
+        prog="pr ci",
         description="CI failure status",
         output_schema=pr.domains.CIDomain,
     )

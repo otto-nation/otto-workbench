@@ -140,6 +140,20 @@ def test_main_refuses_contradictory_flags(cr, reviews_dir, monkeypatch, argv, re
     assert cr.main(argv) == 1, reason
 
 
+def test_force_superseded_reaches_review_flags(cr):
+    parsed = cr.build_parser().parse_args(["--self", "--force-superseded"])
+    flags = cr._flags(parsed, ["--self", "--force-superseded"], "t")
+    assert flags.force_superseded is True
+    assert flags.force is False
+
+
+def test_force_still_reaches_review_flags(cr):
+    parsed = cr.build_parser().parse_args(["--self", "--force"])
+    flags = cr._flags(parsed, ["--self", "--force"], "t")
+    assert flags.force is True
+    assert flags.force_superseded is False
+
+
 # ── the exit status ──────────────────────────────────────────────────────
 
 

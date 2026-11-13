@@ -912,7 +912,8 @@ Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remot
 | `--track` `<finding-id>` | File this open finding from the branch's existing self-review (repeatable). Requires --self; does not run a review. Cannot combine with --fix, --force, or --recover. |
 | `--push` | Push the --fix commit (requires --fix). |
 | `--skip-user-verification` | Skip the PR-ownership check when --self is given a PR ref. |
-| `--force` | Skip stale-review and pending-review prompts; not with --recover. |
+| `--force` | Skip stale-review and pending-review prompts; not with --recover. Also overrides supersession; prefer --force-superseded. |
+| `--force-superseded` | Review even when the branch looks superseded. |
 | `--no-holistic` | Skip the holistic scan phase. |
 | `--no-scout` | Skip the scout phase. |
 | `--no-group` | Skip the group review phase. |
@@ -971,6 +972,7 @@ Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remot
 | Flag | Description |
 |------|-------------|
 | `--post` | Publish what the passes produce, the revised PR description included (default: print drafts and post nothing). |
+| `--force-superseded` | Forwarded to the review pass: review even when the branch looks superseded. |
 | `[<review-or-ci-flag> ...]` | Any other flag is forwarded to the review pass and the CI pass; see `pr review` and `pr ci`. |
 
 Exit codes: `0` ok · `1` failure · `2` usage · `4` refused · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-fix-contract)
@@ -1228,7 +1230,8 @@ resolution, model selection, and Vertex quota preflight are in
 | `--track` `<finding-id>` | File this open finding from the branch's existing self-review (repeatable). Requires --self; does not run a review. Cannot combine with --fix, --force, or --recover. |
 | `--push` | Push the --fix commit (requires --fix). |
 | `--skip-user-verification` | Skip the PR-ownership check when --self is given a PR ref. |
-| `--force` | Skip stale-review and pending-review prompts; not with --recover. |
+| `--force` | Skip stale-review and pending-review prompts; not with --recover. Also overrides supersession; prefer --force-superseded. |
+| `--force-superseded` | Review even when the branch looks superseded. |
 | `--recover` | Finish a review whose agents failed, at the commit it started from. |
 | `--no-holistic` | Skip the holistic scan phase. |
 | `--no-scout` | Skip the scout phase. |

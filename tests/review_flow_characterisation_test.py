@@ -426,9 +426,10 @@ def test_an_unattended_pr_review_is_still_refused_when_superseded(
 
     The PR flow keeps two different notions of "force". One absorbs the
     unattended flags, because nobody is present to answer a confirmation. The
-    supersession refusal reads the raw `--force` instead, and the distinction
-    matters most here: an unattended run is the one with no operator to notice
-    that the findings describe deleted code before they are posted to the PR.
+    supersession refusal reads `--force-superseded` (and still `--force`), and
+    the distinction matters most here: an unattended run is the one with no
+    operator to notice that the findings describe deleted code before they are
+    posted to the PR.
 
     Both are booleans named force, three lines apart, and passing the wrong one
     is invisible in review — so it is asserted rather than described.
@@ -450,8 +451,33 @@ def test_an_unattended_pr_review_is_still_refused_when_superseded(
     )
 
     assert seen["override"] is False, (
-        "an unattended run is not an overridden one — the refusal reads --force"
+        "an unattended run is not an overridden one — the refusal reads "
+        "--force-superseded, not the prompt-skipping force"
     )
+
+
+@pytest.mark.parametrize("kwargs", [{"force": True}, {"force_superseded": True}])
+def test_an_explicit_override_reaches_the_supersession_check(
+    tmp_path, monkeypatch, kwargs,
+):
+    """`--force-superseded` is the named override; `--force` still works."""
+    tape = []
+    review_file = _review_file(tmp_path, "pr")
+    _trace_common(monkeypatch, tape)
+    _stub_pr_edges(monkeypatch, tmp_path, tape)
+
+    seen = {}
+    monkeypatch.setattr(
+        review.preflight, "refuse_if_superseded",
+        lambda *a, **kw: seen.update(override=kw["override"]),
+    )
+
+    review.run.run_pr_review(
+        make_ctx(target_dir=tmp_path / "t"), _flags(**kwargs),
+        review_file, trail=MagicMock(),
+    )
+
+    assert seen["override"] is True
 
 
 def test_the_freshness_prompts_are_skipped_when_nobody_can_answer_them(

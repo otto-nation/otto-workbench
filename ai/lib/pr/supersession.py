@@ -50,23 +50,23 @@ for its already-landed refusal, on the same exit code:
       "holds": true
     }
   ],
-  "override": "--force"
+  "override": "--force-superseded"
 }
 ```
 
 Read the merged PR the `superseding_pr` signal names before doing anything else.
-If the branch really is still wanted, re-run with `--force`, which skips the
-check entirely. `pr fix` stops on the refusal rather than continuing to its CI
-pass: every remaining pass acts on the same branch, so one refusal answers for
-all of them.
+If the branch really is still wanted, re-run with `--force-superseded`, which
+skips the check entirely. `--force` still does the same, as a deprecated path.
+`pr fix` stops on the refusal rather than continuing to its CI pass: every
+remaining pass acts on the same branch, so one refusal answers for all of them.
 
-Two flags do *not* override it, and one does. `--post` and `--no-post` set the
+Two flags do *not* override it, and two do. `--post` and `--no-post` set the
 same internal flag `--force` does — they suppress the confirmation prompts,
 because nobody is present to answer one — but an unattended run is the one this
-refusal most has to survive, so the check reads the raw `--force` instead.
-`--recover` is exempt on both entry points: it finishes a run whose spend was
-already made, so refusing it saves nothing and strands the artifacts of the run
-it was asked to complete.
+refusal most has to survive, so the check reads `--force-superseded` and the
+raw `--force` instead of the prompt-skipping local. `--recover` is exempt on
+both entry points: it finishes a run whose spend was already made, so refusing
+it saves nothing and strands the artifacts of the run it was asked to complete.
 
 Distinct from `pr rebase`'s already-landed check, which asks whether the work
 has *landed* rather than whether it has been *superseded*. Work can land
@@ -74,7 +74,7 @@ without the branch being superseded, and a branch can be superseded without its
 commits having landed anywhere — someone solved the problem differently. They
 stay separate: two of the landed check's three signals are local-only, and this
 one makes a network call that a rebase should not have to pay for. They share
-the exit code and the override flag, and nothing else.
+the exit code, and nothing else.
 """
 
 # doc-group: pr-state
@@ -124,7 +124,7 @@ _SYMBOL_DEF_RE = re.compile(
 # a caller reading the exit code only needs to know "this branch was refused",
 # and one code for that beats two it has to tell apart.
 EXIT_SUPERSEDED = core.exit_codes.ExitCode.REFUSED
-OVERRIDE_FLAG = "--force"
+OVERRIDE_FLAG = "--force-superseded"
 
 
 @dataclass(frozen=True)

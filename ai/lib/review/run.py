@@ -87,6 +87,7 @@ class ReviewFlags:
     generated: bool = False
     recover: bool = False
     force: bool = False
+    force_superseded: bool = False
     fix: bool = False
     may_publish: bool = False
     no_post: bool = False
@@ -141,7 +142,8 @@ def run_pr_review(
     pr_url = f"{pr.target.forge_base_url(ctx.host)}/{repo}/pull/{pr_number}"
 
     # --force absorbs the unattended flags for the prompts below, and only for
-    # those: supersession reads the raw flag — see preflight.supersession_override.
+    # those: supersession reads --force-superseded and the raw --force — see
+    # preflight.supersession_override.
     force_prompts = flags.force or flags.no_post or flags.auto_post
 
     if flags.recover:
@@ -226,7 +228,8 @@ def run_pr_review(
         # --post/--no-post — see review.preflight.supersession_override.
         review.preflight.refuse_if_superseded(
             wt_path, repo, ctx.target_dir, ctx.branch,
-            override=review.preflight.supersession_override(flags.force, flags.recover),
+            override=review.preflight.supersession_override(
+                flags.force, flags.recover, flags.force_superseded),
             base=base,
             trail=trail,
         )
@@ -350,7 +353,8 @@ def run_self_review(
     # the run can still cost nothing.
     review.preflight.refuse_if_superseded(
         wt_path, repo, ctx.target_dir, branch_name,
-        override=review.preflight.supersession_override(flags.force, flags.recover),
+        override=review.preflight.supersession_override(
+            flags.force, flags.recover, flags.force_superseded),
         base=base,
         trail=trail,
     )

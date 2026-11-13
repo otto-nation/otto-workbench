@@ -116,6 +116,8 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.FlagGroup(
             "Publish", ("--no-post", "--submit", "--force")),
         core.command_contract.FlagGroup(
+            "Overrides", ("--force-superseded",)),
+        core.command_contract.FlagGroup(
             "Fix", ("--fix", "--push", "--track")),
         core.command_contract.FlagGroup(
             "Phases",
@@ -173,10 +175,10 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.ExitOutcome(
             ExitCode.REFUSED,
             "the branch looks superseded; refused before reviewing; "
-            "JSON names override --force",
+            "JSON names override --force-superseded",
             (
                 core.command_contract.NextStep("", (
-                    "pr review --force … to review it anyway",
+                    "pr review --force-superseded … to review it anyway",
                 )),
             ),
         ),
@@ -205,8 +207,8 @@ CONTRACT = core.command_contract.CommandContract(
         "after running) is not reachable through `pr`.",
         "A plain PR run prompts before posting and before replacing a "
         "pending review; --no-post skips both. --force skips the "
-        "stale/pending prompts, not the post prompts, and overrides "
-        "the superseded refusal.",
+        "stale/pending prompts, not the post prompts. `--force` still "
+        "overrides supersession; prefer `--force-superseded`.",
         "A self-review files no GitHub review.",
     ),
 )
@@ -242,7 +244,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-user-verification", action="store_true",
                         help="Skip the PR-ownership check when --self is given a PR ref")
     parser.add_argument("--force", action="store_true",
-                        help="Skip stale-review and pending-review prompts; not with --recover")
+                        help="Skip stale-review and pending-review prompts; not with --recover. "
+                             "Also overrides supersession; prefer --force-superseded")
+    parser.add_argument("--force-superseded", action="store_true",
+                        help="Review even when the branch looks superseded")
     parser.add_argument("--recover", action="store_true",
                         help="Finish a review whose agents failed, at the commit it started from")
     add_phase_skip_flags(parser)
@@ -318,6 +323,7 @@ def _flags(args, argv: list[str], generator_version: str) -> review.run.ReviewFl
         generated=args.generated,
         recover=getattr(args, "recover", False),
         force=args.force,
+        force_superseded=getattr(args, "force_superseded", False),
         fix=args.fix,
         may_publish=args.post or args.push,
         no_post=args.no_post,
@@ -349,6 +355,7 @@ def _track_error(parsed) -> str:
         name for name, on in (
             ("--fix", parsed.fix),
             ("--force", parsed.force),
+            ("--force-superseded", getattr(parsed, "force_superseded", False)),
             ("--recover", parsed.recover),
         ) if on
     ]

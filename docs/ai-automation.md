@@ -1083,7 +1083,7 @@ Run the configured review agent on a PR, or handle a mode (--post an existing re
 | `0` | review completed (a partial run included), --version printed, a mode succeeded, or --track drafted/filed |  |
 | `1` | flag conflicts (--fix without --self, --push without --fix, --recover with --force, --no-post with --post, --track with a mode or without --self); no target; a removed subcommand; bad --focus; unresolvable --base; every agent failed; no PR/review file for a mode; --fix on a drifted recover; owner boundary |  |
 | `2` | bad flags; --if-changed without --schema-version |  |
-| `4` | the branch looks superseded; refused before reviewing; JSON names override --force | `pr review --force … to review it anyway` |
+| `4` | the branch looks superseded; refused before reviewing; JSON names override --force-superseded | `pr review --force-superseded … to review it anyway` |
 | `75` | another pr run holds this branch or checkout; retry once it finishes |  |
 
 **Examples**
@@ -1094,7 +1094,7 @@ Run the configured review agent on a PR, or handle a mode (--post an existing re
 - `pr review --json-summary 42` — review PR 42; stdout is one REVIEW_SUMMARY:{json} line
 
 > Under `pr review`, `--post` names a mode that posts an existing review; the `review` binary's own `--post` (post after running) is not reachable through `pr`.
-> A plain PR run prompts before posting and before replacing a pending review; --no-post skips both. --force skips the stale/pending prompts, not the post prompts, and overrides the superseded refusal.
+> A plain PR run prompts before posting and before replacing a pending review; --no-post skips both. --force skips the stale/pending prompts, not the post prompts. `--force` still overrides supersession; prefer `--force-superseded`.
 > A self-review files no GitHub review.
 
 #### pr comments contract
@@ -1147,7 +1147,7 @@ Run the review and CI fix passes from cached state, then revise the PR descripti
 | `0` | passes ran or were skipped from cache; the description pass ran |  |
 | `1` | any pass failed, or there is no state yet | `no state: run pr ci, pr review or pr comments first` |
 | `2` | bad pr-level flags; a bad forwarded flag fails its pass (exit 1) |  |
-| `4` | the review pass refused the branch as superseded; the remaining passes did not run | `re-run with --force to override` |
+| `4` | the review pass refused the branch as superseded; the remaining passes did not run | `re-run with --force-superseded to override` |
 | `75` | another pr run holds this branch or checkout; retry once it finishes |  |
 
 **Examples**
@@ -1157,6 +1157,7 @@ Run the review and CI fix passes from cached state, then revise the PR descripti
 
 > --post is forwarded to the review binary and to ci, not through cmd_review, so it is the binary's publish flag (may_publish), not the pr review --post mode.
 > A self-review files no GitHub review. argv other than --post is not forwarded to describe.
+> `--force` still overrides supersession; prefer `--force-superseded`.
 
 #### pr rebase contract
 

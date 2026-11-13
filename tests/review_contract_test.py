@@ -9,7 +9,9 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import cli.pr  # noqa: E402
+import cli.pr_commands  # noqa: E402
 import cli.review_entry  # noqa: E402
+import pr.supersession  # noqa: E402
 from core.exit_codes import ExitCode  # noqa: E402
 
 
@@ -25,6 +27,18 @@ def test_review_exit_codes():
         0, 1, 2, 4, 75]
     assert cli.review_entry.CONTRACT.exits[0].code is ExitCode.OK
     assert cli.review_entry.CONTRACT.exits[3].code is ExitCode.REFUSED
+
+
+def test_the_supersession_override_is_force_superseded():
+    assert pr.supersession.OVERRIDE_FLAG == "--force-superseded"
+    parser = cli.review_entry.build_parser()
+    assert parser.parse_args(["--force-superseded"]).force_superseded is True
+    assert parser.parse_args(["--force"]).force is True
+    assert parser.parse_args(["--force"]).force_superseded is False
+    grouped = [k for g in cli.review_entry.CONTRACT.groups for k in g.flags]
+    assert "--force-superseded" in grouped
+    grouped_fix = [k for g in cli.pr_commands.FIX_CONTRACT.groups for k in g.flags]
+    assert "--force-superseded" in grouped_fix
 
 
 def test_self_fix_push_effect_mentions_the_fix_commit_push():

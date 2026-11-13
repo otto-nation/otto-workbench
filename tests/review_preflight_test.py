@@ -222,11 +222,12 @@ def test_evidence_refuses_before_the_first_agent_call(monkeypatch, capsys):
 
     out = capsys.readouterr()
     assert "Refusing to review feat/x" in out.err
-    assert pr.supersession.OVERRIDE_FLAG in out.err
+    assert pr.supersession.OVERRIDE_FLAG == "--force-superseded"
+    assert "--force-superseded" in out.err
     payload = json.loads(out.out)
     assert payload["status"] == "superseded"
     assert payload["branch"] == "feat/x"
-    assert payload["override"] == pr.supersession.OVERRIDE_FLAG
+    assert payload["override"] == "--force-superseded"
     assert payload["signals"] == [{
         "kind": "readds_removed_symbol",
         "detail": "`foo` is gone from origin/main",
@@ -264,6 +265,12 @@ def test_only_the_users_own_force_overrides_the_refusal():
     """
     assert review.preflight.supersession_override(False, False) is False
     assert review.preflight.supersession_override(True, False) is True
+
+
+def test_force_superseded_overrides_the_refusal():
+    """The named override, distinct from the prompt-skipping `--force`."""
+    assert review.preflight.supersession_override(
+        False, False, force_superseded=True) is True
 
 
 def test_recover_overrides_the_refusal_on_both_paths():

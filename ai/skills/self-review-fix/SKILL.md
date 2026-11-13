@@ -127,7 +127,7 @@ Parse the JSON:
       "holds": true
     }
   ],
-  "override": "--force"
+  "override": "--force-superseded"
 }
 ```
 
@@ -143,7 +143,7 @@ merged PR the `superseding_pr` signal names, present it, and let the user decide
 If they confirm the branch is still wanted, re-run with the flag in `override`:
 
 ```bash
-pr review --self --fix --push --force --branch <branch_name>
+pr review --self --fix --push --force-superseded --branch <branch_name>
 ```
 
 ### Step 4: Report results

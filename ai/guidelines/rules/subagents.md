@@ -26,8 +26,9 @@ and test specifics live with their owners (pointers below).
   finish, completed it. Brief a continuation with what is already done and what is
   missing. Revisit when the stall timeout or the model changes
 - Never put a bare coreutils `timeout` around a long `pr review --self --fix`: a
-  3000s bound killed one mid-fix, and a rerun was owed. Start it with the job
-  facility and a generous `timeout_minutes` (observed 2026-11: 10 to 35 minutes per
+  3000s bound killed one mid-fix, and a rerun was owed. Start it with `job_start`
+  under Pi (`run_in_background` under Claude Code; see `general.md`) and a
+  generous `timeout_minutes` (observed 2026-11: 10 to 35 minutes per
   run, longer when the repo's checks are slow)
 - Retry a stalled or aborted call on the same model before changing models —
   the stall is usually the call, not the model. A killed or timed-out child can
@@ -45,6 +46,13 @@ and test specifics live with their owners (pointers below).
   statement that `pr rebase` pushing the result is expected and needs no
   confirmation. Which tool a rebase request uses is
   `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts
+- Two changes to the same subsystem can land in parallel under the same module
+  name. Before a long rebase, `git diff <merge-base> origin/main --stat` over the
+  directories the branch touches: a same-named module on main (observed 2026-11:
+  `fix/resume.py`) is a design conflict that no conflict resolver, human or AI,
+  settles by merging text. Decide the roles first, rename one side, then rebase
+  by hand hunk by hunk. `pr rebase --fix` aborted on baseline.py and its earlier
+  resolutions of settlement.py left dead code and a double settle
 
 ## Concurrency
 
@@ -81,13 +89,6 @@ and test specifics live with their owners (pointers below).
   `git diff --stat origin/main...HEAD` (three dots) and expect only the
   branch's own files: a subagent's `reset --soft origin/main` produced a
   commit that reverted a merged PR (see `git-operations.md` § Commit History)
-- Two changes to the same subsystem can land in parallel under the same module
-  name. Before a long rebase, `git diff <merge-base> origin/main --stat` over the
-  directories the branch touches: a same-named module on main (observed 2026-11:
-  `fix/resume.py`) is a design conflict that no conflict resolver, human or AI,
-  settles by merging text. Decide the roles first, rename one side, then rebase
-  by hand hunk by hunk. `pr rebase --fix` aborted on baseline.py and its earlier
-  resolutions of settlement.py left dead code and a double settle
 - An AI-resolved merge is a claim, not a result. `pr rebase --fix` reports
   `files_one_sided` and `one_sided_regions` when it kept one side of a conflict;
   the other side's change is gone. What to do with that output is the

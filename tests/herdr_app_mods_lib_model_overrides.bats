@@ -10,7 +10,7 @@ teardown() { common_teardown; }
 _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/model_overrides.js');
-    const { REVIEW_PHASES, BATCH_PHASES, RUNS_MODELS, overrideEntries, phaseModelFlags, withPhaseModels, overrideSummary } = m;
+    const { REVIEW_PHASES, BATCH_PHASES, RUNS_MODELS, overrideEntries, phaseModelFlags, withPhaseModels, overrideSummary, copyRef } = m;
     process.stdout.write(JSON.stringify(eval(process.argv[1])));
   " -- "$1"
 }
@@ -57,6 +57,28 @@ _js() {
   _js '[[...RUNS_MODELS].sort(), ["post","dismiss"].filter(a => RUNS_MODELS.has(a))]'
   [ "$status" -eq 0 ]
   jq -e '.==[["recover","rerun","review"],[]]' <<<"$output"
+}
+
+@test "copyRef is non-mutating and only touches the given phases" {
+  _js '(() => {
+    const src = { scout: "a", rebase: "keep", extra: "x" };
+    const out = copyRef(src, "b", ["scout", "group"]);
+    return {
+      out,
+      src,
+      sameObject: out === src,
+    };
+  })()'
+  [ "$status" -eq 0 ]
+  jq -e '.out == {scout:"b", rebase:"keep", extra:"x", group:"b"}
+    and .src == {scout:"a", rebase:"keep", extra:"x"}
+    and .sameObject == false' <<<"$output"
+}
+
+@test "copyRef copies a blank ref as blank" {
+  _js 'copyRef({scout:"a", rebase:"keep"}, "", ["scout"])'
+  [ "$status" -eq 0 ]
+  jq -e '.=={scout:"", rebase:"keep"}' <<<"$output"
 }
 
 @test "every phase in the review list is a review-domain phase" {

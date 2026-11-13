@@ -42,3 +42,11 @@ export function withPhaseModels(argv, values, order) {
 export function overrideSummary(values, order) {
   return overrideEntries(values, order).map(([phase, model]) => `${phase}=${model}`).join(' · ');
 }
+
+// A new values object with *ref* on each of *phases*. Other keys are left as they were.
+export function copyRef(values, ref, phases) {
+  const next = { ...(values ?? {}) };
+  const value = String(ref ?? '');
+  for (const phase of phases ?? []) next[phase] = value;
+  return next;
+}

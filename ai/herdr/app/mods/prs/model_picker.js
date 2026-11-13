@@ -7,8 +7,8 @@ import { div } from "gpui-kit";
 import { h_flex, v_flex, Popover, Input, InputState } from "gpui-base";
 import { theme } from "herdr";
 import { invoke, readJson } from "./_lib/board_data.js";
-import { overrideSummary } from "./_lib/model_overrides.js";
-import { choicesArgv, parseChoices, phaseOptions, defaultLabel } from "./_lib/model_choices.js";
+import { overrideSummary, REVIEW_PHASES, copyRef } from "./_lib/model_overrides.js";
+import { choicesArgv, parseChoices, phaseOptions, defaultLabel, refBlocked } from "./_lib/model_choices.js";
 import { SP, RADIUS, CONTROL, LAYOUT } from "./_lib/tokens.js";
 import { ghostButton, popoverSurface, text, caption, hoverRow, sectionLabel } from "./_ui/ui.js";
 
@@ -116,6 +116,16 @@ export class ModelPicker {
     this.acx.notify();
   }
 
+  // Copy this phase's value onto every review phase this picker shows, skipping a blocked row.
+  applyToReviewPhases(phase) {
+    const ref = this.fields.get(phase).value();
+    const doc = this.result?.ok ? this.result.doc : undefined;
+    const targets = this.phases.filter((p) => REVIEW_PHASES.includes(p) && !refBlocked(doc, p, ref));
+    const next = copyRef(this.values(), ref, targets);
+    for (const p of this.phases) this.fields.get(p).set_value(next[p] ?? "");
+    this.acx.notify();
+  }
+
   ensureChoices() {
     if (this.result != null || this.loading || !this.loadChoices) return;
     this.loading = true;
@@ -201,7 +211,15 @@ export class ModelPicker {
     const open = this.expanded === phase;
     return v_flex().gap(SP.xxs)
       .child(this.phaseHeader(phase, true))
-      .when(open, (e) => e.child(this.phaseList(phase)));
+      .when(open, (e) => e
+        .child(this.phaseList(phase))
+        .child(div().flex_none().child(
+          ghostButton(
+            `${this.id}-apply-review-${phase}`,
+            "Use for all review phases",
+            () => this.applyToReviewPhases(phase),
+          ),
+        )));
   }
 
   phaseList(phase) {

@@ -50,7 +50,7 @@ _js() {
         ],
       },
     };
-    const { choicesArgv, parseChoices, phaseOptions, defaultLabel, SECTION_CONFIGURED, SECTION_TIERS, SECTION_ENABLED, FLOOR_REASON } = m;
+    const { choicesArgv, parseChoices, phaseOptions, defaultLabel, refBlocked, SECTION_CONFIGURED, SECTION_TIERS, SECTION_ENABLED, FLOOR_REASON } = m;
     process.stdout.write(JSON.stringify(eval(process.argv[1])));
   " -- "$1"
 }
@@ -100,6 +100,18 @@ _js() {
   _js '[parseChoices({schema: 2, phases: {}, tiers: {}, enabled: [], catalogue: {}}).ok, parseChoices({schema: 2}).error.kind, parseChoices(null).ok, phaseOptions({schema: 2}, "synthesis", "").ok]'
   [ "$status" -eq 0 ]
   jq -e '.==[false,"outdated",false,false]' <<<"$output"
+}
+
+@test "refBlocked is true for a Haiku row on a review phase and false otherwise" {
+  _js '[
+    refBlocked(doc, "synthesis", "anthropic/claude-haiku-5"),
+    refBlocked(doc, "rebase", "anthropic/claude-haiku-5"),
+    refBlocked(doc, "synthesis", ""),
+    refBlocked(doc, "synthesis", "unknown/model"),
+    refBlocked(null, "synthesis", "anthropic/claude-haiku-5"),
+  ]'
+  [ "$status" -eq 0 ]
+  jq -e '.==[true,false,false,false,false]' <<<"$output"
 }
 
 @test "the row ref is passed verbatim, including unusual spelling" {

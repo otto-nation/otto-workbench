@@ -2,17 +2,13 @@
 Description=otto-workbench maintenance timer
 
 [Timer]
-# OnUnitActiveSec counts from the service's last activation, so until the service
-# has run once under the current user manager it schedules nothing, and a timer
-# with no trigger left goes elapsed: daemon-reload does not re-arm it, only a
-# restart does. OnActiveSec counts from the timer's own activation, which happens
-# on every manager start and every install (the installer restarts the timer), so
-# each schedules a first run five minutes out that gives OnUnitActiveSec its base.
-# Not OnStartupSec or OnBootSec: in a manager that has been up a while they have
-# already passed, and a restarted timer fires a passed trigger at once — a
-# maintenance run, which itself syncs, started from inside the sync installing it.
-OnActiveSec=5min
-OnUnitActiveSec=__INTERVAL__sec
+# A wall-clock schedule is not re-armed by daemon-reload or restart (the
+# monotonic OnActiveSec it replaces was: any reload started a maintenance run
+# five minutes later). Persistent=true runs a slot missed while the machine was
+# off at the next start. FixedRandomDelay keeps the jitter stable across reloads.
+OnCalendar=__CALENDAR__
+RandomizedDelaySec=__DELAY__
+FixedRandomDelay=true
 Persistent=true
 
 [Install]

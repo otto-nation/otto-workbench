@@ -91,31 +91,74 @@ _systemd_is_active() {
   systemctl --user is-active "${_SYSTEMD_UNIT}.timer" >/dev/null 2>&1
 }
 
+# _systemd_calendar INTERVAL — prints the OnCalendar expression for INTERVAL
+# seconds. Returns 1 (printing nothing) when INTERVAL cannot be expressed: it
+# must be a positive integer that divides an hour in whole minutes or a day in
+# whole hours.
+_systemd_calendar() {
+  local interval="$1" h=0 m=0
+  [[ "$interval" =~ ^[1-9][0-9]*$ ]] || return 1
+
+  if (( interval % 3600 == 0 )); then
+    h=$((interval / 3600))
+  elif (( interval % 60 == 0 )); then
+    m=$((interval / 60))
+  else
+    return 1
+  fi
+
+  if (( h == 24 )); then
+    echo '*-*-* 00:00:00'
+    return 0
+  fi
+  if (( h > 0 && 24 % h == 0 )); then
+    echo "*-*-* 00/${h}:00:00"
+    return 0
+  fi
+  if (( m > 0 && 60 % m == 0 )); then
+    echo "*-*-* *:00/${m}:00"
+    return 0
+  fi
+  return 1
+}
+
+# _systemd_render_timer INTERVAL — prints the timer unit the template gives for
+# INTERVAL. DELAY is INTERVAL/12 seconds. Returns 1 when _systemd_calendar fails.
+_systemd_render_timer() {
+  local interval="$1" calendar delay
+  calendar=$(_systemd_calendar "$interval") || return 1
+  delay=$((interval / 12))
+  sed \
+    -e "s|__CALENDAR__|${calendar}|g" \
+    -e "s|__DELAY__|${delay}s|g" \
+    "$MAINTENANCE_SRC_DIR/systemd/${_SYSTEMD_UNIT}.timer.template"
+}
+
 _systemd_install() {
   local interval="${1:-$_MAINTENANCE_DEFAULT_INTERVAL}"
   local svc_template="$MAINTENANCE_SRC_DIR/systemd/${_SYSTEMD_UNIT}.service.template"
-  local tmr_template="$MAINTENANCE_SRC_DIR/systemd/${_SYSTEMD_UNIT}.timer.template"
+
+  # Rendered before anything is written: a failed render must leave both
+  # installed units as they were, not truncate the timer or half-apply the pair.
+  local rendered
+  rendered=$(_systemd_render_timer "$interval") || return 1
 
   mkdir -p "$_SYSTEMD_USER_DIR"
 
   sed -e "s|__WORKBENCH_DIR__|$(_maintenance_run_dir)|g" \
     "$svc_template" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.service"
-
-  sed -e "s|__INTERVAL__|${interval}|g" \
-    "$tmr_template" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer"
+  printf '%s\n' "$rendered" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer"
 
   systemctl --user daemon-reload
 }
 
 _systemd_start() {
   local interval="$1"
-  _systemd_install "$interval"
+  _systemd_install "$interval" || return 1
   systemctl --user enable "${_SYSTEMD_UNIT}.timer"
-  # Every call, including an operator's `maintenance start`, resets the 5min
-  # first-run countdown; that is intended.
-  # Restart, not `start`: starting an active timer is a no-op, and only a fresh
-  # activation re-bases the template's OnActiveSec, the trigger that schedules a
-  # first run when the service has not run under this manager.
+  # Restart makes the new definition active even on a timer the old monotonic
+  # schedule left elapsed. With a calendar schedule a restart fires at once only
+  # when Persistent finds a slot missed since the last trigger.
   systemctl --user restart "${_SYSTEMD_UNIT}.timer"
 }
 
@@ -144,10 +187,29 @@ _systemd_status() {
   return 0
 }
 
-# _systemd_installed_interval — the OnUnitActiveSec of the installed timer, or nothing.
+# _systemd_installed_interval — seconds encoded in the installed timer's
+# OnCalendar line, or the legacy OnUnitActiveSec value, or nothing.
 _systemd_installed_interval() {
+  local timer="$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer" cal
+  local hour_re='^\*-\*-\* 00/([0-9]+):00:00$'
+  local min_re='^\*-\*-\* \*:00/([0-9]+):00$'
+  [[ -f "$timer" ]] || return 0
+  cal=$(sed -n '/^OnCalendar=/{s/^OnCalendar=//p;q;}' "$timer" 2>/dev/null) || true
+  if [[ "$cal" == '*-*-* 00:00:00' ]]; then
+    echo 86400
+    return 0
+  fi
+  if [[ "$cal" =~ $hour_re ]]; then
+    echo $((BASH_REMATCH[1] * 3600))
+    return 0
+  fi
+  if [[ "$cal" =~ $min_re ]]; then
+    echo $((BASH_REMATCH[1] * 60))
+    return 0
+  fi
   sed -n '/^OnUnitActiveSec=[0-9][0-9]*sec$/{s/^OnUnitActiveSec=\([0-9]*\)sec$/\1/p;q;}' \
-    "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer" 2>/dev/null
+    "$timer" 2>/dev/null
+  return 0
 }
 
 # _systemd_schedule_current INTERVAL — true when both installed units equal
@@ -157,8 +219,7 @@ _systemd_schedule_current() {
   sed -e "s|__WORKBENCH_DIR__|$(_maintenance_run_dir)|g" \
     "$MAINTENANCE_SRC_DIR/systemd/${_SYSTEMD_UNIT}.service.template" \
     | cmp -s - "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.service" || return 1
-  sed -e "s|__INTERVAL__|${interval}|g" \
-    "$MAINTENANCE_SRC_DIR/systemd/${_SYSTEMD_UNIT}.timer.template" \
+  _systemd_render_timer "$interval" \
     | cmp -s - "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer"
 }
 
@@ -190,8 +251,12 @@ maintenance_refresh_schedule() {
   else
     [[ -f "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer" ]] || return 0
     interval=$(_systemd_installed_interval)
-    _systemd_schedule_current "${interval:-$_MAINTENANCE_DEFAULT_INTERVAL}" && return 0
-    _systemd_start "${interval:-$_MAINTENANCE_DEFAULT_INTERVAL}" \
+    interval="${interval:-$_MAINTENANCE_DEFAULT_INTERVAL}"
+    if ! _systemd_calendar "$interval" >/dev/null; then
+      interval="$_MAINTENANCE_DEFAULT_INTERVAL"
+    fi
+    _systemd_schedule_current "$interval" && return 0
+    _systemd_start "$interval" \
       || { warn "Could not reload the maintenance schedule — run: otto-workbench maintenance start"; return 0; }
   fi
   success "Maintenance schedule re-installed for $(_maintenance_run_dir)"

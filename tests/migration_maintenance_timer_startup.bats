@@ -79,6 +79,13 @@ _old_timer() {
   [ ! -f "$TMPDIR/args" ]
 }
 
+@test "a timer already on OnCalendar is left alone" {
+  printf '[Timer]\nOnCalendar=*-*-* 00/12:00:00\nPersistent=true\n' > "$TIMER"
+  _run_migration
+  [ "$status" -eq 3 ]
+  [ ! -f "$TMPDIR/args" ]
+}
+
 @test "no installed timer is a no-op" {
   _run_migration
   [ "$status" -eq 3 ]

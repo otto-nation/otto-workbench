@@ -49,18 +49,25 @@ _wb_load() {
   done
 }
 
-# ~/.local/bin holds the workbench's own scripts and is where the mise and Pi
-# installers put their binaries. The tools layer gates each snippet on its
-# command being found (mise.zsh returns early without mise), so the directory
-# must be on PATH before any layer runs — a PATH line in ~/.zshrc after the
-# source line comes too late, and on a host with no other route to mise the
-# runtimes it manages (node, and Pi with it) are never activated. It is
-# prepended ahead of .env.local so a machine-specific PATH there still wins.
-[[ ":$PATH:" == *":$HOME/.local/bin:"* ]] || export PATH="$HOME/.local/bin:$PATH"
-
-# Machine-specific secrets and env vars — sourced first so every layer can read them.
-# See zsh/.env.local.template for what belongs here vs ~/.config/task/taskfile.env.
-[[ -f "$HOME/.env.local" ]] && source "$HOME/.env.local"
+# The tool directories and ~/.env.local, from env.sh — the one definition every
+# non-interactive caller (sync, maintenance, herdr's remote commands) reads too.
+#
+# Before any layer: the tools layer gates each snippet on its command being
+# found (mise.zsh returns early without mise), and ~/.local/bin is where the
+# mise and Pi installers put their binaries — a PATH line in ~/.zshrc after the
+# source line comes too late. ~/.env.local is sourced after the PATH so a
+# machine-specific PATH there still wins, and before the layers so every layer
+# can read it. See zsh/.env.local.template for what belongs there vs
+# ~/.config/task/taskfile.env.
+if [[ -f "$HOME/.config/zsh/env.sh" ]]; then
+  source "$HOME/.config/zsh/env.sh"
+  workbench_env
+else
+  # No fallback copy of env.sh's PATH and ~/.env.local handling here: a second
+  # copy is what drifted before. ~/.local/bin is not on PATH in this state, so
+  # the fix is named by its absolute path.
+  echo "⚠  ~/.config/zsh/env.sh is missing — run ~/.local/bin/otto-workbench sync to restore PATH and ~/.env.local" >&2
+fi
 
 _wb_load framework
 _wb_load tools

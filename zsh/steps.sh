@@ -8,7 +8,7 @@
 # What it does:
 #   1. Auto-discovers layer directories from zsh/config.d/ and deploys snippets
 #      to ~/.config/zsh/config.d/<layer>/ — no changes needed here when layers are added
-#   2. Copies loader.zsh as a real file (survives repo move/delete)
+#   2. Copies loader.zsh and env.sh as real files (survive repo move/delete)
 #   3. Ensures ~/.zshrc contains the workbench integration block
 #   4. Warns about tool initializations in ~/.zshrc now managed by snippets
 #   5. Clones oh-my-zsh (no Homebrew formula exists) everywhere; when brew bundle
@@ -163,6 +163,19 @@ step_zsh_loader() {
     success "$(basename "$ZSH_LOADER_SRC") updated"
   else
     [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}✓ $(basename "$ZSH_LOADER_SRC")${NC}" || true
+  fi
+}
+
+# step_zsh_env — copies env.sh as a real file to ZSH_ENV_DST, where the loader,
+# maintenance, and herdr-app's remote preamble all source it. Only copies when
+# content has changed; no-op otherwise.
+step_zsh_env() {
+  mkdir -p "$(dirname "$ZSH_ENV_DST")"
+  if [[ ! -f "$ZSH_ENV_DST" ]] || ! diff -q "$ZSH_ENV_SRC" "$ZSH_ENV_DST" &>/dev/null; then
+    cp "$ZSH_ENV_SRC" "$ZSH_ENV_DST"
+    success "$(basename "$ZSH_ENV_SRC") updated"
+  else
+    [[ "${WORKBENCH_SYNC:-}" != true ]] && echo -e "  ${DIM}✓ $(basename "$ZSH_ENV_SRC")${NC}" || true
   fi
 }
 
@@ -443,6 +456,7 @@ sync_zsh() {
   # Before step_zsh: prompt/starship.zsh deploys only once starship is on PATH.
   step_zsh_shell_tools
   step_zsh
+  step_zsh_env
   step_zsh_loader
   if command -v starship >/dev/null 2>&1; then
     install_file "$STARSHIP_SRC_FILE" "$STARSHIP_CONFIG_FILE" "starship.toml"

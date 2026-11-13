@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Validates the .env.local setup: loader sourcing, template existence, and
+# Validates the .env.local setup: loader wiring, template existence, and
 # the bootstrap step in zsh/steps.sh.
 
 setup() {
@@ -11,25 +11,7 @@ teardown() {
   common_teardown
 }
 
-# ── loader.zsh sources .env.local ─────────────────────────────────────────────
-
-@test "loader.zsh contains .env.local source line" {
-  grep -q 'env\.local' "$REPO_ROOT/zsh/config.d/loader.zsh"
-}
-
-@test ".env.local is sourced before _wb_load framework in loader.zsh" {
-  local loader="$REPO_ROOT/zsh/config.d/loader.zsh"
-  local env_line fw_line
-  env_line=$(grep -n 'env\.local' "$loader" | head -1 | cut -d: -f1)
-  fw_line=$(grep -n '_wb_load framework' "$loader" | head -1 | cut -d: -f1)
-  [ -n "$env_line" ]
-  [ -n "$fw_line" ]
-  [ "$env_line" -lt "$fw_line" ]
-}
-
-@test ".env.local source line is guarded with a file existence check" {
-  grep -qE '\[\[.*-f.*env\.local.*\]\]' "$REPO_ROOT/zsh/config.d/loader.zsh"
-}
+# ── loader.zsh loads .env.local through env.sh ────────────────────────────────
 
 # ── template ──────────────────────────────────────────────────────────────────
 
@@ -474,6 +456,7 @@ EOF
   local home="$BATS_TEST_TMPDIR/home"
   mkdir -p "$home/.local/bin" "$home/.config/zsh/config.d/tools"
   cp "$REPO_ROOT/zsh/config.d/loader.zsh" "$home/.config/zsh/config.d/"
+  cp "$REPO_ROOT/zsh/env.sh" "$home/.config/zsh/env.sh"
   printf '#!/bin/sh\n' > "$home/.local/bin/fake-mise"
   chmod +x "$home/.local/bin/fake-mise"
   echo 'command -v fake-mise >/dev/null && echo FOUND' > "$home/.config/zsh/config.d/tools/probe.zsh"
@@ -483,21 +466,23 @@ EOF
 
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = "FOUND" ]
-  [ "${lines[1]}" = "$home/.local/bin:/usr/bin:/bin" ]
+  [[ "${lines[1]}" == "$home/.local/bin:"* ]]
+  [[ "${lines[1]}" == *":/usr/bin:/bin" ]]
 }
 
-# passes-at-base: the loader had no prepend before, so it could not duplicate one
-# The prepend must be a no-op when ~/.local/bin is already on PATH, so
-# re-sourcing the loader does not stack duplicate entries.
-@test "loader does not prepend ~/.local/bin twice" {
+# passes-at-base: guards that re-sourcing the loader cannot stack PATH entries
+@test "loader does not put ~/.local/bin on PATH twice" {
   require_zsh || return 1
   local home="$BATS_TEST_TMPDIR/home"
-  mkdir -p "$home/.config/zsh/config.d"
+  mkdir -p "$home/.local/bin" "$home/.config/zsh/config.d"
   cp "$REPO_ROOT/zsh/config.d/loader.zsh" "$home/.config/zsh/config.d/"
+  cp "$REPO_ROOT/zsh/env.sh" "$home/.config/zsh/env.sh"
 
   run env -i HOME="$home" PATH="/usr/bin:$home/.local/bin:/bin" zsh -fc \
-    'source "$HOME/.config/zsh/config.d/loader.zsh"; print -r -- "$PATH"'
+    'source "$HOME/.config/zsh/config.d/loader.zsh"; source "$HOME/.config/zsh/config.d/loader.zsh"; print -r -- "$PATH"'
 
   [ "$status" -eq 0 ]
-  [ "$output" = "/usr/bin:$home/.local/bin:/bin" ]
+  [[ "$output" == "$home/.local/bin:"* ]]
+  [[ "$output" == *":/usr/bin:/bin" ]]
+  [ "$(grep -o "$home/.local/bin" <<<"$output" | wc -l | tr -d ' ')" -eq 1 ]
 }

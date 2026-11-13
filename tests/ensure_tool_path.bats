@@ -1,6 +1,8 @@
 #!/usr/bin/env bats
 # Tests for ensure_tool_path in lib/setup.sh — sync's PATH must reach the tools
 # a user installed, or the zsh step removes the snippets that activate them.
+# The list and its order belong to zsh/env.sh (tests/workbench_env.bats); these
+# check sync gets them.
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -26,13 +28,14 @@ _with_tool_path() {
   ' _ "$REPO_ROOT" "$start_path" "$then"
 }
 
-@test "appends ~/.local/bin, Pi's bin and mise shims that exist" {
+@test "puts ~/.local/bin, Pi's bin and mise shims ahead of the inherited PATH, in that order" {
   mkdir -p "$FAKE_HOME/.local/bin" "$FAKE_HOME/.pi/agent/bin" "$FAKE_HOME/.local/share/mise/shims"
 
   run _with_tool_path /usr/bin:/bin 'echo "$PATH"'
 
   [ "$status" -eq 0 ]
-  [[ "$output" == "/usr/bin:/bin:$FAKE_HOME/.local/bin:$FAKE_HOME/.pi/agent/bin:$FAKE_HOME/.local/share/mise/shims"* ]]
+  [[ "$output" == "$FAKE_HOME/.local/bin:$FAKE_HOME/.pi/agent/bin:$FAKE_HOME/.local/share/mise/shims:"* ]]
+  [[ "$output" == *":/usr/bin:/bin" ]]
 }
 
 @test "skips directories that do not exist" {
@@ -41,7 +44,7 @@ _with_tool_path() {
   run _with_tool_path /usr/bin:/bin 'echo "$PATH"'
 
   [ "$status" -eq 0 ]
-  [[ "$output" == "/usr/bin:/bin:$FAKE_HOME/.local/bin"* ]]
+  [[ "$output" == "$FAKE_HOME/.local/bin:"* ]]
   [[ "$output" != *"$FAKE_HOME/.pi/agent/bin"* ]]
   [[ "$output" != *"mise/shims"* ]]
 }
@@ -53,7 +56,8 @@ _with_tool_path() {
   run _with_tool_path "$FAKE_HOME/.local/bin:/usr/bin:/bin" 'echo "$PATH"'
 
   [ "$status" -eq 0 ]
-  [[ "$output" == "$FAKE_HOME/.local/bin:/usr/bin:/bin"* ]]
+  [[ "$output" == "$FAKE_HOME/.local/bin:"* ]]
+  [[ "$output" == *":/usr/bin:/bin" ]]
   [[ "$output" != *":$FAKE_HOME/.local/bin:"* && "$output" != *":$FAKE_HOME/.local/bin" ]]
 }
 

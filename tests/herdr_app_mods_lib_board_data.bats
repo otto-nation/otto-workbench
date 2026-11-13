@@ -26,7 +26,7 @@ _bd() {
     import * as m from '$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js';
     const calls = [];
     let exec = async (cmd, args, opts) => {
-      // Remote calls are wrapped to put ~/.local/bin on PATH; isolate inserts seconds, MemoryMax, scope|plain.
+      // Remote calls are wrapped to load the workbench env; isolate inserts seconds, MemoryMax, scope|plain.
       // The table speaks of the inner command.
       if (cmd === 'sh' && args[0] === '-c' && args[2] === 'sh') {
         if (args[1] === m.REMOTE_ISOLATE_PREAMBLE) [cmd, args] = [args[6], args.slice(7)];
@@ -190,16 +190,17 @@ _bd() {
   [[ "$output" == *'"kind":"failed"'* ]]
 }
 
-@test "toolCall leaves local calls alone and wraps remote ones with the workbench bin on PATH" {
+@test "toolCall leaves local calls alone and wraps remote ones in the workbench env preamble" {
   _bd '
     process.stdout.write(JSON.stringify([
       m.toolCall({ on: null }, "pr", ["review", "--list"]),
       m.toolCall({ on: "" }, "gh", ["api"]),
       m.toolCall({ on: "homelab" }, "pr", ["review", "--list"]),
-    ]));
+      m.REMOTE_PREAMBLE.endsWith("exec \"$@\""),
+    ]).replaceAll(JSON.stringify(m.REMOTE_PREAMBLE), "\"<PREAMBLE>\""));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"cmd":"pr","args":["review","--list"]},{"cmd":"gh","args":["api"]},{"cmd":"sh","args":["-c","PATH=\"$HOME/.local/bin:$PATH\"; if [ -r \"$HOME/.env.local\" ] && ( . \"$HOME/.env.local\" ) >/dev/null 2>&1; then set -a; . \"$HOME/.env.local\" >/dev/null 2>&1; set +a; fi; exec \"$@\"","sh","pr","review","--list"]}]' ]
+  [ "$output" = '[{"cmd":"pr","args":["review","--list"]},{"cmd":"gh","args":["api"]},{"cmd":"sh","args":["-c","<PREAMBLE>","sh","pr","review","--list"]},true]' ]
 }
 
 
@@ -282,6 +283,17 @@ _bd() {
   [ "$output" = '["sh",true,false,["sh","pr","batch","status","--full","--offline"],true]' ]
 }
 
+@test "classifyCode files the missing-env.sh preamble failure as outdated" {
+  _rr '
+    console.log(JSON.stringify([
+      m.classifyCode({ code: 127, stdout: "", stderr: m.REMOTE_ENV_MISSING + "\n" }).kind,
+      m.classifyCode({ code: 127, stdout: "", stderr: "gh: not found" }).kind,
+    ]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["outdated","missing-tool"]' ]
+}
+
 @test "classifyCode treats exit 124 as timeout" {
   _rr '
     process.stdout.write(JSON.stringify([
@@ -349,6 +361,10 @@ _write_echo_stub() {
   [ -n "$preamble" ]
   bin="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$bin"
+  # The environment the preamble loads first is not this test's subject, and the
+  # real one would put the host's Homebrew dir (and any timeout in it) on PATH.
+  mkdir -p "$BATS_TEST_TMPDIR/.config/zsh"
+  printf 'workbench_env() { :; }\n' > "$BATS_TEST_TMPDIR/.config/zsh/env.sh"
   _write_echo_stub "$bin/systemd-run" systemd-run
   _write_echo_stub "$bin/timeout" timeout
   printf '%s\n' '#!/bin/sh' 'printf '\''payload'\''' 'printf '\'' %s'\'' "$@"' 'printf '\''\n'\''' 'exit 3' > "$bin/payload"
@@ -388,4 +404,50 @@ _write_echo_stub() {
     /bin/sh -c "$preamble" sh 55 768M scope payload a
   [ "$status" -eq 3 ]
   [ "$output" = 'payload a' ]
+}
+
+# A fake remote HOME: the real env.sh deployed where the preamble looks, a mise
+# shim for wt, and an ~/.env.local.
+_remote_home() {
+  local home="$BATS_TEST_TMPDIR/remote"
+  mkdir -p "$home/.config/zsh" "$home/.local/share/mise/shims" "$home/.local/bin"
+  cp "$REPO_ROOT/zsh/env.sh" "$home/.config/zsh/env.sh"
+  printf '#!/bin/sh\necho wt-shim\n' > "$home/.local/share/mise/shims/wt"
+  chmod +x "$home/.local/share/mise/shims/wt"
+  printf 'GOOGLE_CLOUD_PROJECT=from-env-local\n' > "$home/.env.local"
+  printf '%s' "$home"
+}
+
+_preamble() {
+  node --input-type=module -e "
+    import { REMOTE_PREAMBLE } from '$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js';
+    process.stdout.write(REMOTE_PREAMBLE);
+  "
+}
+
+@test "REMOTE_PREAMBLE reaches mise shims and exports ~/.env.local from the deployed env.sh" {
+  local home preamble
+  home="$(_remote_home)"
+  preamble="$(_preamble)"
+
+  run env -i HOME="$home" PATH=/usr/bin:/bin /bin/sh -c "$preamble" sh \
+    /bin/sh -c 'wt; printf "%s\n" "$GOOGLE_CLOUD_PROJECT"; printf "%s\n" "${PATH%%:*}"'
+
+  [ "$status" -eq 0 ]
+  [ "${lines[0]}" = "wt-shim" ]
+  [ "${lines[1]}" = "from-env-local" ]
+  [ "${lines[2]}" = "$home/.local/bin" ]
+}
+
+@test "REMOTE_PREAMBLE exits 127 naming the fix when env.sh is not deployed" {
+  local home preamble
+  home="$(_remote_home)"
+  rm "$home/.config/zsh/env.sh"
+  preamble="$(_preamble)"
+
+  run -127 --separate-stderr env -i HOME="$home" PATH=/usr/bin:/bin /bin/sh -c "$preamble" sh /bin/echo ran
+
+  [ "$status" -eq 127 ]
+  [ -z "$output" ]
+  [[ "$stderr" == *"/.config/zsh/env.sh) is missing on this machine"*"otto-workbench sync"* ]]
 }

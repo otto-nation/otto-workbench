@@ -103,6 +103,13 @@ def test_framework_flags_are_read_from_the_parsers():
     assert {"-h", "--help", "--tool-schema", "--debug"} <= vpr.FRAMEWORK_FLAGS
 
 
+def test_a_remainder_separator_is_not_a_flag(tmp_path, tools, names):
+    assert _reasons(
+        tmp_path,
+        "`otto-queue run --ticket --class heavy -- CMD`\n",
+        tools, names) == []
+
+
 def test_unregistered_commands_and_arguments_are_not_invocations(tmp_path, tools, names):
     text = "`git push --force` and `pr ENG-123` and `review`\n"
     assert _reasons(tmp_path, text, tools, names) == []

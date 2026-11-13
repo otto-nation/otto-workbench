@@ -37,8 +37,9 @@ tools:
   - name: otto-queue
     parser: cli.otto_queue:reference_shape
     permission: true
-    visibility: brief
+    visibility: full
     description: "Machine-wide queue for background work — admits a command against the heavy/light budget or queues it as a job for an on-demand worker, de-duplicates it by key, and records it in a per-machine ledger"
+    when_to_use: "Heavy or memory-hungry work an agent starts itself (generators, full builds, `pr review --self --fix`): `otto-queue run --ticket --class heavy -- CMD` runs in the current terminal after admission. Never use `submit` for interactive work — it detaches output to queue/logs. Do not pass `--key` for work that must re-run: a done key is reused without running. Inside a queued job (`OTTO_QUEUE_ENTRY` set), just run the command. If `otto-queue` is not installed, run the command bare. Exit 75 means the ledger is busy and nothing ran."
 
   - name: workbench-rules
     parser: cli.workbench_rules:reference_shape

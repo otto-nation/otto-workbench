@@ -17,7 +17,7 @@ from core.tool_parser import subparsers  # noqa: E402
 # CLI-owned codes main itself returns. run also exits with COMMAND's status.
 _CLI_EXITS = frozenset({
     int(ExitCode.OK), int(ExitCode.FAILURE), int(ExitCode.USAGE),
-    int(ExitCode.TEMPFAIL), int(ExitCode.CANCELLED),
+    int(ExitCode.UNAVAILABLE), int(ExitCode.TEMPFAIL), int(ExitCode.CANCELLED),
 })
 
 
@@ -74,6 +74,6 @@ def test_every_example_parses_and_runs_a_real_command():
     for example in cli.otto_queue.CONTRACT.examples:
         argv = example.command.split()[1:]
         args = parser.parse_args(argv)
-        if args.command == "run":
+        if args.command in ("run", "submit"):
             command = args.argv[1:] if args.argv[:1] == ["--"] else args.argv
             assert command and command[0] != "--", example.command

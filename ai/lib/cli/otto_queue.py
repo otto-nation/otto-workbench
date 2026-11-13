@@ -43,7 +43,10 @@ CONTRACT = core.command_contract.CommandContract(
             "room instead of overloading the host.",
     groups=(
         core.command_contract.FlagGroup(
-            "run", ("--ticket", "--class", "--key", "--force", "--wait", "argv")),
+            "run", ("--ticket", "--class", "--key", "--force", "--no-reuse", "--wait", "argv")),
+        core.command_contract.FlagGroup(
+            "submit", ("--queue-only",)),
+        core.command_contract.FlagGroup("worker", ("--idle",)),
         core.command_contract.FlagGroup("status", ("--json",)),
         core.command_contract.FlagGroup("cancel", ("id",)),
     ),
@@ -51,7 +54,8 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.ExitOutcome(
             ExitCode.OK,
             "status listed the ledger; cancel stopped a waiting or running entry; "
-            "run's command succeeded"),
+            "run's command succeeded; submit queued or joined the job, or ran it here "
+            "and it succeeded"),
         core.command_contract.ExitOutcome(
             ExitCode.FAILURE,
             "cancel named no live entry (unknown id, or already finished); the "
@@ -61,6 +65,12 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.ExitOutcome(
             ExitCode.USAGE,
             "no subcommand, run without --ticket, or run with no command after --"),
+        core.command_contract.ExitOutcome(
+            ExitCode.UNAVAILABLE,
+            "submit --queue-only: no worker could take the job, so it was withdrawn "
+            "and nothing ran",
+            (core.command_contract.NextStep(
+                "", ("run the command yourself", "or retry once a worker is up")),)),
         core.command_contract.ExitOutcome(
             ExitCode.TEMPFAIL,
             "no slot before --wait, or another process holds the ledger; retry",
@@ -78,6 +88,9 @@ CONTRACT = core.command_contract.CommandContract(
             "otto-queue run --ticket --key review:main -- pr review --self",
             "join a live review with that key, or reuse a done one's status"),
         core.command_contract.Example(
+            "otto-queue submit --key nightly -- pr gc",
+            "queue pr gc for the worker and return; runs here if no worker starts"),
+        core.command_contract.Example(
             "otto-queue status", "list live entries and recent finished ones"),
         core.command_contract.Example(
             "otto-queue status --json", "the same, one JSON object per entry"),
@@ -85,7 +98,7 @@ CONTRACT = core.command_contract.CommandContract(
             "otto-queue cancel 12", "stop waiting entry 12, or SIGTERM a running one"),
     ),
     notes=(
-        "run also exits with COMMAND's own status when the command ran.",
+        "run, and submit when it ran the job here, also exit with COMMAND's own status.",
         "--key is idempotent: a live match is joined, a done match returns its "
         "status, --force runs regardless.",
         "Admission is machine-wide `batch.admission.QueuePolicy` (`batch.*` in "

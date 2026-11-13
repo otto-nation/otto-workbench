@@ -1384,9 +1384,10 @@ Run background work through this machine's queue, so it waits for room instead o
 
 | Code | Meaning | Next |
 |---|---|---|
-| `0` | status listed the ledger; cancel stopped a waiting or running entry; run's command succeeded |  |
+| `0` | status listed the ledger; cancel stopped a waiting or running entry; run's command succeeded; submit queued or joined the job, or ran it here and it succeeded |  |
 | `1` | cancel named no live entry (unknown id, or already finished); the ledger could not be opened | `otto-queue status` → `cancel a live id from that list` |
 | `2` | no subcommand, run without --ticket, or run with no command after -- |  |
+| `69` | submit --queue-only: no worker could take the job, so it was withdrawn and nothing ran | `run the command yourself` → `or retry once a worker is up` |
 | `75` | no slot before --wait, or another process holds the ledger; retry | `otto-queue status` → `retry once a slot or the ledger is free` |
 | `130` | the entry was cancelled before it ran, or Ctrl-C interrupted the CLI |  |
 
@@ -1394,11 +1395,12 @@ Run background work through this machine's queue, so it waits for room instead o
 
 - `otto-queue run --ticket --class light -- pytest tests/foo_test.py` — wait for a light slot, then run pytest here
 - `otto-queue run --ticket --key review:main -- pr review --self` — join a live review with that key, or reuse a done one's status
+- `otto-queue submit --key nightly -- pr gc` — queue pr gc for the worker and return; runs here if no worker starts
 - `otto-queue status` — list live entries and recent finished ones
 - `otto-queue status --json` — the same, one JSON object per entry
 - `otto-queue cancel 12` — stop waiting entry 12, or SIGTERM a running one
 
-> run also exits with COMMAND's own status when the command ran.
+> run, and submit when it ran the job here, also exit with COMMAND's own status.
 > --key is idempotent: a live match is joined, a done match returns its status, --force runs regardless.
 > Admission is machine-wide `batch.admission.QueuePolicy` (`batch.*` in the workbench config), never a repo's.
 > The ledger is queue/queue.db under WORKBENCH_STATE_DIR (default ~/.local/state/workbench).

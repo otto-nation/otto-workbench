@@ -816,7 +816,7 @@ Run background work through this machine's queue, so it waits for room instead o
 
 Flags, exit codes and examples are `CONTRACT` in `cli.otto_queue` (`otto-queue --help`).
 
-Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail · `130` cancelled — writes nothing remotely; [contract](ai-automation.md#otto-queue-contract)
+Exit codes: `0` ok · `1` failure · `2` usage · `69` unavailable · `75` tempfail · `130` cancelled — writes nothing remotely; [contract](ai-automation.md#otto-queue-contract)
 
 **`otto-queue run`** — Run a command once the queue admits it
 

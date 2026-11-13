@@ -44,6 +44,7 @@ import otto_queue.ledger
 import otto_queue.slots
 import otto_queue.supervisor
 import otto_queue.ticket
+from core.exit_codes import ExitCode
 from otto_queue.model import Entry, EntryClass, EntryKind, EntryState, NewEntry
 
 
@@ -95,7 +96,7 @@ def submit(request: SubmitRequest, policy: otto_queue.slots.Policy, *, root: Pat
         ledger = otto_queue.ledger.Ledger.open(root)
     except otto_queue.ledger.LedgerBusy as exc:
         core.log.warn(f"otto-queue: queue busy: {exc}")
-        return SubmitResult(os.EX_TEMPFAIL, SubmitOutcome.BUSY)
+        return SubmitResult(ExitCode.TEMPFAIL, SubmitOutcome.BUSY)
     except otto_queue.ledger.LedgerError as exc:
         return _unqueued(request, policy, root, str(exc), notify)
     res = ledger.resolve(request.entry(), force=request.force, pid=None, reuse=request.reuse)
@@ -151,7 +152,7 @@ def _withdraw(ledger: otto_queue.ledger.Ledger, claimed: otto_queue.ledger.Resol
     finally:
         claimed.lease.release()
     notify(f"otto-queue: no worker ({reason}); withdrew entry {claimed.entry.id} and ran nothing")
-    return SubmitResult(os.EX_UNAVAILABLE, SubmitOutcome.NO_WORKER, claimed.entry.id)
+    return SubmitResult(ExitCode.UNAVAILABLE, SubmitOutcome.NO_WORKER, claimed.entry.id)
 
 
 def _unqueued(request: SubmitRequest, policy: otto_queue.slots.Policy, root: Path | None,
@@ -159,7 +160,7 @@ def _unqueued(request: SubmitRequest, policy: otto_queue.slots.Policy, root: Pat
     """The ledger cannot be opened: run the command here unqueued, as a ticket would, unless *run_here* is off."""
     if not request.run_here:
         notify(f"otto-queue: queue unavailable ({reason}); ran nothing")
-        return SubmitResult(os.EX_UNAVAILABLE, SubmitOutcome.NO_WORKER)
+        return SubmitResult(ExitCode.UNAVAILABLE, SubmitOutcome.NO_WORKER)
     result = otto_queue.ticket.run_ticket(request.ticket(), policy, root=root, notify=notify)
     return SubmitResult(result.exit_status, SubmitOutcome.UNQUEUED)
 
@@ -185,7 +186,7 @@ def _queue_only_miss(entry: Entry | None, entry_id: int,
         notify(f"otto-queue: entry {entry_id} already did this; not running it again")
         return SubmitResult(entry.exit_status or 0, SubmitOutcome.REUSED, entry_id)
     notify(f"otto-queue: entry {entry_id} ended without a result; ran nothing")
-    return SubmitResult(os.EX_UNAVAILABLE, SubmitOutcome.NO_WORKER, entry_id)
+    return SubmitResult(ExitCode.UNAVAILABLE, SubmitOutcome.NO_WORKER, entry_id)
 
 
 def _wait_on_ticket(request: SubmitRequest, policy: otto_queue.slots.Policy,

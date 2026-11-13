@@ -10,6 +10,7 @@ if LIB_DIR not in sys.path:
 from core.phases import Mode
 from gh.types import PRContext, PRMetadata
 import review.coverage
+import review.verdict
 import review.outcome
 from review.paths import read_review_meta
 from review.record import FocusSource, TriageEntry
@@ -122,7 +123,7 @@ class TestGapsProse:
             CoverageGap(kind=CoverageGapKind.UNTRIAGED, subject=f"f{i}.py")
             for i in range(7)
         )
-        prose = review.coverage.gaps_prose(gaps)
+        prose = review.verdict.gaps_prose(gaps)
         assert "no triage entry for 7 changed files" in prose
         assert "f0.py, f1.py, f2.py, f3.py, f4.py and 2 more" in prose
         assert "f5.py" not in prose

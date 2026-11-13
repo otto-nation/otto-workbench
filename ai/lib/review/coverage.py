@@ -16,15 +16,12 @@ carries the prior findings unchanged.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 from core.phases import Mode
 from review.grouping import classify_tier
 from review.prompt_sections import _is_incremental
 from review.record import FocusSource, ReviewRecord
 from review.types import CoverageGap, CoverageGapKind, ReviewJob
 
-_MAX_NAMES = 5
 
 
 def _norm_path(path: str) -> str:
@@ -76,28 +73,3 @@ def coverage_gaps(job: ReviewJob, record: ReviewRecord) -> tuple[CoverageGap, ..
         subject = f"{area.id} ({area.title})" if area.title else area.id
         gaps.append(CoverageGap(kind=CoverageGapKind.FOCUS_UNASSESSED, subject=subject))
     return tuple(gaps)
-
-
-def _named(subjects: Sequence[str]) -> str:
-    if len(subjects) <= _MAX_NAMES:
-        return ", ".join(subjects)
-    shown = subjects[:_MAX_NAMES]
-    more = len(subjects) - _MAX_NAMES
-    return f"{', '.join(shown)} and {more} more"
-
-
-def gaps_prose(gaps: Sequence[CoverageGap]) -> str:
-    """The coverage clause the verdict line names, or "" when there are no gaps.
-
-    At most five subjects are listed, then "and N more".
-    """
-    untriaged = [g.subject for g in gaps if g.kind == CoverageGapKind.UNTRIAGED]
-    focus = [g.subject for g in gaps if g.kind == CoverageGapKind.FOCUS_UNASSESSED]
-    parts: list[str] = []
-    if untriaged:
-        n = len(untriaged)
-        noun = "file" if n == 1 else "files"
-        parts.append(f"no triage entry for {n} changed {noun} ({_named(untriaged)})")
-    for subject in focus:
-        parts.append(f"requested focus {subject} not assessed")
-    return "; ".join(parts)

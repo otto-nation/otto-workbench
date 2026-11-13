@@ -25,13 +25,14 @@ stands, with a coverage tail. A self-review states none:
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Sequence
 from dataclasses import replace
 
 from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import ReviewDocument
 from review.record import Disposition, ReviewRecord
-from review.types import ReviewMeta, SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD
+from review.types import CoverageGap, CoverageGapKind, ReviewMeta, SEVERITIES, SEVERITY_MUST, SEVERITY_SHOULD
 from core.text import plural
 
 
@@ -81,6 +82,33 @@ COVERAGE_WITHHELD = "Approve withheld — incomplete coverage: {gaps}."
 
 # The sentence a blocking verdict with unfinished coverage ends with.
 COVERAGE_NOTE = "Coverage incomplete: {gaps}."
+
+
+_MAX_NAMES = 5
+
+def _named(subjects: Sequence[str]) -> str:
+    if len(subjects) <= _MAX_NAMES:
+        return ", ".join(subjects)
+    shown = subjects[:_MAX_NAMES]
+    more = len(subjects) - _MAX_NAMES
+    return f"{', '.join(shown)} and {more} more"
+
+
+def gaps_prose(gaps: Sequence[CoverageGap]) -> str:
+    """The coverage clause the verdict line names, or "" when there are no gaps.
+
+    At most five subjects are listed, then "and N more".
+    """
+    untriaged = [g.subject for g in gaps if g.kind == CoverageGapKind.UNTRIAGED]
+    focus = [g.subject for g in gaps if g.kind == CoverageGapKind.FOCUS_UNASSESSED]
+    parts: list[str] = []
+    if untriaged:
+        n = len(untriaged)
+        noun = "file" if n == 1 else "files"
+        parts.append(f"no triage entry for {n} changed {noun} ({_named(untriaged)})")
+    for subject in focus:
+        parts.append(f"requested focus {subject} not assessed")
+    return "; ".join(parts)
 
 
 def _is_self_review(meta: ReviewMeta) -> bool:
@@ -139,9 +167,6 @@ def verdict_line(record: ReviewRecord, meta: ReviewMeta) -> str:
     if meta.status is ReviewStatus.ERROR:
         return f"**No verdict.** {NO_RUN_VERDICT}"
     verdict = resolve_review_verdict(record, meta)
-    # Imported here: coverage.py pulls prompt_sections, which loads render, which
-    # loads this module.
-    from review.coverage import gaps_prose
     gaps = gaps_prose(meta.coverage_gaps)
     coverage_tail = f" {COVERAGE_NOTE.format(gaps=gaps)}" if gaps else ""
     if verdict is None:

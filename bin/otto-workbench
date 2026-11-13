@@ -133,7 +133,7 @@ COMMANDS_CONFIG=(
 
 # shellcheck disable=SC2034  # used by commands_usage() via nameref
 COMMANDS_MAINTENANCE=(
-  "start [SECONDS]"  "Start maintenance (default: every 12h)"
+  "start [SECONDS]"  "Start maintenance (default: every 12h; Linux: SECONDS must divide 1h or 1d)"
   "stop"             "Stop maintenance"
   "status"           "Show maintenance status"
   "run"              "Run maintenance now"
@@ -650,6 +650,10 @@ cmd_maintenance_start() {
   if [[ "$OSTYPE" == "darwin"* ]]; then
     _launchd_start "$interval"
   else
+    if ! _systemd_calendar "$interval" >/dev/null; then
+      err "The interval must divide an hour (in whole minutes) or a day (in whole hours), e.g. 1800, 3600, 21600, 43200, 86400"
+      return 1
+    fi
     _systemd_start "$interval"
   fi
   success "Maintenance started (every $(_format_interval "$interval"))"

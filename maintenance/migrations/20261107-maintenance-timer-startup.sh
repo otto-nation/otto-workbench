@@ -7,14 +7,15 @@
 # and maintenance silently stops. The template now uses OnStartupSec, which
 # counts from the manager's start; this is what gets it onto a machine that
 # installed the timer before it did. The template has since moved to
-# OnActiveSec, and sync's maintenance_refresh_schedule re-renders any timer that
-# differs from it, so a timer this migration skips still reaches the template.
+# OnCalendar; sync's maintenance_refresh_schedule re-renders older timers that
+# differ from it, so a timer this migration skips still reaches the template.
 #
 # The interval is read back first so a machine running a non-default one keeps
 # it.
 #
-# Idempotent: a timer that already has OnStartupSec or OnActiveSec is left
-# alone, and a machine that never installed the timer has nothing to re-render.
+# Idempotent: a timer that already has OnStartupSec, OnActiveSec, or OnCalendar
+# is left alone, and a machine that never installed the timer has nothing to
+# re-render.
 
 migration_20261107_maintenance_timer_startup() {
   local timer="$HOME/.config/systemd/user/otto-workbench-maintenance.timer"
@@ -26,7 +27,7 @@ migration_20261107_maintenance_timer_startup() {
   # template, so a timer installed later already has the key.
   [[ -f "$timer" ]] || return "$MIGRATION_NOOP"
 
-  if grep -qE '^(OnStartupSec|OnActiveSec)=' "$timer"; then
+  if grep -qE '^(OnStartupSec|OnActiveSec|OnCalendar)=' "$timer"; then
     return "$MIGRATION_NOOP"
   fi
 

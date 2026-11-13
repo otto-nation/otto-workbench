@@ -48,6 +48,31 @@ _refresh() {
   ' _ "$REPO_ROOT" "$os"
 }
 
+# _lib FN [ARGS...] — sources lib/maintenance.sh and runs FN.
+_lib() {
+  run env HOME="$HOME" NO_COLOR=1 bash -c '
+    export NO_COLOR=1
+    WORKBENCH_DIR="$1"
+    . "$1/lib/ui.sh"
+    . "$1/lib/maintenance.sh"
+    shift
+    "$@"
+  ' _ "$REPO_ROOT" "$@"
+}
+
+# _linux_start INTERVAL — cmd_maintenance_start with OSTYPE forced to Linux.
+_linux_start() {
+  run env PATH="$TMPDIR/bin:$PATH" HOME="$HOME" WORKBENCH_STABLE_DIR="$STABLE" bash -c '
+    export NO_COLOR=1
+    WORKBENCH_DIR="$1"
+    . "$1/lib/ui.sh"
+    . "$1/lib/maintenance.sh"
+    OSTYPE=linux-gnu
+    eval "$(sed -n "/^cmd_maintenance_start() {/,/^cmd_maintenance_stop() {/{ /^cmd_maintenance_stop() {/d; p; }" "$1/bin/otto-workbench")"
+    cmd_maintenance_start "$2"
+  ' _ "$REPO_ROOT" "$1"
+}
+
 # _plist PROGRAM_DIR INTERVAL — an installed plist as an older install wrote it.
 _plist() {
   sed -e "s|__WORKBENCH_DIR__|$1|g" -e "s|__INTERVAL__|$2|g" \
@@ -104,30 +129,97 @@ _plist() {
 @test "a systemd service naming a moved checkout is re-rendered and restarted" {
   sed -e "s|__WORKBENCH_DIR__|/home/someone/old/place|g" \
     "$REPO_ROOT/maintenance/systemd/otto-workbench-maintenance.service.template" > "$SERVICE"
-  sed -e "s|__INTERVAL__|7200|g" \
-    "$REPO_ROOT/maintenance/systemd/otto-workbench-maintenance.timer.template" > "$TIMER"
+  printf '[Timer]\nOnActiveSec=5min\nOnUnitActiveSec=7200sec\nPersistent=true\n' > "$TIMER"
   _refresh linux-gnu
   [ "$status" -eq 0 ]
   grep -q "$STABLE/maintenance/bin/otto-workbench-maintenance" "$SERVICE"
-  grep -qx 'OnUnitActiveSec=7200sec' "$TIMER"
+  grep -Fqx 'OnCalendar=*-*-* 00/2:00:00' "$TIMER"
   grep -qx "systemctl --user enable otto-workbench-maintenance.timer" "$CALLS"
   grep -qx "systemctl --user restart otto-workbench-maintenance.timer" "$CALLS"
 }
 
-# A timer installed into a user manager that has been up a while has no trigger
-# left unless something counts from the install itself.
-@test "the systemd timer template arms from its own activation" {
-  grep -qx 'OnActiveSec=5min' "$REPO_ROOT/maintenance/systemd/otto-workbench-maintenance.timer.template"
-  ! grep -q '^On\(Startup\|Boot\)Sec=' "$REPO_ROOT/maintenance/systemd/otto-workbench-maintenance.timer.template"
+@test "the systemd timer template uses a wall-clock schedule" {
+  local template="$REPO_ROOT/maintenance/systemd/otto-workbench-maintenance.timer.template"
+  grep -qx 'OnCalendar=__CALENDAR__' "$template"
+  grep -qx 'RandomizedDelaySec=__DELAY__' "$template"
+  grep -qx 'FixedRandomDelay=true' "$template"
+  grep -qx 'Persistent=true' "$template"
+  ! grep -q '^OnActiveSec=' "$template"
+  ! grep -q '^OnUnitActiveSec=' "$template"
+  ! grep -q '^On\(Startup\|Boot\)Sec=' "$template"
 }
 
 @test "systemd units that match their templates are left alone" {
   sed -e "s|__WORKBENCH_DIR__|$STABLE|g" \
     "$REPO_ROOT/maintenance/systemd/otto-workbench-maintenance.service.template" > "$SERVICE"
-  sed -e "s|__INTERVAL__|43200|g" \
-    "$REPO_ROOT/maintenance/systemd/otto-workbench-maintenance.timer.template" > "$TIMER"
+  _lib _systemd_render_timer 43200
+  [ "$status" -eq 0 ]
+  printf '%s\n' "$output" > "$TIMER"
   _refresh linux-gnu
   [ "$status" -eq 0 ]
+  [ ! -e "$CALLS" ]
+}
+
+@test "_systemd_calendar maps hour and minute intervals" {
+  local interval expected
+  while IFS=' ' read -r interval expected; do
+    [[ -n "$interval" ]] || continue
+    _lib _systemd_calendar "$interval"
+    [ "$status" -eq 0 ]
+    [ "$output" = "$expected" ]
+  done <<'EOF'
+43200 *-*-* 00/12:00:00
+21600 *-*-* 00/6:00:00
+86400 *-*-* 00:00:00
+3600 *-*-* 00/1:00:00
+1800 *-*-* *:00/30:00
+900 *-*-* *:00/15:00
+EOF
+}
+
+@test "_systemd_calendar refuses intervals it cannot express" {
+  local interval
+  for interval in 5400 25200 45 0 abc; do
+    _lib _systemd_calendar "$interval"
+    [ "$status" -eq 1 ]
+    [ -z "$output" ]
+  done
+}
+
+@test "_systemd_installed_interval round-trips each rendered form" {
+  local interval
+  for interval in 43200 21600 86400 3600 1800 900; do
+    _lib _systemd_render_timer "$interval"
+    [ "$status" -eq 0 ]
+    printf '%s\n' "$output" > "$TIMER"
+    _lib _systemd_installed_interval
+    [ "$status" -eq 0 ]
+    [ "$output" = "$interval" ]
+  done
+}
+
+@test "_systemd_installed_interval reads a legacy OnUnitActiveSec timer" {
+  printf '[Timer]\nOnUnitActiveSec=21600sec\nPersistent=true\n' > "$TIMER"
+  _lib _systemd_installed_interval
+  [ "$status" -eq 0 ]
+  [ "$output" = "21600" ]
+}
+
+@test "refresh re-renders a legacy monotonic timer keeping its interval" {
+  sed -e "s|__WORKBENCH_DIR__|$STABLE|g" \
+    "$REPO_ROOT/maintenance/systemd/otto-workbench-maintenance.service.template" > "$SERVICE"
+  printf '[Timer]\nOnActiveSec=5min\nOnUnitActiveSec=21600sec\nPersistent=true\n' > "$TIMER"
+  _refresh linux-gnu
+  [ "$status" -eq 0 ]
+  grep -Fqx 'OnCalendar=*-*-* 00/6:00:00' "$TIMER"
+  run ! grep -q '^OnActiveSec=' "$TIMER"
+}
+
+@test "maintenance start 5400 on Linux writes no timer" {
+  _linux_start 5400
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"must divide an hour"* ]]
+  [ ! -f "$TIMER" ]
   [ ! -e "$CALLS" ]
 }
 

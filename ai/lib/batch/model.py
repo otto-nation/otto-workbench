@@ -125,6 +125,18 @@ class FindingReason(StrEnum):
     FAILED_UNKNOWN = "failed_unknown"
 
 
+class Verdict(StrEnum):
+    """What the operator decided about one finding in a run session (`pr batch note`).
+
+    Recorded in the run's history only; no verdict changes an item's state.
+    """
+
+    FIXED = "fixed"
+    DISMISSED = "dismissed"
+    DEFERRED = "deferred"
+    HANDED_OFF = "handed_off"
+
+
 class Severity(StrEnum):
     BLOCK = "block"
     WAIT = "wait"

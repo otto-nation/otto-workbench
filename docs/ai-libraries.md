@@ -4616,6 +4616,29 @@ naming that ``pr batch resolve`` was removed. ``to_dict`` always writes the
 tag. ``drain_order`` puts every ``Cancel`` ahead of everything else (by name)
 so a cancel never loses to a release queued beside it.
 
+### batch/run_session.py
+
+How to open a batch run's pi session, and the operator decisions recorded in it.
+
+`recipe(run)` is the one owner of a run session's identity: session id
+`batch-<run-id>`, name `batch <owner/repo> <run-id>`, working directory the
+run's one checkout, argv `pi --session-id ID --name NAME`, and
+`WORKBENCH_RUN_DIR` set to the run directory. `pr batch session` prints or
+executes it; every UI asks that command rather than building the argv. The
+checkout is `Run.checkouts`, or for a run saved before that field its items'
+`repo_dir`. A run over more than one checkout or repo has no run session and
+raises `RunSessionError`: herdr starts one run per machine and repo
+(`ai/herdr/app/mods/_lib/batch_launch.js` `groupByRepo`), so that is the run a
+UI ever asks about. A run with no items is named after its checkout's directory.
+
+`note` appends one `decision` event (`item`, `finding` as `<reason>:<step>`,
+`verdict`, `reason`, `commands`) to the run's `events.jsonl`, after checking
+the finding is one a session for the item can show
+(`batch.session_report.finding_keys`) and the reason is not empty. It takes no
+lock and changes no run state: an item stops needing a person only when the
+report stops deriving its finding. The latest note per (item, finding) wins
+(`batch.events.latest_decisions`).
+
 ### batch/scheduler.py
 
 Drive a run: admit steps, reap them, and record findings; the run always settles.

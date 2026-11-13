@@ -31,5 +31,5 @@ def test_ci_no_verify_skips_the_verify_gate_not_the_pre_push_hook():
 
 
 def test_ci_exit_codes():
-    assert [int(o.code) for o in cli.ci_check.CONTRACT.exits] == [0, 1, 2, 75]
+    assert [int(o.code) for o in cli.ci_check.CONTRACT.exits] == [0, 1, 2, 75, 130]
     assert cli.ci_check.CONTRACT.exits[0].code is ExitCode.OK

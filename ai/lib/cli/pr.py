@@ -41,6 +41,7 @@ import config.workbench_config
 import cli.dispatch
 import cli.locks
 import cli.needs
+import cli.queue_gate
 import cli.review_modes
 from cli.needs import Need
 from cli.pr_batch import cmd_batch
@@ -54,7 +55,7 @@ from cli.pr_commands import (
     cmd_gc,
     cmd_status,
 )
-from cli.registry import COMMANDS, CommandSpec, contract_for, need_for
+from cli.registry import COMMANDS, CommandSpec, contract_for, need_for, queue_for
 from cli.schema import (
     EXIT_USAGE,
     checked_schema_version,
@@ -289,6 +290,9 @@ def build_global_parser() -> argparse.ArgumentParser:
                              "(repeatable); a tier name works too. Same layer as "
                              "WORKBENCH_AI_<PHASE>_MODEL, so `--model` outranks it "
                              "and a review phase still refuses a light model")
+    parser.add_argument("--no-queue", action="store_true",
+                        help="Run now instead of waiting for an otto-queue slot "
+                             "(also WORKBENCH_PR_NO_QUEUE=1)")
     add_trail_args(parser)
     return parser
 
@@ -792,6 +796,18 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     _reject_a_target_that_resolves_to_nothing(
         args.command, extra, need, original_pr, original_branch,
     )
+
+    queued = cli.queue_gate.gate(
+        args.command, extra,
+        reexec=(sys.executable, str(bin_dir / SCRIPT), *argv),
+        entry_class=queue_for(spec, extra),
+        label=cli.queue_gate.label_for(
+            args.command, extra, pr_ref=original_pr,
+            branch=original_branch, repo_dir=original_repo_dir),
+        no_queue=global_args.no_queue,
+    )
+    if queued is not None:
+        return queued
 
     # Every lock is held before anything reads or writes state, and before the
     # trail starts, so contention costs no trail artifacts.

@@ -889,6 +889,7 @@ is in [AI Libraries](ai-libraries.md).
 | `--pr` `<num\|url>` | PR number or URL to act on. |
 | `--schema-version` `<n>` | Serve a versioned JSON document on stdout instead of a human table, where the command has a contract. |
 | `--phase-model` `<phase=model>` | Run one phase on MODEL for this invocation only (repeatable); a tier name works too. Same layer as WORKBENCH_AI_<PHASE>_MODEL, so `--model` outranks it and a review phase still refuses a light model. |
+| `--no-queue` | Run now instead of waiting for an otto-queue slot (also WORKBENCH_PR_NO_QUEUE=1). |
 
 **`pr create`** — Create a PR, or preview it with --dry-run
 
@@ -905,7 +906,7 @@ is in [AI Libraries](ai-libraries.md).
 | `--closes` `<id>` | Issue to close on merge (repeatable). |
 | `--skip-review` `<reason>` | Skip the self-review gate; REASON is recorded on the trail. |
 
-Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-create-contract)
+Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail · `130` cancelled — writes remotely; [contract](ai-automation.md#pr-create-contract)
 
 **`pr status`** — Show CI, review, and comment status dashboard
 
@@ -927,7 +928,7 @@ Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [con
 | `--no-rebase` | With --fix: do not rebase onto main before fixing. |
 | `--no-verify` | Skip the verify gate after --fix. The gate has an agent exercise each claimed fix against the tree and demotes the ones that do not hold up; without it every fix lands unverified. |
 
-Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-ci-contract)
+Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail · `130` cancelled — writes remotely; [contract](ai-automation.md#pr-ci-contract)
 
 **`pr review`** — Run code review
 
@@ -969,7 +970,7 @@ Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remot
 | `--list` | List every review in the user's state root — a mode; excludes the other mode flags. |
 | `--if-changed` `<stamp>` | With --list --schema-version: answer {"unchanged": true} when no review changed since the document carrying this stamp. |
 
-Exit codes: `0` ok · `1` failure · `2` usage · `4` refused · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-review-contract)
+Exit codes: `0` ok · `1` failure · `2` usage · `4` refused · `75` tempfail · `130` cancelled — writes remotely; [contract](ai-automation.md#pr-review-contract)
 
 **`pr comments`** — Fetch and manage PR review threads
 
@@ -992,7 +993,7 @@ Exit codes: `0` ok · `1` failure · `2` usage · `4` refused · `75` tempfail �
 | `--reason` `<text>` | Why, for --settle --as dismissed — it becomes the reply the reviewer reads. |
 | `--commit` `<sha>` | The commit carrying a --settle --as fixed change, for a fix that landed away from the line the thread is anchored to. Without it nothing is inferred and the row is recorded with no commit cited. Applies to every --settle in the run, so a batch where only some threads need it takes two runs. |
 
-Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-comments-contract)
+Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail · `130` cancelled — writes remotely; [contract](ai-automation.md#pr-comments-contract)
 
 **`pr fix`** — Fix CI + review + comments
 
@@ -1002,7 +1003,7 @@ Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remot
 | `--force-superseded` | Forwarded to the review pass: review even when the branch looks superseded. |
 | `[<review-or-ci-flag> ...]` | Any other flag is forwarded to the review pass and the CI pass; see `pr review` and `pr ci`. |
 
-Exit codes: `0` ok · `1` failure · `2` usage · `4` refused · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-fix-contract)
+Exit codes: `0` ok · `1` failure · `2` usage · `4` refused · `75` tempfail · `130` cancelled — writes remotely; [contract](ai-automation.md#pr-fix-contract)
 
 **`pr rebase`** — Rebase onto the branch's base
 
@@ -1019,7 +1020,7 @@ Exit codes: `0` ok · `1` failure · `2` usage · `4` refused · `75` tempfail �
 | `--force-landed` | Rebase even when the branch's work already landed on the target ref, and replay its landed prefix too. Not a force push: every push is leased. |
 | `--abort` | Abort in-progress rebase. |
 
-Exit codes: `0` ok · `1` failure · `2` usage · `3` conflicts · `4` refused · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-rebase-contract)
+Exit codes: `0` ok · `1` failure · `2` usage · `3` conflicts · `4` refused · `75` tempfail · `130` cancelled — writes remotely; [contract](ai-automation.md#pr-rebase-contract)
 
 **`pr push`** — Push HEAD with a lease on the remote head you expect
 
@@ -1042,7 +1043,7 @@ Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remot
 | `--body-file` `<path>` | Read the replacement body from this file. Not with `--body`. |
 | `--closes` `<id>` | Issue to close on merge (repeatable). |
 
-Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remotely; [contract](ai-automation.md#pr-describe-contract)
+Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail · `130` cancelled — writes remotely; [contract](ai-automation.md#pr-describe-contract)
 
 **`pr stack`** — Show the repo's PR stack graph (JSON)
 

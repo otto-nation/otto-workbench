@@ -130,6 +130,16 @@ def test_a_write_after_open_raises_ledger_busy(tmp_path, monkeypatch):
         holder.close()
 
 
+def test_finish_does_not_overwrite_a_done_row(tmp_path):
+    ledger = Ledger.open(tmp_path)
+    entry_id = _row(tmp_path, state="done")
+    _sql(tmp_path).execute("UPDATE entries SET exit_status = 0 WHERE id = ?",
+                           (entry_id,))
+    assert ledger.finish(entry_id, 143) is EntryState.DONE
+    entry = ledger.get(entry_id)
+    assert (entry.state, entry.exit_status) == (EntryState.DONE, 0)
+
+
 def test_a_label_is_recorded_and_read_back(tmp_path):
     ledger = Ledger.open(tmp_path)
     labelled = ledger.resolve(NewEntry(argv=("true",), cwd="/", label="x"), force=False, pid=None)

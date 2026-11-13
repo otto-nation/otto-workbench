@@ -2,7 +2,9 @@
 
 `Need` is the declaration; `review_need` is the one resolver that reads a mode
 flag off an argv. Both were written inside `ai/bin/pr`, where nothing could
-import them and no test could reach them without executing the binary.
+import them and no test could reach them without executing the binary. The
+queue-class resolvers next to them (`ci_queue`, `comments_queue`, …) are the
+same kind of declaration, read off the same flags with `has_flag`.
 
 The mode table itself lives in `cli.review_modes`, beside the handlers it
 names. The resolvers here still take a table rather than reaching for one:
@@ -18,6 +20,7 @@ from dataclasses import dataclass
 
 import core.run_lock
 import pr.context
+from otto_queue.model import EntryClass
 
 NONE = pr.context.ContextDepth.NONE
 LOCAL = pr.context.ContextDepth.LOCAL
@@ -313,6 +316,63 @@ def rebase_need(argv: Sequence[str]) -> Need:
             else pr.context.WorktreeNeed.CREATE
         ),
     )
+
+
+def ci_queue(argv: Sequence[str]) -> EntryClass | None:
+    """`ci`'s queue class: only `--fix` runs an agent."""
+    return EntryClass.HEAVY if has_flag(argv, "--fix") else None
+
+
+def comments_queue(argv: Sequence[str]) -> EntryClass | None:
+    """`comments`' queue class, keyed on `--triage` / `--fix`, never on `--finish`.
+
+    `--fix` is heavy even beside `--finish` (the fix still runs). `--triage` is
+    light. Bare `--finish` / `--finish --post` / `--reply` / `--settle` use no
+    agent and take no ticket.
+    """
+    if has_flag(argv, "--fix"):
+        return EntryClass.HEAVY
+    if has_flag(argv, "--triage"):
+        return EntryClass.LIGHT
+    return None
+
+
+def rebase_queue(argv: Sequence[str]) -> EntryClass | None:
+    """`rebase`'s queue class: `--fix` is heavy unless it is `--abort` or `--push-only`."""
+    if has_flag(argv, "--fix") and not (
+            has_flag(argv, "--abort") or has_flag(argv, "--push-only")):
+        return EntryClass.HEAVY
+    return None
+
+
+def create_queue(argv: Sequence[str]) -> EntryClass | None:
+    """`create`'s queue class: none when both `--title` and `--body` skip AI."""
+    if has_flag(argv, "--title") and has_flag(argv, "--body"):
+        return None
+    return EntryClass.LIGHT
+
+
+def describe_queue(argv: Sequence[str]) -> EntryClass | None:
+    """`describe`'s queue class: none when `--body` or `--body-file` skips AI."""
+    if has_flag(argv, "--body") or has_flag(argv, "--body-file"):
+        return None
+    return EntryClass.LIGHT
+
+
+def review_queue(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> EntryClass | None:
+    """`review`'s queue class, which its mode flag decides.
+
+    A mode with a local handler (`--post`, `--publish`, `--repair`, `--summary`,
+    `--dismiss`, `--list`) runs no agent. `--recover` has no local handler and
+    re-runs agents, so it is heavy. `--self --track` without `--fix` files from
+    a record already on disk. Everything else is heavy.
+    """
+    found = review_modes(argv, modes)
+    if found:
+        return None if modes[found[0]].handler is not None else EntryClass.HEAVY
+    if has_flag(argv, "--self") and has_flag(argv, "--track") and not has_flag(argv, "--fix"):
+        return None
+    return EntryClass.HEAVY
 
 
 def review_need(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> Need:

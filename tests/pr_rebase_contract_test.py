@@ -85,7 +85,7 @@ def test_no_verify_skips_the_hook_but_not_the_owner_check():
 
 def test_rebase_exit_codes():
     codes = [int(o.code) for o in cli.pr_rebase.CONTRACT.exits]
-    assert codes == [0, 1, 2, 3, 4, 75]
+    assert codes == [0, 1, 2, 3, 4, 75, 130]
 
 
 def test_the_classes_vocabulary_is_rendered_from_the_enum():

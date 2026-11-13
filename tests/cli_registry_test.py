@@ -30,7 +30,10 @@ import cli.schema  # noqa: E402
 from cli.needs import (  # noqa: E402
     LOCAL, NO_LOCK, NONE, REMOTE, TARGET_AND_CHECKOUT, TARGET_ONLY, Need,
 )
-from cli.registry import COMMANDS, CommandSpec, need_for, validate_needs  # noqa: E402
+from cli.registry import (  # noqa: E402
+    COMMANDS, CommandSpec, need_for, queue_for, validate_needs, validate_queue_classes,
+)
+from otto_queue.model import EntryClass  # noqa: E402
 import core.timeouts  # noqa: E402
 import core.tool_parser  # noqa: E402
 import pr.context  # noqa: E402
@@ -299,7 +302,7 @@ def test_rebase_carries_the_exit_codes_that_are_not_failures():
 
 def test_a_contracted_subcommand_schema_carries_exits_and_remote_effects():
     doc = cli.schema.subcommand_schema("rebase")
-    assert [e["code"] for e in doc["exit_codes"]] == [0, 1, 2, 3, 4, 75]
+    assert [e["code"] for e in doc["exit_codes"]] == [0, 1, 2, 3, 4, 75, 130]
     assert any(e["trigger"] == "--push-only" for e in doc["remote_effects"])
 
 
@@ -420,6 +423,26 @@ def test_a_spec_cannot_be_built_without_a_need():
         CommandSpec(name="listing", help="list reviews")
 
 
+def test_a_spec_cannot_be_built_without_a_queue():
+    """`queue` is required like `need`, so a command silent about its class cannot exist."""
+    with pytest.raises(TypeError):
+        CommandSpec(name="listing", help="list reviews",
+                    need=Need(REMOTE, update=False, locks=NO_LOCK),
+                    contract="cli.pr_commands:STATUS_CONTRACT")
+
+
+def test_a_resolver_returning_a_non_class_is_rejected():
+    with pytest.raises(RuntimeError, match="listing"):
+        validate_queue_classes({
+            "listing": command_spec(name="listing", queue=lambda argv: True),
+        })
+
+
+def test_every_command_declares_a_queue():
+    for name, spec in COMMANDS.items():
+        assert isinstance(queue_for(spec, []), (EntryClass, type(None))), name
+
+
 def test_a_resolver_returning_a_non_need_is_rejected():
     """A callable declaration is checked by resolving it, not by trusting it."""
     with pytest.raises(RuntimeError, match="listing"):
@@ -478,7 +501,7 @@ def test_the_check_runs_at_this_module_s_import(tmp_path):
         "COMMANDS: dict[str, CommandSpec] = dict(\n"
         "    {s.name: s for s in _SPECS},\n"
         "    listing=CommandSpec('listing', 'list reviews', need=None, "
-        "contract='cli.pr_commands:STATUS_CONTRACT'),\n"
+        "contract='cli.pr_commands:STATUS_CONTRACT', queue=None),\n"
         ")",
     )
     assert broken != source, "the registry no longer keys _SPECS as expected"
@@ -511,15 +534,20 @@ def test_pr_help_imports_no_delegate():
                 runpy.run_path(sys.argv[0], run_name="__main__")
             except SystemExit:
                 pass
-        sys.stdout.write(",".join(sorted(
-            m for m in sys.modules if m.startswith("cli."))))
+        cli = ",".join(sorted(
+            m for m in sys.modules if m.startswith("cli.")))
+        heavy = ",".join(m for m in (
+            "otto_queue.ticket", "cli.otto_queue")
+            if m in sys.modules)
+        sys.stdout.write(cli + "|" + heavy)
         """
     )
     out = subprocess.run(
         [sys.executable, "-c", probe.replace('sys.argv[0]', repr(str(BIN_DIR / "pr")))],
         capture_output=True, text=True, timeout=core.timeouts.QUICK, check=True,
     )
-    loaded = {m for m in out.stdout.strip().split(",") if m}
+    cli_line, _, heavy_line = out.stdout.partition("|")
+    loaded = {m for m in cli_line.strip().split(",") if m}
     assert loaded, "the probe loaded no cli module at all — it did not run `pr`"
     # `cli.pr` is the entry point the shim imports; `cli.pr_commands` is the
     # four internal handlers, `cli.dispatch` the seam that calls one,
@@ -529,11 +557,13 @@ def test_pr_help_imports_no_delegate():
     # share (no imports of its own). None is a delegate. A delegate showing up here
     # (`cli.ci_check`, `cli.review_entry`, …) is the regression: those are
     # what `handler` keeps as a string so that dispatch, not import, pays
-    # for them.
+    # for them. `cli.queue_gate` is allowed once `pr` imports it; its heavy
+    # imports stay inside `gate`.
     assert loaded <= {"cli.pr", "cli.needs", "cli.registry", "cli.review_modes",
                       "cli.pr_commands", "cli.pr_batch", "cli.dispatch",
                       "cli.locks", "cli.schema", "cli.boundary",
-                      "cli.contract_notes"}, loaded
+                      "cli.contract_notes", "cli.queue_gate"}, loaded
+    assert heavy_line.strip() == ""
 
 
 # ── process-level state belongs to the process ────────────────────────────

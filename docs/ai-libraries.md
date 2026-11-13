@@ -4980,9 +4980,14 @@ the machine's budget, and runs once per idempotency key.
 2. **Wait.** Every `POLL_S`, orphans are reaped, and only the oldest waiting
    entry of the class (tickets, and while a worker is alive its ready jobs)
    asks `otto_queue.slots.try_admit`. Each new reason for waiting is printed
-   once. `cancel` or Ctrl-C while waiting ends the ticket
-   with 130. Reaching `wait_s` with no slot records `tempfail` and returns 75
-   (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
+   once. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler while waiting
+   ends the ticket with that exit status (130 when none is given). Reaching
+   `wait_s` with no slot records `tempfail` and returns 75 (EX_TEMPFAIL), so a
+   caller can tell "never got room" from a failure.
+
+`LABEL_ENV` and `WAIT_ENV` are the names `cli.queue_gate` and `pr batch` use to
+pass a display label and wait bound into a ticket they construct. `run_ticket`
+does not read them: the `otto-queue run` flags stay the only input to the CLI.
 3. **Run.** The row moves to `running`, and the command runs through
    `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
    terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue
@@ -8893,7 +8898,8 @@ Exit codes, remote writes and examples are `CONTRACT` below.
 Prose more than one command contract carries, written once.
 
 `PUSH_WAIT` goes on every contract that pushes a branch, so each one says the
-same thing about a push that seems stuck.
+same thing about a push that seems stuck. `QUEUED` goes on every command that
+waits for an otto-queue slot before it runs.
 
 ### cli/dispatch.py
 
@@ -9016,7 +9022,9 @@ What a `pr` subcommand needs of dispatch before its handler runs.
 
 `Need` is the declaration; `review_need` is the one resolver that reads a mode
 flag off an argv. Both were written inside `ai/bin/pr`, where nothing could
-import them and no test could reach them without executing the binary.
+import them and no test could reach them without executing the binary. The
+queue-class resolvers next to them (`ci_queue`, `comments_queue`, …) are the
+same kind of declaration, read off the same flags with `has_flag`.
 
 The mode table itself lives in `cli.review_modes`, beside the handlers it
 names. The resolvers here still take a table rather than reaching for one:
@@ -9322,6 +9330,17 @@ promote-scan [--home DIR] [--workbench DIR]
 ```
 
 `--workbench` defaults to `$OTTO_WORKBENCH`, else the checkout this runs from.
+
+### cli/queue_gate.py
+
+Admit AI `pr` subcommands through an otto-queue ticket before they run.
+
+`gate` returns None to carry on in this process, or the ticket's exit status
+when the command ran (or failed to get a slot) under the queue. Help, unqueued
+commands, nested tickets, and a re-exec'd child skip it.
+
+`otto_queue.ticket` and `cli.otto_queue` are imported inside `gate` so
+`pr --help` does not pay for them.
 
 ### cli/registry.py
 

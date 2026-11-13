@@ -708,6 +708,19 @@ A second `pr` against the same target or checkout while one still holds the lock
 exits 75 (`EX_TEMPFAIL`, the same value as `pr gc` when the GitHub hourly quota
 is spent). The error names the owning command; retry once that run finishes.
 
+### pr and the otto-queue
+
+AI subcommands wait for an otto-queue slot before they take any lock, so a
+waiting `pr` holds nothing. The class is declared on the command's `queue=` in
+`cli.registry` (heavy, light, or none — not a table copied here). The wait
+shows as a labelled ticket (`pr comments --fix · repo#123`); `pr batch` supplies
+its own label. `--no-queue` or `WORKBENCH_PR_NO_QUEUE=1` skips the wait.
+A process that already holds `OTTO_QUEUE_ENTRY` (nested under another ticket)
+runs in place. Exit 75 means no slot came in time; 130 means the wait was
+cancelled (`otto-queue cancel`, the Herdr queue panel, or Ctrl-C). `ci-check`
+and `review` run bare queue the same way; `pr ci` / `pr review` / `pr fix`
+calling them in-process do not queue again.
+
 ### pr command contracts
 
 What each `pr` command writes to origin or GitHub and how, what each exit means, and the

@@ -451,8 +451,12 @@ class Ledger:
                 f"WHERE id = ? AND state IN {_LIVE_IN}",
                 (state_for_exit(exit_status).value, exit_status, time.time(), entry_id, *_LIVE))
             if cur.rowcount == 0:
-                conn.execute("UPDATE entries SET exit_status = ? WHERE id = ? AND exit_status IS NULL",
-                             (exit_status, entry_id))
+                # Fill a missing status, and replace the 130 `cancel` writes on a
+                # queued row when a stop handler supplied a more specific code.
+                conn.execute(
+                    "UPDATE entries SET exit_status = ? "
+                    "WHERE id = ? AND (exit_status IS NULL OR state = ?)",
+                    (exit_status, entry_id, EntryState.CANCELLED.value))
             entry = _entry(_row(conn, entry_id))
         return entry.state if entry is not None else None
 

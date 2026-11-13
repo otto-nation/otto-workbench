@@ -341,6 +341,11 @@ def need_for(argv: Sequence[str]) -> Need:
     return cli.needs.review_need(argv, MODES)
 
 
+def queue_for(argv: Sequence[str]):
+    """`review`'s queue class, which its mode flag decides."""
+    return cli.needs.review_queue(argv, MODES)
+
+
 def flags_prose() -> str:
     """The mode flags as an English list, for the exclusivity error."""
     flags = list(MODES)

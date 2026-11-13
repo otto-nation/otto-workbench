@@ -1045,6 +1045,12 @@ def rp():
 
 
 @pytest.fixture(autouse=True)
+def _pr_commands_skip_the_queue(monkeypatch):
+    """Keep existing `cli.pr.main` tests in-process; the gate tests delenv this."""
+    monkeypatch.setenv("WORKBENCH_PR_NO_QUEUE", "1")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_state_root(tmp_path, monkeypatch):
     """Point the whole state root at a temp dir for the duration of every test.
 
@@ -1321,7 +1327,8 @@ def command_spec(**overrides):
 
     fields = dict(name="probe", help="a probe",
                   need=Need(REMOTE, update=False, locks=NO_LOCK),
-                  contract="cli.pr_commands:STATUS_CONTRACT")
+                  contract="cli.pr_commands:STATUS_CONTRACT",
+                  queue=None)
     fields.update(overrides)
     return CommandSpec(**fields)
 

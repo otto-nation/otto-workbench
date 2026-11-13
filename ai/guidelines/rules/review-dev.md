@@ -254,11 +254,12 @@ messages on stderr.
 | `pr review --post` | `review-post` | `pr` wrapper |
 | `pr review --repair` | `review-rebuild` (fallback) | `pr` wrapper |
 | `pr review --summary` | none (local computation) | none |
-| `pr comments` | `review-threads` | script (updates state directly) |
-| `pr comments --triage` | `review-threads --triage` | script (updates state directly) |
-| `pr comments --fix` | `review-threads --fix` | script (updates state directly) |
-| `pr comments --finish` | `review-threads --finish` | script (updates state directly) |
-| `pr rebase` | `pr-rebase` | script (updates state directly) |
+| `pr comments` | in-process (`cli.review_threads`) | handler (inside `pr`'s ticket) |
+| `pr comments --triage` | in-process (`cli.review_threads`) | handler (inside `pr`'s ticket) |
+| `pr comments --fix` | in-process (`cli.review_threads`) | handler (inside `pr`'s ticket) |
+| `pr comments --finish` | in-process (`cli.review_threads`) | handler (inside `pr`'s ticket) |
+| `pr rebase` | in-process (`cli.pr_rebase`) | handler (inside `pr`'s ticket) |
+| `pr describe` | in-process (`cli.pr_describe`) | handler (inside `pr`'s ticket) |
 | `pr gc` | none (local via `review.gc`, `batch.gc`) | none |
 | `pr fix` | `review` (--fix), `ci-check` (--fix) | none |
 | `pr status` | none (reads cached state) | none |

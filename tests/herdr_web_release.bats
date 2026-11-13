@@ -10,7 +10,10 @@ setup() {
   OUT="$BATS_TEST_TMPDIR/rel"
 }
 teardown() {
-  [[ -n "${SERVER_PID:-}" ]] && kill "$SERVER_PID" 2>/dev/null
+  if [[ -n "${SERVER_PID:-}" ]]; then
+    kill "$SERVER_PID" 2>/dev/null || true
+    wait "$SERVER_PID" 2>/dev/null || true
+  fi
   common_teardown
 }
 

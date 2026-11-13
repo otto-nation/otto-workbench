@@ -1,11 +1,12 @@
 // Workflows: `pr batch` runs on every machine the board reads, shown from the Batch button and a PR's Batch tab.
-import { exec, watchFolder } from "herdr";
+import { exec, watchFolder, run } from "herdr";
 import {
   listArgv, statusArgv, reportArgv, logTailArgv, parseRunList, parseRunDoc, parseSessions,
-  stateChanged, laneOf, STEP_ORDER,
+  stateChanged, laneOf, STEP_ORDER, trailArgv,
 } from "./_lib/batch.js";
 import { cancelArgv, runProgress } from "./_lib/batch_launch.js";
 import { invoke, readJson } from "./_lib/board_data.js";
+import { parseRunReply } from "./_lib/launch.js";
 
 function k(on) { return String(on ?? ""); }
 
@@ -41,6 +42,7 @@ export class Workflows {
     this.sessionError = null;
     this.onRun = null;
     this.onTerminal = null;
+    this.trailError = null;
     // The log path being read, so a slow tail is not doubled by the 3 s timer; another step's
     // click still starts its own read.
     this.logInflight = null;
@@ -234,6 +236,7 @@ export class Workflows {
 
   // A run row toggles: picking the pinned run again unpins it.
   pickRun(run) {
+    this.trailError = null;
     const pin = this.pinned;
     if (run == null || (pin && k(pin.on) === k(run.on) && pin.id === run.id)) return this.unpin();
     this.pin(run.on, run.id);
@@ -271,7 +274,36 @@ export class Workflows {
       loading: this.keys == null || (this.machines.size > 0 && !loaded),
       nowMs: Date.now(),
       onPickRun: (r) => this.pickRun(r),
+      trailError: this.trailError,
+      onOpenTrail: (r) => this.openTrail(r),
     };
+  }
+
+  openTrail(entry) {
+    const m = this.machines.get(k(entry.on));
+    const doc = m?.docs.get(entry.id);
+    const argv = trailArgv({
+      ...entry,
+      trailRoot: doc?.run?.trailRoot ?? entry.trailRoot,
+      cwd: m?.ctx?.cwd ?? entry.cwd ?? entry.runDir,
+      repo: entry.repo ?? entry.repos?.[0],
+    });
+    if (!argv) return;
+    this.acx.spawn(async (cx) => {
+      let res;
+      try {
+        res = parseRunReply(await exec("hc", argv, {}));
+      } catch (err) {
+        res = { ok: false, error: { message: String(err?.message ?? err) } };
+      }
+      if (res.ok) {
+        this.trailError = null;
+        run("terminal.keep", { terminal: res.terminal });
+      } else {
+        this.trailError = res.error?.message ?? "failed";
+      }
+      cx.notify();
+    });
   }
 
   sessionOf(key) {

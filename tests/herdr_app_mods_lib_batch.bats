@@ -221,3 +221,25 @@ _sessions() {
   _js 'm.durationText("1970-01-01T00:00:00.000Z", "not-a-date", 0)'
   [ "$output" = '""' ]
 }
+
+_trail() {
+  run node --input-type=module -e "
+    const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/batch.js');
+    const { REMOTE_PREAMBLE } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js');
+    process.stdout.write(JSON.stringify($1).replaceAll(JSON.stringify(REMOTE_PREAMBLE), '\"<PREAMBLE>\"'));
+  "
+}
+
+@test "trailArgv id to argv, null empty whitespace to null, machine via launch convention" {
+  _trail 'm.trailArgv({trailRoot:"03e519c6e72a",cwd:"/w",repo:"o/n"})'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["run","--bg","--json","--cwd","/w","--label","otto.repo=o/n","--label","otto.action=batch","--label","otto.app=pr","--","otto-log","show","03e519c6e72a"]' ]
+  _trail 'm.trailArgv({trailRoot:"03e519c6e72a",cwd:"/w",on:"homelab",repo:"o/n"})'
+  [ "$output" = '["run","--bg","--json","--cwd","/w","--on","homelab","--label","otto.repo=o/n","--label","otto.action=batch","--label","otto.app=pr","--","sh","-c","<PREAMBLE>","sh","otto-log","show","03e519c6e72a"]' ]
+  _trail 'm.trailArgv({trailRoot:null,cwd:"/w",on:"homelab",repo:"o/n"})'
+  [ "$output" = 'null' ]
+  _trail 'm.trailArgv({trailRoot:"",cwd:"/w",on:"homelab",repo:"o/n"})'
+  [ "$output" = 'null' ]
+  _trail 'm.trailArgv({trailRoot:"   ",cwd:"/w",on:"homelab",repo:"o/n"})'
+  [ "$output" = 'null' ]
+}

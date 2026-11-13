@@ -59,6 +59,34 @@ COMMENT_BEFORE_PUSH = "comment on the PR before pushing: it is not a draft"
 NO_CHECKOUT = "no checkout found"
 PROVIDER_NOTE = "otto-workbench config set issues.provider PROVIDER --project"
 TEAM_NOTE = "otto-workbench config set issues.team TEAM --project"
+
+# The findings the report derives at read time rather than reading from the
+# run's state, each with the step it is shown under. One table, so the report
+# and `pr batch note` agree on which findings a session can show.
+DERIVED_STEPS: dict[FindingReason, str] = {
+    FindingReason.CLOSEOUT_OWED: "comments",
+    FindingReason.READY_TO_PUSH: "publish",
+    FindingReason.WRONG_BRANCH: "publish",
+    FindingReason.PUSH_REFUSED: "publish",
+}
+
+
+def finding_key(finding: Finding) -> str:
+    """How a session and `pr batch note` name one finding: `<reason>:<step>`."""
+    return f"{finding.reason.value}:{finding.step}"
+
+
+def finding_keys(run: Run, item: Item) -> frozenset[str]:
+    """Every finding key a session for *item* can show: stored, mapped from v1, or derived."""
+    stored = list(item.findings) + findings_from_decisions(run, item)
+    derived = {f"{reason.value}:{step}" for reason, step in DERIVED_STEPS.items()}
+    return frozenset(finding_key(f) for f in stored) | derived
+
+
+def _derived(reason: FindingReason, detail: str = "", data: dict | None = None) -> Finding:
+    return Finding(reason, DERIVED_STEPS[reason], detail, data=dict(data or {}))
+
+
 _ACTIVE = frozenset({RunStatus.RUNNING})
 _SEV_RANK = {Severity.BLOCK: 0, Severity.WAIT: 1, Severity.ACT: 2}
 _CLOSEOUT_ARGV = tuple(shlex.split(CLOSEOUT_COMMAND))
@@ -128,7 +156,7 @@ def _session(run: Run, item: Item, closeout: CloseoutFn, tree: TreeFn | None) ->
     debt = closeout(item.repo_dir, item.branch)
     if debt.owed:
         if not _has(findings, FindingReason.CLOSEOUT_OWED):
-            findings.append(Finding(FindingReason.CLOSEOUT_OWED, "comments", CLOSEOUT_WHY))
+            findings.append(_derived(FindingReason.CLOSEOUT_OWED, CLOSEOUT_WHY))
     else:
         _drop(findings, FindingReason.CLOSEOUT_OWED)
     planned = _plan_tree(item, tree, debt)
@@ -169,18 +197,18 @@ def _apply_plan(findings: list[Finding], planned: _Planned) -> None:
     result = planned.plan
     if result.ok and result.pushes:
         if not _has(findings, FindingReason.READY_TO_PUSH):
-            findings.append(Finding(FindingReason.READY_TO_PUSH, "publish"))
+            findings.append(_derived(FindingReason.READY_TO_PUSH))
     else:
         _drop(findings, FindingReason.READY_TO_PUSH)
     if result.ok:
         return
     if result.refusal is Refusal.WRONG_BRANCH:
         if not _has(findings, FindingReason.WRONG_BRANCH):
-            findings.append(Finding(FindingReason.WRONG_BRANCH, "publish", result.detail))
+            findings.append(_derived(FindingReason.WRONG_BRANCH, result.detail))
         return
     if not _has(findings, FindingReason.PUSH_REFUSED):
         data = {"refusal": result.refusal.value} if result.refusal is not None else {}
-        findings.append(Finding(FindingReason.PUSH_REFUSED, "publish", result.detail, data=data))
+        findings.append(_derived(FindingReason.PUSH_REFUSED, result.detail, data))
 
 
 def _after(run: Run, item: Item) -> list[str]:

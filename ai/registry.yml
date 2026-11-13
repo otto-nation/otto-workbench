@@ -81,7 +81,7 @@ tools:
     description: "Delete the local reviews a retro consumed, for the scan ID that recorded them"
 
   - name: wiki
-    parser: cli.wiki:build_parser
+    parser: cli.wiki:reference_shape
     permission: true
     visibility: brief
     description: "Mechanical operations over a compiled knowledge base — status, lint, signals, archive, source hashes, index, browsing link, snapshots"

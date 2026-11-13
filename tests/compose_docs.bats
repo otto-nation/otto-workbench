@@ -106,7 +106,19 @@ after'
   _src page '<!-- include: bin/gen -->'
 
   run _compose --quiet
-  [ "$status" -eq 3 ]
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"include: command failed: bin/gen"* ]]
+  [ ! -f "$ROOT/docs/page.md" ]
+}
+
+@test "aborts and names a nested include when that generator exits non-zero" {
+  _stub bin/outer 'printf "outer\n<!-- include: bin/inner -->\n"'
+  _stub bin/inner 'printf "partial\n"; exit 3'
+  _src page '<!-- include: bin/outer -->'
+
+  run _compose --quiet
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"include: command failed: bin/inner"* ]]
   [ ! -f "$ROOT/docs/page.md" ]
 }
 

@@ -20,23 +20,17 @@ Options:
 
 from __future__ import annotations
 
-import subprocess
 import sys
 from pathlib import Path
 
-# Checked before REPO_ROOT is resolved via git, so --help works outside a
-# git repo (e.g. `pip show`-style introspection, or a stray checkout).
+# Path arithmetic rather than `git rev-parse --show-toplevel`: an inherited
+# GIT_DIR makes git answer for the caller's repository instead of this one.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
+
 if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
     print(__doc__.strip())
     sys.exit(0)
-
-REPO_ROOT = Path(
-    subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"],
-        capture_output=True, text=True, check=True,
-    ).stdout.strip(),
-)
-sys.path.insert(0, str(REPO_ROOT / "ai" / "lib"))
 
 import config.workbench_config  # noqa: E402
 import config.workbench_config_report  # noqa: E402

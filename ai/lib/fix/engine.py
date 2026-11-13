@@ -613,16 +613,6 @@ def _records(adapter: FixAdapter) -> bool:
     return adapter.keeps_checkpoints or adapter.resume is not None
 
 
-def _agent_blobs(
-    adapter: FixAdapter, start: _PassStart, dirty_before: set[str],
-) -> dict[str, str] | None:
-    if not _records(adapter):
-        return None
-    return fix.pass_resume.agent_files(
-        adapter.workdir, dirty_before, base=start.head_before,
-    )
-
-
 def _reached(phase: CheckpointPhase | None, target: CheckpointPhase) -> bool:
     """Whether a resume has already finished *target*. Fresh passes never have."""
     return phase is not None and phase.reached(target)
@@ -918,7 +908,7 @@ def _run_agent(adapter: FixAdapter, start: _PassStart) -> _AgentRun:
         )
         results.append(agent_batch)
         collected.extend(fix.pass_resume.answered(agent_batch.outcomes))
-        blobs = _agent_blobs(adapter, start, dirty_before)
+        blobs = (fix.pass_resume.agent_files(adapter.workdir, dirty_before, base=start.head_before) if _records(adapter) else None)
         start = _note(
             adapter, start, CheckpointPhase.AGENT_RUNNING,
             answers=collected, blobs=blobs,
@@ -954,7 +944,7 @@ def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
         start = agent_run.start
         settled = settle(adapter, list(agent_run.results), by_id, trail)
         record_unevidenced(settled.outcomes, trail)
-        blobs = _agent_blobs(adapter, start, dirty_before)
+        blobs = (fix.pass_resume.agent_files(adapter.workdir, dirty_before, base=start.head_before) if _records(adapter) else None)
         prior_now = start.prior or EngineProgress()
         start = _note(
             adapter, start, CheckpointPhase.AGENT_DONE,

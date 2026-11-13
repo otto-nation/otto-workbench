@@ -810,7 +810,6 @@ it did not resolve. Every reason except `not on the PR` keeps reply debt, so
 row are listed with `pr comments --fix` or `pr comments --settle`. A comments `--fix` stopped mid-agent records leftovers and, on the next pass at the same HEAD with no checkpoint, resumes matching blobs so they can be committed.
 
 
-
 ### The summary comments are the record, not the state file
 
 The `Review Comments Addressed` comments are what a reviewer reads to confirm

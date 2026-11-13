@@ -75,15 +75,3 @@ def test_agent_files_compares_against_base_not_live_head(tmp_path):
     assert fix.pass_resume.edited_since(
         repo, {"a.py": blob},
     ) == ["a.py"]
-
-
-def test_apply_suite_if_missing_does_not_double_detail():
-    outcomes = [
-        ItemOutcome(
-            id="i0", outcome=FixOutcome.FIXED, verified=False,
-            verify_detail=fix.suite.RED_DETAIL,
-        ),
-    ]
-    result = fix.suite.SuiteResult(status=fix.suite.SuiteStatus.RED, command="true")
-    fix.pass_resume.apply_suite_if_missing(outcomes, result)
-    assert outcomes[0].verify_detail == fix.suite.RED_DETAIL

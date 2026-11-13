@@ -313,8 +313,10 @@ def test_run_checks_hands_the_baseline_the_time_left(tmp_path):
     )
     seen = {}
 
-    def capture(workdir, result, command, timeout_s, trail, *, ref, paths_file=""):
+    def capture(workdir, result, command, timeout_s, trail, *,
+                 ref, paths_file="", progress_s=0):
         seen["timeout_s"] = timeout_s
+        seen["progress_s"] = progress_s
         return result
 
     adapter = StubAdapter(tmp_path)

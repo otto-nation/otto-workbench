@@ -8,7 +8,8 @@ the stop, and on the next run drops matching paths from the dirty baseline so
 they are attributed to the pass again.
 
 The review domain keeps its own stash (`review.convergence.set_aside_leftovers`);
-only the comments adapter opts in.
+only the comments adapter opts in. A checkpoint resume (`fix.pass_resume`)
+skips this adoption and clears the leftover record so the two cannot disagree.
 """
 
 # doc-group: pipeline

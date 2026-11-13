@@ -16,6 +16,7 @@ import fix.resume  # noqa: E402
 import git.client  # noqa: E402
 from fix_containment_support import _repo  # noqa: E402
 from fix_engine_support import StubAdapter, _answer  # noqa: E402
+from pr.fix_checkpoint import CheckpointPhase, EngineProgress  # noqa: E402
 from review_fix_pass_support import _PUSHED  # noqa: E402
 
 
@@ -91,3 +92,44 @@ def test_resumed_edits_appear_in_the_landing_paths(_push, tmp_path):
 
     assert adapter.landing_scope is not None
     assert "a.py" in adapter.landing_scope
+
+
+@patch("git.push.push", return_value=_PUSHED)
+def test_checkpoint_resume_does_not_adopt_and_clears_leftover_record(
+        _push, tmp_path):
+    """Checkpoint resume owns dirty_before; leftover-adoption must not run."""
+    wt = _repo(tmp_path, {"a.py": "orig\n"})
+    (wt / "a.py").write_text("edited\n")
+    adapter = _Resuming(wt)
+    adapter.keeps_checkpoints = True
+    sha = git.client.head_sha(cwd=wt)
+    adapter.artifacts.mkdir(parents=True, exist_ok=True)
+    fix.resume.record(adapter.artifacts, wt, sha, ["a.py"])
+    leftover = adapter.artifacts / "interrupted-pass.json"
+    assert leftover.is_file()
+    adapter.resume = EngineProgress(head_before=sha, branch="HEAD")
+    adapter.resume_phase = CheckpointPhase.LANDED
+    with (
+        patch.object(fix.resume, "adopt", wraps=fix.resume.adopt) as adopt,
+        patch.object(agent.invoke, "run_fix", side_effect=_answer(adapter)),
+    ):
+        fix.engine.run(adapter)
+    adopt.assert_not_called()
+    assert not leftover.is_file()
+
+
+@patch("git.push.push", return_value=_PUSHED)
+def test_fresh_pass_still_adopts_pending_leftovers(_push, tmp_path):
+    """No checkpoint: leftover-adoption still rewrites dirty_before."""
+    wt = _repo(tmp_path, {"a.py": "orig\n"})
+    (wt / "a.py").write_text("edited\n")
+    adapter = _Resuming(wt)
+    sha = git.client.head_sha(cwd=wt)
+    adapter.artifacts.mkdir(parents=True, exist_ok=True)
+    fix.resume.record(adapter.artifacts, wt, sha, ["a.py"])
+    with (
+        patch.object(fix.resume, "adopt", wraps=fix.resume.adopt) as adopt,
+        patch.object(agent.invoke, "run_fix", side_effect=_answer(adapter)),
+    ):
+        fix.engine.run(adapter)
+    adopt.assert_called_once()

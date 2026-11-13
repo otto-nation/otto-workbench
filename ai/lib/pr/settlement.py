@@ -823,6 +823,34 @@ def settle_flag_error(kind: FixOutcome, reason: str, commit: str) -> str:
     return ""
 
 
+def _refuse_no_snapshot() -> int:
+    core.log.error(
+        "No fix snapshot to settle against — run "
+        "`pr comments --fix` first"
+    )
+    return 1
+
+
+def _state_from_open_threads(
+    ctx: pr.context.ResolvedContext,
+    wt_path: Path,
+    targets: list[str],
+    threads: Mapping[str, ReportThread] | None,
+) -> pr.state.PRState | None:
+    """A new snapshot when *targets* are still open on the PR, else None."""
+    found = bool(threads) and any(tid in threads for tid in targets)
+    if not found:
+        return None
+    return pr.state.load_or_init(
+        target_dir=ctx.target_dir,
+        repo=ctx.repo,
+        branch=ctx.branch,
+        pr_number=ctx.pr_number,
+        head_sha=ctx.head_sha,
+        worktree_root=str(wt_path),
+    )
+
+
 def run_settle(
     ctx: pr.context.ResolvedContext,
     targets: list[str],
@@ -870,22 +898,11 @@ def run_settle(
         threads = fetch_threads()
 
     if record is None or not record.items:
-        found = bool(threads) and any(tid in threads for tid in targets)
-        if found:
-            state = pr.state.load_or_init(
-                target_dir=ctx.target_dir,
-                repo=ctx.repo,
-                branch=ctx.branch,
-                pr_number=ctx.pr_number,
-                head_sha=ctx.head_sha,
-                worktree_root=str(wt_path),
-            )
+        opened = _state_from_open_threads(ctx, wt_path, targets, threads)
+        if opened is not None:
+            state = opened
         elif fetch_threads is None:
-            core.log.error(
-                "No fix snapshot to settle against — run "
-                "`pr comments --fix` first"
-            )
-            return 1
+            return _refuse_no_snapshot()
         else:
             # Nothing is recorded here: the throwaway record exists only so
             # settle_targets reports the targets it never recorded.
@@ -905,23 +922,11 @@ def run_settle(
         except pr.fix_checkpoint.CheckpointAdoptError as exc:
             core.log.error(str(exc))
             return 1
-        if state is None or not state.fix.fix.items:
-            found = bool(threads) and any(tid in threads for tid in targets)
-            if found:
-                state = pr.state.load_or_init(
-                    target_dir=ctx.target_dir,
-                    repo=ctx.repo,
-                    branch=ctx.branch,
-                    pr_number=ctx.pr_number,
-                    head_sha=ctx.head_sha,
-                    worktree_root=str(wt_path),
-                )
-            else:
-                core.log.error(
-                    "No fix snapshot to settle against — run "
-                    "`pr comments --fix` first"
-                )
-                return 1
+        missing = state is None or not state.fix.fix.items
+        if missing:
+            state = _state_from_open_threads(ctx, wt_path, targets, threads)
+        if missing and state is None:
+            return _refuse_no_snapshot()
 
     result = settle_targets(state.fix.fix, targets, threads=threads)
     if result is None:

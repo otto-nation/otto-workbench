@@ -301,7 +301,7 @@ def main(argv: list[str] | None = None) -> int:
         args = parser.parse_args(argv)
         if args.command is None:
             parser.print_help()
-            return 2
+            return ExitCode.USAGE
         handlers = {
             "run": lambda: _run(args, parser),
             "submit": lambda: _submit(args, parser),

@@ -182,6 +182,22 @@ class TestContractExitCodes:
         assert unlisted.is_error is True
         assert "nope" in unlisted.text
 
+    def test_ok_nonzero_exit_with_output_schema_returns_structured(self):
+        schema = _pr_call_schema()
+        schema["output_schema"] = {"type": "object"}
+        result = core.proc.CmdResult(returncode=3, stdout='{"status": "conflicts"}')
+        answer = _answer_tool_call(
+            "pr", schema, {"command": "rebase"}, result)
+
+        assert answer.is_error is False
+        assert answer.structured == {"status": "conflicts"}
+
+    def test_unknown_or_missing_command_only_zero_is_ok(self):
+        result = core.proc.CmdResult(returncode=3, stderr="nope")
+        for args in ({"command": "bogus"}, {}):
+            answer = _answer_tool_call("pr", _pr_call_schema(), args, result)
+            assert answer.is_error is True
+
     def test_timeout_is_still_an_error_even_if_listed_ok(self):
         schema = _pr_call_schema(extra_ok=(core.proc.TIMEOUT_RETURNCODE,))
         result = core.proc.CmdResult(returncode=core.proc.TIMEOUT_RETURNCODE)

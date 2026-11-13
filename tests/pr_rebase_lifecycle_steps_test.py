@@ -721,7 +721,7 @@ def test_a_resume_keeps_the_squash_count_from_the_stop():
     """A stop records the squash; the next process has to keep it."""
     prior = SimpleNamespace(rebase=SimpleNamespace(
         status="conflicts", files_one_sided=[], one_sided_regions=[],
-        fork_point="abc1234", squashed_commits=3,
+        fork_point="abc1234", squashed_commits=3, files_stale=[],
     ))
     with mock.patch.object(rebase.types, "load_or_init", return_value=prior), \
          mock.patch.object(rebase.inspect, "rebase_orig_head", return_value="orig1"):

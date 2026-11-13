@@ -10,7 +10,7 @@ ${delta_section}
 
 ## Task
 Review all files listed above (scan-level — understand purpose and structure, not line-by-line deep review).
-Use the pre-collected diff and any file contents above. For files listed under "Files not pre-collected" or "Diffs not pre-collected", read them directly using Read or `git diff`. Only use Read/Bash for files not in the PR for cross-references.
+Use the pre-collected diff and any file contents above. For files listed under "Diffs not pre-collected", read them using `git diff`. Only use Read/Bash for files not in the PR for cross-references.
 Then assess:
 1. Does the PR accomplish what the description and commits claim?
 2. Is the scope focused or does it mix unrelated concerns?
@@ -31,4 +31,4 @@ Answer questions 1 and 2 in `assessment`. Put each thing the detailed reviewers 
 Do NOT write per-file findings — those come from the detailed review phase.
 
 ## Turn budget
-You have ${max_turns} turns.${omitted_guidance} Write your assessment file within the first few turns. For files listed under "Files not pre-collected," read only those critical to the holistic assessment.
+You have ${max_turns} turns.${omitted_guidance} Write your assessment file within the first few turns.

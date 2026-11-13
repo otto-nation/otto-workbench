@@ -282,7 +282,7 @@ class TestDroppedContentsAreDeclared:
         assert _build_omitted_guidance(pf) == ""
         asked = _build_omitted_guidance(pf, files=dropped_all)
         assert "Files not pre-collected" in asked
-        assert "File Triage entry saying what you read of it" in asked
+        assert "rewrite each one's File Triage entry with what you read of it" in asked
 
     def test_skip_omitted_does_not_silence_dropped_contents(self):
         """The effort preset declines the large files, not every file."""
@@ -291,7 +291,9 @@ class TestDroppedContentsAreDeclared:
         skipped = _build_omitted_guidance(pf, skip_omitted=True)
         assert "not reviewed at this effort level" in skipped
         assert "one-line File Triage entry" in skipped
-        assert "Files not pre-collected" not in skipped
-        assert "Files not pre-collected" in _build_omitted_guidance(
+        assert "do not read them" in skipped
+        dropped = _build_omitted_guidance(
             pf, skip_omitted=True, files=dropped_all,
         )
+        assert "first investigation" in dropped
+        assert "not reviewed at this effort level" not in dropped

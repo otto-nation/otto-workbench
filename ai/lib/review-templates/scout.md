@@ -34,4 +34,4 @@ Rules:
 - `focus`: 1–3 areas this PR most needs reviewed — the risks particular to this change, each with a `title`, a `rationale`, and the `paths` it concerns ([] when it spans the PR)
 
 ## Turn budget
-You have ${max_turns} turns.${omitted_guidance} Write your leads file within the first few turns. For files listed under "Files not pre-collected," read only those critical to spotting concerns.
+You have ${max_turns} turns.${omitted_guidance} Write your leads file within the first few turns.

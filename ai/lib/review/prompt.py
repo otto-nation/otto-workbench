@@ -46,7 +46,7 @@ from review.claims import has_claim_source
 from review.focus import areas_for_group, needs_derived, user_areas
 from review.grouping import hint_subjects, unpaired_subjects
 from review.prompt_sections import (
-    _build_delta_section, _build_env_section, _build_focus_section,
+    OmittedReads, _build_delta_section, _build_env_section, _build_focus_section,
     _build_issue_section, _build_omitted_guidance, _build_pr_header,
     _build_reply_threads_section, _build_reviews_section,
     _build_state_context_section, _build_test_hint_section, _is_incremental,
@@ -143,6 +143,7 @@ class PromptBuilder:
         skip_file_contents: bool = False,
         skip_project_context: bool = False,
         min_diff: int = MIN_DIFF_BYTES,
+        reads: OmittedReads = OmittedReads.REVIEW,
     ) -> "PromptBuilder":
         """Register the budgeted sections, shrunk to whatever room is left.
 
@@ -158,7 +159,8 @@ class PromptBuilder:
         `delta_section`, which are what shrink, and `env_section` and
         `omitted_guidance`, which describe them and would otherwise promise the
         agent data the prompt no longer carries. The latter two are rewritten
-        only if the caller registered them.
+        only if the caller registered them. `reads` is which phase is asking
+        about the omitted files, and is forwarded to `_build_omitted_guidance`.
         """
         plan = _fit_budget(
             job, self._vars, file_filter=file_filter,
@@ -188,6 +190,7 @@ class PromptBuilder:
                 job.preflight,
                 skip_omitted=EFFORT_PRESETS[job.effort].skip_omitted_files,
                 files=plan.files,
+                reads=reads,
             ))
         return self
 
@@ -666,7 +669,10 @@ def _prompt_single(job, common, extra, output):
         derive_focus=needs_derived(job.focus), has_areas=bool(job.focus),
         has_behaviour_source=review.behaviours.has_behaviour_source(job),
     ))
-    b.fit(job)
+    b.fit(
+        job,
+        reads=OmittedReads.SELF if job.mode is Mode.SELF else OmittedReads.REVIEW,
+    )
     return BuiltPrompt(b, "")
 
 
@@ -732,7 +738,7 @@ def _survey_prompt(job, common, extra, output):
     b.set("all_files_formatted", job.pr.all_files_formatted)
     b.set("focus_section", _build_focus_section(user_areas(job.focus), note=_SURVEY_FOCUS_NOTE))
     b.output(output, output_format=_artifact_format(job, extra))
-    b.fit(job)
+    b.fit(job, reads=OmittedReads.SURVEY)
     return BuiltPrompt(b, "")
 
 

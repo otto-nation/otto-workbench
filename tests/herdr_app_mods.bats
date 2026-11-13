@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for _herdr_app_install_mods — copy herdr-app mods with a per-file manifest.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/mods_install.sh ai/herdr/steps.sh ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/* ai/herdr/app/mods/prs-button/* lib/constants.sh lib/files.sh
+# select-on: ai/herdr/mods_install.sh ai/herdr/steps.sh ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/* ai/herdr/app/mods/prs-button/* ai/herdr/app/mods/queue/* lib/constants.sh lib/files.sh
 
 setup() {
   load 'test_helper'
@@ -74,6 +74,13 @@ _cksum() {
   grep -qx $'mod.json\t'"$(_cksum "$APP/mods/prs/mod.json")" "$APP/mods/prs/.workbench-install"
   grep -qx $'_lib/location.js\t'"$(_cksum "$APP/mods/prs/_lib/location.js")" "$APP/mods/prs/.workbench-install"
   [[ "$output" == *"herdr-app mod prs"* ]]
+  [ -f "$APP/mods/queue/main.js" ]
+  [ -f "$APP/mods/queue/mod.json" ]
+  [ -f "$APP/mods/queue/view.js" ]
+  [ -f "$APP/mods/queue/_lib/queue.js" ]
+  cmp -s "$SRC/queue/main.js" "$APP/mods/queue/main.js"
+  cmp -s "$SRC/queue/mod.json" "$APP/mods/queue/mod.json"
+  cmp -s "$SRC/_lib/queue.js" "$APP/mods/queue/_lib/queue.js"
 }
 
 # herdr docks a mod the first time it sees the folder, reading mod.json for where;

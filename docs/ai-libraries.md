@@ -7142,6 +7142,15 @@ re-point a root before invoking a subprocess — and an import-time constant
 would capture whichever value happened to be live when the first importer
 loaded this module.
 
+### core/workbench_rules.py
+
+Machine-local coding-rule layers: override files, generated workbench.md, AGENTS.md.
+
+`workbench-rules` is the CLI; this module owns the paths, the writes, and the
+domain aliases. The generated layer is under the state root, the operator's
+overrides under the config root, and the repo's `AGENTS.md` under the worktree
+`project_root` names — never a walk up looking for a `.git` directory.
+
 ### fix/baseline.py
 
 Telling a red verify run the pass caused from one it inherited.
@@ -9550,6 +9559,13 @@ Where a repo's knowledge base lives, and where a new one should go.
 Resolution consults an explicit `--wiki`, then the machine's vault, then the
 in-tree walk. Placement is the other half of that question: `init` will not
 guess between a committed base and a private one.
+
+### cli/workbench_rules.py
+
+`workbench-rules`: manage this machine's coding-rule layers.
+
+Argument parsing, output and exit codes. Writes live in `core.workbench_rules`.
+Flags, exit codes and examples are `CONTRACT` below.
 
 ### cli/workbench_statusline.py
 

@@ -4,7 +4,7 @@ description: Claude Code integration for coding guidelines, intelligent skills, 
 ---
 <!-- Generated from docs/ai-automation.src.md by bin/local/compose-docs — do not edit. -->
 
-<!-- doc-budget: 920 -->
+<!-- doc-budget: 925 -->
 
 # AI Automation
 
@@ -1485,6 +1485,42 @@ Query the unified trail root and AI usage across otto-workbench scripts.
 
 > record and prune write the trail under the state root (WORKBENCH_STATE_DIR, default ~/.local/state/workbench); nothing is written remotely.
 > stats reads the usage ledger, a separate monthly store under the same state root.
+
+### workbench-rules contract
+
+What `workbench-rules` writes (nothing remotely), what each exit means, and the next
+step after one, rendered from `cli.workbench_rules.CONTRACT` (`workbench-rules --help`
+prints the same text).
+
+#### workbench-rules contract
+
+Manage this machine's coding-rule layers, for whichever harnesses are installed.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | sync wrote workbench.md; add/list/status/open/project ran |  |
+| `1` | the rules tree is missing, AGENTS.md is missing, the cwd is not a repo, no worktree resolved, the instructions resolver failed, or $EDITOR could not be started |  |
+| `2` | no command, unknown command, missing args to add or project add, or unknown project subcommand |  |
+
+**Examples**
+
+- `workbench-rules sync` — regenerate workbench.md in the state root
+- `workbench-rules add go use-errors.As` — append a rule to go.local.md under the config root
+- `workbench-rules list` — list local rule files with line counts
+- `workbench-rules status` — show untracked local rule bodies
+- `workbench-rules open go` — open go.local.md in $EDITOR
+- `workbench-rules project add prefer-AGENTS.md` — append a convention to the current repo's AGENTS.md
+- `workbench-rules project show` — print the current repo's AGENTS.md
+
+> Writes nothing remotely.
+> add writes <domain>.local.md under the config root (WORKBENCH_CONFIG_DIR/overrides/ai/guidelines/rules, default ~/.config/workbench/overrides/ai/guidelines/rules).
+> sync writes workbench.md under the state root (WORKBENCH_STATE_DIR/rules, default ~/.local/state/workbench/rules).
+> project add appends to the current repo's AGENTS.md.
+> Any domain name is accepted (e.g. general, go). Aliases: ts/js → typescript, py → python, sh/shell → bash, yml → yaml.
 
 ### Running a branch's own libraries
 

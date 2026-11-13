@@ -1462,11 +1462,7 @@ the TRIGGER/SKIP/Use-when clause so the card stays short.
 
 ### `workbench-rules`
 
-Manage this machine's own coding-rule layers — the local additions and
-overrides that no harness ships. Installing the merged set is each harness's
-own sync step (`step_claude_rules` symlinks it into `~/.claude/rules/`,
-`step_pi_guidelines` concatenates it into `~/.pi/agent/AGENTS.md`), so a
-machine running either harness alone gets the same rules.
+Manage this machine's own coding-rule layers — local additions and overrides, for whichever harnesses are installed.
 
 ```
 workbench-rules <command> [<args>]
@@ -1485,6 +1481,49 @@ workbench-rules <command> [<args>]
 | `-h`, `--help` | Show help |
 
 Domain aliases: `ts`/`js` → `typescript`, `py` → `python`, `sh`/`shell` → `bash`, `yml` → `yaml`.
+
+**Global flags**
+
+| Flag | Description |
+|------|-------------|
+| `-V`, `--version` | Show version. |
+
+Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [contract](ai-automation.md#workbench-rules-contract)
+
+**`workbench-rules sync`** — Regenerate the machine's generated rule layer
+
+Takes no flags.
+
+**`workbench-rules add`** — Append a rule to the override layer's <domain>.local.md
+
+| Flag | Description |
+|------|-------------|
+| `[<domain>]` | Rule domain. |
+| `[<rule>]` | Rule text. |
+
+**`workbench-rules list`** — List all local rule files with line counts
+
+Takes no flags.
+
+**`workbench-rules status`** — Show local rules not tracked in workbench
+
+Takes no flags.
+
+**`workbench-rules open`** — Open a local rule file in $EDITOR
+
+| Flag | Description |
+|------|-------------|
+| `[<domain>]` | Domain to open. |
+
+**`workbench-rules project add`** — Append a convention to the current repo's AGENTS.md
+
+| Flag | Description |
+|------|-------------|
+| `[<rule>]` | Rule text. |
+
+**`workbench-rules project show`** — Display the current repo's AGENTS.md
+
+Takes no flags.
 
 ## Installed Tools
 

@@ -3,7 +3,7 @@ title: AI Automation
 description: Claude Code integration for coding guidelines, intelligent skills, and AI-powered git automation.
 ---
 
-<!-- doc-budget: 920 -->
+<!-- doc-budget: 925 -->
 
 # AI Automation
 
@@ -743,6 +743,14 @@ under the state root), what each exit means, and the next step after one,
 rendered from `cli.otto_log.CONTRACT` (`otto-log --help` prints the same text).
 
 <!-- include: bin/local/generate-cli-reference --tool otto-log --emit contract -->
+
+### workbench-rules contract
+
+What `workbench-rules` writes (nothing remotely), what each exit means, and the next
+step after one, rendered from `cli.workbench_rules.CONTRACT` (`workbench-rules --help`
+prints the same text).
+
+<!-- include: bin/local/generate-cli-reference --tool workbench-rules --emit contract -->
 
 ### Running a branch's own libraries
 

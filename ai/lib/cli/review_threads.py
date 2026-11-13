@@ -255,7 +255,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--commit", metavar="SHA",
                         help="The commit carrying a --settle --as fixed change, "
                              "for a fix that landed away from the line the thread "
-                             "is anchored to (default: inferred from that line). "
+                             "is anchored to. Without it nothing is inferred and the row "
+                             "is recorded with no commit cited. "
                              "Applies to every --settle in the run, so a batch "
                              "where only some threads need it takes two runs")
     add_trail_args(parser)

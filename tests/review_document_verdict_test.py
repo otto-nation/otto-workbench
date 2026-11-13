@@ -1,7 +1,8 @@
 """Tests for `review.verdict`: open counts, the derived call, and counts prose.
 
 The verdict follows the open findings, the run's status and its mode: a
-self-review or errored run states none, a partial run states no approval.
+self-review or errored run states none, a partial run or incomplete coverage
+states no approval.
 """
 
 from collections import Counter
@@ -16,14 +17,16 @@ from core.phases import Mode
 from pr.domains import ReviewStatus, ReviewVerdict
 from review.document import ReviewDocument, ReviewHeader
 from review.record import Disposition, LedgerLine
-from review.types import PriorDisposition, ReviewMeta, SEVERITIES
-from review.verdict import counts_prose, open_counts, resolve_review_verdict
+from review.types import CoverageGap, PriorDisposition, ReviewMeta, SEVERITIES, review_meta_from_dict
+from review.verdict import counts_prose, open_counts, resolve_review_verdict, verdict_line
 
 from review_document_support import _write
 from review_record_support import finding, record
 
 _PR_DONE = ReviewMeta(mode=Mode.PR, status=ReviewStatus.COMPLETED)
 _PR_PARTIAL = ReviewMeta(mode=Mode.PR, status=ReviewStatus.PARTIAL)
+_GAP = CoverageGap(kind="untriaged", subject="ui-console/CLAUDE.md")
+_PR_GAPS = ReviewMeta(mode=Mode.PR, status=ReviewStatus.COMPLETED, coverage_gaps=(_GAP,))
 
 
 def _doc(*findings, status=None, **fields) -> ReviewDocument:
@@ -180,6 +183,63 @@ class TestResolveVerdict:
         assert rec.unfixed == (
             rec.findings[0], rec.findings[2], rec.findings[3], rec.findings[4],
         )
+
+    def test_incomplete_coverage_withholds_approve(self):
+        assert resolve_review_verdict(record(), _PR_GAPS) is None
+
+    def test_incomplete_coverage_keeps_a_blocking_verdict(self):
+        assert resolve_review_verdict(
+            record(finding("S1", "smell", path="")), _PR_GAPS,
+        ) is ReviewVerdict.NEEDS_DISCUSSION
+
+    def test_self_mode_with_gaps_still_states_none(self):
+        assert resolve_review_verdict(
+            record(),
+            ReviewMeta(
+                mode=Mode.SELF, status=ReviewStatus.COMPLETED, coverage_gaps=(_GAP,),
+            ),
+        ) is None
+
+    def test_an_older_sidecar_without_coverage_gaps_still_approves(self):
+        meta = review_meta_from_dict({"mode": "pr", "status": "completed"})
+        assert meta.coverage_gaps == ()
+        assert resolve_review_verdict(record(), meta) is ReviewVerdict.APPROVE
+
+
+class TestVerdictLine:
+    def test_incomplete_coverage_states_approve_withheld(self):
+        line = verdict_line(record(), _PR_GAPS)
+        assert line.startswith("**No verdict.** Approve withheld — incomplete coverage:")
+        assert "(ui-console/CLAUDE.md)" in line
+        assert "Verdict: Approve" not in line
+
+    def test_a_blocking_verdict_keeps_its_line_and_names_the_gaps(self):
+        line = verdict_line(
+            record(finding("S1", "smell", path="")), _PR_GAPS,
+        )
+        assert line.startswith("**Verdict: Needs discussion.**")
+        assert "Coverage incomplete: no triage entry for 1 changed file (ui-console/CLAUDE.md)" in line
+        assert "Approve" not in line
+
+    def test_a_partial_clean_run_keeps_its_line_and_names_the_gaps(self):
+        line = verdict_line(
+            record(),
+            ReviewMeta(
+                mode=Mode.PR, status=ReviewStatus.PARTIAL, coverage_gaps=(_GAP,),
+            ),
+        )
+        assert line.startswith("**No verdict.**")
+        assert "cannot vouch that nothing blocks" in line
+        assert "Coverage incomplete:" in line
+        assert "Verdict: Approve" not in line
+
+    def test_self_mode_with_gaps_states_no_line(self):
+        assert verdict_line(
+            record(),
+            ReviewMeta(
+                mode=Mode.SELF, status=ReviewStatus.COMPLETED, coverage_gaps=(_GAP,),
+            ),
+        ) == ""
 
 
 class TestCountsProse:

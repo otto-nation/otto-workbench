@@ -23,7 +23,7 @@ from review.render import (
 )
 from core.phases import Mode
 from pr.domains import ReviewStatus
-from review.types import PhaseRun, PriorDisposition, ReviewMeta
+from review.types import CoverageGap, PhaseRun, PriorDisposition, ReviewMeta
 
 from review.claim_types import ClaimVerdict
 from review_behaviours_support import behaviour
@@ -124,6 +124,23 @@ def test_the_verdict_line_closes_the_summary():
     summary = text.split("## Summary", 1)[1].split("## ", 1)[0]
     assert summary.strip().endswith("**Verdict: Needs discussion.** 1 should-fix open.")
     assert "## Verdict" not in text
+
+
+def test_incomplete_coverage_withholds_approve_in_the_verdict_line():
+    rec = record(summary="Adds docs.")
+    text = render_review(
+        rec,
+        ReviewMeta(
+            mode=Mode.PR, status=ReviewStatus.COMPLETED, repo="a/b", pr_number=1,
+            coverage_gaps=(
+                CoverageGap(kind="untriaged", subject="ui-console/CLAUDE.md"),
+            ),
+        ),
+    )
+    summary = text.split("## Summary", 1)[1].split("## ", 1)[0]
+    assert "Approve withheld — incomplete coverage: no triage entry for" in summary
+    assert "(ui-console/CLAUDE.md)" in summary
+    assert "Verdict: Approve" not in text
 
 
 def test_prompt_text_states_no_verdict():

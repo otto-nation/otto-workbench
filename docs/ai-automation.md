@@ -1248,6 +1248,48 @@ Revise a PR description against the repo's PR template. Without --post the edit 
 > Without --post the edit is drafted to stderr; the bare invocation writes nothing on GitHub.
 > --dry-run prints the revision and records nothing, even with --post.
 
+#### pr stack contract
+
+The repo's PR stack graph (JSON)
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | the graph (or one PR's ladder) printed |  |
+| `1` | no checkout, or the graph could not be loaded |  |
+| `2` | bad pr-level flags |  |
+
+**Examples**
+
+- `pr stack` — the whole repo's graph
+- `pr stack --pr 42` — PR 42's ladder, bottom first
+
+> Writes nothing remotely. --repo-dir/--branch/--pr are global flags. stdout is {schema_version, trunk, nodes, cycles}.
+
+#### pr board contract
+
+The PR board document (JSON). Requires the global --schema-version (the versions in board.model.SCHEMA_VERSIONS: 1); without it exits 2.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | a document printed; per-repo failures live in repos[].error |  |
+| `1` | a checkout could not be read |  |
+| `2` | no --schema-version; --prs without --phase status; --offline without --phase listing |  |
+
+**Examples**
+
+- `pr --schema-version 1 board --checkout ~/git/o/r/main --phase listing` — print the listing document
+- `pr --schema-version 1 board --checkout ~/git/o/r/main --phase status --prs 12,15` — status for named PRs
+
+> Writes nothing remotely. --schema-version is a global flag. complete is false for status --prs and owed (clients merge by (repo, number)). Clients hide a row whose effective team lane is landed.
+
 #### pr gc contract
 
 Deletes stale review and PR-state artifacts on this machine. Reads GitHub (gh pr list/view) whether each PR ended; never writes to GitHub. Deletes local artifacts only.

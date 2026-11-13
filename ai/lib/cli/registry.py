@@ -179,10 +179,12 @@ _SPECS: tuple[CommandSpec, ...] = (
     # A read of GitHub and the local refs; no lock, no fetch of its own.
     CommandSpec("stack",    "Show the repo's PR stack graph (JSON)",
                 Need(LOCAL,  update=False, locks=NO_LOCK),
-                handler="cli.pr_stack:main"),
+                handler="cli.pr_stack:main",
+                contract="cli.pr_stack:CONTRACT"),
     CommandSpec("board",    "PR board document: facts, lanes, badges (JSON)",
                 Need(NONE, update=False, locks=NO_LOCK), takes_target=False,
-                handler="cli.pr_board:cmd_board"),
+                handler="cli.pr_board:cmd_board",
+                contract="cli.pr_board:CONTRACT"),
     # Orchestrates other commands across many PRs, so it resolves no target of
     # its own and declares no lock. `run` and `resume` hold every item's TARGET
     # and worktree CHECKOUT themselves, since only planning can name them;

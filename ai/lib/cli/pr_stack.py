@@ -1,22 +1,45 @@
 """`pr stack`: the repo's open PRs as a stack graph, as versioned JSON.
 
-Usage:
-  pr --schema-version 1 stack            # the whole repo's graph
-  pr --schema-version 1 stack --pr 42    # PR 42's ladder, bottom first
+Exit codes, remote writes and examples are `CONTRACT` below.
 """
 
 # doc-group: cli
 
 from __future__ import annotations
 
+import core.command_contract
 import core.report
 import core.serde
+from core.exit_codes import ExitCode
 from core.tool_parser import ToolParser
 import pr.context
 import pr.stack
 
 SCRIPT = "pr stack"
 SCHEMA_VERSION = 1
+
+CONTRACT = core.command_contract.CommandContract(
+    summary="The repo's PR stack graph (JSON)",
+    groups=(),
+    remote_effects=(),
+    exits=(
+        core.command_contract.ExitOutcome(
+            ExitCode.OK, "the graph (or one PR's ladder) printed"),
+        core.command_contract.ExitOutcome(
+            ExitCode.FAILURE, "no checkout, or the graph could not be loaded"),
+        core.command_contract.ExitOutcome(
+            ExitCode.USAGE, "bad pr-level flags"),
+    ),
+    examples=(
+        core.command_contract.Example("pr stack", "the whole repo's graph"),
+        core.command_contract.Example(
+            "pr stack --pr 42", "PR 42's ladder, bottom first"),
+    ),
+    notes=(
+        "Writes nothing remotely. --repo-dir/--branch/--pr are global flags. "
+        "stdout is {schema_version, trunk, nodes, cycles}.",
+    ),
+)
 
 
 def build_parser() -> ToolParser:

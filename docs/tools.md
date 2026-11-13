@@ -1038,6 +1038,8 @@ Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail — writes remot
 
 Takes no flags.
 
+Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [contract](ai-automation.md#pr-stack-contract)
+
 **`pr board`** — PR board document: facts, lanes, badges (JSON)
 
 | Flag | Description |
@@ -1047,6 +1049,8 @@ Takes no flags.
 | `--prs` `<n,n>` | Comma-separated PR numbers; only with --phase status. |
 | `--if-changed` `<stamp>` | Return the unchanged envelope when this stamp still matches. |
 | `--offline` | Listing from cache only; only with --phase listing. |
+
+Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [contract](ai-automation.md#pr-board-contract)
 
 **`pr batch plan`** — Show which PRs need which steps
 

@@ -1,10 +1,6 @@
 """`pr board`: the PR board document as versioned JSON.
 
-Usage:
-  pr board --schema-version 1 --checkout DIR --phase listing|status|owed
-  pr board --schema-version 1 --checkout DIR --phase status --prs N,N
-  pr board --schema-version 1 --checkout DIR --phase listing --offline
-  pr board --schema-version 1 --checkout DIR --phase listing --if-changed STAMP
+Exit codes, remote writes and examples are `CONTRACT` below.
 """
 
 # doc-group: cli
@@ -15,13 +11,61 @@ import argparse
 
 import board.document
 import board.flight
+import core.command_contract
 import core.log
 import core.report
 import pr.context
 from board.model import SCHEMA_VERSIONS, Phase
+from core.exit_codes import ExitCode
 from core.tool_parser import EXIT_USAGE, ToolParser, enum_arg
 
 SCRIPT = "pr board"
+_BOARD_VERSIONS = ", ".join(str(v) for v in SCHEMA_VERSIONS)
+_BOARD_LATEST = str(SCHEMA_VERSIONS[-1])
+
+CONTRACT = core.command_contract.CommandContract(
+    summary=(
+        f"The PR board document (JSON). Requires the global --schema-version "
+        f"(the versions in board.model.SCHEMA_VERSIONS: {_BOARD_VERSIONS}); "
+        f"without it exits 2."
+    ),
+    groups=(
+        core.command_contract.FlagGroup("Scope", ("--checkout", "--prs")),
+        core.command_contract.FlagGroup(
+            "Phase", ("--phase", "--offline", "--if-changed")),
+    ),
+    remote_effects=(),
+    exits=(
+        core.command_contract.ExitOutcome(
+            ExitCode.OK,
+            "a document printed; per-repo failures live in repos[].error"),
+        core.command_contract.ExitOutcome(
+            ExitCode.FAILURE, "a checkout could not be read"),
+        core.command_contract.ExitOutcome(
+            ExitCode.USAGE,
+            "no --schema-version; --prs without --phase status; "
+            "--offline without --phase listing",
+        ),
+    ),
+    examples=(
+        core.command_contract.Example(
+            f"pr --schema-version {_BOARD_LATEST} board "
+            f"--checkout ~/git/o/r/main --phase listing",
+            "print the listing document",
+        ),
+        core.command_contract.Example(
+            f"pr --schema-version {_BOARD_LATEST} board "
+            f"--checkout ~/git/o/r/main --phase status --prs 12,15",
+            "status for named PRs",
+        ),
+    ),
+    notes=(
+        "Writes nothing remotely. --schema-version is a global flag. "
+        "complete is false for status --prs and owed (clients merge by "
+        "(repo, number)). Clients hide a row whose effective team lane "
+        "is landed.",
+    ),
+)
 
 
 def _prs(text: str) -> list[int]:

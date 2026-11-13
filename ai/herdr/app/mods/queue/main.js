@@ -39,6 +39,7 @@ export default class Queue extends View {
   init(_props, cx) {
     this.acx = cx;
     this.byOn = new Map();
+    this.cancelErr = new Map();
     this.visible = false;
     this.inflight = false;
     this.again = false;
@@ -82,7 +83,9 @@ export default class Queue extends View {
 
   cancel(on, id) {
     this.acx.spawn(async (cx) => {
-      await cancelEntry(exec, { on, cwd: null }, id);
+      const r = await cancelEntry(exec, { on, cwd: null }, id);
+      if (r?.ok) this.cancelErr.delete(on);
+      else this.cancelErr.set(on, r?.error ?? "cancel failed");
       this.refresh(cx);
     });
   }
@@ -91,6 +94,7 @@ export default class Queue extends View {
     return this.targets().map((t) => ({
       on: t.on,
       result: this.byOn.get(t.on),
+      cancelError: this.cancelErr.get(t.on),
     }));
   }
 

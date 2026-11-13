@@ -10,6 +10,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import cli.contract_notes  # noqa: E402
 import cli.pr  # noqa: E402
 from cli.needs import NO_LOCK  # noqa: E402
 from cli.registry import COMMANDS, contract_for, need_for  # noqa: E402
@@ -87,3 +88,22 @@ def test_a_command_without_a_factory_still_answers_help(name, capsys):
     assert f"usage: pr {name}" in out
     if name == "fix":
         assert "--post" in out
+
+
+def _pushes_a_branch(contract) -> bool:
+    return any("refs/heads/" in effect.writes or "git push" in effect.how
+               for effect in contract.remote_effects)
+
+
+@pytest.mark.parametrize("name", sorted(COMMANDS))
+def test_every_pushing_command_says_how_to_tell_hung_from_slow(name):
+    """A contract that declares a branch push carries the one slow-or-hung note."""
+    contract = contract_for(COMMANDS[name])
+    if _pushes_a_branch(contract):
+        assert cli.contract_notes.PUSH_WAIT in contract.notes, name
+
+
+def test_the_pushing_set_is_not_empty():
+    """Guards the predicate: if no contract matched, the check above would hold nothing."""
+    pushing = {n for n, s in COMMANDS.items() if _pushes_a_branch(contract_for(s))}
+    assert {"push", "rebase", "create", "fix"} <= pushing

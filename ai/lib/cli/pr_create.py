@@ -25,6 +25,7 @@ import argparse
 import functools
 import sys
 
+import cli.contract_notes
 import core.command_contract
 import pr.context
 import pr.create
@@ -102,6 +103,7 @@ CONTRACT = core.command_contract.CommandContract(
             "skip the self-review gate; the reason is recorded on the trail"),
     ),
     notes=(
+        cli.contract_notes.PUSH_WAIT,
         "--dry-run takes no lock, pushes nothing and never calls gh.",
     ),
 )

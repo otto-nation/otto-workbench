@@ -38,6 +38,7 @@ import sys
 from pathlib import Path
 
 import batch.gc
+import cli.contract_notes
 import cli.dispatch
 from cli.registry import COMMANDS
 import core.command_contract
@@ -311,7 +312,7 @@ FIX_CONTRACT = core.command_contract.CommandContract(
     remote_effects=(
         core.command_contract.RemoteEffect(
             "--post",
-            "the review fix commit, the CI fix, then the PR description",
+            "the review and CI fix commits pushed to refs/heads/<branch>, then the PR description",
             "origin and GitHub", _POST_HOW, _POST_REFUSED),
     ),
     exits=(
@@ -361,6 +362,7 @@ FIX_CONTRACT = core.command_contract.CommandContract(
         "A self-review files no GitHub review. argv other than --post is "
         "not forwarded to describe.",
         "`--force` still overrides supersession; prefer `--force-superseded`.",
+        cli.contract_notes.PUSH_WAIT,
     ),
 )
 

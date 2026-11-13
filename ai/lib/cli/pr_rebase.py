@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import sys
 
+import cli.contract_notes
 import cli.locks
 import cli.needs
 import core.command_contract
@@ -149,7 +150,10 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.Example("pr rebase --onto origin/release/1.2", "rebase onto a ref, used verbatim"),
         core.command_contract.Example("pr rebase --force-landed --fix", "rebase even though the work landed"),
     ),
-    notes=("`--force` is a deprecated alias of `--force-landed`.",),
+    notes=(
+        "`--force` is a deprecated alias of `--force-landed`.",
+        cli.contract_notes.PUSH_WAIT,
+    ),
     json_output=core.command_contract.JsonOutput(
         enums=(
             core.command_contract.EnumDoc("classes", tuple(

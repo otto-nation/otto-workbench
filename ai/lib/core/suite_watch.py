@@ -28,6 +28,7 @@ from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+import core.heartbeat
 import core.signal_relay
 import core.timeouts
 
@@ -75,17 +76,7 @@ def heartbeat_interval(raw: str | None = None) -> float:
     treating it as disable would silence the heartbeat for a caller that
     meant to inherit.
     """
-    if raw is None:
-        raw = os.environ.get(ENV_INTERVAL)
-    if raw is None or raw == "":
-        return DEFAULT_INTERVAL
-    try:
-        value = float(raw)
-    except ValueError:
-        raise ValueError(f"{ENV_INTERVAL} must be a number, got {raw!r}") from None
-    if value < 0:
-        raise ValueError(f"{ENV_INTERVAL} must be >= 0, got {raw!r}")
-    return value
+    return core.heartbeat.interval_from_env(ENV_INTERVAL, DEFAULT_INTERVAL, raw)
 
 
 def parse_etime(text: str) -> int:

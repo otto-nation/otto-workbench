@@ -30,3 +30,14 @@ setup() {
     "$REPO_ROOT/git/hooks/pre-push-workbench"
   [ "$status" -eq 0 ]
 }
+
+@test "captured pre-push steps run through run_bounded" {
+  run grep -F 'run_bounded "$deadline" "$beat" "$label"' "$REPO_ROOT/git/hooks/pre-push-workbench"
+  [ "$status" -eq 0 ]
+}
+
+@test "pre-push treats 124 as a timeout only when the marker exists" {
+  run grep -E 'status == 124' "$REPO_ROOT/git/hooks/pre-push-workbench"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *'$out.timeout'* ]]
+}

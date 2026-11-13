@@ -16,6 +16,9 @@ setup() {
   common_setup
 
   HOOK="$REPO_ROOT/git/hooks/pre-push-workbench"
+  RUN_BOUNDED_SH="$REPO_ROOT/lib/run_bounded.sh"
+  # shellcheck source=../lib/run_bounded.sh
+  . "$RUN_BOUNDED_SH"
 
   # The function reads REPO_ROOT to find the branch, so it points at the
   # fixture repo for the duration — not at this checkout.
@@ -101,9 +104,13 @@ stub_gh_empty() {
 
 @test "no gh installed leaves the push alone" {
   # A machine without the CLI must push exactly as it did before.
+  # This inner shell does not inherit setup's sourced functions, and CI's gh
+  # lives on /usr/bin — so command -v succeeds and _run_briefly runs. Source
+  # the same lib setup does, or run_bounded is missing only on that path.
   run env PATH="/usr/bin:/bin" bash -c "
     warn() { printf 'WARN: %s\n' \"\$*\"; }
     REPO_ROOT='$REPO_ROOT'; GIT_REMOTE=origin
+    . '$RUN_BOUNDED_SH'
     $(sed -n '/^_run_briefly()/,/^}/p' "$HOOK")
     $(sed -n '/^_warn_if_pr_is_open()/,/^}/p' "$HOOK")
     _warn_if_pr_is_open"

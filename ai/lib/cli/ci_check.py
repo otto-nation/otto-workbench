@@ -18,6 +18,7 @@ from __future__ import annotations
 import sys
 
 import cli.boundary
+import cli.contract_notes
 import cli.locks
 import cli.needs
 import core.command_contract
@@ -109,6 +110,7 @@ CONTRACT = core.command_contract.CommandContract(
             "fix and push without rebasing first"),
     ),
     notes=(
+        cli.contract_notes.PUSH_WAIT,
         "--no-verify here skips the verify gate (an agent exercising each "
         "fix), not git's pre-push hook.",
         "--fix without --post still rebases locally when behind and commits; "

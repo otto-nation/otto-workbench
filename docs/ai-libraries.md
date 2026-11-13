@@ -6042,6 +6042,14 @@ caller running off the main thread. Every waiter here polls `LOCK_EX|LOCK_NB`
 until the deadline, then proceeds unlocked so the work still happens — a
 timeout is not a refusal to fetch or to build the board.
 
+### core/heartbeat.py
+
+How often a long wait reports itself, read from the environment.
+
+One parser for every heartbeat interval — the test-suite watcher's
+`TEST_HEARTBEAT_SECS` and the push's `WORKBENCH_PUSH_HEARTBEAT_SECS` — so the
+two agree on what empty, zero and garbage mean.
+
 ### core/job_slots.py
 
 A machine-wide pool of parallelism slots, shared by suites and agents.
@@ -7794,7 +7802,8 @@ prints for minutes is visible, not captured into silence until git exits — and
 the same bytes are kept for classification and the failure artifact. Before git
 runs, `plan_line` says what the push will do. A trail records it as a `push`
 span (the wait) plus whether `--no-verify` skipped the hooks. There is no timeout
-that would kill a legitimate long hook. Because the output has already been on
+that would kill a legitimate long hook. A heartbeat (`WORKBENCH_PUSH_HEARTBEAT_SECS`,
+default 60, 0 off) says the push is still waiting. Because the output has already been on
 screen once, `report` labels its excerpt of it as a replay rather than printing
 the hook's failure a second time unannounced.
 
@@ -8642,6 +8651,13 @@ Manages local state in <state_dir()>/pr/<repo-key>-<branch-slug>/state.json, key
 on the run's target rather than on the checkout it was invoked from.
 
 Exit codes, remote writes and examples are `CONTRACT` below.
+
+### cli/contract_notes.py
+
+Prose more than one command contract carries, written once.
+
+`PUSH_WAIT` goes on every contract that pushes a branch, so each one says the
+same thing about a push that seems stuck.
 
 ### cli/dispatch.py
 

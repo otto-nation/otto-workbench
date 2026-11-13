@@ -694,8 +694,10 @@ def plan_line(wt_path: str | Path, *, sha: str, branch: str, remote: str,
     lease = _lease_on(args)
     on_top = ""
     range_base = lease if lease else tracked
-    # Local refs only: a fetch here would be a network round trip on a line that
-    # only needs to say how many commits the push is about to send.
+    # Local refs only: a fetch here would be a network round trip. With a
+    # resolvable base the count is every commit on top of that base (a stale
+    # local base overcounts); otherwise it is what the push sends past the
+    # lease or tracked ref.
     if base_ref and git.client.ok(
         "rev-parse", "--verify", "--quiet", f"{base_ref}^{{commit}}", cwd=wt_path,
     ):

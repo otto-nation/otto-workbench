@@ -104,19 +104,8 @@ def test_push_exit_codes():
 
 
 def _contract_json_names(cls: type) -> list[str]:
-    needle = f": {cls.__name__} ("
-    line = next(
-        ln for ln in core.command_contract.render_help(cli.pr_rebase.CONTRACT).splitlines()
-        if needle in ln
-    )
-    inner = line[line.index("(") + 1: line.rindex(")")]
-    names: list[str] = []
-    for part in inner.split(", "):
-        if " — " in part:
-            names.append(part.split(" — ", 1)[0])
-        elif part.isidentifier():
-            names.append(part)
-    return names
+    report = next(r for r in cli.pr_rebase.CONTRACT.json_output.reports if r.cls is cls)
+    return list(core.command_contract._json_field_names(report.cls))
 
 
 def _emit_keys(report, capsys) -> list[str]:

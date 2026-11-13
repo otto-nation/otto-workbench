@@ -751,10 +751,12 @@ Items end `done` or `needs_session` with `findings` (`batch/findings.py`). A
 stored waiting v1 run converts on `resume` (one-way). Report keys: `run` (`id`,
 `status`, `active`, `exit_hint`, `hint`, `pending_requests`, `failed_requests`),
 `counts`, `items` (non-terminal), `github`, `sessions` (`pr batch report` only).
-`run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`.
+`resume` replays `--focus`. `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`.
 `github` is omitted under `--offline`; keys and checkout rules are in
 [`batch/live.py`](ai-libraries.md#batchlivepy). Step output stays in the run's
-`logs/`. Admission is [`batch/machine.py`](ai-libraries.md#batchmachinepy).
+`logs/`. Admission is [`batch/machine.py`](ai-libraries.md#batchmachinepy): `batch.pool_max`
+(2) caps concurrency, `batch.pool_default` (1) applies without host metrics, and
+`batch.mem_reserve`, `batch.cpu_pressure_max`, `batch.mem_pressure_max` gate on pressure.
 State lives under `~/.local/state/workbench/batch/<run-id>/`; `pr gc` removes
 finished runs and orphaned `refs/pr-batch/` namespaces
 ([`batch/gc.py`](ai-libraries.md#batchgcpy)).

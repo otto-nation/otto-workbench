@@ -38,3 +38,9 @@ def test_undeclared_exit_warns_without_pytest(monkeypatch, capsys):
 def test_no_contract_skips_the_check():
     spec = command_spec(contract="")
     assert cli.pr.checked_exit(spec, 99) == 99
+
+
+def test_dispatch_checks_the_handlers_return(monkeypatch):
+    src = Path(cli.pr.__file__).read_text()
+    body = src[src.index("def _dispatch"):]
+    assert "return checked_exit(spec, code)" in body.split("\ndef ")[0]

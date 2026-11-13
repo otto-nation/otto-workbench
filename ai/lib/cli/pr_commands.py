@@ -114,7 +114,7 @@ GC_CONTRACT = core.command_contract.CommandContract(
             ExitCode.USAGE, "bad pr-level flags"),
         core.command_contract.ExitOutcome(
             ExitCode.TEMPFAIL, _GC_BUDGET,
-            (core.command_contract.NextStep("", (_GC_BUDGET,)),),
+            (core.command_contract.NextStep("", ("pr gc",)),),
         ),
     ),
     examples=(

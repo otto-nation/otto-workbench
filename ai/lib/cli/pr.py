@@ -556,11 +556,11 @@ def _dispatch(args, ctx: pr.context.ResolvedContext, extra: list[str], global_ar
                 **({"install_signal_handler": False}
                    if spec.handler == "cli.ci_check:main" else {}),
             )
+        return checked_exit(spec, code)
     except Exception as exc:
         cli.boundary.reraise(trail, exc)
     finally:
         trail.finish()
-    return checked_exit(spec, code)
 
 
 def _held_scopes(spec, extra: list[str], ctx: pr.context.ResolvedContext,

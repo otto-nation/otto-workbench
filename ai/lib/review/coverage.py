@@ -57,6 +57,12 @@ def required_triage(job: ReviewJob) -> tuple[str, ...]:
     return tuple(sorted(required))
 
 
+def missing_triage(required: Sequence[str], entries) -> list[str]:
+    """Required paths with no triage entry, compared on normalised paths."""
+    triaged = {_norm_path(entry.path) for entry in entries}
+    return [path for path in required if _norm_path(path) not in triaged]
+
+
 def triage_problems(
     artifact: ReviewArtifact, required: Sequence[str],
 ) -> tuple[IngestError, ...]:
@@ -66,8 +72,7 @@ def triage_problems(
     `required` (self-review) is a complete triage. Extra entries are not
     errors.
     """
-    triaged = {_norm_path(entry.path) for entry in (artifact.triage or ())}
-    missing = [path for path in required if _norm_path(path) not in triaged]
+    missing = missing_triage(required, artifact.triage or ())
     if not missing:
         return ()
     return (IngestError(
@@ -85,11 +90,9 @@ def coverage_gaps(job: ReviewJob, record: ReviewRecord) -> tuple[CoverageGap, ..
     """
     if job.mode is Mode.SELF:
         return ()
-    triaged = {_norm_path(entry.path) for entry in (record.triage or ())}
     gaps: list[CoverageGap] = [
         CoverageGap(kind=CoverageGapKind.UNTRIAGED, subject=path)
-        for path in required_triage(job)
-        if path not in triaged
+        for path in missing_triage(required_triage(job), record.triage or ())
     ]
     for area in record.focus:
         if area.source is not FocusSource.USER or area.coverage:

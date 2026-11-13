@@ -9,14 +9,14 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from core.phases import Phase
-from review.prompt_stats import log_prompt_size
-from review.registry import build_prompt
-from review.store import StoredReview
-from review.types import ReviewMeta
-from conftest import TEST_MODEL
-from review_prompt_support import _make_job, _make_preflight
-from review_record_support import finding, record
+from core.phases import Phase  # noqa: E402
+from review.prompt_stats import log_prompt_size  # noqa: E402
+from review.registry import build_prompt  # noqa: E402
+from review.store import StoredReview  # noqa: E402
+from review.types import ReviewMeta  # noqa: E402
+from conftest import TEST_MODEL  # noqa: E402
+from review_prompt_support import _make_job, _make_preflight  # noqa: E402
+from review_record_support import finding, record  # noqa: E402
 
 
 def _job(tmp_path, *, started_at=None):

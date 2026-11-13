@@ -18,12 +18,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import core.proc
 import server
+import cli.schema
 from server import (
     WORKBENCH_DIR,
     _answer_tool_call,
     _args_to_cli,
     _described,
     _extract_json,
+    _ok_codes,
     _tool_schema,
     discover_tools,
 )
@@ -125,6 +127,30 @@ class TestArgsToCLI:
         args = _args_to_cli({"branch": None}, schema)
         assert args == []
 
+    def test_pr_command_is_a_positional_not_a_flag(self):
+        schema = cli.schema.tool_schema()["input_schema"]
+        args = _args_to_cli({"command": "gc", "dry_run": True}, schema)
+        assert args == ["gc", "--dry-run"]
+        assert "--command" not in args
+
+    def test_positional_none_is_skipped(self):
+        schema = {"properties": {
+            "command": {"type": "string", "x-positional": True},
+            "branch": {"type": "string"},
+        }}
+        args = _args_to_cli({"command": None, "branch": "main"}, schema)
+        assert args == ["--branch", "main"]
+
+    def test_positionals_emit_first_in_schema_order(self):
+        schema = {"properties": {
+            "command": {"type": "string", "x-positional": True},
+            "target": {"type": "string", "x-positional": True},
+            "fix": {"type": "boolean"},
+        }}
+        args = _args_to_cli(
+            {"fix": True, "target": "HEAD", "command": "gc"}, schema)
+        assert args == ["gc", "HEAD", "--fix"]
+
 
 def _pr_call_schema(*, rebase_ok=(0, 3, 4), extra_ok=()):
     """A `pr` tool schema whose rebase contract lists *rebase_ok*."""
@@ -197,6 +223,14 @@ class TestContractExitCodes:
         for args in ({"command": "bogus"}, {}):
             answer = _answer_tool_call("pr", _pr_call_schema(), args, result)
             assert answer.is_error is True
+
+    def test_ok_codes_still_read_command_from_the_arguments_dict(self):
+        arguments = {"command": "rebase", "dry_run": True}
+        schema = _pr_call_schema()
+        _args_to_cli(arguments, schema["input_schema"])
+
+        assert arguments["command"] == "rebase"
+        assert 3 in _ok_codes(schema, arguments)
 
     def test_timeout_is_still_an_error_even_if_listed_ok(self):
         schema = _pr_call_schema(extra_ok=(core.proc.TIMEOUT_RETURNCODE,))

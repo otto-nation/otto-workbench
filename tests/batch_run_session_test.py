@@ -1,6 +1,6 @@
 """The run-session recipe and `note`'s checks.
 
-Revert: in recipe, use `run.items[0].repo_dir` instead of checkout_of(run); in note,
+Revert: in recipe, use `run.items[0].repo_dir` instead of _checkout(run); in note,
 skip the finding_keys membership check.
 """
 

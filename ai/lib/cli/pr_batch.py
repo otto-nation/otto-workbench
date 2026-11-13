@@ -529,7 +529,8 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox,
         selected = {s.key: s.steps for s in args.select} if args.select else None
         dirs = sorted({r.repo_dir for r in rows}) or (args.checkout or [])
         checkouts = (sorted({os.path.abspath(d) for d in args.checkout}) if args.checkout
-                     else sorted({r.repo_dir for r in rows}))
+                     else sorted({r.repo_dir for r in rows})
+                     or sorted({os.path.abspath(d) for d in plan.ref_dirs}))
         cfg = _cfg(dirs)
         run = batch.scheduler.new_run(rows, steps=args.steps, selected=selected,
                                       pool=batch.admission.ceiling(args.pool, cfg),

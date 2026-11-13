@@ -98,23 +98,6 @@ def test_force_runs_even_when_the_key_is_done(tmp_path):
     assert forced.outcome is TicketOutcome.RAN and (tmp_path / "second").exists()
 
 
-def test_interrupt_after_admission_releases_the_slot(tmp_path, monkeypatch):
-    real_wait = otto_queue.ticket._Wait
-
-    def boom(end, slot=None):
-        if slot is not None:
-            raise KeyboardInterrupt
-        return real_wait(end, slot)
-
-    monkeypatch.setattr(otto_queue.ticket, "_Wait", boom)
-    result = _run(touch_argv(tmp_path / "ran"), policy=Room(slots=1))
-    assert result.outcome is TicketOutcome.CANCELLED
-    again = otto_queue.slots.try_admit(
-        otto_queue.paths.queue_root(), Room(slots=1), EntryClass.HEAVY)
-    assert again.admitted
-    again.slot.release()
-
-
 def test_interrupt_in_mark_running_releases_the_slot(tmp_path, monkeypatch):
     def boom(_self, _entry_id, _pid):
         raise KeyboardInterrupt

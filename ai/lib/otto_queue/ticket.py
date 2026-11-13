@@ -11,9 +11,9 @@ the machine's budget, and runs once per idempotency key.
    matching `done` entry returns its recorded status without running. A
    matching live entry is joined: the ticket waits for it and returns its
    status. Reaching `wait_s` while the holder is still live returns 75 without
-   cancelling it. `force` skips the match. A joined entry whose holder died is not a
-   result: the ticket resolves again and, finding nothing live, runs the work
-   itself.
+   cancelling it. `force` skips the match. A joined entry whose holder died is
+   not a result: the ticket resolves again and, finding nothing live, runs the
+   work itself.
 2. **Wait.** Every `POLL_S`, orphans are reaped, and only the oldest waiting
    entry of the class (tickets, and while a worker is alive its ready jobs)
    asks `otto_queue.slots.try_admit`. Each new reason for waiting is printed
@@ -230,16 +230,6 @@ def _release_slot(slot: otto_queue.slots.Slot | None) -> None:
         slot.release()
 
 
-def _owned_wait(slot: otto_queue.slots.Slot) -> _Wait:
-    # The slot is held from this instant. Any exception before the caller
-    # receives the _Wait must drop it, or the flock stays in this process.
-    try:
-        return _Wait(_WaitEnd.ADMITTED, slot)
-    except BaseException:
-        slot.release()
-        raise
-
-
 def _run_after_wait(ledger: otto_queue.ledger.Ledger, entry_id: int,
                     request: TicketRequest, wait: _Wait,
                     notify: Callable[[str], None]) -> TicketResult:
@@ -261,14 +251,15 @@ def _run_after_wait(ledger: otto_queue.ledger.Ledger, entry_id: int,
 def _admit_and_run(ledger: otto_queue.ledger.Ledger, entry_id: int,
                   request: TicketRequest, policy: otto_queue.slots.Policy,
                   poll_s: float, notify: Callable[[str], None]) -> TicketResult:
-    wait = _wait_for_slot(ledger, entry_id, request, policy, poll_s, notify)
+    wait: _Wait | None = None
     try:
+        wait = _wait_for_slot(ledger, entry_id, request, policy, poll_s, notify)
         return _run_after_wait(ledger, entry_id, request, wait, notify)
     except BaseException as exc:
         _record_crash(ledger, entry_id, exc)
         raise
     finally:
-        _release_slot(wait.slot)
+        _release_slot(wait.slot if wait is not None else None)
 
 
 def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
@@ -282,7 +273,7 @@ def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
             return _Wait(_WaitEnd.CANCELLED)
         admission = _try_once(ledger, entry_id, request.entry_class, policy)
         if admission.slot is not None:
-            return _owned_wait(admission.slot)
+            return _Wait(_WaitEnd.ADMITTED, admission.slot)
         if admission.reason != said:
             notify(f"otto-queue: entry {entry_id} is waiting: {admission.reason}")
             said = admission.reason

@@ -12,7 +12,9 @@ if str(LIB_DIR) not in sys.path:
 
 from core.phases import Mode, Phase
 from review.budget import fit_files
-from review.prompt_sections import OmittedReads, _build_omitted_guidance
+from review.prompt_sections import (
+    OmittedReads, _build_env_section, _build_omitted_guidance,
+)
 from review.registry import build_prompt
 
 from review_contracts_support import AGENTS_DIR, TEMPLATE_DIR
@@ -27,6 +29,7 @@ _GONE = (
     "use Read only for files NOT in the PR",
     "read only those critical",
     "must be read directly from this path",
+    "Read every file listed under",
 )
 _GROUP_EXTRA = {
     "group_idx": 1, "group_count": 1, "group_name": "core",
@@ -131,3 +134,17 @@ def test_old_omitted_phrases_are_gone():
 def test_templates_do_not_name_files_not_pre_collected():
     for path in sorted(TEMPLATE_DIR.glob("*.md")):
         assert "Files not pre-collected" not in path.read_text()
+
+
+@pytest.mark.parametrize("omitted", [[], ["big.go"]])
+def test_env_section_only_says_where_omitted_files_are(omitted):
+    """Neither omission branch of the env section instructs a read.
+
+    `_build_omitted_guidance` owns what a phase does with omitted files; the
+    env section is phase-blind, so it may only say where they live. The empty
+    case drives the branch where the budget dropped every file.
+    """
+    pf = _make_preflight(file_contents={"a.py": "x", "b.py": "y"}, omitted_files=omitted)
+    env = _build_env_section("/wt", pf, files=_dropped(pf))
+    assert 'Files listed under "Files not pre-collected" are at this path.' in env
+    assert "Read every file" not in env

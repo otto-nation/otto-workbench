@@ -144,9 +144,9 @@ _plist() {
   grep -qx 'RandomizedDelaySec=__DELAY__' "$template"
   grep -qx 'FixedRandomDelay=true' "$template"
   grep -qx 'Persistent=true' "$template"
-  ! grep -q '^OnActiveSec=' "$template"
-  ! grep -q '^OnUnitActiveSec=' "$template"
-  ! grep -q '^On\(Startup\|Boot\)Sec=' "$template"
+  run ! grep -q '^OnActiveSec=' "$template"
+  run ! grep -q '^OnUnitActiveSec=' "$template"
+  run ! grep -q '^On\(Startup\|Boot\)Sec=' "$template"
 }
 
 @test "systemd units that match their templates are left alone" {

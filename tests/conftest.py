@@ -1320,7 +1320,8 @@ def command_spec(**overrides):
     from cli.registry import CommandSpec
 
     fields = dict(name="probe", help="a probe",
-                  need=Need(REMOTE, update=False, locks=NO_LOCK))
+                  need=Need(REMOTE, update=False, locks=NO_LOCK),
+                  contract="cli.pr_commands:STATUS_CONTRACT")
     fields.update(overrides)
     return CommandSpec(**fields)
 

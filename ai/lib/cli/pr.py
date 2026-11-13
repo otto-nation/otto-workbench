@@ -357,9 +357,7 @@ def help_parser(name: str) -> argparse.ArgumentParser:
     and the schema render from.
     """
     parser = _reference_parser(name, core.tool_parser.subparsers(_build_parser()))
-    contract = contract_for(COMMANDS[name])
-    if contract is not None:
-        core.command_contract.attach_help(parser, contract)
+    core.command_contract.attach_help(parser, contract_for(COMMANDS[name]))
     return parser
 
 

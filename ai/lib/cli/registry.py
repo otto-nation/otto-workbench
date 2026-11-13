@@ -98,19 +98,19 @@ class CommandSpec:
     * ``contract`` — ``"<module>:<attr>"`` naming the command's
       `core.command_contract.CommandContract`, kept in the module that owns
       its flags. A string for the reason ``handler`` is one: `pr --help`
-      imports no delegate. `tests/cli_contract_test.py` fails for a spec
-      without one unless it is listed as not yet migrated.
+      imports no delegate. No default: a command that promises nothing fails
+      construction.
     """
 
     name: str
     help: str
     need: Need | Callable[[Sequence[str]], Need]
+    contract: str
     script: str | None = None
     takes_target: bool = True
     handler: str | None = None
     parses_own_argv: bool = False
     parser: str | None = None
-    contract: str | None = None
 
 
 # `ci_need`, `comments_need` and `rebase_need` live in `cli.needs` because the
@@ -217,10 +217,8 @@ def need_for(spec: CommandSpec, argv: Sequence[str]) -> Need:
     return spec.need(argv) if callable(spec.need) else spec.need
 
 
-def contract_for(spec: CommandSpec) -> "CommandContract | None":
-    """The contract *spec* names, imported now; None for a command not yet migrated."""
-    if spec.contract is None:
-        return None
+def contract_for(spec: CommandSpec) -> "CommandContract":
+    """The contract *spec* names, imported now."""
     module, _, attr = spec.contract.partition(":")
     return getattr(importlib.import_module(module), attr)
 

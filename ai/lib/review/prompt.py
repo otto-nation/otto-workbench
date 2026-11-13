@@ -571,35 +571,25 @@ _REREVIEW_CTX: dict[Mode, str] = {
 
 # The independent-review preamble a full-review prior opens with. Same-HEAD,
 # focus-changed, and unreachable-prior runs are all full reviews: the earlier
-# review's checks are not evidence. Spelled out per mode, plus a group variant,
-# for the same reason `_REREVIEW_CTX` is.
+# review's checks are not evidence. One sentence, varied only by whose review it
+# was and what the agent is asked to cover.
+def _independent_ctx(review_of: str, earlier: str, scope: str) -> str:
+    return (
+        f"This is an independent full review{review_of}. The findings below are from "
+        f"an earlier {earlier} and are listed for continuity only, so their IDs, sids "
+        "and declines carry over. Do not cite that review's checks or conclusions as "
+        "evidence: re-verify each finding against the code, carry forward the ones "
+        "still present, leave fixed ones out of `findings`, and review "
+        f"{scope} as if no earlier review existed."
+    )
+
+
 _INDEPENDENT_CTX: dict[Mode, str] = {
-    Mode.PR: (
-        "This is an independent full review. The findings below are from an earlier "
-        "review and are listed for continuity only, so their IDs, sids and declines "
-        "carry over. Do not cite that review's checks or conclusions as evidence: "
-        "re-verify each finding against the code, carry forward the ones still present, "
-        "leave fixed ones out of `findings`, and review every changed file as if no "
-        "earlier review existed."
-    ),
-    Mode.SELF: (
-        "This is an independent full review of your own code. The findings below are "
-        "from an earlier self-review and are listed for continuity only, so their IDs, "
-        "sids and declines carry over. Do not cite that review's checks or conclusions "
-        "as evidence: re-verify each finding against the code, carry forward the ones "
-        "still present, leave fixed ones out of `findings`, and review every changed "
-        "file as if no earlier review existed."
-    ),
+    Mode.PR: _independent_ctx("", "review", "every changed file"),
+    Mode.SELF: _independent_ctx(" of your own code", "self-review", "every changed file"),
 }
 
-_INDEPENDENT_GROUP_CTX = (
-    "This is an independent full review. The findings below are from an earlier "
-    "review and are listed for continuity only, so their IDs, sids and declines "
-    "carry over. Do not cite that review's checks or conclusions as evidence: "
-    "re-verify each finding against the code, carry forward the ones still present, "
-    "leave fixed ones out of `findings`, and review every file in this group as if "
-    "no earlier review existed."
-)
+_INDEPENDENT_GROUP_CTX = _independent_ctx("", "review", "every file in this group")
 
 _SAME_HEAD_CLAUSE = (
     "The earlier review read this same commit; its conclusions are not a "

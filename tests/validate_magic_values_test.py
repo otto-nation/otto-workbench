@@ -11,7 +11,7 @@ SCRIPT = REPO_ROOT / "bin" / "local" / "validate-magic-values"
 
 vm = load_script("validate_magic_values", SCRIPT)
 
-EXITS = vm.resolve_owners(str(REPO_ROOT), vm.EXIT_OWNERS)
+EXITS = vm.resolve_exits(str(REPO_ROOT))
 CAPS = vm.resolve_owners(str(REPO_ROOT), vm.CAP_OWNERS)
 
 
@@ -26,9 +26,11 @@ def _check(tmp_path, source):
 
 def test_the_watched_values_come_from_the_owning_modules():
     """The check must not carry its own copy of a number it polices."""
+    import core.exit_codes
     import core.proc
     import core.trail
     assert EXITS[core.proc.INTERRUPT_RETURNCODE] == ["proc.INTERRUPT_RETURNCODE"]
+    assert EXITS[int(core.exit_codes.ExitCode.TEMPFAIL)] == ["ExitCode.TEMPFAIL"]
     assert "trail.EXCERPT_LIMIT" in CAPS[core.trail.EXCERPT_LIMIT]
 
 
@@ -170,6 +172,34 @@ def test_a_module_level_constant_is_where_a_number_belongs(tmp_path):
 
 def test_an_annotated_constant_is_a_constant_too(tmp_path):
     assert _check(tmp_path, "INTERRUPT_RETURNCODE: int = 130\n") == []
+
+
+def test_an_exitcode_enum_member_is_suggested(tmp_path):
+    """75 in an exit context names ExitCode.TEMPFAIL.
+
+    `_exit_positions` does not treat a bare `return 75` as an exit
+    context; `sys.exit(75)` is one.
+    """
+    violations = _check(tmp_path, """
+def handler():
+    sys.exit(75)
+""")
+    assert [(v.line, v.found) for v in violations] == [(3, "75")]
+    assert violations[0].suggestion == "ExitCode.TEMPFAIL"
+
+
+def test_interrupt_still_suggests_the_proc_owner(tmp_path):
+    """CANCELLED aliases 130; the check still names one owner."""
+    violations = _check(tmp_path, """
+def handler():
+    sys.exit(130)
+""")
+    assert [v.suggestion for v in violations] == ["proc.INTERRUPT_RETURNCODE"]
+
+
+def test_argparse_and_shell_exits_are_not_watched(tmp_path):
+    """0, 1 and 2 stay unflagged even though ExitCode names them."""
+    assert _check(tmp_path, "sys.exit(0)\nsys.exit(1)\nsys.exit(2)\n") == []
 
 
 # ── reporting ────────────────────────────────────────────────────────────

@@ -4903,9 +4903,9 @@ the machine's budget, and runs once per idempotency key.
    matching `done` entry returns its recorded status without running. A
    matching live entry is joined: the ticket waits for it and returns its
    status. Reaching `wait_s` while the holder is still live returns 75 without
-   cancelling it. `force` skips the match. A joined entry whose holder died is not a
-   result: the ticket resolves again and, finding nothing live, runs the work
-   itself.
+   cancelling it. `force` skips the match. A joined entry whose holder died is
+   not a result: the ticket resolves again and, finding nothing live, runs the
+   work itself.
 2. **Wait.** Every `POLL_S`, orphans are reaped, and only the oldest waiting
    entry of the class (tickets, and while a worker is alive its ready jobs)
    asks `otto_queue.slots.try_admit`. Each new reason for waiting is printed

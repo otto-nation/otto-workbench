@@ -132,6 +132,13 @@ class _SampleReport:
     files: list[str]
 
 
+@dataclass
+class _EmittedReport:
+    status: str
+    ghost: str
+    EMITTED = ("status",)
+
+
 def _with_reports(reports: tuple[core.command_contract.JsonReport, ...]) -> core.command_contract.CommandContract:
     c = _contract()
     return core.command_contract.CommandContract(
@@ -154,3 +161,18 @@ def test_a_note_naming_a_non_field_is_reported():
         core.command_contract.JsonReport("exit 3", _SampleReport, {"nope": "ghost"}),
     )), ["--go", "--dry"])
     assert any("nope" in p for p in problems)
+
+
+def test_a_report_with_emitted_renders_only_those_fields():
+    text = core.command_contract.render_help(_with_reports((
+        core.command_contract.JsonReport("exit 0", _EmittedReport),
+    )))
+    assert "exit 0: _EmittedReport (status)" in text
+    assert "ghost" not in text
+
+
+def test_a_note_naming_a_non_emitted_field_is_reported():
+    problems = core.command_contract.coverage_problems(_with_reports((
+        core.command_contract.JsonReport("exit 0", _EmittedReport, {"ghost": "no"}),
+    )), ["--go", "--dry"])
+    assert any("ghost" in p for p in problems)

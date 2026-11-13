@@ -11,7 +11,7 @@ the `--help` epilog (`render_help`/`attach_help`), the docs block
 `coverage_problems` is what keeps the declaration honest against the parser:
 every documented flag sits in exactly one `FlagGroup`, every `RemoteEffect`
 trigger names declared flags, every contract says what exits 0, 1 and 2
-mean, and every JSON-report note names a field of its dataclass. Which flags
+mean, and every JSON-report note names a key that report emits. Which flags
 *touch the remote* cannot be read off a parser, so it is asserted by the
 enforcement suite (`tests/cli_contract_test.py`) rather than here.
 
@@ -120,8 +120,9 @@ class JsonReport:
     """One JSON object a command prints, described from a dataclass.
 
     ``when`` — which exit (or condition) prints it. ``cls`` — the dataclass
-    whose fields are the object's keys. ``notes`` — extra prose for a field,
-    keyed by field name.
+    whose emitted keys are the object's keys (``cls.EMITTED`` when that
+    tuple is set, otherwise ``dataclasses.fields``). ``notes`` — extra prose
+    for a key, keyed by that name.
     """
 
     when: str
@@ -182,11 +183,18 @@ def _trigger(trigger: str) -> str:
     return trigger or "(bare invocation)"
 
 
+def _json_field_names(cls: type) -> tuple[str, ...]:
+    emitted = getattr(cls, "EMITTED", None)
+    if emitted is not None:
+        return tuple(emitted)
+    return tuple(f.name for f in fields(cls))
+
+
 def _json_report_line(report: JsonReport) -> str:
     parts: list[str] = []
-    for f in fields(report.cls):
-        note = report.notes.get(f.name)
-        parts.append(f"{f.name} — {note}" if note else f.name)
+    for name in _json_field_names(report.cls):
+        note = report.notes.get(name)
+        parts.append(f"{name} — {note}" if note else name)
     return f"{report.when}: {report.cls.__name__} ({', '.join(parts)})"
 
 
@@ -373,9 +381,9 @@ def _json_report_problems(json_output: JsonOutput | None) -> list[str]:
         return []
     problems: list[str] = []
     for report in json_output.reports:
-        names = {f.name for f in fields(report.cls)}
+        names = set(_json_field_names(report.cls))
         problems.extend(
-            f"JSON report {report.cls.__name__} note {key!r} is not a field"
+            f"JSON report {report.cls.__name__} note {key!r} is not an emitted field"
             for key in report.notes if key not in names
         )
     return problems

@@ -167,7 +167,10 @@ CONTRACT = core.command_contract.CommandContract(
                 for s in rebase.types.RefusalSignal)),
         ),
         reports=(
-            core.command_contract.JsonReport("exit 0/1", rebase.types.RebaseOutcome),
+            core.command_contract.JsonReport(
+                "exit 0/1", rebase.types.RebaseOutcome,
+                {"force_pushed": "only when the push ran"},
+            ),
             core.command_contract.JsonReport("exit 3", rebase.types.ConflictReport),
             core.command_contract.JsonReport(
                 "exit 4", rebase.types.RefusalReport,

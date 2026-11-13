@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
+from typing import ClassVar
 
 import core.exit_codes
 import core.log
@@ -576,6 +577,24 @@ class ConflictReport:
 @dataclass
 class RebaseOutcome:
     """Result of a rebase — owns state persistence and JSON reporting."""
+
+    # JSON keys emit() writes, in that order. The contract lists these, not
+    # every dataclass field: lease_expect, aborted, classes and target_base
+    # are state-only. force_pushed is omitted when it is None.
+    EMITTED: ClassVar[tuple[str, ...]] = (
+        "status",
+        "commits_replayed",
+        "conflicts_resolved",
+        "files_resolved",
+        "files_stale",
+        "files_one_sided",
+        "one_sided_regions",
+        "pre_rebase_head",
+        "resolution",
+        "fork_point",
+        "squashed_commits",
+        "force_pushed",
+    )
     status: RebaseStatus = RebaseStatus.COMPLETED
     commits_replayed: int = 0
     conflicts_resolved: int = 0
@@ -629,23 +648,18 @@ class RebaseOutcome:
         pr.state.save_state(ctx.target_dir, state)
 
     def emit(self) -> None:
-        report: dict = {
-            "status": self.status.value,
-            "commits_replayed": self.commits_replayed,
-            "conflicts_resolved": self.conflicts_resolved,
-            "files_resolved": self.files_resolved,
-            "files_stale": self.files_stale,
-            "files_one_sided": self.files_one_sided,
-            "one_sided_regions": self.one_sided_regions,
-            "pre_rebase_head": self.pre_rebase_head,
-            "resolution": self.resolution,
-            # Always present: empty fork_point and a missing squash both
-            # become null, so a reader never has to treat a missing key as 0.
-            "fork_point": self.fork_point or None,
-            "squashed_commits": self.squashed_commits,
-        }
-        if self.force_pushed is not None:
-            report["force_pushed"] = self.force_pushed
+        report: dict = {}
+        for name in self.EMITTED:
+            if name == "force_pushed" and self.force_pushed is None:
+                continue
+            value = getattr(self, name)
+            if name == "status":
+                value = value.value
+            elif name == "fork_point":
+                # Always present: empty fork_point becomes null, so a reader
+                # never has to treat a missing key as 0.
+                value = value or None
+            report[name] = value
         core.report.emit_json(report)
         warn_files_stale(self.files_stale)
 

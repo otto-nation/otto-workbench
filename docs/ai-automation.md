@@ -1169,7 +1169,7 @@ Rebase the branch onto its base, handle conflicts, and force-push the result und
 - `pr rebase --force-landed --fix` — rebase even though the work landed
 
 **JSON on stdout:**
-- exit 0/1: RebaseOutcome (status, commits_replayed, conflicts_resolved, files_resolved, files_stale, force_pushed, lease_expect, files_one_sided, one_sided_regions, pre_rebase_head, aborted, classes, resolution, fork_point, squashed_commits, target_base)
+- exit 0/1: RebaseOutcome (status, commits_replayed, conflicts_resolved, files_resolved, files_stale, files_one_sided, one_sided_regions, pre_rebase_head, resolution, fork_point, squashed_commits, force_pushed — only when the push ran)
 - exit 3: ConflictReport (status, files, rebase_head, rebase_head_subject, remaining_commits, aborted, tree, classes, files_stale, pre_rebase_head)
 - exit 4: RefusalReport (branch, signal, detail, commits_ahead — a count on the git signals, null on pr_merged, which is asked before checkout, pr_number — set on pr_merged only, status, override)
 

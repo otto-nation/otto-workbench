@@ -5919,7 +5919,7 @@ the `--help` epilog (`render_help`/`attach_help`), the docs block
 `coverage_problems` is what keeps the declaration honest against the parser:
 every documented flag sits in exactly one `FlagGroup`, every `RemoteEffect`
 trigger names declared flags, every contract says what exits 0, 1 and 2
-mean, and every JSON-report note names a field of its dataclass. Which flags
+mean, and every JSON-report note names a key that report emits. Which flags
 *touch the remote* cannot be read off a parser, so it is asserted by the
 enforcement suite (`tests/cli_contract_test.py`) rather than here.
 

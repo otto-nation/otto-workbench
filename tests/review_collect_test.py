@@ -380,7 +380,8 @@ class TestFormatPreflightData:
         assert "# Project" in result
         assert "package main" not in result
         assert "Changed file contents" not in result
-        assert "### Files not pre-collected (read directly)" in result
+        assert "### Files not pre-collected" in result
+        assert "(read directly)" not in result
         assert "- foo.go" in result
         assert "- bar.go" in result
 

@@ -1,4 +1,4 @@
-"""Omitted-file guidance is role-aware: only triage phases triage."""
+"""Omitted-file guidance is role-aware and the only omitted-file instruction."""
 
 import sys
 from pathlib import Path
@@ -15,7 +15,25 @@ from review.budget import fit_files
 from review.prompt_sections import OmittedReads, _build_omitted_guidance
 from review.registry import build_prompt
 
+from review_contracts_support import AGENTS_DIR, TEMPLATE_DIR
 from review_prompt_support import _make_job, _make_preflight
+
+_WRITE_FIRST = "do not investigate before that first write"
+_READ_SENTENCE = "Then, as your first investigation"
+_GONE = (
+    "First, read all files",
+    "read a file when a finding depends on what surrounds the change",
+    "(read directly)",
+    "use Read only for files NOT in the PR",
+    "read only those critical",
+    "must be read directly from this path",
+)
+_GROUP_EXTRA = {
+    "group_idx": 1, "group_count": 1, "group_name": "core",
+    "group_files_formatted": "  - a.py",
+    "group_file_paths": ["a.py"],
+}
+_SYNTH_EXTRA = {"group_count": 2, "merged_content": "x"}
 
 
 def _dropped(preflight):
@@ -72,3 +90,44 @@ def test_survey_prompts_read_only_those_without_triage(phase):
     prompt = build_prompt(phase, job, max_turns=15)
     assert "File Triage" not in prompt
     assert prompt.count("read only those") == 1
+
+
+@pytest.mark.parametrize(
+    "phase,mode,extra",
+    [
+        (Phase.SINGLE, Mode.PR, {}),
+        (Phase.GROUP, Mode.PR, _GROUP_EXTRA),
+        (Phase.SINGLE, Mode.SELF, {}),
+    ],
+)
+def test_omitted_read_comes_after_write_first(phase, mode, extra):
+    job = _make_job(
+        _make_preflight(omitted_files=["big.go"]), mode=mode,
+    )
+    prompt = build_prompt(phase, job, max_turns=15, **extra)
+    assert prompt.index(_WRITE_FIRST) < prompt.index(_READ_SENTENCE)
+
+
+def test_old_omitted_phrases_are_gone():
+    blobs = [path.read_text() for path in sorted(TEMPLATE_DIR.glob("*.md"))]
+    blobs += [path.read_text() for path in sorted(AGENTS_DIR.glob("reviewer*.md"))]
+    job = _make_job(_make_preflight(omitted_files=["big.go"]))
+    extras = {
+        Phase.SINGLE: {},
+        Phase.GROUP: _GROUP_EXTRA,
+        Phase.SCOUT: {},
+        Phase.HOLISTIC: {},
+        Phase.SYNTHESIS: _SYNTH_EXTRA,
+    }
+    blobs += [
+        build_prompt(phase, job, max_turns=15, **extra)
+        for phase, extra in extras.items()
+    ]
+    combined = "\n".join(blobs)
+    for phrase in _GONE:
+        assert phrase not in combined
+
+
+def test_templates_do_not_name_files_not_pre_collected():
+    for path in sorted(TEMPLATE_DIR.glob("*.md")):
+        assert "Files not pre-collected" not in path.read_text()

@@ -241,7 +241,8 @@ class TestDroppedContentsAreDeclared:
         dropped_all = fit_files(pf.file_contents, pf.file_permissions, 0)
         text = format_preflight_data(pf, files=dropped_all).text
         assert "### Changed file contents" not in text
-        assert "### Files not pre-collected (read directly)" in text
+        assert "### Files not pre-collected" in text
+        assert "(read directly)" not in text
         assert "- a.py" in text
         assert "- b.py" in text
 

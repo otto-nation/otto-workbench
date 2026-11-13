@@ -274,7 +274,7 @@ File contents and diffs are in the Pre-collected data section. Use Read/Bash onl
         return f"""
 ## Environment
 PR branch checked out at: {wt_path}
-Diffs and some file contents are pre-collected. Files listed under "Files not pre-collected" must be read directly from this path."""
+Diffs and some file contents are pre-collected. Files listed under "Files not pre-collected" are at this path."""
     return f"""
 ## Environment
 PR branch checked out at: {wt_path}

@@ -989,11 +989,10 @@ def _format_file_contents(
     if omitted:
         parts += [
             "",
-            "### Files not pre-collected (read directly)",
+            "### Files not pre-collected",
             "",
             "These did not fit the prompt budget. The diff above carries their"
-            " changed lines but not the code around them — read a file when a"
-            " finding depends on what surrounds the change.",
+            " changed lines but not the code around them.",
         ]
         for path in omitted:
             size = data.file_sizes.get(path)

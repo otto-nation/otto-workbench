@@ -710,7 +710,10 @@ run ended and its mode:
   approve (`**No verdict.** Approve withheld — incomplete coverage: …`) and
   names the gaps. A blocking verdict stands with "Coverage incomplete".
   Self-reviews are unaffected. The harness checks a triage entry exists, not
-  that a file was read; a missing entry gets one repair turn.
+  that a file was read; a missing entry gets one repair turn. A file too large
+  to pre-collect is read after the agent's first write and triaged with what
+  was read. At an effort that skips large files, its entry says it was not
+  reviewed, and that entry counts as triaged.
 
 Open means not fixed: declined, skipped and unreached findings still count, and
 the line counts declined ones apart. Nits and idioms never count.

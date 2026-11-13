@@ -418,7 +418,7 @@
               "writes": "the same push, after AI conflict resolution"
             },
             {
-              "how": "git push [--no-verify] --force-with-lease=refs/heads/<branch>:<expect>, where <expect> is RebaseSummary.lease_expect that the last completed rebase saved in the target's state.json",
+              "how": "git push [--no-verify] --force-with-lease=refs/heads/<branch>:<expect>, where <expect> is RebaseSummary.lease_expect that the last rebase saved in the target's state.json (a completed run or a conflict stop)",
               "on_refusal": "No recorded rebase: exit 1. A recorded empty lease while origin has the branch: exit 1 ('recorded lease is stale'). origin moved since the lease was taken: git reports stale info, nothing is written, exit 1. Resume line: git ls-remote origin refs/heads/<branch>.",
               "trigger": "--push-only",
               "where": "origin",

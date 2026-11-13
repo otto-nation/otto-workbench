@@ -38,8 +38,8 @@ def test_a_paused_stop_prints_how_to_finish(ran, capsys):
     _, err = capsys.readouterr()
     assert "Next:\n" in err
     assert "rebase --continue" in err
-    assert "ls-remote origin refs/heads/isaac/feat/x" in err
-    assert "pr rebase --push-only --expect" in err
+    assert "pr rebase --push-only" in err
+    assert "ls-remote" not in err
 
 
 def test_a_clean_abort_prints_how_to_retry(ran, capsys):

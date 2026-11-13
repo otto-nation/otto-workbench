@@ -190,7 +190,7 @@ def _drive_loop(
 
         rc, conflict_found = _drive_one_step(
             cwd, ctx, mode, tally, target_ref=target_ref, force=force, trail=trail,
-            pause_on_conflict=pause_on_conflict,
+            lease=lease, pause_on_conflict=pause_on_conflict,
         )
         if rc is not None:
             return rc
@@ -221,18 +221,19 @@ def _drive_loop(
 def _drive_one_step(
     cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     tally: ResolutionTally, *, target_ref: str, force: bool = False,
-    trail: Trail | None = None,
+    trail: Trail | None = None, lease: rebase_lease.PushLease | None = None,
     pause_on_conflict: bool = False,
 ) -> tuple[int | None, bool]:
     conflicts = rebase_inspect.detect_conflicts(cwd)
     if not conflicts:
         return step_advance(
             cwd, ctx, tally, mode=mode, target_ref=target_ref, trail=trail,
+            lease=lease,
         ), False
 
     rc = step_conflicts(
         cwd, ctx, mode, conflicts, tally, target_ref=target_ref, force=force,
-        trail=trail, pause_on_conflict=pause_on_conflict,
+        trail=trail, lease=lease, pause_on_conflict=pause_on_conflict,
     )
     if rc is not None:
         return rc, False
@@ -242,12 +243,16 @@ def _drive_one_step(
 def _stopped_outcome(
     tally: ResolutionTally, *, target_ref: str,
     aborted: bool = False, classes: dict[str, str] | None = None,
+    lease_expect: str = "",
 ) -> RebaseOutcome:
     """The `conflicts` outcome a stopped run records, one-sided regions included.
 
     The regions are saved at every stop because the resume is a new process:
     `resumed_tally` reads them back, so a region resolved before the stop
     still holds the eventual push.
+    ``lease_expect`` is the remote tip the rebase planned from, so a later
+    ``pr rebase --push-only`` after a hand continue leases on that tip, not
+    on whatever origin holds now.
     """
     return RebaseOutcome(
         status=RebaseStatus.CONFLICTS,
@@ -262,6 +267,7 @@ def _stopped_outcome(
         fork_point=tally.fork_point,
         squashed_commits=tally.squashed_commits,
         target_base=target_ref,
+        lease_expect=lease_expect,
     )
 
 
@@ -292,6 +298,7 @@ def resumed_tally(cwd: str, ctx: pr.context.ResolvedContext) -> ResolutionTally:
 def _report_conflicts_and_stop(
     cwd: str, ctx: pr.context.ResolvedContext, *, target_ref: str,
     tally: ResolutionTally | None = None,
+    lease: rebase_lease.PushLease | None = None,
 ) -> int:
     """Persist status=conflicts, emit the report, and return the conflicts exit code.
 
@@ -309,7 +316,7 @@ def _report_conflicts_and_stop(
     }
     _stopped_outcome(
         tally, target_ref=target_ref, classes=classes,
-    ).save(ctx)
+        lease_expect="" if lease is None else lease.expect).save(ctx)
     ConflictReport.from_repo(
         cwd, tree="paused", classes=classes,
         files_stale=list(tally.stale), pre_rebase_head=tally.pre_rebase_head,
@@ -347,6 +354,7 @@ def _over_budget(
 
 def _record_failed(
     ctx: pr.context.ResolvedContext, tally: ResolutionTally, *, target_ref: str,
+    lease: rebase_lease.PushLease | None = None,
 ) -> None:
     """Persist what a failed run resolved before it stopped.
 
@@ -354,7 +362,9 @@ def _record_failed(
     leaves the next reader — `pr status`, `cmd_push`, the operator — with the
     previous run's summary and no sign that anything happened since.
     """
-    _stopped_outcome(tally, target_ref=target_ref).save(ctx)
+    _stopped_outcome(
+        tally, target_ref=target_ref,
+        lease_expect="" if lease is None else lease.expect).save(ctx)
 
 
 def _restore_conflicts(cwd: str, paths: list[str]) -> None:
@@ -390,7 +400,7 @@ def _restore_conflicts(cwd: str, paths: list[str]) -> None:
 def _halt_if_discarding(
     cwd: str, ctx: pr.context.ResolvedContext, tally: ResolutionTally, *,
     target_ref: str, restore: bool, mode: RunMode = RunMode.FIX,
-    trail: Trail | None = None,
+    trail: Trail | None = None, lease: rebase_lease.PushLease | None = None,
 ) -> int | None:
     """Stop before a `--continue` that would commit a resolution discarding changes.
 
@@ -441,7 +451,9 @@ def _halt_if_discarding(
         return None
     if restore:
         _restore_conflicts(cwd, refused)
-    _stopped_outcome(tally, target_ref=target_ref).save(ctx)
+    _stopped_outcome(
+        tally, target_ref=target_ref,
+        lease_expect="" if lease is None else lease.expect).save(ctx)
     report = ConflictReport.from_repo(cwd)
     dataclasses.replace(report, files=sorted(set(report.files) | set(refused))).emit()
     return rebase_types.CONFLICTS_EXIT
@@ -450,6 +462,7 @@ def _halt_if_discarding(
 def _halt_unresolved(
     cwd: str, ctx: pr.context.ResolvedContext, unresolved: list[str],
     tally: ResolutionTally, *, target_ref: str, trail: Trail | None = None,
+    lease: rebase_lease.PushLease | None = None,
 ) -> int:
     """Stop on files the AI could not resolve — without aborting the rebase.
 
@@ -475,19 +488,19 @@ def _halt_unresolved(
     core.log.dim("Resolve the listed files by hand and re-run `pr rebase --fix` to "
             "continue, or `pr rebase --abort` to throw the whole replay away.")
     return _report_conflicts_and_stop(
-        cwd, ctx, target_ref=target_ref, tally=tally,
+        cwd, ctx, target_ref=target_ref, tally=tally, lease=lease,
     )
 
 
 def _default_mode_conflicts(
     cwd: str, ctx: pr.context.ResolvedContext, conflicts: list[str],
     tally: ResolutionTally, *, target_ref: str,
-    pause_on_conflict: bool,
+    pause_on_conflict: bool, lease: rebase_lease.PushLease | None = None,
 ) -> int | None:
     """Classify, regenerate-or-abort. None means continue the shared finish."""
     if pause_on_conflict:
         return _report_conflicts_and_stop(
-            cwd, ctx, target_ref=target_ref, tally=tally,
+            cwd, ctx, target_ref=target_ref, tally=tally, lease=lease,
         )
     plans = conflict_stop.classify_stop(cwd, conflicts)
     if conflict_stop.try_generated(cwd, plans, tally):
@@ -503,13 +516,14 @@ def _ai_mode_conflicts(
     cwd: str, ctx: pr.context.ResolvedContext, conflicts: list[str],
     tally: ResolutionTally, *, target_ref: str,
     force: bool, trail: Trail | None,
+    lease: rebase_lease.PushLease | None = None,
 ) -> int | None:
     """AI resolve path. None means continue the shared finish."""
     if not agent.backend.is_available():
         terr(trail, "resolve_conflicts", "AI backend unavailable")
         core.log.error("Cannot resolve conflicts — AI backend unavailable.")
         return _report_conflicts_and_stop(
-            cwd, ctx, target_ref=target_ref, tally=tally,
+            cwd, ctx, target_ref=target_ref, tally=tally, lease=lease,
         )
     if not force:
         over = _over_budget(tally, conflicts)
@@ -537,14 +551,14 @@ def _ai_mode_conflicts(
         return None
     return _halt_unresolved(
         cwd, ctx, resolved.failed, tally, target_ref=target_ref, trail=trail,
-    )
+        lease=lease)
 
 
 def step_conflicts(
     cwd: str, ctx: pr.context.ResolvedContext, mode: RunMode,
     conflicts: list[str], tally: ResolutionTally, *,
     target_ref: str, force: bool = False, trail: Trail | None = None,
-    pause_on_conflict: bool = False,
+    lease: rebase_lease.PushLease | None = None, pause_on_conflict: bool = False,
 ) -> int | None:
     """Handle a rebase step with conflicts. Returns exit code to stop, or None to continue."""
     # Captured before this step absorbs new stale paths: only regenerations
@@ -554,12 +568,12 @@ def step_conflicts(
     if not mode.resolves_conflicts:
         rc = _default_mode_conflicts(
             cwd, ctx, conflicts, tally, target_ref=target_ref,
-            pause_on_conflict=pause_on_conflict,
+            pause_on_conflict=pause_on_conflict, lease=lease,
         )
     else:
         rc = _ai_mode_conflicts(
             cwd, ctx, conflicts, tally, target_ref=target_ref,
-            force=force, trail=trail,
+            force=force, trail=trail, lease=lease,
         )
     if rc is not None:
         return rc
@@ -575,7 +589,7 @@ def step_conflicts(
 
     rc = _halt_if_discarding(
         cwd, ctx, tally, target_ref=target_ref, restore=True, mode=mode, trail=trail,
-    )
+        lease=lease)
     if rc is not None:
         return rc
 
@@ -600,7 +614,7 @@ def step_conflicts(
            output=r.combined_output,
            data={"files_resolved": tally.files})
     core.log.error("rebase --continue failed after conflict resolution.")
-    _record_failed(ctx, tally, target_ref=target_ref)
+    _record_failed(ctx, tally, target_ref=target_ref, lease=lease)
     return 1
 
 
@@ -608,6 +622,7 @@ def step_advance(
     cwd: str, ctx: pr.context.ResolvedContext,
     tally: ResolutionTally | None = None, *,
     target_ref: str, mode: RunMode = RunMode.FIX, trail: Trail | None = None,
+    lease: rebase_lease.PushLease | None = None,
 ) -> int | None:
     """Advance rebase when there are no conflicts. Returns exit code to stop, or None to continue."""
     tally = tally if tally is not None else ResolutionTally()
@@ -628,7 +643,7 @@ def step_advance(
     # audit, because HEAD already holds its changes.
     rc = _halt_if_discarding(
         cwd, ctx, tally, target_ref=target_ref, restore=False, mode=mode, trail=trail,
-    )
+        lease=lease)
     if rc is not None:
         return rc
 
@@ -669,7 +684,7 @@ def step_advance(
            output=r.combined_output,
            data={"exit_code": r.returncode, "files_resolved": tally.files})
     core.log.error("rebase --continue failed without conflicts.")
-    _record_failed(ctx, tally, target_ref=target_ref)
+    _record_failed(ctx, tally, target_ref=target_ref, lease=lease)
     return 1
 
 

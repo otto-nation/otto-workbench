@@ -434,9 +434,10 @@ pr rebase --push-only --branch <branch>
 It pushes HEAD (your fix commit included) under the lease the completing run
 recorded, and runs the pre-push hook on what is actually going out. Do not
 re-run a bare `pr rebase` to push: it re-fetches and replays again if the
-base moved. A rebase you finished with `git rebase --continue` has no
-recorded lease; follow the `Next:` block `pr rebase` printed at exit 3
-(`--push-only --expect <full SHA>`). This is how the skill ends. Never run
+base moved. After a conflict stop, resolve, `git rebase --continue`, then
+`pr rebase --push-only` — the stop saved the lease. `pr rebase --fix` still
+resumes. `--push-only --expect <full SHA>` is only for a rebase not started
+by `pr` (no state). This is how the skill ends. Never run
 `git push --force-with-lease` yourself, and never hand it to the user as the
 remaining step: `pr rebase` prints a
 `Resume: git -C '<worktree>' push --force-with-lease` line when a push is refused,

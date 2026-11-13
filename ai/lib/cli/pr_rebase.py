@@ -78,7 +78,8 @@ CONTRACT = core.command_contract.CommandContract(
             "--push-only", "refs/heads/<branch> := current HEAD, commits added since the "
                            "rebase included; no rebase runs", "origin",
             f"git push [--no-verify] {_LEASE}, where <expect> is RebaseSummary.lease_expect "
-            "that the last completed rebase saved in the target's state.json",
+            "that the last rebase saved in the target's state.json (a completed run or "
+            "a conflict stop)",
             "No recorded rebase: exit 1. A recorded empty lease while origin has the "
             "branch: exit 1 ('recorded lease is stale'). " + _STALE),
         core.command_contract.RemoteEffect(
@@ -115,10 +116,8 @@ CONTRACT = core.command_contract.CommandContract(
                 "resolve each file in `files` hunk by hunk (never take a side whole)",
                 "git -C {worktree} add <file> for each resolved file",
                 "git -C {worktree} rebase --continue (repeat until the rebase finishes)",
-                "git -C {worktree} ls-remote origin refs/heads/{branch} — it must equal "
-                "git -C {worktree} rev-parse refs/remotes/origin/{branch}; if not, someone "
-                "pushed since the rebase started: stop",
-                "pr rebase --push-only --expect <that full SHA> --branch {branch}",
+                "pr rebase --push-only --branch {branch} — pushes under the lease saved "
+                "at the stop",
                 "(or let pr finish instead: pr rebase --fix --branch {branch} resumes here)",
             )),
             core.command_contract.NextStep("clean", (

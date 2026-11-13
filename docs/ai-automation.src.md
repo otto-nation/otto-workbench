@@ -714,7 +714,9 @@ What each `pr` command writes to origin or GitHub and how, what each exit means,
 next step after one, rendered from the command's `CONTRACT` (`pr <command> --help` prints
 the same text). Lease semantics for `pr rebase` and `pr push` live here and nowhere else.
 To finish a rebase `pr rebase` completed but did not push, run `pr rebase --push-only`;
-for one finished outside `pr`, add `--expect <full SHA>` as its `Next:` block says.
+after a conflict stop, resolve, `git rebase --continue`, then the same command (the
+stop saved the lease). For a rebase never started by `pr` (no state), add
+`--expect <full SHA>`.
 
 <!-- include: bin/local/generate-cli-reference --tool pr --emit contract -->
 

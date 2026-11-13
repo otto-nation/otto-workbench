@@ -182,6 +182,14 @@ def test_a_stop_signal_while_waiting_cancels_the_entry(tmp_path):
     assert (entry.state, entry.exit_status) == (EntryState.CANCELLED, 143)
 
 
+def test_a_clean_exit_during_a_wait_records_130_not_0(tmp_path):
+    with pytest.raises(SystemExit):
+        _run(touch_argv(tmp_path / "ran"), policy=Room(raises=SystemExit(0)))
+    [entry] = Ledger.open().entries()
+    assert (entry.state, entry.exit_status) == (
+        EntryState.CANCELLED, core.proc.INTERRUPT_RETURNCODE)
+
+
 def test_a_ticket_inside_a_ticket_runs_directly(tmp_path, monkeypatch):
     monkeypatch.setenv(otto_queue.ticket.ENTRY_ENV, "41")
     result = _run(touch_argv(tmp_path / "ran"), policy=Room(admit=False), wait_s=10)

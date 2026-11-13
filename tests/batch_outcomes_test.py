@@ -296,9 +296,22 @@ def test_the_module_docstring_names_every_failure_reason():
 @pytest.mark.parametrize("code", [130, 143, 129])
 def test_a_stop_exit_is_interrupted_not_a_failure(code):
     r = batch.outcomes.classify(batch.model.Step.REVIEW, code, "", item=ITEM,
-                                log_tail=["working"])
+                                log_tail=["working"], cancelled=True)
     assert r.status is batch.model.StepStatus.INTERRUPTED
     assert r.decisions == []
+
+
+@pytest.mark.parametrize("code", [130, 143, 129])
+def test_a_stop_exit_outside_a_cancel_is_a_failure(code):
+    r = batch.outcomes.classify(batch.model.Step.REVIEW, code, "", item=ITEM,
+                                log_tail=["working"])
+    assert r.status is batch.model.StepStatus.FAILED
+
+
+def test_an_unmarked_tempfail_is_a_failure():
+    r = batch.outcomes.classify(batch.model.Step.REVIEW, 75, "", item=ITEM,
+                                log_tail=["otto-queue: queue busy: x"])
+    assert r.status is batch.model.StepStatus.FAILED
 
 
 def test_a_ticket_tempfail_is_not_an_ordinary_failure():

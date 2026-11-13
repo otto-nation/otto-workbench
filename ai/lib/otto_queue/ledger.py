@@ -455,8 +455,10 @@ class Ledger:
                 # queued row when a stop handler supplied a more specific code.
                 conn.execute(
                     "UPDATE entries SET exit_status = ? "
-                    "WHERE id = ? AND (exit_status IS NULL OR state = ?)",
-                    (exit_status, entry_id, EntryState.CANCELLED.value))
+                    "WHERE id = ? AND (exit_status IS NULL OR "
+                    "(state = ? AND exit_status = ?))",
+                    (exit_status, entry_id, EntryState.CANCELLED.value,
+                     core.proc.INTERRUPT_RETURNCODE))
             entry = _entry(_row(conn, entry_id))
         return entry.state if entry is not None else None
 

@@ -312,7 +312,8 @@ class Scheduler:
         result = batch.outcomes.classify(rec.step, code, live.proc.stdout(), item=item,
                                          log_tail=list(live.tail), head_before=base,
                                          log_path=rec.log_path,
-                                         fixing=self.run.uses_ai(rec.step))
+                                         fixing=self.run.uses_ai(rec.step),
+                                         cancelled=self.run.cancel is not None)
         rec.exit_code, rec.ended_at, rec.status = code, batch.store.now_iso(), result.status
         head = self._head(item.worktree)
         moved = head != base
@@ -637,24 +638,26 @@ class Scheduler:
             if self._repo_busy(item, rec):
                 self._refuse(item, rec, f"another rebase or CI step is fetching in {item.repo_dir}")
                 continue
-            # Kept for every step (not machine admission): the per-run --pool
-            # cap, counting children waiting on a ticket. A pool-full refusal
-            # must not queue this driver for the machine floor.
-            limit = max(1, self.run.pool)
-            if len(self._live) >= limit:
-                self._refuse(item, rec, f"at the concurrency limit ({limit})")
-                continue
-            # Non-AI steps keep decide unchanged (floor, peers, memory,
-            # pressure, macOS pool_default). AI steps skip it.
-            if not self._ai(rec):
-                verdict = self._verdict(item, rec)
-                if not verdict.admit:
-                    self._refused = True
-                    self._refuse(item, rec, verdict.reason)
-                    continue
-            fresh = self._confirm(item, rec)
-            if fresh is None:
-                continue
+            self._admit_one(item, rec)
+
+    def _admit_one(self, item: Item, rec: StepRecord) -> None:
+        # Kept for every step (not machine admission): the per-run --pool
+        # cap, counting children waiting on a ticket. A pool-full refusal
+        # must not queue this driver for the machine floor.
+        limit = max(1, self.run.pool)
+        if len(self._live) >= limit:
+            self._refuse(item, rec, f"at the concurrency limit ({limit})")
+            return
+        # Non-AI steps keep decide unchanged (floor, peers, memory,
+        # pressure, macOS pool_default). AI steps skip it.
+        if not self._ai(rec):
+            verdict = self._verdict(item, rec)
+            if not verdict.admit:
+                self._refused = True
+                self._refuse(item, rec, verdict.reason)
+                return
+        fresh = self._confirm(item, rec)
+        if fresh is not None:
             self._start(item, rec, fresh)
 
     def _start(self, item: Item, rec: StepRecord, fresh: PlanRow) -> None:
@@ -683,20 +686,21 @@ class Scheduler:
             return
         waits = self._queue_waits({live.proc.pid for live in lives})
         for live in lives:
-            entry_id = waits.get(live.proc.pid)
-            if entry_id is not None:
-                reason = f"waiting for an otto-queue slot (entry {entry_id})"
-                if live.queue_entry != entry_id or live.item.wait_reason != reason:
-                    self._emit("admission_wait", run=self.run.id, item=live.item.key,
-                               step=live.rec.step.value, reason=reason,
-                               queue_entry=entry_id)
-                live.item.wait_reason = reason
-                live.queue_entry = entry_id
-                continue
+            self._note_wait(live, waits.get(live.proc.pid))
+
+    def _note_wait(self, live: _Live, entry_id: int | None) -> None:
+        if entry_id is None:
             if live.queued:
                 live.item.wait_reason = ""
                 live.queued = False
                 live.queue_entry = None
+            return
+        reason = f"waiting for an otto-queue slot (entry {entry_id})"
+        if live.queue_entry != entry_id or live.item.wait_reason != reason:
+            self._emit("admission_wait", run=self.run.id, item=live.item.key,
+                       step=live.rec.step.value, reason=reason, queue_entry=entry_id)
+        live.item.wait_reason = reason
+        live.queue_entry = entry_id
 
     # ── loop ─────────────────────────────────────────────────────────────
 
@@ -752,7 +756,8 @@ class Scheduler:
         if kill:
             self._kill_live()
         elif cancel is not None:
-            # Plain cancel: waiters have started nothing; running steps finish.
+            # Plain cancel: queue waiters are stopped; running steps finish. A waiter
+            # admitted since the read may be stopped as it starts: same as --kill.
             self._kill_live(waiting=self._queue_waits(
                 {live.proc.pid for live in self._live.values()}))
         self._reap(kill)

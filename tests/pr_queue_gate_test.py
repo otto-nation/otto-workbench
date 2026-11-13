@@ -170,6 +170,7 @@ def test_a_ticket_under_a_broken_ledger_does_not_reenter(tmp_path, monkeypatch):
     state.mkdir(parents=True, exist_ok=True)
     (state / "queue").write_text("not a directory")
     monkeypatch.setenv("PROBE_LIB", str(LIB_DIR))
+    monkeypatch.setenv("PROBE_OUT", str(tmp_path / "probe"))
     probe = textwrap.dedent(
         """
         import os, sys
@@ -180,6 +181,7 @@ def test_a_ticket_under_a_broken_ledger_does_not_reenter(tmp_path, monkeypatch):
             "status", [],
             reexec=(sys.executable, "-c", "raise SystemExit(4)"),
             entry_class=EntryClass.LIGHT, label="inner")
+        open(os.environ["PROBE_OUT"], "w").write(repr(code))
         raise SystemExit(3 if code is not None else 0)
         """
     )
@@ -201,6 +203,7 @@ def test_a_ticket_under_a_broken_ledger_does_not_reenter(tmp_path, monkeypatch):
         timeout=core.timeouts.LAUNCH, capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
+    assert (tmp_path / "probe").read_text() == "None"
 
 
 def test_a_real_ticket_records_the_label_and_sets_the_entry_env(capsys):

@@ -205,7 +205,7 @@ class Harness:
             def stdout(self):
                 return out
 
-            def kill(self):
+            def kill(self, *, force=False):
                 pass
 
         self.live += 1

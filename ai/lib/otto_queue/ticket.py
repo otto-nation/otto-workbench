@@ -211,7 +211,7 @@ def _record_crash(ledger: otto_queue.ledger.Ledger, entry_id: int, exc: BaseExce
     # whose lease is gone is an orphan, and reap_orphans marks it failed.
     if isinstance(exc, (KeyboardInterrupt, SystemExit)):
         ledger.cancel(entry_id)
-        code = exc.code if isinstance(getattr(exc, "code", None), int) else (
+        code = exc.code if isinstance(getattr(exc, "code", None), int) and exc.code else (
             core.proc.INTERRUPT_RETURNCODE)
         ledger.finish(entry_id, code)
         return

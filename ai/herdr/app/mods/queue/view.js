@@ -45,6 +45,9 @@ function renderSection(section, opts) {
     return body.child(caption("busy").px(SP.sm));
   }
   const rows = section.result.rows ?? [];
+  if (section.cancelError != null) {
+    body.child(errorLine(friendlyError(section.cancelError, section.on)).px(SP.sm));
+  }
   if (!rows.length) {
     return body.child(placeholder("None").px(SP.sm));
   }

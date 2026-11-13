@@ -13,6 +13,8 @@
 ## File Triage
 
 - `src/app.py` — reviewed; adds the retry loop.
+- `src/cli.py` — reviewed; timeout flag.
+- `src/util.py` — reviewed; nothing to report.
 
 ## Summary
 

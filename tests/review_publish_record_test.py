@@ -89,6 +89,8 @@ def test_the_clean_review_is_published_as_a_record(tmp_path):
     from review.record import TriageEntry
     review.outcome._write_clean_review(job, 2, record(triage=(
         TriageEntry("src/app.py", "reviewed; nothing to report."),
+        TriageEntry("src/cli.py", "reviewed; nothing to report."),
+        TriageEntry("src/util.py", "reviewed; nothing to report."),
     )))
     assert (Path(job.review_file).parent / FILENAME_RECORD).is_file()
     assert _same_as_fixture(job, "clean")

@@ -87,6 +87,8 @@ class TestMechanical:
     def test_the_clean_review_body(self):
         merged = record(triage=(
             TriageEntry("src/app.py", "reviewed; nothing to report."),
+            TriageEntry("src/cli.py", "reviewed; nothing to report."),
+            TriageEntry("src/util.py", "reviewed; nothing to report."),
         ))
         rec = build_mechanical_record(merged, group_count=2, summary_note=CLEAN_SUMMARY,
                                       file_count=3)

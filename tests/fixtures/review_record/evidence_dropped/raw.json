@@ -45,6 +45,14 @@
     {
       "path": "src/app.py",
       "note": "reviewed; adds the retry loop."
+    },
+    {
+      "path": "src/cli.py",
+      "note": "reviewed; timeout flag."
+    },
+    {
+      "path": "src/util.py",
+      "note": "reviewed; nothing to report."
     }
   ],
   "static_analysis": "",

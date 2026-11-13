@@ -19,7 +19,7 @@ import review.steps  # noqa: E402
 from review.claim_types import ClaimVerdict  # noqa: E402
 from core.phases import Mode, Phase  # noqa: E402
 from review.phases import PhaseResult  # noqa: E402
-from review.record import Disposition, ReviewRecord  # noqa: E402
+from review.record import Disposition, ReviewRecord, TriageEntry  # noqa: E402
 from review.state import PipelineState  # noqa: E402
 from review.store import StoredReview, read_review, write_review  # noqa: E402
 from review.types import (  # noqa: E402
@@ -321,7 +321,12 @@ def test_a_round_with_no_open_derived_finding_still_writes_a_clean_review(
     monkeypatch.setattr(review.steps, "_phase_synthesis",
                         lambda *a, **k: pytest.fail("synthesis ran on a clean round"))
     result = review.steps._run_synthesis_or_fallback(
-        job, _state(), "", 2, merged(fresh=0), [], 0,
+        job, _state(), "", 2, merged(
+            ReviewRecord(triage=(
+                TriageEntry("b.py", "reviewed; nothing to report."),
+            )),
+            fresh=0,
+        ), [], 0,
         0.0, 20.0, settled=False)
     assert result.cost == 0.0
     stored = read_review(Path(job.review_file))

@@ -260,6 +260,12 @@ class FixAdapter(ABC):
     # Comments resumes leftovers an interrupted pass left uncommitted; review
     # keeps its stash instead (`review.convergence.set_aside_leftovers`).
     resumes_interrupted: bool = False
+    # Stage hooks. All defaulted so CI, review and pre-push keep today's path.
+    plan_phase: Phase | None = None
+    implement_phase: Phase | None = None
+    escalate_phase: Phase | None = None
+    plan_max_items: int = 0
+    escalate_max_items: int = 0
 
     @property
     def tracking_path(self) -> Path:
@@ -293,6 +299,35 @@ class FixAdapter(ABC):
         if chunk < 1:
             raise ValueError(f"verify chunk is 1-based, got {chunk}")
         return self.artifacts / f"verify-session-{chunk}.jsonl"
+
+    @property
+    def plans_dir(self) -> Path:
+        """Local JSON plans; never posted."""
+        return self.artifacts / "plans"
+
+    @property
+    def escalations_dir(self) -> Path:
+        return self.artifacts / "escalations"
+
+    def plan_tracking_path(self, chunk: int) -> Path:
+        if chunk < 1:
+            raise ValueError(f"plan chunk is 1-based, got {chunk}")
+        return self.artifacts / f"plan-tracking-{chunk}.md"
+
+    def plan_session_log(self, chunk: int) -> Path:
+        if chunk < 1:
+            raise ValueError(f"plan chunk is 1-based, got {chunk}")
+        return self.artifacts / f"plan-session-{chunk}.jsonl"
+
+    def escalate_tracking_path(self, chunk: int) -> Path:
+        if chunk < 1:
+            raise ValueError(f"escalate chunk is 1-based, got {chunk}")
+        return self.artifacts / f"escalate-tracking-{chunk}.md"
+
+    def escalate_session_log(self, chunk: int) -> Path:
+        if chunk < 1:
+            raise ValueError(f"escalate chunk is 1-based, got {chunk}")
+        return self.artifacts / f"escalate-session-{chunk}.jsonl"
 
     @abstractmethod
     def items(self) -> list[FixItem]:
@@ -395,6 +430,41 @@ class FixAdapter(ABC):
         filtered out so it cannot undo the pass's own edits.
         """
         return []
+
+    def staged_items(self) -> list:
+        """Items for the plan stage. Default: every `items()` entry as ACT/WORK."""
+        from fix.plan_model import StagedItem
+        return [StagedItem(item=item) for item in self.items()]
+
+    def escalates(self, outcome: ItemOutcome, staged: object | None = None) -> bool:
+        """Whether this outcome may take its one escalation. Default: C1."""
+        from pr.fix import FixOutcome, Handoff
+        planned = {
+            Handoff.PLAN_NEEDS_HUMAN, Handoff.PLAN_DECLINED,
+            Handoff.PLAN_ADVISED, Handoff.PLAN_INVALID,
+        }
+        if outcome.handoff in planned:
+            return outcome.verified is False
+        if outcome.handoff in {
+            Handoff.PLAN_FAILED, Handoff.VERIFY_BROKEN,
+            Handoff.AGENT_HANDBACK, Handoff.TRIAGE_FALSIFIED,
+        }:
+            return True
+        return (
+            outcome.outcome is FixOutcome.NEEDS_HUMAN
+            and outcome.verified is False
+        )
+
+    def pr_files(self) -> frozenset[str] | None:
+        """Files the change under review touches; None if unknown."""
+        return None
+
+    def plan_template_vars(self) -> dict[str, str]:
+        return self.template_vars()
+
+    def stage_prompt(self, stage: object, turns: int) -> str | None:
+        """Injectable prompt for a stage. None uses the default renderer."""
+        return None
 
     def test_exempt_ids(self) -> frozenset[str]:
         """Item ids that owe no test when `requires_tests` is on; none by default."""
@@ -747,6 +817,9 @@ def _prior_batch(
 
 def _run_agent(adapter: FixAdapter, start: _PassStart) -> _AgentRun:
     """Run the agent for items without a prior answer."""
+    if adapter.plan_phase is not None:
+        from fix import stages
+        return stages.run_planned(adapter, start)
     items = list(start.items)
     chunk_size = agent.phases.phase_chunk_size(adapter.phase)
     prior = {}
@@ -847,6 +920,10 @@ def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
             adapter, start, CheckpointPhase.VERIFIED,
             answers=list(settled.outcomes),
         )
+
+    if adapter.escalate_phase is not None:
+        from fix import escalate
+        escalate.run(adapter, settled, by_id, trail, verify=verify)
 
     changed = fix.scope.agent_changed(adapter.workdir, dirty_before)
     committed = adapter.commit_scope(changed)

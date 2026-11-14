@@ -1,5 +1,10 @@
 Plan comment-thread fixes. You are planning, not editing.
 
+The `fixed` box asks for a test that fails without the change.
+
 ${execution_claim_guard}
 
-The `fixed` box asks for a test that fails without the change.
+${tracking_content}
+
+Answer in ${tracking_file}.
+${answer_format}

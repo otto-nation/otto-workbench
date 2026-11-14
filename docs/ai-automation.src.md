@@ -550,6 +550,13 @@ clears on a guess: a commit still on the branch is unpushed for the ordinary
 reason, and an orphan with no replay, or with two, holds too and says how to
 recover. Re-running `--fix` after a completed pass discards reviewed replies; an interrupted pass resumes on the same HEAD (`--no-resume` starts over). Checkpoint resume skips finished phases. Leftover-adoption (`interrupted-pass.json`, written whenever a comments pass is interrupted) applies unless the pass resumes from a fix-checkpoint at `AGENT_RUNNING` or later (`--no-resume`, HEAD moved, new feedback, or a checkpoint before `AGENT_RUNNING`).
 
+### Plan and escalate stages in the shared engine
+
+When a `FixAdapter` sets `plan_phase`, the engine plans (read-only), implements
+from that plan, then escalates items that still need a person — one opus pass,
+no retry. Adapters that set no stage hooks keep today's path. Plans are local
+artifacts under the pass directory and are never posted.
+
 ### Closing out comments
 
 `--finish --post` refuses before resolving threads when the fix commit is still

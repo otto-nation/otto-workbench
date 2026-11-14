@@ -879,6 +879,14 @@ launched, and the checks belong to the tree being edited. An adapter that was
 given one still wins: it is the same file when the two agree, and the
 caller's explicit choice when they do not.
 
+### fix/escalate.py
+
+One deep pass over items that are still going to a person.
+
+No retries (``produced=None``). An item the plan already decided is not
+escalated again (C1). Escalation never lifts a publishing hold (C4) — this
+module does not touch holds.
+
 ### fix/gate.py
 
 The verify gate: when it runs, and what its verdicts mean.
@@ -1068,6 +1076,13 @@ Checklists the plan, implement and escalate stages answer in.
 Reuses :mod:`fix.tracking`'s box type and parser so the three vocabularies
 cannot drift from the format the engine already reads. An untouched item still
 reads as ``DEFERRED``.
+
+### fix/stages.py
+
+Plan then implement, or fall back to today's agent path.
+
+Called from the engine only when ``adapter.plan_phase`` is set. Existing
+adapters leave that unset and never reach this module.
 
 ### fix/verify.py
 

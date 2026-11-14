@@ -29,6 +29,7 @@ left alone.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -42,6 +43,7 @@ import fix.scope
 import fix.tracking
 from agent.diagnosis import Diagnosis
 from agent.registry import PHASES
+from core.phases import Phase
 from core.trail import Trail
 from fix.types import FixItem
 from pr.fix import FixOutcome, ItemOutcome
@@ -123,6 +125,26 @@ class Settled:
         return self.scopes.get(outcome.id, fix.scope.UNKNOWN_SCOPE)
 
 
+@dataclass(frozen=True)
+class BatchStage:
+    """How one engine stage prompts, tracks and parses a batch.
+
+    `None` at every call site is today's path: the adapter's phase, template
+    and the default three boxes.
+    """
+
+    phase: Phase
+    template: str
+    boxes: tuple = ()
+    title: str = ""
+    instructions: str = ""
+    tracking_path: Path | None = None
+    session_log: Path | None = None
+    use_adapter_model: bool = True
+    one_shot: bool = False
+    parse: Callable[[Path], list[ItemOutcome]] | None = None
+
+
 def chunks(items: list[FixItem], size: int) -> list[list[FixItem]]:
     """Split the work into runs a single agent pass can actually finish.
 
@@ -136,31 +158,73 @@ def chunks(items: list[FixItem], size: int) -> list[list[FixItem]]:
     return [items[i:i + size] for i in range(0, len(items), size)]
 
 
-def render_prompt(adapter: fix.engine.FixAdapter, turns: int, *, resume: bool = False) -> str:
+def _stage_path(adapter: fix.engine.FixAdapter, stage: BatchStage | None) -> Path:
+    if stage is not None and stage.tracking_path is not None:
+        return stage.tracking_path
+    return adapter.tracking_path
+
+
+def _stage_log(adapter: fix.engine.FixAdapter, stage: BatchStage | None) -> Path:
+    if stage is not None and stage.session_log is not None:
+        return stage.session_log
+    return adapter.session_log
+
+
+def _stage_boxes(stage: BatchStage | None) -> tuple:
+    if stage is not None and stage.boxes:
+        return stage.boxes
+    return fix.tracking._BOXES
+
+
+def render_prompt(
+    adapter: fix.engine.FixAdapter, turns: int, *,
+    resume: bool = False, stage: BatchStage | None = None,
+) -> str:
     """Render this domain's template around the tracking file as it now stands."""
-    text = agent.templates.render(
-        PHASES[adapter.phase].template_for(),
-        branch_name=adapter.branch,
-        repo=adapter.repo,
-        tracking_content=adapter.tracking_path.read_text(),
-        tracking_file=str(adapter.tracking_path),
-        answer_format=fix.tracking.instructions(adapter.item_noun),
-        execution_claim_guard=agent.templates.build_execution_claim_guard(
-            occasion=agent.templates.ClaimOccasion.FIX_EVIDENCE,
-        ),
-        worktree_block=agent.templates.build_worktree_block(str(adapter.workdir)),
-        generated_block=agent.templates.GENERATED_BLOCK,
-        role_block=agent.templates.ROLE_BLOCK,
-        max_turns=str(turns),
-        **adapter.template_vars(),
+    path = _stage_path(adapter, stage)
+    template = (
+        stage.template if stage is not None
+        else PHASES[adapter.phase].template_for()
     )
+    title_vars = adapter.template_vars()
+    if (
+        stage is not None
+        and getattr(adapter, "plan_phase", None) is not None
+        and stage.phase is adapter.plan_phase
+    ):
+        title_vars = adapter.plan_template_vars()
+    boxes = _stage_boxes(stage)
+    answer = (
+        stage.instructions if stage is not None and stage.instructions
+        else fix.tracking.instructions(adapter.item_noun, boxes)
+    )
+    extra = adapter.stage_prompt(stage, turns) if stage is not None else None
+    if extra is not None:
+        text = extra
+    else:
+        text = agent.templates.render(
+            template,
+            branch_name=adapter.branch,
+            repo=adapter.repo,
+            tracking_content=path.read_text() if path.exists() else "",
+            tracking_file=str(path),
+            answer_format=answer,
+            execution_claim_guard=agent.templates.build_execution_claim_guard(
+                occasion=agent.templates.ClaimOccasion.FIX_EVIDENCE,
+            ),
+            worktree_block=agent.templates.build_worktree_block(str(adapter.workdir)),
+            generated_block=agent.templates.GENERATED_BLOCK,
+            role_block=agent.templates.ROLE_BLOCK,
+            max_turns=str(turns),
+            **title_vars,
+        )
     return RESUME_HINT + text if resume else text
 
 
 def _invoke(
     adapter: fix.engine.FixAdapter, items: list[FixItem], *,
     label: str, turns: int, budget: float | None, resume: bool = False,
-    before: set[str] | None = None,
+    before: set[str] | None = None, stage: BatchStage | None = None,
 ) -> Batch:
     """Write the tracking file for `items`, run the agent, read back its answers.
 
@@ -191,13 +255,24 @@ def _invoke(
     """
     if before is None:
         before = fix.scope.changed_files(adapter.workdir)
-    fix.tracking.write(adapter.tracking_path, adapter.title, items)
+    path = _stage_path(adapter, stage)
+    boxes = _stage_boxes(stage)
+    title = stage.title if stage is not None and stage.title else adapter.title
+    fix.tracking.write(path, title, items, boxes)
     core.log.info(f"{label} — {adapter.action}...")
+    produced = None
+    if stage is None or not stage.one_shot:
+        produced = lambda: fix.tracking.checked(path, boxes) > 0
+    phase = stage.phase if stage is not None else adapter.phase
+    model = adapter.model or None
+    if stage is not None and not stage.use_adapter_model:
+        model = None
+    parser = stage.parse if stage is not None and stage.parse else None
     result = agent.invoke.run_fix(
-        adapter.phase, render_prompt(adapter, turns, resume=resume),
+        phase, render_prompt(adapter, turns, resume=resume, stage=stage),
         cwd=adapter.workdir,
-        session_log=str(adapter.session_log),
-        produced=lambda: fix.tracking.checked(adapter.tracking_path) > 0,
+        session_log=str(_stage_log(adapter, stage)),
+        produced=produced,
         add_dirs=adapter.add_dirs(),
         max_turns=turns,
         max_budget=budget,
@@ -208,11 +283,12 @@ def _invoke(
         branch=adapter.branch or None,
         config=adapter.config,
         effort=adapter.effort,
-        model=adapter.model or None,
+        model=model,
     )
     core.log.blank()
+    outcomes = parser(path) if parser else fix.tracking.parse(path, boxes)
     return Batch(
-        outcomes=fix.tracking.parse(adapter.tracking_path),
+        outcomes=outcomes,
         unproductive=result.unproductive,
         exit_code=result.exit_code,
         max_turns=turns,
@@ -269,21 +345,23 @@ def relative_to(workdir: Path, path: Path) -> str:
 
 def run_batch(
     adapter: fix.engine.FixAdapter, items: list[FixItem], label: str,
-    before: set[str] | None = None,
+    before: set[str] | None = None, stage: BatchStage | None = None,
 ) -> Batch:
     """Run one batch at the budget the phase gives work of that size."""
+    phase = stage.phase if stage is not None else adapter.phase
     return _invoke(
         adapter, items, label=label,
-        turns=agent.phases.phase_turns(adapter.phase, items=len(items)),
+        turns=agent.phases.phase_turns(phase, items=len(items)),
         budget=agent.phases.phase_budget(
-            adapter.phase, adapter.effort, items=len(items),
+            phase, adapter.effort, items=len(items),
         ),
-        before=before,
+        before=before, stage=stage,
     )
 
 
 def _retry(
     adapter: fix.engine.FixAdapter, items: list[FixItem], trail: Trail | None,
+    stage: BatchStage | None = None,
 ) -> list[Batch]:
     """Run the deferred remainder again, chunked, at the phase's retry budget.
 
@@ -292,9 +370,10 @@ def _retry(
     sending every leftover in one invoke is how a partial-progress retry
     collapsed back to ~2 turns an item against the cap.
     """
-    chunk_size = agent.phases.phase_chunk_size(adapter.phase)
+    phase = stage.phase if stage is not None else adapter.phase
+    chunk_size = agent.phases.phase_chunk_size(phase)
     batched = chunks(items, chunk_size)
-    name = f"{PHASES[adapter.phase].label} retry"
+    name = f"{PHASES[phase].label} retry"
     if len(batched) > 1:
         core.log.info(
             f"Retry pass — {len(items)} deferred item(s) in {len(batched)} "
@@ -305,7 +384,7 @@ def _retry(
         _retry_chunk(
             adapter, chunk,
             name if single else f"{name} (batch {n}/{len(batched)})",
-            announce=single,
+            announce=single, stage=stage,
         )
         for n, chunk in enumerate(batched, start=1)
     ]
@@ -323,11 +402,12 @@ def _retry(
 
 def _retry_chunk(
     adapter: fix.engine.FixAdapter, items: list[FixItem], label: str, *,
-    announce: bool,
+    announce: bool, stage: BatchStage | None = None,
 ) -> Batch:
     """One retry invoke, budgeted for this chunk's size rather than the pass's."""
-    original = agent.phases.phase_turns(adapter.phase, items=len(items))
-    retry_turns = agent.phases.phase_retry_turns(adapter.phase, original)
+    phase = stage.phase if stage is not None else adapter.phase
+    original = agent.phases.phase_turns(phase, items=len(items))
+    retry_turns = agent.phases.phase_retry_turns(phase, original)
     if announce:
         core.log.info(
             f"Retry pass — {len(items)} deferred item(s) "
@@ -338,9 +418,9 @@ def _retry_chunk(
         label=label,
         turns=retry_turns,
         budget=agent.phases.phase_budget(
-            adapter.phase, adapter.effort, items=len(items),
+            phase, adapter.effort, items=len(items),
         ),
-        resume=True,
+        resume=True, stage=stage,
     )
 
 
@@ -405,7 +485,7 @@ def record_unevidenced(outcomes: list[ItemOutcome], trail: Trail | None) -> None
 
 def settle(
     adapter: fix.engine.FixAdapter, batches: list[Batch], by_id: dict[str, FixItem],
-    trail: Trail | None,
+    trail: Trail | None, stage: BatchStage | None = None,
 ) -> Settled:
     """Every item's final answer, once the deferred remainder has had its retry.
 
@@ -433,7 +513,7 @@ def settle(
     unknown = [o for o in deferred if o.id not in by_id]
     # The retry re-decided every item it was handed, so the first pass's
     # deferrals are superseded rather than reported alongside the second's.
-    retried = _retry(adapter, again, trail)
+    retried = _retry(adapter, again, trail, stage=stage)
     return Settled(
         stalled + settled + unknown + [o for b in retried for o in b.outcomes],
         max(worst, max((b.exit_code for b in retried), default=0)),

@@ -361,6 +361,8 @@ class TestTemplateRendering:
         name = PHASES[phase].template_for()
         left = _unsubstituted(agent.templates.render(
             name, execution_claim_guard="guard",
+            tracking_content="items", tracking_file="t.md",
+            answer_format="boxes",
         ))
         assert not left, f"{name} left: {left}"
 

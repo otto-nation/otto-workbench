@@ -123,3 +123,13 @@ RUNS_JS
   [ "$status" -eq 0 ]
   [ "$output" = '[["review-publish","batch-session"],null]' ]
 }
+
+@test "run session: the run row and the Needs-you card both draw sessionControl, labelled Open session" {
+  local view="$REPO_ROOT/ai/herdr/app/mods/prs/workflows_view.js"
+  run grep -c 'sessionControl("open-session-run", session)' "$view"
+  [ "$output" = "1" ]
+  run grep -c 'sessionControl("open-session", state.runSession)' "$view"
+  [ "$output" = "1" ]
+  run grep -c 'ghostButton(id, "Open session", () => s.onOpen())' "$view"
+  [ "$output" = "1" ]
+}

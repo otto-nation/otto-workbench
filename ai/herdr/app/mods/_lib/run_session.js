@@ -10,11 +10,14 @@
  * A machine whose `pr board` features lack `batch-session` gets OUTDATED_TEXT and no exec.
  */
 
-import { readJson } from './board_data.js';
-import { LABEL_SESSION, machineOf } from './launch.js';
+import { invoke, readJson } from './board_data.js';
+import { LABEL_SESSION, hcSessionArgv, machineOf, parseRunReply } from './launch.js';
 
 export const SESSION_FEATURE = 'batch-session';
 export const OUTDATED_TEXT = 'Update pr on this machine to open sessions (otto-workbench sync)';
+
+// What argparse prints for a `pr` that predates `pr batch session`.
+const OUTDATED_RE = /invalid choice: 'session'/;
 
 export function sessionArgv(runId) {
   return ['batch', 'session', String(runId), '--json'];
@@ -79,4 +82,48 @@ export function focusSteps(address, panes, spaces) {
     ['tab.select', { id: pane.tab }],
     ['pane.focus', { pane: pane.pane }],
   ];
+}
+
+function failed(message) {
+  return { ok: false, outdated: false, message: String(message ?? 'failed') };
+}
+
+const OUTDATED = Object.freeze({ ok: false, outdated: true, message: OUTDATED_TEXT });
+
+/**
+ * deps: {exec, run, panes, spaces} (the herdr functions). target: {on, cwd, runId, repo, features}.
+ * Resolves {ok:true, opened:'focused'|'started'} or {ok:false, outdated, message}; never rejects.
+ */
+export async function openRunSession(deps, target) {
+  const { exec, run, panes, spaces } = deps;
+  const { on = null, cwd = null, runId, repo = null, features = null } = target;
+  if (sessionGate(features) === 'outdated') return OUTDATED;
+  const asked = await invoke(exec, { on, cwd }, 'pr', sessionArgv(runId));
+  if (!asked.ok) return OUTDATED_RE.test(asked.error.message ?? '') ? OUTDATED : failed(asked.error.message);
+  const body = readJson(asked.stdout);
+  const got = body.ok ? parseRecipe(body.value) : body;
+  if (!got.ok) return failed(got.error.message);
+  const { sessionId, cwd: checkout } = got.recipe;
+  let ls;
+  try {
+    ls = await exec('hc', findArgv(sessionId), {});
+  } catch (err) {
+    return failed(`could not look for an open session: ${err?.message ?? err}`);
+  }
+  // Refuse rather than start a second pi on the same session file when the lookup fails.
+  if (ls.code !== 0) return failed(`could not look for an open session: ${ls.stderr || `exit ${ls.code}`}`);
+  const address = liveAddress(ls.stdout, on);
+  if (address) {
+    for (const [name, args] of focusSteps(address, panes(), spaces())) run(name, args);
+    return { ok: true, opened: 'focused' };
+  }
+  let res;
+  try {
+    res = parseRunReply(await exec('hc', hcSessionArgv({ repo, runId, sessionId, cwd: checkout, on }), {}));
+  } catch (err) {
+    res = { ok: false, error: { message: String(err?.message ?? err) } };
+  }
+  if (!res.ok) return failed(res.error.message);
+  run('terminal.keep', { terminal: res.terminal });
+  return { ok: true, opened: 'started' };
 }

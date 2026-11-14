@@ -511,9 +511,10 @@ class FixConfig:
     remaining-budget baseline re-run get the same interval.
 
     ``plan_stage`` is the kill switch for the comments plan/implement/escalate
-    path. True (the default) is the staged pass; false is today's comments_fix
-    path. Allowed at every scope: it is an operator cost preference, not a
-    fact about one checkout.
+    path. True (the default) is the staged pass, including routing high-complexity
+    valid suggestions through the plan; false is today's comments_fix path.
+    Allowed at every scope: it is an operator cost preference, not a fact about
+    one checkout.
 
     Scoped to the repo. The command names paths inside one checkout, so a
     machine-wide value would point every other repo at a script it does not

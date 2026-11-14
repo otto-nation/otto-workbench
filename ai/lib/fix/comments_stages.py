@@ -44,6 +44,16 @@ def apply(adapter) -> None:
     adapter.escalate_phase = Phase.COMMENTS_ESCALATE
 
 
+def active(cfg) -> bool:
+    """True when the staged comments path (and complex→fixable routing) will run."""
+    return bool(cfg.fix.plan_stage) and not unavailable(cfg)
+
+
+def plan_complex_for(workdir) -> bool:
+    """Whether triage should send high-complexity valids to the agent."""
+    return active(load_config_or_default(workdir))
+
+
 def unavailable(cfg) -> str:
     """Why the plan stage cannot run, or empty when it can."""
     if not cfg.models.deep:

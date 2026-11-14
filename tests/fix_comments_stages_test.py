@@ -27,6 +27,7 @@ import git.client
 import git.topology
 import pr.fix_state
 import pr.thread_context
+import pr.triage_round
 from agent.registry import PHASES
 from config.workbench_config import FixConfig, ModelsConfig, WorkbenchConfig
 from core.phases import Phase
@@ -74,14 +75,46 @@ def test_hooks_off_when_plan_stage_is_false(tmp_path):
     assert adapter.plan_phase is None
     assert adapter.implement_phase is None
     assert adapter.escalate_phase is None
+    assert fix.comments_stages.active(_cfg(plan_stage=False)) is False
 
 
 def test_hooks_on_when_plan_stage_is_on(tmp_path):
     with patch.object(fix.comments_stages, "unavailable", return_value=""):
         adapter = _adapter(tmp_path, cfg=_cfg(plan_stage=True))
+        assert fix.comments_stages.active(_cfg(plan_stage=True)) is True
     assert adapter.plan_phase is Phase.COMMENTS_PLAN
     assert adapter.implement_phase is Phase.COMMENTS_IMPLEMENT
     assert adapter.escalate_phase is Phase.COMMENTS_ESCALATE
+
+
+def test_plan_complex_for_reuses_active(tmp_path):
+    with patch.object(fix.comments_stages, "unavailable", return_value=""), \
+         patch(
+             "fix.comments_stages.load_config_or_default",
+             return_value=_cfg(plan_stage=True),
+         ):
+        assert fix.comments_stages.plan_complex_for(tmp_path) is True
+    with patch(
+        "fix.comments_stages.load_config_or_default",
+        return_value=_cfg(plan_stage=False),
+    ):
+        assert fix.comments_stages.plan_complex_for(tmp_path) is False
+
+
+def test_run_pass_passes_plan_complex_to_triage(tmp_path):
+    captured = {}
+
+    def fake_round(*_a, **kw):
+        captured.update(kw)
+        raise RuntimeError("stop")
+
+    report = PRReport(repo="owner/repo", pr_number=1)
+    ctx = _fake_ctx(tmp_path)
+    with patch.object(pr.triage_round, "triage_the_round", side_effect=fake_round), \
+         patch.object(fix.comments_stages, "plan_complex_for", return_value=True):
+        with pytest.raises(RuntimeError, match="stop"):
+            fix.comments.run_pass(TriageResult(), report, tmp_path, ctx)
+    assert captured.get("plan_complex") is True
 
 
 def test_unset_deep_tier_logs_one_error_and_stays_on_today_s_path(tmp_path):

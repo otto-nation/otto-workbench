@@ -90,6 +90,70 @@ class TestClassifyTriageComplexity:
         assert len(result.needs_human) == 0
 
 
+class TestPlanComplexRouting:
+    """When the staged path can run, valid+high goes to the agent.
+
+    `needs_discussion`, questions, conflicting, and contested stay mechanical
+    NEEDS_HUMAN. Off (the default) is today's COMPLEX hand-back.
+    """
+
+    def _valid_high(self, **kw):
+        base = dict(
+            id="t1", file="f.go", line=10, reviewer="alice",
+            summary="refactor", classification="actionable_suggestion",
+            verification="valid", complexity="high", state=ThreadState.NEW,
+        )
+        return CommentItem(**(base | kw))
+
+    def test_complex_goes_to_fixable_when_plan_complex(self):
+        result = pr.triage_round.classify_entries(
+            [self._valid_high()], plan_complex=True,
+        )
+        assert [e.id for e in result.fixable] == ["t1"]
+        assert result.needs_human == []
+
+    def test_complex_goes_to_needs_human_when_plan_complex_off(self):
+        result = pr.triage_round.classify_entries(
+            [self._valid_high()], plan_complex=False,
+        )
+        assert result.fixable == []
+        assert result.needs_human[0].reason == "complex"
+
+    @pytest.mark.parametrize("kw, reason", [
+        ({"state": ThreadState.CONTESTED}, "contested"),
+        ({"classification": "question"}, "question"),
+        ({"classification": "conflicting"}, "conflicting"),
+        ({"verification": "needs_discussion"}, "needs_discussion"),
+    ])
+    def test_other_human_reasons_stay_needs_human_when_plan_complex(
+        self, kw, reason,
+    ):
+        result = pr.triage_round.classify_entries(
+            [self._valid_high(**kw)], plan_complex=True,
+        )
+        assert result.fixable == []
+        assert result.needs_human[0].reason == reason
+
+    def test_triage_the_round_forwards_plan_complex(self, publishing_on):
+        """The `_route` call site the pass uses, not only classify_entries."""
+        entry = self._valid_high()
+        report = PRReport(
+            repo="owner/repo", pr_number=1,
+            threads=[ReportThread(id="t1", state=ThreadState.NEW)],
+        )
+        ctx = make_ctx(repo="owner/repo", pr_number=1)
+        with patch.object(pr.supersession, "detect_cached",
+                          return_value=supersession_verdict()), \
+             patch.object(git.topology, "default_branch_cached",
+                          return_value="main"):
+            round_ = pr.triage_round.triage_the_round(
+                TriageResult(threads=[entry]), report, "/tmp/wt", ctx,
+                plan_complex=True,
+            )
+        assert [e.id for e in round_.fixable] == ["t1"]
+        assert round_.needs_human == []
+
+
 class TestFixableCountMatchesTheClassifier:
     """What the trail reports fixable is what the fix agent is handed.
 

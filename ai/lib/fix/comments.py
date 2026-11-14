@@ -608,6 +608,7 @@ def run_pass(
 
     round_ = pr.triage_round.triage_the_round(
         triage_result, report, wt_path, ctx, trail=trail,
+        plan_complex=fix.comments_stages.plan_complex_for(wt_path),
     )
 
     if resume is None:

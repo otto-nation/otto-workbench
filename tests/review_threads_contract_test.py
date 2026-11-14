@@ -11,6 +11,7 @@ if str(LIB_DIR) not in sys.path:
 import cli.pr  # noqa: E402
 import cli.review_threads  # noqa: E402
 from core.exit_codes import ExitCode  # noqa: E402
+from pr.thread_models import CommentFixResult  # noqa: E402
 
 
 def test_comments_help_names_the_command_as_typed():
@@ -39,3 +40,12 @@ def test_comments_exit_codes():
     assert [int(o.code) for o in cli.review_threads.CONTRACT.exits] == [
         0, 1, 2, 75, 130]
     assert cli.review_threads.CONTRACT.exits[0].code is ExitCode.OK
+
+
+def test_skill_lists_every_comment_fix_result_field():
+    skill = (REPO_ROOT / "ai" / "skills" / "pr-comments" / "SKILL.md").read_text()
+    missing = [
+        name for name in CommentFixResult.__dataclass_fields__
+        if f"`{name}`" not in skill
+    ]
+    assert missing == []

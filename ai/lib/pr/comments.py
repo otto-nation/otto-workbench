@@ -6,8 +6,8 @@ lives in, belong to `pr.comments_state`.
 
 A thread's lifecycle state is what decides whether the run may report itself
 done. `--post` is a request, not a guarantee: if triage routes any thread to
-`needs_human` — contested, conflicting, a question, or too complex to
-auto-fix — the fix pass *holds* publishing for the rest of the process, and the
+`needs_human` — contested, conflicting, a question, or needs discussion —
+the fix pass *holds* publishing for the rest of the process, and the
 hold outranks `--post`. Nothing reopens it (see `publishing`).
 
 The fixes still get applied and still get committed. What waits is everything

@@ -118,9 +118,16 @@ def _no_published_summary():
     Every summary upsert reads the published comment first, so without this the
     suite would shell out to `gh api`. Tests covering the carry-forward stub it
     with a body of their own.
+
+    Also pins `fix.plan_stage` off so these suites stay on today's comments_fix
+    path. Staged-pass tests construct their own config.
     """
     import pr.comments
-    with _lookup_returns(pr.comments.MarkerComment(found=True)):
+    from dataclasses import replace
+    from config.workbench_config import FixConfig, WorkbenchConfig
+    legacy = replace(WorkbenchConfig(), fix=replace(FixConfig(), plan_stage=False))
+    with _lookup_returns(pr.comments.MarkerComment(found=True)), \
+            patch("fix.comments_stages.load_config_or_default", return_value=legacy):
         yield
 
 
@@ -256,7 +263,12 @@ def _fix_adapter(wt_path, **overrides):
         repo="owner/repo", pr_number=1, worktree_root=wt_path, target_dir=wt_path,
     )
     round_ = overrides.pop("round_", None) or _triaged_round(**overrides)
-    return fix.comments.CommentFixAdapter(report, ctx, wt_path, round_)
+    adapter = fix.comments.CommentFixAdapter(report, ctx, wt_path, round_)
+    # Helpers build today's adapter. Staged tests set the hooks themselves.
+    adapter.plan_phase = None
+    adapter.implement_phase = None
+    adapter.escalate_phase = None
+    return adapter
 
 
 # ── _render_deferred_summary ───────────────────────────────────────────────

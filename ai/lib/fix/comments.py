@@ -35,6 +35,7 @@ from core.phases import Phase
 from core.trail import Trail
 import fix.comment_checklist
 import fix.comment_replies
+import fix.comments_stages
 import fix.engine
 import fix.gate
 import fix.pass_resume
@@ -125,6 +126,7 @@ class CommentFixAdapter(fix.engine.FixAdapter):
         self._checkpoint = checkpoint
         # `record` builds this and `_run_comment_fix` returns it.
         self.result = CommentFixResult()
+        fix.comments_stages.apply(self)
 
     @property
     def keeps_checkpoints(self) -> bool:
@@ -217,6 +219,14 @@ class CommentFixAdapter(fix.engine.FixAdapter):
         around the pass and restores anything the agent changed.
         """
         return [self.main_wt] if self.main_wt else []
+
+    def escalates(self, outcome: ItemOutcome, staged: object | None = None) -> bool:
+        """C1, skipping question / conflicting / contested threads."""
+        return fix.comments_stages.escalates(self, outcome, staged)
+
+    def pr_files(self) -> frozenset[str] | None:
+        """Files this PR touches, for the plan's `outside_pr` flag."""
+        return fix.comments_stages.pr_files(self)
 
     def items(self) -> list[fix.types.FixItem]:
         return fix.comment_checklist.fix_items(
@@ -461,6 +471,8 @@ def _result_for(
         max_turns=run.max_turns,
         max_budget=run.max_budget,
         batches=run.batches,
+        planned=sum(1 for o in run.outcomes if o.plan_path),
+        escalated=sum(1 for o in run.outcomes if o.escalation is not None),
     )
 
 

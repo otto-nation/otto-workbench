@@ -360,9 +360,19 @@ class TestTemplateRendering:
     def test_staged_comments_templates_fully_substituted(self, phase):
         name = PHASES[phase].template_for()
         left = _unsubstituted(agent.templates.render(
-            name, execution_claim_guard="guard",
-            tracking_content="items", tracking_file="t.md",
+            name,
+            branch_name="b",
+            repo="o/r",
+            tracking_content="items",
+            tracking_file="t.md",
             answer_format="boxes",
+            execution_claim_guard="guard",
+            worktree_block="wt",
+            generated_block="gen",
+            role_block="role",
+            max_turns="16",
+            pr_body_file="body.md",
+            main_worktree="",
         ))
         assert not left, f"{name} left: {left}"
 

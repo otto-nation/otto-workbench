@@ -782,6 +782,15 @@ module is the decision: auto-detect, require, or discard, keyed on the PR,
 the branch, HEAD, and the agent's file blobs. Nothing here writes a
 checkpoint; ``fix.comments.run_pass`` and the adapter's ``advance`` do that.
 
+### fix/comments_stages.py
+
+Comments-domain wiring for the plan / implement / escalate stages.
+
+The engine's hooks are defaulted off. This module turns them on for a comments
+pass when ``fix.plan_stage`` is set and the plan model can actually run. Off,
+or when the deep tier is unset or a light model is forced, the adapter is
+today's ``comments_fix`` path — one error line, nothing else.
+
 ### fix/containment.py
 
 Content snapshots that restore a phase's writes in a named worktree.

@@ -33,7 +33,8 @@ long: the joiner reaps it and resolves again. An orphaned ticket becomes
 `failed` with no exit status, and an orphaned running job goes back to
 `queued` for the worker, until it has run `MAX_JOB_ATTEMPTS` times, when it is
 `failed`. A job that exits 75 is put back by `requeue` with `not_before` set;
-`next_job` does not offer it before then.
+`next_job` does not offer it before then. `label` is an optional display
+string stored beside `not_before`; it is never used to match entries.
 `resolve(reuse=False)` joins a live entry but never answers from a `done` one.
 `claim_as_ticket` converts a still-queued job into a ticket for the process
 that runs it.
@@ -100,6 +101,7 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "CREATE INDEX IF NOT EXISTS entries_by_state ON entries (state, entry_class)",
     ),
     ("ALTER TABLE entries ADD COLUMN not_before REAL",),
+    ("ALTER TABLE entries ADD COLUMN label TEXT",),
 )
 
 _VERSION_KEY = "schema_version"
@@ -256,7 +258,8 @@ def _entry(row: sqlite3.Row | None) -> Entry | None:
                  attempts=row["attempts"], exit_status=row["exit_status"],
                  log_path=row["log_path"], result=row["result"], pid=row["pid"],
                  created_at=row["created_at"], started_at=row["started_at"],
-                 finished_at=row["finished_at"], not_before=row["not_before"])
+                 finished_at=row["finished_at"], not_before=row["not_before"],
+                 label=row["label"])
 
 
 class Outcome(StrEnum):
@@ -292,9 +295,10 @@ def _match(conn: sqlite3.Connection, key: str, reuse: bool) -> Resolution | None
 def _insert(conn: sqlite3.Connection, new: NewEntry, pid: int | None) -> int:
     cur = conn.execute(
         "INSERT INTO entries (kind, entry_class, idem_key, argv, cwd, env_allow, state, pid, "
-        "created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "created_at, label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (new.kind.value, new.entry_class.value, new.idem_key, json.dumps(list(new.argv)),
-         new.cwd, json.dumps(list(new.env_allow)), EntryState.QUEUED.value, pid, time.time()))
+         new.cwd, json.dumps(list(new.env_allow)), EntryState.QUEUED.value, pid, time.time(),
+         new.label))
     return cur.lastrowid
 
 
@@ -447,8 +451,14 @@ class Ledger:
                 f"WHERE id = ? AND state IN {_LIVE_IN}",
                 (state_for_exit(exit_status).value, exit_status, time.time(), entry_id, *_LIVE))
             if cur.rowcount == 0:
-                conn.execute("UPDATE entries SET exit_status = ? WHERE id = ? AND exit_status IS NULL",
-                             (exit_status, entry_id))
+                # Fill a missing status, and replace the 130 `cancel` writes on a
+                # queued row when a stop handler supplied a more specific code.
+                conn.execute(
+                    "UPDATE entries SET exit_status = ? "
+                    "WHERE id = ? AND (exit_status IS NULL OR "
+                    "(state = ? AND exit_status = ?))",
+                    (exit_status, entry_id, EntryState.CANCELLED.value,
+                     core.proc.INTERRUPT_RETURNCODE))
             entry = _entry(_row(conn, entry_id))
         return entry.state if entry is not None else None
 

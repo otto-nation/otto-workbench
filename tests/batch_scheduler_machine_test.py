@@ -14,12 +14,20 @@ from batch.model import ItemStatus, Step  # noqa: E402
 # `_close_open_sessions` and `_quiet_outcomes` are autouse fixtures, imported only so
 # pytest registers them (the `noqa: F401` covers them); the other names are used directly.
 from batch_scheduler_support import (  # noqa: F401
-    NEED, NO, Harness, _close_open_sessions, _quiet_outcomes, row,
+    NEED, NO, Harness as _Harness, _close_open_sessions, _quiet_outcomes, row,
 )
 
 GiB = 1024 ** 3
-ONLY_REVIEW = {Step.REBASE: NO, Step.COMMENTS: NO, Step.REVIEW: NEED}
-# Room for one 1.5 GiB review step above the 2G reserve, and no more.
+# Host-admission tests hold decide's floor and memory path: plain rebase, not AI.
+ONLY_REBASE = {Step.REBASE: NEED, Step.COMMENTS: NO, Step.REVIEW: NO}
+PLAIN = []
+
+
+def Harness(*args, **kwargs):
+    kwargs.setdefault("with_ai", PLAIN)
+    return _Harness(*args, **kwargs)
+
+# Room for one rebase step above the 2G reserve once a peer's pending is counted.
 TIGHT = batch.admission.HostSample(4 * GiB, 1.0, 0.0)
 NO_METRICS = batch.admission.HostSample(None, None, None)
 
@@ -61,7 +69,7 @@ def test_a_driver_with_nothing_running_waits_without_the_floor_slot():
     """Regression: every driver started its first step whatever memory said, so N
     concurrent batches started N steps on a host with room for one."""
     machine = FakeMachine(peers=batch.machine.Peers(pending=3 * GiB), floor=False)
-    h = Harness([row(1, ONLY_REVIEW)], host=TIGHT, machine=machine)
+    h = Harness([row(1, ONLY_REBASE)], host=TIGHT, machine=machine)
     item = _first_tick(h)
     assert h.spawned == []
     assert item.status is ItemStatus.WAITING_ADMISSION
@@ -72,7 +80,7 @@ def test_a_driver_with_nothing_running_waits_without_the_floor_slot():
 
 def test_the_floor_slot_starts_one_step_on_a_starved_host():
     machine = FakeMachine(peers=batch.machine.Peers(pending=3 * GiB), floor=True)
-    h = Harness([row(1, ONLY_REVIEW), row(2, ONLY_REVIEW)], host=TIGHT, machine=machine)
+    h = Harness([row(1, ONLY_REBASE), row(2, ONLY_REBASE)], host=TIGHT, machine=machine)
     h.sched._once()
     assert len(h.spawned) == 1
     live, waiting = machine.settled[-1]
@@ -80,19 +88,19 @@ def test_the_floor_slot_starts_one_step_on_a_starved_host():
 
 
 def test_other_drivers_pending_memory_comes_off_the_host():
-    h = Harness([row(1, ONLY_REVIEW)], host=TIGHT,
+    h = Harness([row(1, ONLY_REBASE)], host=TIGHT,
                 machine=FakeMachine(peers=batch.machine.Peers(pending=0)))
     _first_tick(h)
     assert len(h.spawned) == 1
-    h2 = Harness([row(1, ONLY_REVIEW)], host=TIGHT,
-                 machine=FakeMachine(peers=batch.machine.Peers(pending=GiB, live=1)))
+    h2 = Harness([row(1, ONLY_REBASE)], host=TIGHT,
+                 machine=FakeMachine(peers=batch.machine.Peers(pending=2 * GiB, live=1)))
     _first_tick(h2)
     assert h2.spawned == []
 
 
 def test_the_floor_is_not_asked_for_while_a_step_of_ours_runs():
     machine = FakeMachine(peers=batch.machine.Peers(pending=3 * GiB), floor=True)
-    h = Harness([row(1, ONLY_REVIEW), row(2, ONLY_REVIEW)], host=TIGHT, machine=machine)
+    h = Harness([row(1, ONLY_REBASE), row(2, ONLY_REBASE)], host=TIGHT, machine=machine)
     h.sched._once()
     assert machine.asked == 1
     assert len(h.spawned) == 1
@@ -100,14 +108,14 @@ def test_the_floor_is_not_asked_for_while_a_step_of_ours_runs():
 
 def test_without_host_metrics_steps_elsewhere_count_against_the_pool_default():
     machine = FakeMachine(peers=batch.machine.Peers(live=1), floor=False)
-    h = Harness([row(1, ONLY_REVIEW)], host=NO_METRICS, machine=machine)
+    h = Harness([row(1, ONLY_REBASE)], host=NO_METRICS, machine=machine)
     item = _first_tick(h)
     assert h.spawned == []
     assert "running machine-wide" in item.wait_reason
 
 
 def test_a_scheduler_given_no_machine_keeps_the_per_run_floor():
-    h = Harness([row(1, ONLY_REVIEW)], host=batch.admission.HostSample(1 * GiB, 99.0, 50.0))
+    h = Harness([row(1, ONLY_REBASE)], host=batch.admission.HostSample(1 * GiB, 99.0, 50.0))
     _first_tick(h)
     assert len(h.spawned) == 1
 
@@ -117,8 +125,8 @@ def test_two_real_drivers_on_a_starved_host_start_one_step_between_them(tmp_path
     starved = batch.admission.HostSample(1 * GiB, 1.0, 0.0)
     with batch.machine.register("run-a", tmp_path) as ma, \
             batch.machine.register("run-b", tmp_path) as mb:
-        a = Harness([row(1, ONLY_REVIEW)], host=starved, machine=ma)
-        b = Harness([row(2, ONLY_REVIEW)], host=starved, machine=mb)
+        a = Harness([row(1, ONLY_REBASE)], host=starved, machine=ma)
+        b = Harness([row(2, ONLY_REBASE)], host=starved, machine=mb)
         a.sched._once()
         b.sched._once()
         assert (len(a.spawned), len(b.spawned)) == (1, 0)
@@ -132,8 +140,8 @@ def test_floor_refused_while_a_peer_has_a_step_live(tmp_path):
     healthy = batch.admission.HostSample(64 * GiB, 1.0, 0.0)
     with batch.machine.register("run-a", tmp_path) as ma, \
             batch.machine.register("run-b", tmp_path) as mb:
-        a = Harness([row(1, ONLY_REVIEW)], host=healthy, machine=ma)
-        b = Harness([row(2, ONLY_REVIEW)], host=starved, machine=mb)
+        a = Harness([row(1, ONLY_REBASE)], host=healthy, machine=ma)
+        b = Harness([row(2, ONLY_REBASE)], host=starved, machine=mb)
         a.sched._once()
         b.sched._once()
         assert (len(a.spawned), len(b.spawned)) == (1, 0)
@@ -142,7 +150,7 @@ def test_floor_refused_while_a_peer_has_a_step_live(tmp_path):
 
 def test_a_driver_defers_to_an_earlier_waiter_even_with_room():
     machine = FakeMachine(ahead="run-x")
-    h = Harness([row(1, ONLY_REVIEW)], machine=machine)
+    h = Harness([row(1, ONLY_REBASE)], machine=machine)
     item = _first_tick(h)
     assert h.spawned == []
     assert item.wait_reason == "waiting behind batch run run-x, which queued for the machine first"
@@ -157,9 +165,9 @@ def test_a_freed_slot_goes_to_the_driver_that_waited_rather_than_the_one_that_fi
     starved = batch.admission.HostSample(1 * GiB, 1.0, 0.0)
     with batch.machine.register("run-a", tmp_path) as ma, \
             batch.machine.register("run-b", tmp_path) as mb:
-        a = Harness([row(1, ONLY_REVIEW), row(3, ONLY_REVIEW)],
+        a = Harness([row(1, ONLY_REBASE), row(3, ONLY_REBASE)],
                     host=batch.admission.HostSample(4 * GiB, 1.0, 0.0), pool=1, machine=ma)
-        b = Harness([row(2, ONLY_REVIEW)], host=starved, machine=mb)
+        b = Harness([row(2, ONLY_REBASE)], host=starved, machine=mb)
         a.sched._once()
         assert len(a.spawned) == 1
         b.sched._once()

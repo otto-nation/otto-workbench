@@ -1045,6 +1045,19 @@ def rp():
 
 
 @pytest.fixture(autouse=True)
+def _pr_commands_skip_the_queue(monkeypatch):
+    """Keep existing `cli.pr.main` tests in-process; the gate tests delenv this.
+
+    A suite run under `otto-queue run --ticket` (what agents are told to do) inherits
+    `OTTO_QUEUE_ENTRY` and the gate's loop marker, which would make every ticket test
+    believe it is nested; each test starts without them and sets what it needs.
+    """
+    monkeypatch.setenv("WORKBENCH_PR_NO_QUEUE", "1")
+    monkeypatch.delenv("OTTO_QUEUE_ENTRY", raising=False)
+    monkeypatch.delenv("_WB_PR_QUEUED", raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_state_root(tmp_path, monkeypatch):
     """Point the whole state root at a temp dir for the duration of every test.
 
@@ -1321,7 +1334,8 @@ def command_spec(**overrides):
 
     fields = dict(name="probe", help="a probe",
                   need=Need(REMOTE, update=False, locks=NO_LOCK),
-                  contract="cli.pr_commands:STATUS_CONTRACT")
+                  contract="cli.pr_commands:STATUS_CONTRACT",
+                  queue=None)
     fields.update(overrides)
     return CommandSpec(**fields)
 

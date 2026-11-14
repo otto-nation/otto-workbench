@@ -3,6 +3,8 @@
 Every value here is persisted in the ledger, so the enums' string values are
 stable. A machine mid-sync runs old and new code against one file, so a value
 is added, never renamed or removed — the rule the schema follows too.
+A `label` is display-only: `status` shows it in place of the command; it is
+never used to match entries.
 
 | State | Meaning |
 |---|---|
@@ -35,6 +37,12 @@ class EntryClass(StrEnum):
 
     HEAVY = "heavy"
     LIGHT = "light"
+
+
+# Read by `cli.queue_gate` (and set by `pr batch`); `run_ticket` does not. Here rather than in
+# `ticket` so a caller that only names them does not import the whole ticket machinery.
+LABEL_ENV = "OTTO_QUEUE_LABEL"
+WAIT_ENV = "OTTO_QUEUE_WAIT_S"
 
 
 class EntryState(StrEnum):
@@ -87,6 +95,7 @@ class NewEntry:
     entry_class: EntryClass = EntryClass.HEAVY
     idem_key: str | None = None
     env_allow: tuple[str, ...] = ()
+    label: str | None = None
 
 
 @dataclass(frozen=True)
@@ -110,6 +119,7 @@ class Entry:
     started_at: float | None
     finished_at: float | None
     not_before: float | None = None
+    label: str | None = None
 
     @property
     def holds_lease(self) -> bool:

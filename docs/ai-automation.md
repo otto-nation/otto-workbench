@@ -974,6 +974,10 @@ A second `pr` against the same target or checkout while one still holds the lock
 exits 75 (`EX_TEMPFAIL`, the same value as `pr gc` when the GitHub hourly quota
 is spent). The error names the owning command; retry once that run finishes.
 
+### pr and the otto-queue
+
+AI subcommands wait for an otto-queue slot before they take any lock, so a waiting `pr` holds nothing. The class is declared on the command's `queue=` in `cli.registry` (heavy, light, or none — not a table copied here). The wait shows as a labelled ticket (`pr comments --fix · repo#123`); `pr batch` supplies its own label. `--no-queue` or `WORKBENCH_PR_NO_QUEUE=1` skips the wait. A process that already holds `OTTO_QUEUE_ENTRY` (nested under another ticket) runs in place. Exit 75 means no slot came in time; 130 means the wait was cancelled (`otto-queue cancel`, the Herdr queue panel, or Ctrl-C). `ci-check` and `review` run bare queue the same way; `pr ci` / `pr review` / `pr fix` calling them in-process do not queue again.
+
 ### pr command contracts
 
 What each `pr` command writes to origin or GitHub and how, what each exit means, and the
@@ -1002,7 +1006,8 @@ Create a pull request for the current branch, or preview it with --dry-run. Push
 | `0` | PR created (its URL on stdout), or the --dry-run preview printed |  |
 | `1` | refused in preflight (a PR already exists for the branch — use pr describe; run from the default branch; origin/<base> missing or unfetched; no commits ahead of the base; a --closes the tracker refuses), no checkout, the self-review gate (no self-review covers HEAD), the publishing token, the nesting gate, the push (including behind/diverged), content generation, or gh pr create |  |
 | `2` | bad flags, unreadable --body-file, empty --skip-review reason |  |
-| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+| `75` | another pr run holds this branch or checkout, or no otto-queue slot came in time; retry once it finishes |  |
+| `130` | waiting for an otto-queue slot was cancelled |  |
 
 **Examples**
 
@@ -1011,6 +1016,7 @@ Create a pull request for the current branch, or preview it with --dry-run. Push
 - `pr create --draft --dry-run` — print title and body; push nothing, create nothing
 - `pr create --draft --skip-review "user asked to skip"` — skip the self-review gate; the reason is recorded on the trail
 
+> AI work waits for an otto-queue slot first (exit 75 if none came in time, 130 if cancelled); --no-queue or WORKBENCH_PR_NO_QUEUE=1 skips it.
 > Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > --dry-run takes no lock, pushes nothing and never calls gh.
 
@@ -1053,7 +1059,8 @@ Report CI failures for the branch. --fix diagnoses and applies fixes; --post pus
 | `0` | report printed; with --fix the fixes landed or there was nothing to fix. Without --fix, 0 even when CI failed — read the JSON. A held or refused push of the fix commit is still 0 |  |
 | `1` | no run to report on, --fix without a worktree, a paused rebase in the worktree, a refused commit, or the fix pass failed |  |
 | `2` | bad flags |  |
-| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+| `75` | another pr run holds this branch or checkout, or no otto-queue slot came in time; retry once it finishes |  |
+| `130` | waiting for an otto-queue slot was cancelled |  |
 
 **Examples**
 
@@ -1062,6 +1069,7 @@ Report CI failures for the branch. --fix diagnoses and applies fixes; --post pus
 - `pr ci --fix --post` — rebase if behind, fix, and push the fix commit
 - `pr ci --fix --no-rebase --post` — fix and push without rebasing first
 
+> AI work waits for an otto-queue slot first (exit 75 if none came in time, 130 if cancelled); --no-queue or WORKBENCH_PR_NO_QUEUE=1 skips it.
 > Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > --no-verify here skips the verify gate (an agent exercising each fix), not git's pre-push hook.
 > --fix without --post still rebases locally when behind and commits; both pushes are drafted.
@@ -1089,7 +1097,8 @@ Run the configured review agent on a PR, or handle a mode (--post an existing re
 | `1` | flag conflicts (--fix without --self, --push without --fix, --recover with --force, --no-post with --post, --track with a mode or without --self); no target; a removed subcommand; bad --focus; unresolvable --base; every agent failed; no PR/review file for a mode; --publish with no pending draft or a moved head; --post of a too-large draft; a mode with --fix; --fix on a drifted recover; owner boundary |  |
 | `2` | bad flags; --if-changed without --schema-version |  |
 | `4` | the branch looks superseded; refused before reviewing; JSON names override --force-superseded | `pr review --force-superseded … to review it anyway` |
-| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+| `75` | another pr run holds this branch or checkout, or no otto-queue slot came in time; retry once it finishes |  |
+| `130` | waiting for an otto-queue slot was cancelled |  |
 
 **Examples**
 
@@ -1100,6 +1109,7 @@ Run the configured review agent on a PR, or handle a mode (--post an existing re
 - `pr review --publish approve` — approve with the draft already on GitHub
 - `pr review --json-summary 42` — review PR 42; stdout is one REVIEW_SUMMARY:{json} line
 
+> AI work waits for an otto-queue slot first (exit 75 if none came in time, 130 if cancelled); --no-queue or WORKBENCH_PR_NO_QUEUE=1 skips it.
 > Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > Under `pr review`, `--post` names a mode that posts an existing review; the `review` binary's own `--post` (post after running) is not reachable through `pr`.
 > A plain PR run prompts before posting a draft and again before publishing it as a comment; --no-post skips both. --force skips the stale/pending prompts, not the post prompts. `--force` still overrides supersession; prefer `--force-superseded`.
@@ -1124,7 +1134,8 @@ Fetch and manage PR review threads. Phase flags pick the work; --post publishes 
 | `0` | dashboard printed; the chosen phase completed (draft or published); --settle recorded locally |  |
 | `1` | no PR; --settle/--reply flag conflicts; missing --reply body; no worktree; unpublished held commit; --finish on an incomplete fetch; finish_deferred_work refused (bad --track, summary refused); fix commit failed; owner boundary |  |
 | `2` | bad flags |  |
-| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+| `75` | another pr run holds this branch or checkout, or no otto-queue slot came in time; retry once it finishes |  |
+| `130` | waiting for an otto-queue slot was cancelled |  |
 
 **Examples**
 
@@ -1133,6 +1144,7 @@ Fetch and manage PR review threads. Phase flags pick the work; --post publishes 
 - `pr comments --finish --post` — push a held fix commit, then replies, resolutions, summary
 - `pr comments --reply <id> --body-file reply.md --post` — post one thread reply
 
+> AI work waits for an otto-queue slot first (exit 75 if none came in time, 130 if cancelled); --no-queue or WORKBENCH_PR_NO_QUEUE=1 skips it.
 > Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > Without --post, GitHub writes and the held-commit push are drafted.
 > --settle writes local state only and refuses --post.
@@ -1157,13 +1169,15 @@ Run the review and CI fix passes from cached state, then revise the PR descripti
 | `1` | any pass failed, or there is no state yet | `no state: run pr ci, pr review or pr comments first` |
 | `2` | bad pr-level flags; a bad forwarded flag fails its pass (exit 1) |  |
 | `4` | the review pass refused the branch as superseded; the remaining passes did not run | `re-run with --force-superseded to override` |
-| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+| `75` | another pr run holds this branch or checkout, or no otto-queue slot came in time; retry once it finishes |  |
+| `130` | waiting for an otto-queue slot was cancelled |  |
 
 **Examples**
 
 - `pr fix` — run the passes; draft the review, CI, and description
 - `pr fix --post` — publish the review fix commit, CI fix, and PR description
 
+> AI work waits for an otto-queue slot first (exit 75 if none came in time, 130 if cancelled); --no-queue or WORKBENCH_PR_NO_QUEUE=1 skips it.
 > --post is forwarded to the review binary and to ci, not through cmd_review, so it is the binary's publish flag (may_publish), not the pr review --post mode.
 > A self-review files no GitHub review. argv other than --post is not forwarded to describe.
 > `--force` still overrides supersession; prefer `--force-superseded`.
@@ -1192,7 +1206,8 @@ Rebase the branch onto its base, handle conflicts, and force-push the result und
 | `2` | flags that cannot combine (--push-only with --fix/--abort/--no-push, --expect without --push-only, --fix with --stop-on-conflict) |  |
 | `3` | conflicts need a person; ConflictReport on stdout, its tree says paused or clean | *paused:* `resolve each file in `files` hunk by hunk (never take a side whole)` → `git -C {worktree} add <file> for each resolved file` → `git -C {worktree} rebase --continue (repeat until the rebase finishes)` → `pr rebase --push-only --branch {branch} — pushes under the lease saved at the stop` → `(or let pr finish instead: pr rebase --fix --branch {branch} resumes here)`<br>*clean:* `the rebase was aborted; HEAD is back at pre_rebase_head` → `pr rebase --fix --branch {branch} to resolve with AI, or pr rebase --stop-on-conflict --branch {branch} to pause and resolve by hand` |
 | `4` | refused before changing anything (already landed, unrelated history, conflicts over budget); RefusalReport on stdout | `read `signal` in the JSON — already_landed usually means delete the branch` → `to rebase anyway: pr rebase --force-landed --branch {branch}` |
-| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+| `75` | another pr run holds this branch or checkout, or no otto-queue slot came in time; retry once it finishes |  |
+| `130` | waiting for an otto-queue slot was cancelled |  |
 
 **Examples**
 
@@ -1232,6 +1247,7 @@ Rebase the branch onto its base, handle conflicts, and force-push the result und
 | `resolutions_over_budget` | status conflicts_over_budget: the same files conflict commit after commit, past the AI call budget; the rebase was aborted |
 | `tracker_refused` | status tracker_unread: GitHub was not asked whether the PR merged (budget latch), so landing could not be ruled out |
 
+> AI work waits for an otto-queue slot first (exit 75 if none came in time, 130 if cancelled); --no-queue or WORKBENCH_PR_NO_QUEUE=1 skips it.
 > `--force` is a deprecated alias of `--force-landed`.
 > Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 
@@ -1279,7 +1295,8 @@ Revise a PR description against the repo's PR template. Without --post the edit 
 | `0` | description current, revised, or no PR and nothing asked of one |  |
 | `1` | no PR for --title/--body/--closes, no worktree, gh failure, could not read the PR body or fetch the PR base, unusable AI output, refused --closes or --body, no publishing token under --post |  |
 | `2` | bad flags, unreadable --body-file |  |
-| `75` | another pr run holds this branch or checkout; retry once it finishes |  |
+| `75` | another pr run holds this branch or checkout, or no otto-queue slot came in time; retry once it finishes |  |
+| `130` | waiting for an otto-queue slot was cancelled |  |
 
 **Examples**
 
@@ -1287,6 +1304,7 @@ Revise a PR description against the repo's PR template. Without --post the edit 
 - `pr describe --force --post` — revise regardless of HEAD and apply it on GitHub
 - `pr describe --post --closes 941` — apply the revision and link issue 941 to close on merge
 
+> AI work waits for an otto-queue slot first (exit 75 if none came in time, 130 if cancelled); --no-queue or WORKBENCH_PR_NO_QUEUE=1 skips it.
 > Without --post the edit is drafted to stderr; the bare invocation writes nothing on GitHub.
 > --dry-run prints the revision and records nothing, even with --post.
 
@@ -1429,6 +1447,7 @@ Run background work through this machine's queue, so it waits for room instead o
 **Examples**
 
 - `otto-queue run --ticket --class light -- pytest tests/foo_test.py` — wait for a light slot, then run pytest here
+- `otto-queue run --ticket --label nightly-build -- make` — show a label instead of the command in status
 - `otto-queue run --ticket --key review:main -- pr review --self` — join a live review with that key, or reuse a done one's status
 - `otto-queue submit --key nightly -- pr gc` — queue pr gc for the worker and return; runs here if no worker starts
 - `otto-queue status` — list live entries and recent finished ones
@@ -1608,14 +1627,7 @@ stored waiting v1 run converts on `resume` (one-way). Report keys: `run` (`id`,
 `status`, `active`, `exit_hint`, `hint`, `pending_requests`, `failed_requests`),
 `counts`, `items` (non-terminal), `github`, `sessions` (`pr batch report` only).
 `resume` replays `--focus`. `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`.
-`github` is omitted under `--offline`; keys and checkout rules are in
-[`batch/live.py`](ai-libraries.md#batchlivepy). Step output stays in the run's
-`logs/`. Admission is [`batch/machine.py`](ai-libraries.md#batchmachinepy): `batch.pool_max`
-(2) caps concurrency, `batch.pool_default` (1) applies without host metrics, and
-`batch.mem_reserve`, `batch.cpu_pressure_max`, `batch.mem_pressure_max` gate on pressure.
-State lives under `~/.local/state/workbench/batch/<run-id>/`; `pr gc` removes
-finished runs and orphaned `refs/pr-batch/` namespaces
-([`batch/gc.py`](ai-libraries.md#batchgcpy)).
+`github` is omitted under `--offline`; keys and checkout rules are in [`batch/live.py`](ai-libraries.md#batchlivepy). Step output stays in the run's `logs/`. AI steps (review, comments, rebase/CI under `--with-ai`) start within `batch.pool_max` (2) and each wait on their own otto-queue ticket (`pr batch · <step> · <repo>#<n>`); a waiter shows `items[].wait_reason` and an `admission_wait` event, stays `running`, and a plain `pr batch cancel` (no `--kill`) SIGTERMs it. `--pool` still caps every live step, waiters included. Plain steps are still admitted by [`batch/machine.py`](ai-libraries.md#batchmachinepy) against `batch.pool_default` (1) without host metrics, plus `batch.mem_reserve`, `batch.cpu_pressure_max`, `batch.mem_pressure_max`. State lives under `~/.local/state/workbench/batch/<run-id>/`; `pr gc` removes finished runs and orphaned `refs/pr-batch/` namespaces ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
 
 ### pr status
 

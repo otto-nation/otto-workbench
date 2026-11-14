@@ -174,6 +174,22 @@ def test_ctrl_c_while_waiting_cancels_the_entry(tmp_path):
     assert Ledger.open().get(result.entry_id).state is EntryState.CANCELLED
 
 
+def test_a_stop_signal_while_waiting_cancels_the_entry(tmp_path):
+    with pytest.raises(SystemExit) as exc:
+        _run(touch_argv(tmp_path / "ran"), policy=Room(raises=SystemExit(143)))
+    assert exc.value.code == 143
+    [entry] = Ledger.open().entries()
+    assert (entry.state, entry.exit_status) == (EntryState.CANCELLED, 143)
+
+
+def test_a_clean_exit_during_a_wait_records_130_not_0(tmp_path):
+    with pytest.raises(SystemExit):
+        _run(touch_argv(tmp_path / "ran"), policy=Room(raises=SystemExit(0)))
+    [entry] = Ledger.open().entries()
+    assert (entry.state, entry.exit_status) == (
+        EntryState.CANCELLED, core.proc.INTERRUPT_RETURNCODE)
+
+
 def test_a_ticket_inside_a_ticket_runs_directly(tmp_path, monkeypatch):
     monkeypatch.setenv(otto_queue.ticket.ENTRY_ENV, "41")
     result = _run(touch_argv(tmp_path / "ran"), policy=Room(admit=False), wait_s=10)
@@ -335,3 +351,20 @@ def test_without_reuse_a_done_key_runs_again(tmp_path):
     second = _run(touch_argv(tmp_path / "again"), idem_key="k", reuse=False)
     assert (second.outcome, (tmp_path / "again").exists()) == (TicketOutcome.RAN, True)
     assert second.entry_id != first.entry_id
+
+
+def test_a_tickets_label_is_on_its_entry():
+    result = _run(exit_argv(0), label="nightly")
+    assert Ledger.open().get(result.entry_id).label == "nightly"
+
+
+def test_claimed_request_keeps_the_entrys_label():
+    held = Ledger.open().resolve(NewEntry(argv=("true",), cwd="/", label="L"),
+                                 force=False, pid=os.getpid())
+    try:
+        claimed = otto_queue.ticket.claimed_request(
+            held.entry, TicketRequest(argv=("other",), cwd="/tmp"))
+        assert claimed.label == "L"
+        assert claimed.argv == ("true",)
+    finally:
+        held.lease.release()

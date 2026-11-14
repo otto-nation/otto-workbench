@@ -23,5 +23,5 @@ def test_describe_post_edits_via_gh_pr_edit():
 
 
 def test_describe_exit_codes():
-    assert [int(o.code) for o in cli.pr_describe.CONTRACT.exits] == [0, 1, 2, 75]
+    assert [int(o.code) for o in cli.pr_describe.CONTRACT.exits] == [0, 1, 2, 75, 130]
     assert cli.pr_describe.CONTRACT.exits[0].code is ExitCode.OK

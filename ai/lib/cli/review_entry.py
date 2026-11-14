@@ -29,6 +29,7 @@ from agent.registry import add_phase_skip_flags, phase_skips
 import cli.boundary
 import cli.contract_notes
 import cli.locks
+import cli.queue_gate
 import core.command_contract
 import core.log
 import core.proc
@@ -201,8 +202,11 @@ CONTRACT = core.command_contract.CommandContract(
         ),
         core.command_contract.ExitOutcome(
             ExitCode.TEMPFAIL,
-            "another pr run holds this branch or checkout; retry once "
-            "it finishes"),
+            "another pr run holds this branch or checkout, or no "
+            "otto-queue slot came in time; retry once it finishes"),
+        core.command_contract.ExitOutcome(
+            ExitCode.CANCELLED,
+            "waiting for an otto-queue slot was cancelled"),
     ),
     examples=(
         core.command_contract.Example(
@@ -225,6 +229,7 @@ CONTRACT = core.command_contract.CommandContract(
             "review PR 42; stdout is one REVIEW_SUMMARY:{json} line"),
     ),
     notes=(
+        cli.contract_notes.QUEUED,
         cli.contract_notes.PUSH_WAIT,
         "Under `pr review`, `--post` names a mode that posts an "
         "existing review; the `review` binary's own `--post` (post "
@@ -615,6 +620,17 @@ def main(argv: list[str] | None = None, *,
     if parsed.version:
         print(core.version.version_string(SCRIPT))
         return 0
+
+    if install_signal_handler:
+        code = cli.queue_gate.gate(
+            "review", argv,
+            reexec=(sys.executable, os.path.abspath(sys.argv[0]), *argv),
+            entry_class=cli.queue_gate.class_for("review", argv),
+            label=cli.queue_gate.label_for(
+                "review", argv, pr_ref=parsed.pr, branch=parsed.branch,
+                repo_dir=parsed.repo_dir))
+        if code is not None:
+            return code
 
     with _json_summary_stdout(parsed.json_summary) as json_stdout_fd:
         return _main_body(parsed, argv, json_stdout_fd)

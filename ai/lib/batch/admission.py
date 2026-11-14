@@ -18,12 +18,14 @@ On macOS free memory comes from `vm_stat` (free, inactive and speculative
 pages); there is no pressure reading, so batch's `decide` still takes its
 `pool_default` path there.
 
-The host is shared by every batch driver on it, so the caller passes in what
-the others are running (`batch.machine`): their pending memory comes off the
-sample, and their live steps count against `batch.pool_default` where there
-are no host metrics. Whether a driver may start a step regardless — the floor
-slot — is the caller's to establish and pass as `floor`; `decide` no longer
-infers it from this run having nothing running.
+The host is shared by every batch driver on it for the steps batch still
+admits itself (non-AI: plain rebase, and CI without `--fix`). AI steps are
+queue entries. The caller passes in what the others are running
+(`batch.machine`): their pending memory comes off the sample, and their live
+non-AI steps count against `batch.pool_default` where there are no host
+metrics. Whether a driver may start a step regardless — the floor slot — is
+the caller's to establish and pass as `floor`; `decide` no longer infers it
+from this run having nothing running.
 
 It is also the queue's admission policy. `QueuePolicy` is what
 `otto_queue.slots` asks, so "is there room" has one owner — the `room`
@@ -285,10 +287,11 @@ def admit_entry(sample: HostSample, *, entry_class: EntryClass, running: int,
     still makes progress one entry at a time, as `decide`'s floor slot does for
     batch. Otherwise `room` decides.
     """
-    # ceiling: batch and the queue each grant their own floor and neither sees
-    # the other's pending memory, so a starved host can run one batch step plus
-    # one heavy queue entry; acceptable until 2.2 moves batch steps onto the
-    # queue as jobs.
+    # ceiling: batch's non-AI steps keep batch's own floor and memory check, so
+    # a starved host can still run one plain step beside one heavy queue entry.
+    # Upgrade trigger: once plain steps are seen overcommitting a host
+    # alongside heavy entries, move them onto light tickets and retire
+    # batch.machine.
     if entry_class is EntryClass.LIGHT:
         return Verdict(True, "light work is bounded by count alone")
     if running == 0:

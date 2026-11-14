@@ -27,12 +27,14 @@ A `failed` finding's `reason` is one of these, or a publish refusal from
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 
 import batch.publish
+import core.proc
 import core.quota_throttle
 import gh.owners
 import git.client
@@ -340,9 +342,26 @@ def _commit_refused(lines: Sequence[str]) -> bool:
     return any(COMMIT_FAILED_MARKER in _clean(l).lower() for l in lines)
 
 
+TICKET_TIMEOUT_MARKER = "found no room in"
+
+
+def _wait_ended(exit_code: int, log_tail: Sequence[str], *, cancelled: bool) -> bool:
+    """Whether *exit_code* is a requested stop or a ticket timeout, not a step failure.
+
+    A waiting `pr` exits 128+N on SIGINT/SIGTERM/SIGHUP; that is an interrupt
+    only when the run is being cancelled, else it is a failure that must show.
+    75 is an interrupt only when it carries the ticket timeout text;
+    any other 75 (queue busy, lock busy, quota) stays a failure.
+    """
+    if exit_code - 128 in core.proc.STOP_SIGNALS:
+        return cancelled
+    return (exit_code == os.EX_TEMPFAIL
+            and any(TICKET_TIMEOUT_MARKER in _clean(l) for l in log_tail))
+
+
 def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
              log_tail: list[str], head_before: str = "", log_path: str = "",
-             fixing: bool = True) -> StepResult:
+             fixing: bool = True, cancelled: bool = False) -> StepResult:
     """The status and decisions a finished step leaves, read from its stdout and the tree.
 
     A clean exit yields at most one `step_review` decision, carrying every
@@ -350,11 +369,15 @@ def classify(step: Step, exit_code: int, stdout: str, *, item: Item,
     *head_before* is the HEAD the step's first attempt started from; the
     `Fix-Checks:` trailers are read from every commit after it.
     *log_path* is the step's log, recorded on a failed decision.
+    A stop-signal exit while *cancelled*, or a ticket timeout (75 with the
+    ticket timeout text), is interrupted, not a failed decision with a fix suggestion.
     """
     if step is Step.REBASE and exit_code == CONFLICTS_EXIT:
         return _needs(DecisionKind.REBASE_CONFLICT, [_rebase_payload(stdout, log_tail)])
     if step is Step.REBASE and exit_code == REFUSAL_EXIT:
         return _needs(DecisionKind.REBASE_REFUSED, [_rebase_payload(stdout, log_tail)])
+    if _wait_ended(exit_code, log_tail, cancelled=cancelled):
+        return StepResult(StepStatus.INTERRUPTED, [])
     if exit_code != 0:
         return _failed(exit_code, log_tail, log_path)
     if step in _FIXING_STEPS and _commit_refused(log_tail):

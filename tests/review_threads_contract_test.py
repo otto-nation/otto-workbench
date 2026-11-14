@@ -37,5 +37,5 @@ def test_finish_post_mentions_held_commit_push_and_no_push_verify():
 
 def test_comments_exit_codes():
     assert [int(o.code) for o in cli.review_threads.CONTRACT.exits] == [
-        0, 1, 2, 75]
+        0, 1, 2, 75, 130]
     assert cli.review_threads.CONTRACT.exits[0].code is ExitCode.OK

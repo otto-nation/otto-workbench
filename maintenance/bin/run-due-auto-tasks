@@ -107,7 +107,7 @@ _spawn() {
   local skill="$1" key="$2" rc=0
   if [[ -x "$OTTO_QUEUE_BIN" ]]; then
     "$OTTO_QUEUE_BIN" submit --class heavy --key "$key" --queue-only \
-      -- "$AUTO_TASK_BIN" --foreground "$skill" || rc=$?
+      --label "auto-task · $skill" -- "$AUTO_TASK_BIN" --foreground "$skill" || rc=$?
     [[ $rc -eq 0 ]] && return 0
     log "otto-queue could not take $skill (exit $rc); spawning it detached"
   fi

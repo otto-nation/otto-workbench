@@ -4282,12 +4282,14 @@ On macOS free memory comes from `vm_stat` (free, inactive and speculative
 pages); there is no pressure reading, so batch's `decide` still takes its
 `pool_default` path there.
 
-The host is shared by every batch driver on it, so the caller passes in what
-the others are running (`batch.machine`): their pending memory comes off the
-sample, and their live steps count against `batch.pool_default` where there
-are no host metrics. Whether a driver may start a step regardless — the floor
-slot — is the caller's to establish and pass as `floor`; `decide` no longer
-infers it from this run having nothing running.
+The host is shared by every batch driver on it for the steps batch still
+admits itself (non-AI: plain rebase, and CI without `--fix`). AI steps are
+queue entries. The caller passes in what the others are running
+(`batch.machine`): their pending memory comes off the sample, and their live
+non-AI steps count against `batch.pool_default` where there are no host
+metrics. Whether a driver may start a step regardless — the floor slot — is
+the caller's to establish and pass as `floor`; `decide` no longer infers it
+from this run having nothing running.
 
 It is also the queue's admission policy. `QueuePolicy` is what
 `otto_queue.slots` asks, so "is there room" has one owner — the `room`
@@ -4432,6 +4434,9 @@ directory the reader happens to be in.
 
 What every batch driver on this machine is running, so admission sees all of them.
 
+The registry counts the steps batch admits itself (non-AI); AI steps are
+admitted by the otto-queue.
+
 Each driver decides alone whether the host can take one more step
 (`batch.admission.decide`), but memory and CPU are the machine's, not the
 run's. Counting only its own steps, and always admitting a run's first one,
@@ -4569,6 +4574,18 @@ spawn a publish child: `--auto-publish ff` runs `commands[0]` when it is a
 plain `pr push --expect`, and `session_report` prints the planned argv.
 Closeout is a `closeout_owed` finding, not a post from this module.
 
+### batch/queue_wait.py
+
+Match live batch steps to otto-queue tickets they are waiting on.
+
+A step's process is the ticket process: `StepProcess.start` Popens the `pr`
+or `ci-check` shim, which execs Python in place, and the gate calls
+`run_ticket` in-process. The ticket row's `pid` is written in the same
+transaction that creates it, and a queued ticket holds its lease, so the pid
+is live and cannot have been reused. Matching `StepProcess.pid` against
+queued tickets is how the scheduler reports `wait_reason` without parsing
+log prose or adding a side protocol.
+
 ### batch/report.py
 
 The compact document `pr batch status` and a run's last line print.
@@ -4579,7 +4596,7 @@ One builder: `build` is the whole report.
 |---|---|
 | `run` | `id`, `status`, `active` (a scheduler is driving it), `exit_hint`, `hint`, `pending_requests` (requests waiting in its inbox), `failed_requests` (`name` and `error` of each request a drain rejected) |
 | `counts` | items by status |
-| `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses |
+| `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses, `wait_reason` |
 | `github` | `pr batch status` only: what GitHub says about the run's repos now (see `batch.live`) |
 | `sessions` | `pr batch report` only: per-PR findings and session commands (`batch.session_report`) |
 
@@ -4650,6 +4667,7 @@ The child processes a batch run spawns — `pr`, or `ci-check` for CI — and th
 Every step is its own process so concurrent steps share no interpreter state,
 and each gets a new session with stdin closed: no prompt in any child can
 reach a terminal, whether the batch runs under a server or in a shell.
+AI steps wait on their own otto-queue ticket rather than batch's host admission.
 
 ### batch/store.py
 
@@ -4840,7 +4858,8 @@ long: the joiner reaps it and resolves again. An orphaned ticket becomes
 `failed` with no exit status, and an orphaned running job goes back to
 `queued` for the worker, until it has run `MAX_JOB_ATTEMPTS` times, when it is
 `failed`. A job that exits 75 is put back by `requeue` with `not_before` set;
-`next_job` does not offer it before then.
+`next_job` does not offer it before then. `label` is an optional display
+string stored beside `not_before`; it is never used to match entries.
 `resolve(reuse=False)` joins a live entry but never answers from a `done` one.
 `claim_as_ticket` converts a still-queued job into a ticket for the process
 that runs it.
@@ -4857,6 +4876,8 @@ The queue's vocabulary: what an entry is, which class it runs in, and the states
 Every value here is persisted in the ledger, so the enums' string values are
 stable. A machine mid-sync runs old and new code against one file, so a value
 is added, never renamed or removed — the rule the schema follows too.
+A `label` is display-only: `status` shows it in place of the command; it is
+never used to match entries.
 
 | State | Meaning |
 |---|---|
@@ -4898,7 +4919,7 @@ bound the count, and only the host check can race.
 Submit: hand a command to the worker as a job, or run it here when no worker can be started.
 
 `otto-queue submit` returns as soon as the job is queued: unattended work
-(scheduled maintenance now, `pr batch` steps next) outlives the process that
+(scheduled maintenance and its auto-tasks) outlives the process that
 asked for it.
 
 1. `Ledger.resolve` records a `queued` job, or answers from an entry with the
@@ -4977,9 +4998,14 @@ the machine's budget, and runs once per idempotency key.
 2. **Wait.** Every `POLL_S`, orphans are reaped, and only the oldest waiting
    entry of the class (tickets, and while a worker is alive its ready jobs)
    asks `otto_queue.slots.try_admit`. Each new reason for waiting is printed
-   once. `cancel` or Ctrl-C while waiting ends the ticket
-   with 130. Reaching `wait_s` with no slot records `tempfail` and returns 75
-   (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
+   once. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler while waiting
+   ends the ticket with that exit status (130 when none is given). Reaching
+   `wait_s` with no slot records `tempfail` and returns 75 (EX_TEMPFAIL), so a
+   caller can tell "never got room" from a failure.
+
+`LABEL_ENV` and `WAIT_ENV` are the names `cli.queue_gate` and `pr batch` use to
+pass a display label and wait bound into a ticket they construct. `run_ticket`
+does not read them: the `otto-queue run` flags stay the only input to the CLI.
 3. **Run.** The row moves to `running`, and the command runs through
    `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
    terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue
@@ -8890,7 +8916,8 @@ Exit codes, remote writes and examples are `CONTRACT` below.
 Prose more than one command contract carries, written once.
 
 `PUSH_WAIT` goes on every contract that pushes a branch, so each one says the
-same thing about a push that seems stuck.
+same thing about a push that seems stuck. `QUEUED` goes on every command that
+waits for an otto-queue slot before it runs.
 
 ### cli/dispatch.py
 
@@ -9013,7 +9040,9 @@ What a `pr` subcommand needs of dispatch before its handler runs.
 
 `Need` is the declaration; `review_need` is the one resolver that reads a mode
 flag off an argv. Both were written inside `ai/bin/pr`, where nothing could
-import them and no test could reach them without executing the binary.
+import them and no test could reach them without executing the binary. The
+queue-class resolvers next to them (`ci_queue`, `comments_queue`, …) are the
+same kind of declaration, read off the same flags with `has_flag`.
 
 The mode table itself lives in `cli.review_modes`, beside the handlers it
 names. The resolvers here still take a table rather than reaching for one:
@@ -9319,6 +9348,17 @@ promote-scan [--home DIR] [--workbench DIR]
 ```
 
 `--workbench` defaults to `$OTTO_WORKBENCH`, else the checkout this runs from.
+
+### cli/queue_gate.py
+
+Admit AI `pr` subcommands through an otto-queue ticket before they run.
+
+`gate` returns None to carry on in this process, or the ticket's exit status
+when the command ran (or failed to get a slot) under the queue. Help, unqueued
+commands, nested tickets, and a re-exec'd child skip it.
+
+`otto_queue.ticket` and `cli.otto_queue` are imported inside `gate` so
+`pr --help` does not pay for them.
 
 ### cli/registry.py
 

@@ -344,8 +344,11 @@ FIX_CONTRACT = core.command_contract.CommandContract(
         ),
         core.command_contract.ExitOutcome(
             ExitCode.TEMPFAIL,
-            "another pr run holds this branch or checkout; retry once "
-            "it finishes"),
+            "another pr run holds this branch or checkout, or no otto-queue "
+            "slot came in time; retry once it finishes"),
+        core.command_contract.ExitOutcome(
+            ExitCode.CANCELLED,
+            "waiting for an otto-queue slot was cancelled"),
     ),
     examples=(
         core.command_contract.Example(
@@ -356,6 +359,7 @@ FIX_CONTRACT = core.command_contract.CommandContract(
             "publish the review fix commit, CI fix, and PR description"),
     ),
     notes=(
+        cli.contract_notes.QUEUED,
         "--post is forwarded to the review binary and to ci, not through "
         "cmd_review, so it is the binary's publish flag (may_publish), "
         "not the pr review --post mode.",

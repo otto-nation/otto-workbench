@@ -29,12 +29,14 @@ but multiplicatively rather than as a layer in that chain: a deeper review buys
 turns on top of whatever the winning layer said, where a level it flattened
 would discard a per-phase override.
 
-**Reviews never run on the light tier.** Every review-domain phase reads the
-standard or deep tier, and a review phase that resolves to the light tier or a
-Haiku model — from any layer, a tier set to Haiku included — raises
-`ReviewModelTooLight`. A review pass that finds nothing on a light model cannot
-be told from a clean PR; ``models.light`` serves only the phases that are not
-reviews. A review phase can be pinned to another provider by config alone on
+**Reviews, plan and escalation never run on the light tier.** Every
+review-domain phase, plus ``comments_plan`` and ``comments_escalate``, reads
+the standard or deep tier, and a phase that ``refuses_light`` and resolves to
+the light tier or a Haiku model — from any layer, a tier set to Haiku included
+— raises `ReviewModelTooLight`. A review pass that finds nothing on a light
+model cannot be told from a clean PR; ``models.light`` serves only the phases
+that are not on that floor. A review phase can be pinned to another provider
+by config alone on
 the ``pi`` backend (``agent.phases.scout.model:
 google-vertex/gemini-3.1-pro-preview:medium``); the Claude backend serves only
 Anthropic, Vertex-Claude and Bedrock models.
@@ -63,7 +65,7 @@ import agent.context_ceiling
 import config.workbench_config
 import core.errors
 from agent.models import ModelLayer, ModelRef, ResolvedModel, named_tier, resolve, tier_ref
-from agent.registry import PHASES, REVIEW_PHASES
+from agent.registry import LIGHT_FLOOR_PHASES, PHASES, REVIEW_PHASES
 from agent.types import EFFORT_PRESETS
 from core.phases import ENV_PREFIX, Effort, Phase, PhaseDomain, Tier
 from config.workbench_config import WorkbenchConfig
@@ -85,16 +87,17 @@ OMITTED_FILE_TURNS = 2
 
 
 class ReviewModelTooLight(core.errors.OperatorError):
-    """A review phase was pointed at the light tier or a Haiku model."""
+    """A review, plan or escalation phase was pointed at the light tier or a Haiku model."""
 
     def __init__(self, phase: Phase, where: str, model: str):
         self.phase = phase
         super().__init__(
-            f"{where} puts the review phase '{phase.value}' on {model}. Review "
-            "phases never run on the light tier or a Haiku model: a pass that "
-            "finds nothing there cannot be told from a clean PR. Name a "
-            "standard or deep model (for example claude-sonnet-5-5, or "
-            "google-vertex/gemini-3.1-pro-preview), or a tier other than light.")
+            f"{where} puts the phase '{phase.value}' on {model}. Review, plan "
+            "and escalation phases never run on the light tier or a Haiku "
+            "model: a pass that finds nothing there cannot be told from a "
+            "clean PR. Name a standard or deep model (for example "
+            "claude-sonnet-5-5, or google-vertex/gemini-3.1-pro-preview), or "
+            "a tier other than light.")
 
 
 def is_light_model(model_id: str) -> bool:
@@ -113,14 +116,19 @@ def clears_review_floor(ref_id: str, tier: Tier | None = None) -> bool:
     return not is_light_model(ref_id)
 
 
+def refuses_light(phase: Phase) -> bool:
+    """Whether *phase* must not run on the light tier or a Haiku model."""
+    return PHASES[phase].domain is PhaseDomain.REVIEW or phase in LIGHT_FLOOR_PHASES
+
+
 def _refuse_light_review(phase: Phase, resolved: ResolvedModel, allow_light: bool) -> None:
-    """Raise `ReviewModelTooLight` when a review-domain phase resolved to a light model.
+    """Raise `ReviewModelTooLight` when a floored phase resolved to a light model.
 
     Checked on the resolved reference rather than per layer, so ``--model``,
     both env keys, ``agent.phases`` and ``models.<tier>`` are held to one rule:
     a tier name that resolves to Haiku is caught the same as Haiku spelled out.
     """
-    if allow_light or PHASES[phase].domain is not PhaseDomain.REVIEW:
+    if allow_light or not refuses_light(phase):
         return
     if not clears_review_floor(resolved.ref.id, resolved.tier):
         raise ReviewModelTooLight(phase, resolved.key, resolved.ref.id)

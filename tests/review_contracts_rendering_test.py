@@ -354,6 +354,16 @@ class TestTemplateRendering:
         left = _unsubstituted(_render_fix_prepush(tmp_path))
         assert not left, f"fix-prepush.md left: {left}"
 
+    @pytest.mark.parametrize("phase", [
+        Phase.COMMENTS_PLAN, Phase.COMMENTS_IMPLEMENT, Phase.COMMENTS_ESCALATE,
+    ])
+    def test_staged_comments_templates_fully_substituted(self, phase):
+        name = PHASES[phase].template_for()
+        left = _unsubstituted(agent.templates.render(
+            name, execution_claim_guard="guard",
+        ))
+        assert not left, f"{name} left: {left}"
+
     def test_the_comments_adapter_declares_the_gate_s_own_phase(self):
         """The one domain that runs a gate must name the gate's phase.
 
@@ -402,6 +412,9 @@ class TestTemplateRendering:
             PHASES[Phase.COMMENTS_FIX].template_for(),
             PHASES[Phase.PREPUSH_FIX].template_for(),
             PHASES[Phase.COMMENTS_VERIFY].template_for(),
+            PHASES[Phase.COMMENTS_PLAN].template_for(),
+            PHASES[Phase.COMMENTS_IMPLEMENT].template_for(),
+            PHASES[Phase.COMMENTS_ESCALATE].template_for(),
         }
         uncovered = sorted(
             name for name in _template_files() - covered

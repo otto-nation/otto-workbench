@@ -415,8 +415,8 @@ class TestVerifyPhaseDeniesWrites:
         assert "Edit" in denied.split(",")
         assert "Write" in denied.split(",")
 
-    @pytest.mark.parametrize("phase", sorted(agent.registry.VERIFY_PHASES))
-    def test_every_gate_phase_denies_edit_and_write(self, phase):
+    @pytest.mark.parametrize("phase", sorted(agent.registry.READ_ONLY_FIX_PHASES))
+    def test_every_read_only_fix_phase_denies_edit_and_write(self, phase):
         denied = self._denied(phase=str(phase)).split(",")
         assert "Edit" in denied
         assert "Write" in denied
@@ -425,3 +425,8 @@ class TestVerifyPhaseDeniesWrites:
         denied = self._denied(phase=str(Phase.FIX))
         assert "Edit" not in denied.split(",")
         assert "Write" not in denied.split(",")
+
+    def test_comments_escalate_keeps_edit_and_write(self):
+        denied = self._denied(phase=str(Phase.COMMENTS_ESCALATE)).split(",")
+        assert "Edit" not in denied
+        assert "Write" not in denied

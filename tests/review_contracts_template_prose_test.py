@@ -186,6 +186,7 @@ def test_execution_claim_templates_are_found():
         # fix-shape, derived from the phase registry
         "fix-findings.md", "verify-fixes.md", "fix-comments.md",
         "fix-ci.md", "fix-prepush.md",
+        "plan-comments.md", "implement-plan.md", "escalate-comments.md",
     }, f"unexpected set of execution-claim templates: {sorted(found)}"
 
 

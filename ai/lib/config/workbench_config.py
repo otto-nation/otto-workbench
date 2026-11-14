@@ -153,6 +153,7 @@ ISSUE_LABELS_KEY = "issues.labels"
 FIX_VERIFY_COMMAND_KEY = "fix.verify_command"
 FIX_VERIFY_TIMEOUT_KEY = "fix.verify_timeout"
 FIX_VERIFY_PROGRESS_INTERVAL_KEY = "fix.verify_progress_interval"
+FIX_PLAN_STAGE_KEY = "fix.plan_stage"
 WIKI_DIR_KEY = "wiki.dir"
 WIKI_ROOT_KEY = "wiki.root"
 WIKI_LINK_KEY = "wiki.link"
@@ -509,6 +510,11 @@ class FixConfig:
     checks run. ``<= 0`` disables the heartbeat. Both the pass run and the
     remaining-budget baseline re-run get the same interval.
 
+    ``plan_stage`` is the kill switch for the comments plan/implement/escalate
+    path. True (the default) is the staged pass; false is today's comments_fix
+    path. Allowed at every scope: it is an operator cost preference, not a
+    fact about one checkout.
+
     Scoped to the repo. The command names paths inside one checkout, so a
     machine-wide value would point every other repo at a script it does not
     have — and the timeout belongs beside the command it bounds, since what is
@@ -539,6 +545,7 @@ class FixConfig:
             " it reports against",
         )},
     )
+    plan_stage: bool = True
 
 
 @dataclass(frozen=True)

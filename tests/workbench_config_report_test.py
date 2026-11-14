@@ -335,6 +335,7 @@ def test_every_written_key_resolves_to_a_field():
     assert config.workbench_config.FIX_VERIFY_COMMAND_KEY in keys
     assert config.workbench_config.FIX_VERIFY_TIMEOUT_KEY in keys
     assert config.workbench_config.FIX_VERIFY_PROGRESS_INTERVAL_KEY in keys
+    assert config.workbench_config.FIX_PLAN_STAGE_KEY in keys
 
 
 def test_the_generator_banner_names_a_script_that_exists():

@@ -171,6 +171,20 @@ def test_the_fix_verification_keys_are_on_the_surface():
         config.workbench_config.FIX_VERIFY_PROGRESS_INTERVAL_KEY)
 
 
+def test_plan_stage_defaults_true_and_round_trips(roots):
+    assert config.workbench_config.WorkbenchConfig().fix.plan_stage is True
+    assert config.workbench_config.defines_key(config.workbench_config.FIX_PLAN_STAGE_KEY)
+    for scope in (config.workbench_config.GLOBAL_SCOPE,
+                  config.workbench_config.PROJECT_SCOPE,
+                  config.workbench_config.CONTAINER_SCOPE):
+        assert config.workbench_config_write.check_scope(
+            config.workbench_config.FIX_PLAN_STAGE_KEY, scope).ok is True
+    _, project = roots
+    _write(project / config.workbench_config.PROJECT_CONFIG_NAME,
+           "fix:\n  plan_stage: false\n")
+    assert config.workbench_config.load_config(project).fix.plan_stage is False
+
+
 def test_a_repo_that_declares_no_verify_command_gets_the_empty_default():
     """Empty is "this repo has not said", which `fix.suite` reports as such.
 

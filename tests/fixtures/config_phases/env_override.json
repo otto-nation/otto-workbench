@@ -374,6 +374,90 @@
       },
       "error": null
     },
+    "comments_plan": {
+      "domain": "comments",
+      "tier": "deep",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "comments_implement": {
+      "domain": "comments",
+      "tier": "standard",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
+    "comments_escalate": {
+      "domain": "comments",
+      "tier": "deep",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_MODEL",
+        "scope": "env",
+        "via": {
+          "layer": "tier",
+          "key": "models.deep",
+          "scope": "global",
+          "via": null
+        }
+      },
+      "thinking": "minimal",
+      "thinking_source": {
+        "layer": "global_env",
+        "key": "WORKBENCH_AI_THINKING",
+        "scope": "env",
+        "via": null
+      },
+      "error": null
+    },
     "rebase": {
       "domain": "rebase",
       "tier": "standard",

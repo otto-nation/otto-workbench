@@ -510,7 +510,8 @@ class TestEveryFixTemplateAsksForTheTest:
         """
         behaviour = {"fix", "comments_fix"}
         check_driven = {"ci_fix", "prepush_fix"}
-        assert set(self._fix_templates()) == behaviour | check_driven, (
+        staged = {"comments_plan", "comments_implement", "comments_escalate"}
+        assert set(self._fix_templates()) == behaviour | check_driven | staged, (
             "a fix phase belongs to neither domain group — decide whether it "
             "owes a regression test or a re-run, and add it to that test"
         )

@@ -335,12 +335,14 @@ but multiplicatively rather than as a layer in that chain: a deeper review buys
 turns on top of whatever the winning layer said, where a level it flattened
 would discard a per-phase override.
 
-**Reviews never run on the light tier.** Every review-domain phase reads the
-standard or deep tier, and a review phase that resolves to the light tier or a
-Haiku model — from any layer, a tier set to Haiku included — raises
-`ReviewModelTooLight`. A review pass that finds nothing on a light model cannot
-be told from a clean PR; ``models.light`` serves only the phases that are not
-reviews. A review phase can be pinned to another provider by config alone on
+**Reviews, plan and escalation never run on the light tier.** Every
+review-domain phase, plus ``comments_plan`` and ``comments_escalate``, reads
+the standard or deep tier, and a phase that ``refuses_light`` and resolves to
+the light tier or a Haiku model — from any layer, a tier set to Haiku included
+— raises `ReviewModelTooLight`. A review pass that finds nothing on a light
+model cannot be told from a clean PR; ``models.light`` serves only the phases
+that are not on that floor. A review phase can be pinned to another provider
+by config alone on
 the ``pi`` backend (``agent.phases.scout.model:
 google-vertex/gemini-3.1-pro-preview:medium``); the Claude backend serves only
 Anthropic, Vertex-Claude and Bedrock models.

@@ -252,6 +252,63 @@
       },
       "error": null
     },
+    "comments_plan": {
+      "domain": "comments",
+      "tier": "deep",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.deep",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "medium",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "comments_implement": {
+      "domain": "comments",
+      "tier": "standard",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.standard",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "low",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "comments_escalate": {
+      "domain": "comments",
+      "tier": "deep",
+      "model": null,
+      "model_source": {
+        "layer": "unset",
+        "key": "models.deep",
+        "scope": null,
+        "via": null
+      },
+      "thinking": "medium",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
     "rebase": {
       "domain": "rebase",
       "tier": "standard",

@@ -134,3 +134,60 @@ EOF
   [ "$status" -eq 0 ]
   [ "$output" = '["T (0 events)\n(2 unreadable lines skipped)","",""]' ]
 }
+
+@test "run-session: parseReport says what is wrong with a report it cannot use" {
+  _eval now.ts '[m.parseReport("nope"), m.parseReport("{}"), m.parseReport("null"), m.parseReport("{\"sessions\":[]}")]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"ok":false,"error":"the report was not JSON"},{"ok":false,"error":"the report has no sessions list"},{"ok":false,"error":"the report has no sessions list"},{"ok":true,"sessions":[]}]' ]
+}
+
+@test "run-session: shellQuote quotes only what a shell would split" {
+  _text now.ts 'm.shellQuote(["pr", "ci", "--fix", "o/r#1", "it'"'"'s here", ""])'
+  [ "$status" -eq 0 ]
+  [ "$output" = "pr ci --fix o/r#1 'it'\\''s here' ''" ]
+}
+
+# _atext FILE EXPR [ARG...] — like _text, awaiting EXPR first.
+_atext() {
+  local file="$1" expr="$2"
+  shift 2
+  run node --input-type=module -e "
+    const m = await import('$EXT/$file');
+    const args = process.argv.slice(1);
+    process.stdout.write(String(await ($expr)));
+  " -- "$@"
+}
+
+@test "run-session: Now shows each finding, its latest decision, and the exact commands" {
+  _atext now.ts '(async () => { const e = await import(args[2]); const d = e.latestDecisions(JSON.parse(args[1])); return m.renderNow("R1", JSON.parse(args[0]), d); })()' \
+    '[{"pr":"o/r#1","state":"needs_session","severity":"block","branch":"b1","base_ref":"main","after":["o/r#2"],
+       "findings":[{"reason":"ci_failing","step":"ci","detail":"red","files":["a.py"],"log":"/l/ci.log"},
+                   {"reason":"ready_to_push","step":"publish","detail":"","files":[],"log":null}],
+       "commands":[{"argv":["pr","ci","--fix","--repo-dir","/w 1"],"why":"fix failing CI","action":"ci"},
+                   {"argv":["pr","push","--expect","abc"],"why":"publish","action":"publish","push":true}],
+       "notes":["stacked"]}]' \
+    '[{"kind":"decision","item":"o/r#1","finding":"ci_failing:ci","verdict":"dismissed","reason":"old"},
+      {"kind":"decision","item":"o/r#1","finding":"ci_failing:ci","verdict":"deferred","reason":"flaky runner"}]' \
+    "$EXT/events.ts"
+  [ "$status" -eq 0 ]
+  local expected
+  expected=$(cat <<'EOF'
+## Now — run R1: 1 of 1 PRs waiting on you
+
+### o/r#1 — needs_session (block) · b1 → main · after o/r#2
+- finding `ci_failing:ci` — red (files: a.py) log /l/ci.log
+  decided: deferred — flaky runner
+- finding `ready_to_push:publish`
+- run `pr ci --fix --repo-dir '/w 1'` — fix failing CI
+- run `pr push --expect abc` — publish (pushes: only when the operator says so)
+- note: stacked
+EOF
+)
+  [ "$output" = "$expected" ]
+}
+
+@test "run-session: Now says so when nothing waits" {
+  _text now.ts 'm.renderNow("R1", [], new Map())'
+  [ "$status" -eq 0 ]
+  [ "$output" = $'## Now — run R1\nNothing in the report: no PR has findings or commands.' ]
+}

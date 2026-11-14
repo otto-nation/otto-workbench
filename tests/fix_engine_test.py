@@ -345,6 +345,23 @@ def test_every_verify_chunk_is_taken_back_out_of_the_batch_scope(
     assert scope.files == {"ours.py"}
 
 
+def test_stage_tracking_files_are_taken_back_out_of_the_batch_scope(
+    tmp_path, landed, head, snapshots,
+):
+    adapter = StubAdapter(tmp_path)
+    adapter.artifacts.mkdir(parents=True, exist_ok=True)
+    stage_files = [adapter.plan_tracking_path(1), adapter.escalate_tracking_path(1)]
+    for path in stage_files:
+        path.write_text("## answers\n")
+    inside = {fix.batches.relative_to(adapter.workdir, p) for p in stage_files}
+    assert all(inside), "the stub's artifacts must sit inside the worktree"
+    snapshots.return_value = {"ours.py", *inside}
+
+    scope = fix.batches.batch_scope(adapter, before=set())
+
+    assert scope.files == {"ours.py"}
+
+
 def test_an_unreadable_second_snapshot_reaches_the_domain_as_none(
     tmp_path, landed, head, snapshots,
 ):

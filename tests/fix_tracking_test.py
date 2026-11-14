@@ -484,6 +484,9 @@ class TestEveryFixTemplateAsksForTheTest:
             # vocabulary — it is forbidden to edit source, so it can never be
             # the pass that adds a test.
             and spec.template_for() != "verify-fixes.md"
+            # The plan and escalate passes answer in their own checklists (a verdict and a
+            # plan, not a `fixed` box), and the plan pass is read-only, so neither owes a test.
+            and spec.template_for() not in {"plan-comments.md", "escalate-comments.md"}
         }
 
     def test_the_shared_ask_names_a_test_and_the_way_out_of_one(self):
@@ -510,7 +513,7 @@ class TestEveryFixTemplateAsksForTheTest:
         """
         behaviour = {"fix", "comments_fix"}
         check_driven = {"ci_fix", "prepush_fix"}
-        staged = {"comments_plan", "comments_implement", "comments_escalate"}
+        staged = {"comments_implement"}
         assert set(self._fix_templates()) == behaviour | check_driven | staged, (
             "a fix phase belongs to neither domain group — decide whether it "
             "owes a regression test or a re-run, and add it to that test"

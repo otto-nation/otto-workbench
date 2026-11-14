@@ -816,9 +816,7 @@ clears on a guess: a commit still on the branch is unpushed for the ordinary
 reason, and an orphan with no replay, or with two, holds too and says how to
 recover. Re-running `--fix` after a completed pass discards reviewed replies; an interrupted pass resumes on the same HEAD (`--no-resume` starts over). Checkpoint resume skips finished phases. Leftover-adoption (`interrupted-pass.json`, written whenever a comments pass is interrupted) applies unless the pass resumes from a fix-checkpoint at `AGENT_RUNNING` or later (`--no-resume`, HEAD moved, new feedback, or a checkpoint before `AGENT_RUNNING`).
 
-### Plan, implement, verify, escalate (`pr comments --fix`)
-
-When `fix.plan_stage` is on (default) and the plan model can run, comments `--fix` plans each fixable item (deep, read-only), implements from that plan (cheaper), verifies, then escalates anything still going to a person — one deep pass, no retry. High-complexity valids are fixable on this path (the plan may still return `needs_human`); `needs_discussion`, questions, conflicting, and contested stay mechanical hand-backs. Hand-backs carry the escalation's one-sentence reason. Plans are local artifacts and never posted. Off, or if the deep tier cannot run, today's `comments_fix` path. Models: `otto-workbench config phases`. Other adapters keep today's path until they set `plan_phase`.
+**Plan, implement, verify, escalate (`pr comments --fix`).** When `fix.plan_stage` is on (default) and the plan model can run, comments `--fix` plans each fixable item (deep, read-only), implements from that plan (cheaper), verifies, then escalates anything still going to a person — one deep pass, no retry. High-complexity valids are fixable on this path (the plan may still return `needs_human`); `needs_discussion`, questions, conflicting, and contested stay mechanical hand-backs. Hand-backs carry the escalation's one-sentence reason. Plans are local artifacts and never posted. Off, or if the deep tier cannot run, today's `comments_fix` path. Models: `otto-workbench config phases`. Other adapters keep today's path until they set `plan_phase`.
 
 ### Closing out comments
 
@@ -828,12 +826,14 @@ pr push --expect <origin tip> — then re-run pr comments --finish --post` (exit
 1, no JSON). A successful bare `--finish` also prints no JSON; `--fix --finish`
 still does.
 
-`--settle <id>` records a thread that is on the PR even when it is missing from the fix snapshot (`recorded as … (not in the fix snapshot — taken from the PR)`). An id found neither place is still refused.
+`--settle <id>` records a thread that is on the PR even when it is missing from
+the fix snapshot (`recorded as … (not in the fix snapshot — taken from the
+PR)`). An id found neither place is still refused.
 
 Closeout warns `<id>: left open — <reason>` for FIXED/ALREADY_ADDRESSED threads
 it did not resolve. Every reason except `not on the PR` keeps reply debt, so
 `pr status` still shows closeout owed. Open unanswered threads with no snapshot
-row are listed with `pr comments --fix` or `pr comments --settle`.
+row are listed with `pr comments --fix` or `pr comments --settle`. A comments `--fix` stopped mid-agent records leftovers (`interrupted-pass.json`) and, on the next pass at the same HEAD, resumes matching blobs so they can be committed unless that pass resumes from a fix-checkpoint at `AGENT_RUNNING` or later. An empty round will not commit those leftovers.
 
 ### The summary comments are the record, not the state file
 

@@ -10,6 +10,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import {
   HISTORY_TYPE,
   NOW_TYPE,
+  SECTION_NAME,
   STATE_TYPE,
   consume,
   digest,
@@ -23,6 +24,7 @@ import {
   reportArgv,
   runIdOf,
   runSessionDir,
+  systemNote,
   type RunEvent,
   type RunState,
 } from "./detect.ts";
@@ -130,5 +132,15 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
     state = refreshed.state;
     // No options: an idle session stores the message without starting a turn.
     if (refreshed.now) pi.sendMessage({ customType: NOW_TYPE, content: refreshed.now, display: true });
+  });
+
+  pi.on("before_agent_start", async (event, ctx: ExtensionContext) => {
+    if (!state) return;
+    const sections = (event.systemPromptOptions.sections ??= {});
+    sections[SECTION_NAME] = systemNote(state, ctx.cwd);
+    const refreshed = await refresh(state, ctx.cwd, false);
+    state = refreshed.state;
+    if (!refreshed.now) return;
+    return { message: { customType: NOW_TYPE, content: refreshed.now, display: true } };
   });
 }

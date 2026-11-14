@@ -360,3 +360,51 @@ _wired() {
   run grep -nE '^import \{.*@earendil-works' "$EXT/wire.ts"
   [ "$status" -ne 0 ]
 }
+
+@test "run-session: before a turn it adds the note, files new history and re-sends a changed Now" {
+  _wired '
+    const f = fakePi({ sessionId: "batch-" + ID });
+    wire(f.pi, deps({ WORKBENCH_RUN_DIR: RUN }));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    const event = { systemPromptOptions: { sections: {} } };
+    const quiet = await f.calls.handlers.before_agent_start(event, f.ctx);
+    fs.appendFileSync(RUN + "/events.jsonl", JSON.stringify({ kind: "decision", at: "2026-11-14T12:06:00+00:00", item: "o/r#1", finding: "ci_failing:ci", verdict: "deferred", reason: "flaky runner", commands: [] }) + "\n");
+    f.control.report = JSON.stringify({ sessions: [{ pr: "o/r#1", state: "needs_session", severity: "block", branch: "b1", base_ref: "main", after: [], findings: [{ reason: "ci_failing", step: "ci", detail: "red", files: [], log: null }], commands: [{ argv: ["pr", "ci", "--fix"], why: "fix failing CI", action: "ci" }] }] });
+    const changed = await f.calls.handlers.before_agent_start({ systemPromptOptions: { sections: {} } }, f.ctx);
+    const note = event.systemPromptOptions.sections[m.SECTION_NAME];
+    console.log(JSON.stringify({
+      quiet: quiet ?? null,
+      note: [note.includes(ID), note.includes("record_decision"), note.includes(RUN + "/events.jsonl")],
+      message: [changed.message.customType, changed.message.display],
+      now: changed.message.content.split("\n").slice(-3),
+      histories: ofType(f.entries, m.HISTORY_TYPE).map((e) => e.data.text.split("\n")[0]),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"quiet":null,"note":[true,true,true],"message":["workbench-run-now",true],"now":["- finding `ci_failing:ci` — red","  decided: deferred — flaky runner","- run `pr ci --fix` — fix failing CI"],"histories":["Run 20261114T120000-ab12: no history recorded (the run predates events.jsonl).","Run 20261114T120000-ab12: new since last look (1 events)"]}' ]
+}
+
+@test "run-session: a report that fails says so in Now with the command and its error" {
+  _wired '
+    const f = fakePi({ sessionId: "batch-" + ID });
+    f.control.reportCode = 1;
+    wire(f.pi, deps({ WORKBENCH_RUN_DIR: RUN }));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    console.log(f.calls.messages[0].message.content);
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = $'## Now — run 20261114T120000-ab12\nThe report is unavailable: `pr batch report 20261114T120000-ab12 --offline --format json` exited 1: pr batch: no run x. Run it yourself to see why.' ]
+}
+
+@test "run-session: before a turn in a session that is no run's own it does nothing" {
+  _wired '
+    const f = fakePi({ sessionId: "abc" });
+    wire(f.pi, deps({}));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    const event = { systemPromptOptions: { sections: {} } };
+    const out = await f.calls.handlers.before_agent_start(event, f.ctx);
+    console.log(JSON.stringify([out ?? null, event.systemPromptOptions.sections, f.calls.execs.length]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[null,{},0]' ]
+}

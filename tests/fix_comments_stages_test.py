@@ -51,9 +51,12 @@ def _cfg(*, plan_stage=True, deep="claude-opus"):
 def _adapter(tmp_path, cfg=None, **round_kw):
     ctx = _fake_ctx(tmp_path)
     report = PRReport(repo="owner/repo", pr_number=1)
-    adapter = fix.comments.CommentFixAdapter(
-        report, ctx, tmp_path, _triaged_round(**round_kw),
-    )
+    # Construction applies whatever config the isolated test env resolves and may log; only
+    # the apply below is the one under test, so a test's own error mock must not see this one.
+    with patch.object(core.log, "error"):
+        adapter = fix.comments.CommentFixAdapter(
+            report, ctx, tmp_path, _triaged_round(**round_kw),
+        )
     if cfg is not None:
         adapter.config = cfg
         fix.comments_stages.apply(adapter)

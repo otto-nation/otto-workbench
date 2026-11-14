@@ -206,8 +206,8 @@ def _run_stage(adapter, start, items, stage: BatchStage | None):
     collected = list(prior.values())
     origin = start.prior.batches if start.prior else 0
     for n, chunk in enumerate(batched, start=1):
-        label = name if len(batched) == 1 else f"{name} (batch {n}/{len(batched)})"
-        batch = run_batch(
+        label = name if len(batched) == 1 else f"{name} (ran {n}/{len(batched)})"
+        ran = run_batch(
             adapter, chunk, label,
             before=(
                 None if start.resume_phase is not None or n > 1 or prior
@@ -215,8 +215,8 @@ def _run_stage(adapter, start, items, stage: BatchStage | None):
             ),
             stage=stage,
         )
-        results.append(batch)
-        collected.extend(fix.pass_resume.answered(batch.outcomes))
+        results.append(ran)
+        collected.extend(fix.pass_resume.answered(ran.outcomes))
         blobs = fix.pass_resume.recorded_agent_files(
             adapter.workdir, dirty_before, start.head_before,
             fix.engine._records(adapter),

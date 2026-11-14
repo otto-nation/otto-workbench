@@ -19,7 +19,9 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import config.workbench_config
 import core.publishing
+import core.trail
 import fix.baseline
 import fix.blame
 import fix.suite
@@ -29,14 +31,12 @@ from fix.types import FixItem
 from pr.fix import ItemOutcome
 
 if TYPE_CHECKING:
-    from config.workbench_config import WorkbenchConfig
-    from core.trail import Trail
-    from fix.engine import FixAdapter
+    import fix.engine
 
 
 def _verify_suite(
-    adapter: FixAdapter, outcomes: list[ItemOutcome],
-    changed: set[str] | None, trail: Trail | None,
+    adapter: fix.engine.FixAdapter, outcomes: list[ItemOutcome],
+    changed: set[str] | None, trail: core.trail.Trail | None,
     by_id: dict[str, FixItem] | None = None,
     *, base: str = "", left_out: set[str] | frozenset[str] = frozenset(),
     baseline_ref: str = "", dirty_before: frozenset[str] = frozenset(),
@@ -62,9 +62,9 @@ def _verify_suite(
     """
     if not adapter.verifies_with_suite or not fix.suite.should_run(outcomes, changed):
         return fix.suite.SuiteResult()
-    config = adapter.config or load_config_or_default(adapter.workdir)
+    cfg = adapter.config or load_config_or_default(adapter.workdir)
     result = _run_checks(
-        adapter, config, trail, base=base, baseline_ref=baseline_ref,
+        adapter, cfg, trail, base=base, baseline_ref=baseline_ref,
         paths=(changed or set()) | dirty_before,
     )
     result = fix.suite.scoped_to(result, set(left_out))
@@ -111,7 +111,8 @@ def _hold_for_suite(result: fix.suite.SuiteResult) -> None:
 
 
 def _run_checks(
-    adapter: FixAdapter, config: WorkbenchConfig, trail: Trail | None, *,
+    adapter: fix.engine.FixAdapter, cfg: config.workbench_config.WorkbenchConfig,
+    trail: core.trail.Trail | None, *,
     base: str, baseline_ref: str, paths: set[str] | frozenset[str],
 ) -> fix.suite.SuiteResult:
     """The declared command over the pass's tree, and a red verdict re-asked at its base.
@@ -123,8 +124,8 @@ def _run_checks(
     with tempfile.TemporaryDirectory(prefix="fix-paths-") as scratch:
         listed = Path(scratch) / "paths"
         listed.write_text("".join(f"{p}\n" for p in sorted(paths)))
-        command, timeout_s = config.fix.verify_command, config.fix.verify_timeout
-        interval = config.fix.verify_progress_interval
+        command, timeout_s = cfg.fix.verify_command, cfg.fix.verify_timeout
+        interval = cfg.fix.verify_progress_interval
         result = fix.suite.run(adapter.workdir, command, timeout_s, trail,
                                base=base, paths_file=str(listed),
                                progress_s=interval)

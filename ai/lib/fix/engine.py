@@ -76,7 +76,9 @@ from pr.fix import ItemOutcome
 from pr.fix_checkpoint import CheckpointPhase, EngineProgress
 from core.trail import Trail, tinfo, twarn
 from config.workbench_config import WorkbenchConfig, load_config_or_default
+import fix.escalate
 import fix.gate
+import fix.stages
 from fix.engine_checks import _anchors, _hold_for_suite, _verify_suite
 from fix.gate import VerifyFn
 
@@ -818,8 +820,7 @@ def _prior_batch(
 def _run_agent(adapter: FixAdapter, start: _PassStart) -> _AgentRun:
     """Run the agent for items without a prior answer."""
     if adapter.plan_phase is not None:
-        from fix import stages
-        return stages.run_planned(adapter, start)
+        return fix.stages.run_planned(adapter, start)
     items = list(start.items)
     chunk_size = agent.phases.phase_chunk_size(adapter.phase)
     prior = {}
@@ -922,8 +923,7 @@ def _run_contained_pass(adapter: FixAdapter, start: _PassStart) -> FixRun:
         )
 
     if adapter.escalate_phase is not None:
-        from fix import escalate
-        escalate.run(adapter, settled, by_id, trail, verify=verify)
+        fix.escalate.run(adapter, settled, by_id, trail, verify=verify)
 
     changed = fix.scope.agent_changed(adapter.workdir, dirty_before)
     committed = adapter.commit_scope(changed)

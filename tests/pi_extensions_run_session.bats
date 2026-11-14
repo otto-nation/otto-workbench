@@ -396,6 +396,29 @@ _wired() {
   [ "$output" = $'## Now — run 20261114T120000-ab12\nThe report is unavailable: `pr batch report 20261114T120000-ab12 --offline --format json` exited 1: pr batch: no run x. Run it yourself to see why.' ]
 }
 
+@test "run-session: a failed report is not filed as Now's digest, and the real Now is re-sent after it" {
+  _wired '
+    const f = fakePi({ sessionId: "batch-" + ID });
+    wire(f.pi, deps({ WORKBENCH_RUN_DIR: RUN }));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    const states = () => ofType(f.entries, m.STATE_TYPE).map((e) => e.data);
+    const before = states();
+    f.control.reportCode = 1;
+    const failed = await f.calls.handlers.before_agent_start({ systemPromptOptions: { sections: {} } }, f.ctx);
+    const afterFail = states();
+    f.control.reportCode = 0;
+    const good = await f.calls.handlers.before_agent_start({ systemPromptOptions: { sections: {} } }, f.ctx);
+    console.log(JSON.stringify({
+      failed: failed.message.content.includes("unavailable"),
+      filed: afterFail.length === before.length && afterFail.at(-1).nowDigest === before.at(-1).nowDigest,
+      cursor: afterFail.at(-1).cursor === before.at(-1).cursor,
+      resent: !!good && !good.message.content.includes("unavailable"),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"failed":true,"filed":true,"cursor":true,"resent":true}' ]
+}
+
 @test "run-session: before a turn in a session that is no run's own it does nothing" {
   _wired '
     const f = fakePi({ sessionId: "abc" });

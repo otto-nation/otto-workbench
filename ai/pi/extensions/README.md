@@ -96,6 +96,11 @@ session id `batch-<run-id>`. The variable alone is not enough — every pi the
 session dispatches through `pr … --fix` inherits it. `_shared/run-dir.ts` is
 the one predicate.
 
+This is a deliberate exception to the `extensions-cli/` rule in AGENTS.md: it
+loads in every Pi session because `pr batch session` starts pi with no
+`--extension`, and `/resume` and `pi --session` carry none either. Do not move it
+to `extensions-cli/`; it stays inert unless the entry or env and session id match.
+
 - **History.** `<run-dir>/events.jsonl`, written only by Python, is filed as
   `workbench-run-history` entries: a per-PR timeline, one line per step, the
   last 12 lines per PR per block with older ones folded into a count. Custom

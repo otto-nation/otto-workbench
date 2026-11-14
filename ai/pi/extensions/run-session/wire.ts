@@ -105,10 +105,16 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
    * second); cache it on state.json's and events.jsonl's mtimes once that spawn
    * shows up in turn latency.
    */
-  async function nowText(s: RunState, cwd: string, all: RunEvent[]): Promise<string> {
+  async function nowText(
+    s: RunState,
+    cwd: string,
+    all: RunEvent[],
+  ): Promise<{ text: string; available: boolean }> {
     const argv = reportArgv(s.runId);
-    const unavailable = (why: string) =>
-      `## Now — run ${s.runId}\nThe report is unavailable: \`pr ${argv.join(" ")}\` ${why}. Run it yourself to see why.`;
+    const unavailable = (why: string) => ({
+      available: false,
+      text: `## Now — run ${s.runId}\nThe report is unavailable: \`pr ${argv.join(" ")}\` ${why}. Run it yourself to see why.`,
+    });
     let result;
     try {
       result = await pi.exec(pr, argv, { cwd, timeout: REPORT_TIMEOUT_MS });
@@ -122,7 +128,7 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
     }
     const parsed = parseReport(result.stdout);
     if (!parsed.ok) return unavailable(`printed no usable report (${parsed.error})`);
-    return renderNow(s.runId, parsed.sessions, latestDecisions(all));
+    return { text: renderNow(s.runId, parsed.sessions, latestDecisions(all)), available: true };
   }
 
   /**
@@ -150,10 +156,13 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
       if (!history && first) history = `Run ${s.runId}: no events recorded yet.`;
     }
     if (history) pi.appendEntry(HISTORY_TYPE, { text: history, runId: s.runId });
-    const now = await nowText(s, cwd, bytes ? consume(bytes, 0).events : []);
+    const { text: now, available } = await nowText(s, cwd, bytes ? consume(bytes, 0).events : []);
     const nowDigest = digest(now);
     const next: RunState = { ...s, cursor: chunk.cursor, nowDigest };
-    if (next.cursor !== s.cursor || nowDigest !== s.nowDigest) pi.appendEntry(STATE_TYPE, next);
+    // An unavailable paragraph is shown but never filed as the stored digest:
+    // a later session must still be sent the real Now.
+    const filed = available ? nowDigest : s.nowDigest;
+    if (next.cursor !== s.cursor || filed !== s.nowDigest) pi.appendEntry(STATE_TYPE, { ...next, nowDigest: filed });
     return { state: next, now: nowDigest === s.nowDigest ? null : now };
   }
 

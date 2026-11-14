@@ -1330,7 +1330,7 @@ The PR board document (JSON). Requires the global --schema-version (the versions
 - `pr --schema-version 1 board --checkout ~/git/o/r/main --phase listing` — print the listing document
 - `pr --schema-version 1 board --checkout ~/git/o/r/main --phase status --prs 12,15` — status for named PRs
 
-> Writes nothing remotely. --schema-version is a global flag. complete is false for status --prs and owed (clients merge by (repo, number)). Clients hide a row whose effective team lane is landed. The full document carries features (this build's pr capabilities a board consumer drives; currently review-publish).
+> Writes nothing remotely. --schema-version is a global flag. complete is false for status --prs and owed (clients merge by (repo, number)). Clients hide a row whose effective team lane is landed. The full document carries features (this build's pr capabilities a board consumer drives; currently review-publish and batch-session).
 
 #### pr models contract
 
@@ -1373,13 +1373,14 @@ Rebase, CI, comments and (opt-in) self-review across my open PRs. A default run 
 |---|---|---|
 | `0` | the run is done or cancelled |  |
 | `1` | it stopped without settling | `pr batch resume` |
-| `2` | bad flags, missing --checkout/--plan, or resume --steps that widen |  |
+| `2` | bad flags, missing --checkout/--plan, resume --steps that widen, or a note naming a run, PR or finding the run does not have |  |
 
 **Examples**
 
 - `pr batch run --checkout DIR` — rebase, ci, comments; drafted; no AI, no review
 - `pr batch run --checkout DIR --auto-publish ff` — the same, fast-forwarding a clean close
 - `pr batch resume` — continue this checkout's covering run
+- `pr batch session RUN_ID` — open the run's pi session in its checkout
 
 > Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > Batch declares NO_LOCK; 75 is not an exit. LockBusy on an item is exit 1 (fail), not TEMPFAIL. A default run never opens a decision.
@@ -1607,7 +1608,7 @@ Items end `done` or `needs_session` with `findings` (`batch/findings.py`). A
 stored waiting v1 run converts on `resume` (one-way). Report keys: `run` (`id`,
 `status`, `active`, `exit_hint`, `hint`, `pending_requests`, `failed_requests`),
 `counts`, `items` (non-terminal), `github`, `sessions` (`pr batch report` only).
-`resume` replays `--focus`. `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`.
+`resume` replays `--focus`. `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`, and each is also appended to the run's `events.jsonl` ([`core/run_events.py`](ai-libraries.md#corerun_eventspy)). `pr batch session RUN_ID` opens the run's pi session in its checkout (`--json` prints how, for UIs), and `pr batch note` records an operator verdict there as a `decision` event without changing item state ([`batch/run_session.py`](ai-libraries.md#batchrun_sessionpy)).
 `github` is omitted under `--offline`; keys and checkout rules are in
 [`batch/live.py`](ai-libraries.md#batchlivepy). Step output stays in the run's
 `logs/`. Admission is [`batch/machine.py`](ai-libraries.md#batchmachinepy): `batch.pool_max`

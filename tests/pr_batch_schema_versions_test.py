@@ -24,4 +24,6 @@ def test_batch_schema_versions_match_what_each_subcommand_emits():
     assert cli.schema.served_schema_versions("batch", ["resume"]) == (1,)
     assert cli.schema.served_schema_versions("batch", ["cancel"]) == ()
     assert cli.schema.served_schema_versions("batch", ["release"]) == ()
+    assert cli.schema.served_schema_versions("batch", ["session"]) == (1,)
+    assert cli.schema.served_schema_versions("batch", ["note"]) == ()
     assert cli.schema.served_schema_versions("batch", ["status", "--full"]) == (2,)

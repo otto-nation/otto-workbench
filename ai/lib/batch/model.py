@@ -125,6 +125,18 @@ class FindingReason(StrEnum):
     FAILED_UNKNOWN = "failed_unknown"
 
 
+class Verdict(StrEnum):
+    """What the operator decided about one finding in a run session (`pr batch note`).
+
+    Recorded in the run's history only; no verdict changes an item's state.
+    """
+
+    FIXED = "fixed"
+    DISMISSED = "dismissed"
+    DEFERRED = "deferred"
+    HANDED_OFF = "handed_off"
+
+
 class Severity(StrEnum):
     BLOCK = "block"
     WAIT = "wait"
@@ -338,6 +350,11 @@ class Run:
     # --rebase. The default is the load value for a run saved before the field
     # existed, when every PR behind its base was rebased; new_run always sets it.
     rebase_when: RebaseWhen = RebaseWhen.BEHIND
+    # The checkouts the run was started over, absolute: `run --checkout`, or
+    # the plan rows' repo_dir for `run --plan`. Additive: a run saved before
+    # the field loads empty, and `batch.run_session` falls back to its items'
+    # repo_dir.
+    checkouts: list[str] = field(default_factory=list)
 
     def uses_ai(self, step: Step) -> bool:
         return self.with_ai is None or step in self.with_ai

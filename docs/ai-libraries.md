@@ -4316,14 +4316,25 @@ files an issue.
 
 ### batch/events.py
 
-NDJSON progress events for live consumers of `pr batch run`.
+NDJSON progress events for live consumers of `pr batch run`, and the run's history.
 
 The state file is authoritative; events only save a consumer from polling it.
+Every event `emit` prints is also appended, as the identical JSON line, to the
+run's `events.jsonl` through `core.run_events`. That history is what a run
+session shows; nothing reads it to decide what a run does. An append that fails
+warns once per run on stderr and never fails the run. An event naming no run
+(`item_skipped_held`, printed before the run exists) is printed only.
+`run_summary`'s `run` is the run view, filed under its `id`.
+
 `step_log` is emitted only under `--verbose`; `run_summary` is the last line of every `run`/`resume` that settles.
+`step_started` and `step_finished` carry the attempt's `log_path`.
 `generated_dirt_restored` names tracked generated files the batch restored rather than raising `dirty_worktree`.
 `item_skipped_held` is a PR a new `run` left out because an unfinished run still holds it.
-`finding_created` is a schema-2 recording (`run`, `item`, `reason`, `step`).
+`finding_created` is a schema-2 recording (`run`, `item`, `reason`, `step`, `detail`).
 `commits_unrecorded` is a step whose new commits git would not list; the attempt's tip is stored instead.
+`decision` is an operator verdict `pr batch note` appends to the history (`item`,
+`finding` as `<reason>:<step>`, `verdict`, `reason`, `commands`); it is never
+printed by a run and changes no item state. The latest per (`item`, `finding`) wins.
 
 ### batch/findings.py
 
@@ -4605,6 +4616,29 @@ naming that ``pr batch resolve`` was removed. ``to_dict`` always writes the
 tag. ``drain_order`` puts every ``Cancel`` ahead of everything else (by name)
 so a cancel never loses to a release queued beside it.
 
+### batch/run_session.py
+
+How to open a batch run's pi session, and the operator decisions recorded in it.
+
+`recipe(run)` is the one owner of a run session's identity: session id
+`batch-<run-id>`, name `batch <owner/repo> <run-id>`, working directory the
+run's one checkout, argv `pi --session-id ID --name NAME`, and
+`WORKBENCH_RUN_DIR` set to the run directory. `pr batch session` prints or
+executes it; every UI asks that command rather than building the argv. The
+checkout is `Run.checkouts`, or for a run saved before that field its items'
+`repo_dir`. A run over more than one checkout or repo has no run session and
+raises `RunSessionError`: herdr starts one run per machine and repo
+(`ai/herdr/app/mods/_lib/batch_launch.js` `groupByRepo`), so that is the run a
+UI ever asks about. A run with no items is named after its checkout's directory.
+
+`note` appends one `decision` event (`item`, `finding` as `<reason>:<step>`,
+`verdict`, `reason`, `commands`) to the run's `events.jsonl`, after checking
+the finding is one a session for the item can show
+(`batch.session_report.finding_keys`) and the reason is not empty. It takes no
+lock and changes no run state: an item stops needing a person only when the
+report stops deriving its finding. The latest note per (item, finding) wins
+(`batch.events.latest_decisions`).
+
 ### batch/scheduler.py
 
 Drive a run: admit steps, reap them, and record findings; the run always settles.
@@ -4653,10 +4687,11 @@ reach a terminal, whether the batch runs under a server or in a shell.
 
 ### batch/store.py
 
-Where a `pr batch` run lives on disk; the only module that touches it.
+Where a `pr batch` run lives on disk; the only module that touches its state.
 
     <state_dir>/batch/<run-id>/state.json       authoritative run state
     <state_dir>/batch/<run-id>/run.lock         the run's resource lock (holder record carries role)
+    <state_dir>/batch/<run-id>/events.jsonl     the run's event history (core.run_events, via batch.events); not state
     <state_dir>/batch/claims/<hex>.json         in-flight refs/pr-batch/<hex> ownership (plan.py)
     <state_dir>/batch/<run-id>/requests/*.json  the inbox: cancels and releases waiting to be applied
     <state_dir>/batch/<run-id>/requests/rejected/<name>  a request that failed to apply (<name> ends in .json)
@@ -6595,6 +6630,23 @@ A tool's stdout is its contract with whatever launched it, and the shape of
 that contract is the same everywhere: one JSON object (indented by default),
 or a stream of them a reader can tell apart. Neither is domain vocabulary, so
 it lives here rather than being spelled out again in each binary that reports.
+
+### core/run_events.py
+
+The append-only history of one run: `<run-dir>/events.jsonl`.
+
+The only Python that opens the file. Each line is one JSON object; its caller
+builds the envelope (`schema_version`, `kind`, `at`, `run`, then the event's own
+fields), and `append` requires only a string `kind`. A history is a record of
+what happened, never state: nothing reads it to decide what a run does next.
+
+`append` writes the whole line with one `O_APPEND` write, so a run's driver and
+a `pr batch note` appending beside it never interleave inside a line. It never
+creates the run directory, so an append racing a reap fails instead of
+resurrecting a deleted run. `read` returns the parsed events in file order and
+counts what it skipped: a torn line, a line that is not a JSON object, or one
+with no string `kind`. An unknown `kind` is returned like any other, so a
+history written by a newer build still reads.
 
 ### core/run_lock.py
 
@@ -9128,6 +9180,8 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
     pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
     pr batch status [RUN_ID] [--full] [--offline]   the run report (JSON)
     pr batch report [RUN_ID] [--offline] [--format json|md]         per-PR session commands
+    pr batch session RUN_ID [--json]           open the run's pi session (--json prints how)
+    pr batch note RUN_ID PR --finding R:S --verdict V --reason TEXT   record a verdict in the run's history
 
 Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/report fall back to the newest run on the machine and say so on stderr.
 
@@ -9147,6 +9201,14 @@ A leaf: imported by `cli.pr_batch`, `cli.pr_batch_requests`, and
 Inbox-writing `pr batch` commands: cancel and release.
 
 Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
+
+### cli/pr_batch_session.py
+
+`pr batch session` and `pr batch note`: open a run's pi session, record a verdict in it.
+
+Beside `cli.pr_batch` so the dispatcher stays under the file-size cap. What a
+session is and what a note checks live in `batch.run_session`; this module
+parses, prints and maps exits.
 
 ### cli/pr_batch_views.py
 

@@ -71,3 +71,16 @@ def test_record_sets_needs_session_only_for_block_or_wait():
         emit=lambda kind, **fields: events.append((kind, fields)))
     assert item.status is ItemStatus.NEEDS_SESSION
     assert any(k == "finding_created" for k, _ in events)
+
+
+def test_finding_created_carries_the_findings_detail():
+    # Revert: drop detail= from the finding_created emit in record.
+    events = []
+    item = make_item(1, status=ItemStatus.QUEUED)
+    batch.findings.record(
+        make_run([item]), item, "rebase", DecisionKind.DIRTY_WORKTREE,
+        {"path": "/wt/b1", "reason": "untracked files"},
+        emit=lambda kind, **fields: events.append((kind, fields)))
+    assert events == [("finding_created", {
+        "run": "r1", "item": "o/r#1", "reason": "dirty_worktree", "step": "rebase",
+        "detail": "untracked files"})]

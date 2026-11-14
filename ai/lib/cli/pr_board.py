@@ -64,7 +64,7 @@ CONTRACT = core.command_contract.CommandContract(
         "complete is false for status --prs and owed (clients merge by "
         "(repo, number)). Clients hide a row whose effective team lane "
         "is landed. The full document carries features (this build's pr "
-        "capabilities a board consumer drives; currently review-publish).",
+        "capabilities a board consumer drives; currently review-publish and batch-session).",
     ),
 )
 

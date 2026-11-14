@@ -152,6 +152,9 @@ def served_schema_versions(command: str, argv: list[str]) -> tuple[int, ...]:
             return (2,)
         if sub in ("run", "resume"):
             return (1,)
+        if sub == "session":
+            import batch.run_session
+            return (batch.run_session.SCHEMA_VERSION,)
         return ()
     if command == "board":
         return board.model.SCHEMA_VERSIONS

@@ -86,6 +86,46 @@ The Linear write tools' text fields (`LINEAR_TEXT_TOOLS`) go to `owners-check --
 judged against the group of the session's checkout. oneshot-publish-guard refuses
 both sets in one-shot sessions.
 
+## run-session
+
+The pi session of one `pr batch` run, opened by `pr batch session RUN_ID`
+(`ai/lib/batch/run_session.py` owns how). It does nothing unless the session
+already holds a `workbench-run` entry (so `/resume` and `pi --session` keep
+working) or was started as the run's own session: `WORKBENCH_RUN_DIR` set *and*
+session id `batch-<run-id>`. The variable alone is not enough — every pi the
+session dispatches through `pr … --fix` inherits it. `_shared/run-dir.ts` is
+the one predicate.
+
+This is a deliberate exception to the `extensions-cli/` rule in AGENTS.md: it
+loads in every Pi session because `pr batch session` starts pi with no
+`--extension`, and `/resume` and `pi --session` carry none either. Do not move it
+to `extensions-cli/`; it stays inert unless the entry or env and session id match.
+
+- **History.** `<run-dir>/events.jsonl`, written only by Python, is filed as
+  `workbench-run-history` entries: a per-PR timeline, one line per step, the
+  last 12 lines per PR per block with older ones folded into a count. Custom
+  entries never reach the model; the system note points it at the file.
+- **Now.** `pr batch report RUN_ID --offline --format json`, each finding with
+  its latest `decision`, sent as a `workbench-run-now` custom message — custom
+  messages are model context. It is rebuilt before every turn and re-sent only
+  when it changed. Opening a session never starts a turn.
+- **Cursor.** How far the history has been shown (a byte offset) and Now's
+  digest are filed as `workbench-run` entries; the latest on the branch wins.
+- **`record_decision`** runs `pr batch note`, the only writer of a `decision`.
+  A decision changes no item state.
+- **System note.** The `workbench_run` prompt section says what the session is
+  for and that nothing is pushed unless the operator says so.
+
+`events.ts`, `now.ts` and `session.ts` import nothing; `detect.ts` adds node
+built-ins; `wire.ts` holds the handlers with SDK types only, so
+`tests/pi_extensions_run_session.bats` drives them with a stand-in `pi`.
+`index.ts` only adds pi-tui's `Text`. It is a feature, not a guard, so it has
+no Claude Code twin.
+
+session-lock records no claim in the run's own session (`claimsWorktree`): its
+cwd is the run's checkout, and a claim there would make that run's own `--fix`
+steps refuse the worktrees they reuse.
+
 ## Overriding one
 
 `~/.config/workbench/overrides/ai/pi/extensions/<name>/` replaces the extension

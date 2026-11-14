@@ -23,7 +23,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { acquireFor, releaseFor } from "./detect.ts";
+import { acquireFor, claimsWorktree, releaseFor } from "./detect.ts";
 
 export default function (pi: ExtensionAPI) {
   // The worktree this session claimed, or null. Held so shutdown releases the
@@ -40,6 +40,8 @@ export default function (pi: ExtensionAPI) {
     // has no `sessionId` of its own, and reading one would quietly record an
     // empty string, costing Pi the session-id half of self-exemption.
     const sessionId = ctx.sessionManager?.getSessionId() ?? "";
+    // A batch run's own session leaves its checkout unclaimed; see claimsWorktree.
+    if (!claimsWorktree(process.env, sessionId)) return;
     if (acquireFor(cwd, process.pid, sessionId)) {
       held = cwd;
     }

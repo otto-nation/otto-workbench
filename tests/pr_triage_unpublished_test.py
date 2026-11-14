@@ -21,7 +21,7 @@ from conftest import commit_all
 from review_threads_support import _no_published_summary  # noqa: F401
 import agent.backend
 import pr.triage
-from pr.thread_models import PRReport, ReportThread, Verification
+from pr.thread_models import Downgrade, PRReport, ReportThread, Verification
 
 
 def _report(path="feat.txt"):
@@ -61,6 +61,7 @@ def _triage(work, *, verification="already_addressed", path="feat.txt"):
 def _assert_demoted(entry):
     assert entry.verification is Verification.NEEDS_DISCUSSION
     assert pr.triage.UNPUBLISHED_DOWNGRADE_REASON in entry.reasoning
+    assert entry.downgrade is Downgrade.UNPUBLISHED
 
 
 class TestUnpublishedTreeDemotesClaimVerdicts:

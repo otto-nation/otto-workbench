@@ -9,9 +9,13 @@ skip: "Do not use for initial code review requests (use code-review or pr review
 
 # PR Comments
 
-Triages and fixes PR review comments. Wraps `pr comments --fix`, which classifies
-threads via AI, applies mechanical fixes, and outputs structured JSON for any
-threads that need human input.
+Triages and fixes PR review comments. Wraps `pr comments --fix`: classify, then
+(when `fix.plan_stage` is on, the default) plan with the deep model, implement
+from that plan with a cheaper model, verify, and one deep escalation pass before
+any hand-back. Hand-backs carry the escalation's one-sentence reason. Plans are
+local artifacts and never posted. Models: `otto-workbench config phases`.
+`fix.plan_stage: false` is today's comments_fix path. JSON for anything still
+needing a person.
 
 Replies, the summary comment, thread resolutions, and deferral issues are drafted
 to stderr; `--post` is what publishes them. A round that needs a person's
@@ -182,12 +186,12 @@ Every row below marked **(field)** is a real JSON key of `fix_pass`. The rows
 marked otherwise are not keys of it — `declined`, `skipped` and
 `settled_elsewhere` are outcome kinds, and each row says where it actually
 surfaces. `batches`, `max_turns` and `max_budget` are keys too, covered above
-rather than in this table.
+rather than in this table. `planned` and `escalated` count staged-path work.
 
 | Field | Contents |
 |-------|----------|
 | `fixed` **(field)** | Threads and items the agent auto-fixed (committed + pushed) |
-| `needs_human` **(field)** | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) — **also** where a fix the verify gate falsified ends up, carrying the gate's detail as its reason, and where a `declined` outcome (below) travels |
+| `needs_human` **(field)** | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) — **also** where a fix the verify gate falsified ends up, carrying the gate's detail as its reason, where a `declined` outcome (below) travels, and where a staged-path hand-back lands with `escalation_note`. High-complexity valids go through the plan when `fix.plan_stage` is on, not this bucket |
 | `dismissed` **(field)** | Threads and items dismissed because the reviewer's premise was factually wrong. Triage's call, made before any agent looked |
 | `declined` (not a field) | The agent read the item and argued it should not be acted on. Distinct from `dismissed`: a considered disagreement rather than a triage verdict. A decline with no reason is recorded as `needs_human` instead. It has no key of its own — it is folded into `needs_human` above, and travels with it at every reviewer-facing surface |
 | `already_addressed` **(field)** | Threads and items the code already satisfies — agreement with the reviewer, not rejection. Triage checks the citation resolves, not that the behaviour is really there, so treat it as the least-checked verdict in the set |
@@ -200,6 +204,8 @@ rather than in this table.
 | `summary_url` **(field)** | URL of the live summary issue comment, or null. A round that has lost the last word on the PR reposts rather than editing, so this can name a new comment |
 | `summary_deferred` **(field)** | `true` when the round rendered a summary that did not go out — a draft run, a commit still off the remote, `needs_human` threads holding it back, or a post the API refused. The rows it covers are not only `fixed`: a round settled entirely as `already_addressed` renders a full table and owes it the same way. Together with `replies_pending` this is what `pr status` reads to report `⚠ closeout owed` and block merge readiness until `--finish --post` drains it |
 | `pr_body_pending` (state field, not fix_pass) | `true` when a comment was answered by rewriting the PR description but the gate was shut. The replacement waits in `pr-description.md` in the pass's artifact directory, under the workbench state root rather than in the worktree; it is owed in `⚠ closeout owed` and sent by `--finish --post` |
+| `planned` **(field)** | Count of items that received a plan this pass |
+| `escalated` **(field)** | Count of items that took the one escalation pass |
 | `comment_items` (top-level field, listed above) | Breakdown of comment item outcomes: `{fixed, needs_human, dismissed, deferred}` |
 
 **Comment items** (`comment_items` array at the top level): when top-level PR
@@ -294,8 +300,8 @@ true, `pr status` reports `⚠ closeout owed`, and that blocks merge readiness
 until something drains it. Go to Step 4 and close the round out — do not stop
 here.
 
-**If `needs_human` is non-empty:** present each with its reason and summary.
-Ask the user what to do for each:
+**If `needs_human` is non-empty:** present each with its `escalation_note` first
+when present, then its reason and summary. Ask the user what to do for each:
 - **Fix it** — apply the edit inline, commit and push, then record it with
   `--settle` (Step 3a)
 - **Skip** — move on

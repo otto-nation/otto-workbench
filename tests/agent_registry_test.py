@@ -12,9 +12,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.registry
-from agent.registry import PHASES, RETRYABLE_FIX_PHASES, REVIEW_PHASES
+from agent.registry import (
+    LIGHT_FLOOR_PHASES, ONE_SHOT_FIX_PHASES, PHASES, READ_ONLY_FIX_PHASES,
+    RETRYABLE_FIX_PHASES, REVIEW_PHASES,
+)
 from agent.types import EFFORT_PRESETS
-from core.phases import AgentKind, Phase, PhaseDomain, PhaseShape, Thinking
+from core.phases import AgentKind, Phase, PhaseDomain, PhaseShape, Thinking, Tier
 
 
 class TestPhasesRegistry:
@@ -54,6 +57,9 @@ class TestPhaseDomains:
             Phase.COMMENTS_FIX: PhaseDomain.COMMENTS,
             Phase.COMMENTS_VERIFY: PhaseDomain.COMMENTS,
             Phase.COMMENTS_TRIAGE: PhaseDomain.COMMENTS,
+            Phase.COMMENTS_PLAN: PhaseDomain.COMMENTS,
+            Phase.COMMENTS_IMPLEMENT: PhaseDomain.COMMENTS,
+            Phase.COMMENTS_ESCALATE: PhaseDomain.COMMENTS,
             Phase.CI_FIX: PhaseDomain.CI,
             Phase.CI_VERIFY: PhaseDomain.CI,
             Phase.REBASE: PhaseDomain.REBASE,
@@ -91,6 +97,9 @@ class TestPhaseThinkingDefaults:
             # both called the backend without one and took its default.
             Phase.COMMENTS_FIX: None,
             Phase.COMMENTS_VERIFY: Thinking.LOW,
+            Phase.COMMENTS_PLAN: Thinking.MEDIUM,
+            Phase.COMMENTS_IMPLEMENT: Thinking.LOW,
+            Phase.COMMENTS_ESCALATE: Thinking.MEDIUM,
             Phase.CI_FIX: None,
             Phase.CI_VERIFY: Thinking.LOW,
             # Nor did any prompt-shaped call, which had no way to name one:
@@ -126,6 +135,9 @@ class TestPhaseMaxTurnsDefaults:
             Phase.FIX_VERIFY: 15,
             Phase.COMMENTS_FIX: 20,
             Phase.COMMENTS_VERIFY: 15,
+            Phase.COMMENTS_PLAN: 16,
+            Phase.COMMENTS_IMPLEMENT: 16,
+            Phase.COMMENTS_ESCALATE: 16,
             Phase.CI_FIX: 20,
             Phase.CI_VERIFY: 15,
             Phase.PREPUSH_FIX: 20,
@@ -147,7 +159,8 @@ class TestPhaseBudgetDefaults:
     def test_only_the_non_review_phases_pin_a_budget(self):
         pinned = {p for p, s in PHASES.items() if s.max_budget is not None}
         assert pinned == {
-            Phase.COMMENTS_FIX, Phase.COMMENTS_VERIFY, Phase.CI_FIX,
+            Phase.COMMENTS_FIX, Phase.COMMENTS_VERIFY, Phase.COMMENTS_PLAN,
+            Phase.COMMENTS_IMPLEMENT, Phase.COMMENTS_ESCALATE, Phase.CI_FIX,
             Phase.CI_VERIFY, Phase.PREPUSH_FIX,
         }
 
@@ -210,8 +223,9 @@ class TestPhaseShapes:
         editing = {p for p, s in PHASES.items() if s.shape is PhaseShape.FIX}
         assert editing == {
             Phase.FIX, Phase.FIX_VERIFY, Phase.COMMENTS_FIX,
-            Phase.COMMENTS_VERIFY, Phase.CI_FIX, Phase.CI_VERIFY,
-            Phase.PREPUSH_FIX,
+            Phase.COMMENTS_VERIFY, Phase.COMMENTS_PLAN,
+            Phase.COMMENTS_IMPLEMENT, Phase.COMMENTS_ESCALATE,
+            Phase.CI_FIX, Phase.CI_VERIFY, Phase.PREPUSH_FIX,
         }
 
     def test_only_the_stateless_phases_are_prompts(self):
@@ -388,3 +402,60 @@ class TestPhaseOutputNames:
         for spec in specs:
             stem = spec.output_filename.removesuffix(".md").removesuffix(".json")
             assert spec.log_filename.removesuffix(".jsonl") == stem
+
+
+class TestCommentsPlanImplementEscalate:
+    """The staged comments phases: tier, thinking, shape, read-only, retry."""
+
+    def test_plan_is_deep_medium_fix_and_read_only(self):
+        spec = PHASES[Phase.COMMENTS_PLAN]
+        assert spec.tier is Tier.DEEP
+        assert spec.thinking is Thinking.MEDIUM
+        assert spec.shape is PhaseShape.FIX
+        assert spec.label == "Plan"
+        assert spec.template_for() == "plan-comments.md"
+        assert Phase.COMMENTS_PLAN in READ_ONLY_FIX_PHASES
+        assert Phase.COMMENTS_PLAN in ONE_SHOT_FIX_PHASES
+        assert Phase.COMMENTS_PLAN in LIGHT_FLOOR_PHASES
+        assert Phase.COMMENTS_PLAN not in RETRYABLE_FIX_PHASES
+        assert agent.registry.is_read_only_fix_phase("comments_plan")
+        assert not agent.registry.is_verify_phase("comments_plan")
+
+    def test_implement_is_standard_low_fix_and_retryable(self):
+        spec = PHASES[Phase.COMMENTS_IMPLEMENT]
+        assert spec.tier is Tier.STANDARD
+        assert spec.thinking is Thinking.LOW
+        assert spec.shape is PhaseShape.FIX
+        assert spec.label == "Implement"
+        assert spec.template_for() == "implement-plan.md"
+        assert Phase.COMMENTS_IMPLEMENT not in READ_ONLY_FIX_PHASES
+        assert Phase.COMMENTS_IMPLEMENT not in ONE_SHOT_FIX_PHASES
+        assert Phase.COMMENTS_IMPLEMENT not in LIGHT_FLOOR_PHASES
+        assert Phase.COMMENTS_IMPLEMENT in RETRYABLE_FIX_PHASES
+        assert not agent.registry.is_read_only_fix_phase("comments_implement")
+        assert spec.retry.ceiling == 96
+        assert spec.retry.turns_min == 24
+        assert spec.retry.bump == 12
+
+    def test_escalate_is_deep_medium_fix_one_shot_not_read_only(self):
+        spec = PHASES[Phase.COMMENTS_ESCALATE]
+        assert spec.tier is Tier.DEEP
+        assert spec.thinking is Thinking.MEDIUM
+        assert spec.shape is PhaseShape.FIX
+        assert spec.label == "Escalation"
+        assert spec.template_for() == "escalate-comments.md"
+        assert Phase.COMMENTS_ESCALATE not in READ_ONLY_FIX_PHASES
+        assert Phase.COMMENTS_ESCALATE in ONE_SHOT_FIX_PHASES
+        assert Phase.COMMENTS_ESCALATE in LIGHT_FLOOR_PHASES
+        assert Phase.COMMENTS_ESCALATE not in RETRYABLE_FIX_PHASES
+        assert not agent.registry.is_read_only_fix_phase("comments_escalate")
+        assert not agent.registry.is_verify_phase("comments_escalate")
+
+    def test_one_shots_are_excluded_from_retryable_fix_phases(self):
+        assert not ONE_SHOT_FIX_PHASES & set(RETRYABLE_FIX_PHASES)
+
+    def test_plan_is_read_only_and_escalate_is_not(self):
+        assert Phase.COMMENTS_PLAN in READ_ONLY_FIX_PHASES
+        assert Phase.COMMENTS_ESCALATE not in READ_ONLY_FIX_PHASES
+        assert not agent.registry.is_read_only_fix_phase("")
+        assert not agent.registry.is_read_only_fix_phase("nope")

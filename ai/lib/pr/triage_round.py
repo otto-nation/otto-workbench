@@ -71,12 +71,15 @@ def _infers_actionable(tt: CommentItem) -> bool:
 
 def _route(
     tt: CommentItem,
+    *,
+    plan_complex: bool = False,
 ) -> tuple[Disposition, pr.summary_model.HumanReason | None] | None:
     """Where one entry goes, or None to drop it.
 
     Order is the rule. Contested state overrides the model; a question never
-    reaches verification; valid + high is a person before VALID is fixable.
-    A verification with no classification is treated as an actionable
+    reaches verification; valid + high is a person before VALID is fixable,
+    unless *plan_complex* (the staged comments path will plan it). A
+    verification with no classification is treated as an actionable
     suggestion: verification is only asked for those, so a resumed --fix that
     logged UNSET+ALREADY_ADDRESSED still has a bucket to land in.
     """
@@ -93,6 +96,7 @@ def _route(
     if (
         tt.verification is Verification.VALID
         and tt.complexity is Complexity.HIGH
+        and not plan_complex
     ):
         return (Disposition.NEEDS_HUMAN, pr.summary_model.HumanReason.COMPLEX)
     return _VERIFICATION_ROUTES.get(tt.verification)
@@ -120,6 +124,7 @@ def _report_drop(tt: CommentItem, trail: Trail | None) -> None:
 def classify_entries(
     triage_entries: list[CommentItem], *,
     trail: Trail | None = None,
+    plan_complex: bool = False,
 ) -> ClassificationResult:
     """Sort one side's triage verdicts into the dispositions the pass routes on.
 
@@ -131,7 +136,7 @@ def classify_entries(
     anything else — the state overrides whatever the model called it — and a
     question never reaches verification at all. Only an `actionable_suggestion`
     gets that far, and a valid one the model called complex goes to a person
-    rather than to the agent.
+    rather than to the agent, unless *plan_complex* (it then follows VALID).
 
     Every disposition takes a copy of the model's entry at one append. That
     single statement is what makes the four agree about object identity, so a
@@ -146,7 +151,7 @@ def classify_entries(
                 f"{tt.id}: verification={tt.verification.name} without "
                 f"classification — treating as actionable_suggestion",
             )
-        routed = _route(tt)
+        routed = _route(tt, plan_complex=plan_complex)
         if routed is None:
             _report_drop(tt, trail)
             continue
@@ -459,6 +464,8 @@ def triage_the_round(
     wt_path,
     ctx,
     trail: Trail | None = None,
+    *,
+    plan_complex: bool = False,
 ) -> TriagedRound:
     """Dispose of what triage said, place the holds, and report the round.
 
@@ -472,8 +479,12 @@ def triage_the_round(
     left out because the fix record settles it is accounted for — its row
     comes from that record — so it does not leave the round owed.
     """
-    threads = classify_entries(triage_result.threads, trail=trail)
-    items = classify_entries(triage_result.comment_items, trail=trail)
+    threads = classify_entries(
+        triage_result.threads, trail=trail, plan_complex=plan_complex,
+    )
+    items = classify_entries(
+        triage_result.comment_items, trail=trail, plan_complex=plan_complex,
+    )
 
     hold_if_superseded(
         pr.supersession.detect_cached(

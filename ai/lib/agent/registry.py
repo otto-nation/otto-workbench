@@ -245,6 +245,44 @@ _SPECS: tuple[PhaseSpec, ...] = (
         shape=PhaseShape.PROMPT,
         scales_with_omitted=False,
     ),
+    # Deep, read-only plan for a comments fix round. One-shot (guard retry
+    # only) and on the light floor: a cheap model planning edits is the same
+    # failure as a cheap model reviewing them.
+    PhaseSpec(
+        Phase.COMMENTS_PLAN, PhaseDomain.COMMENTS, "Plan",
+        tier=Tier.DEEP,
+        template="plan-comments.md",
+        thinking=Thinking.MEDIUM, max_turns=16, max_budget=2.0,
+        shape=PhaseShape.FIX,
+        scales_with_omitted=False,
+        scaling=ItemScaling(turns_per_item=4, turns_cap=40,
+                            budget_per_item=0.50, budget_cap=4.0),
+    ),
+    # Standard-tier implementer that carries out a plan. Thinking low; the
+    # retry ceiling sits above the first-pass cap so a maxed chunk can grow.
+    PhaseSpec(
+        Phase.COMMENTS_IMPLEMENT, PhaseDomain.COMMENTS, "Implement",
+        tier=Tier.STANDARD,
+        template="implement-plan.md",
+        thinking=Thinking.LOW, max_turns=16, max_budget=1.6,
+        shape=PhaseShape.FIX,
+        scales_with_omitted=False,
+        scaling=ItemScaling(turns_per_item=4, turns_cap=48,
+                            budget_per_item=0.40, budget_cap=4.0),
+        retry=RetryBudget(ceiling=96, turns_min=24, bump=12),
+    ),
+    # Deep last look before an item reaches the operator. No retry: the
+    # engine passes produced=None. On the light floor with the plan stage.
+    PhaseSpec(
+        Phase.COMMENTS_ESCALATE, PhaseDomain.COMMENTS, "Escalation",
+        tier=Tier.DEEP,
+        template="escalate-comments.md",
+        thinking=Thinking.MEDIUM, max_turns=16, max_budget=1.6,
+        shape=PhaseShape.FIX,
+        scales_with_omitted=False,
+        scaling=ItemScaling(turns_per_item=8, turns_cap=40,
+                            budget_per_item=0.80, budget_cap=4.0),
+    ),
     # One phase, three ledger labels: pr-rebase asks for conflict resolutions,
     # chunked resolutions and stash resolutions. They are the same call sized
     # the same way, and an operator moving the rebase model means all of them.
@@ -316,16 +354,43 @@ def is_verify_phase(phase: str) -> bool:
         # "" is AgentInvocation's default and names no phase at all.
         return False
 
+
+# Plan and escalate run once. Listed rather than derived, for the reason
+# VERIFY_PHASES is: nothing on a PhaseSpec says "one shot".
+ONE_SHOT_FIX_PHASES: frozenset[Phase] = frozenset(
+    {Phase.COMMENTS_PLAN, Phase.COMMENTS_ESCALATE}
+)
+
+# Verify gates plus the comments plan stage. Claude denies Edit/Write and Pi
+# sets REVIEW_VERIFY_PHASE for these. is_verify_phase stays the narrower set.
+READ_ONLY_FIX_PHASES: frozenset[Phase] = VERIFY_PHASES | {Phase.COMMENTS_PLAN}
+
+
+def is_read_only_fix_phase(phase: str) -> bool:
+    """Whether *phase* must not Edit/Write the worktree."""
+    try:
+        return Phase(phase) in READ_ONLY_FIX_PHASES
+    except ValueError:
+        return False
+
+
+# Deep comments stages that refuse the light tier, same as the review domain.
+LIGHT_FLOOR_PHASES: frozenset[Phase] = frozenset(
+    {Phase.COMMENTS_PLAN, Phase.COMMENTS_ESCALATE}
+)
+
 # The phases whose retry budget `agent.phases.phase_retry_turns` actually
 # decides: a fix-shaped phase is the only thing a `FixAdapter` names as its own,
 # and `fix.batches._retry` is that function's one caller. Derived from the shape
 # so a fix pass added later inherits the retry invariant its tests assert
 # instead of being a fifth entry somebody has to remember to list — and a gate
 # added later fails that invariant loudly until it joins `VERIFY_PHASES`,
-# which is the safe direction for this to break in.
+# which is the safe direction for this to break in. One-shot phases are
+# excluded on purpose: they pass produced=None and must not grow a retry.
 RETRYABLE_FIX_PHASES: tuple[Phase, ...] = tuple(
     p for p, s in PHASES.items()
     if s.shape is PhaseShape.FIX and p not in VERIFY_PHASES
+    and p not in ONE_SHOT_FIX_PHASES
 )
 
 # A review's phase 1 is one scan chosen from these two, so every question about

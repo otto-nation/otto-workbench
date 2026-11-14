@@ -24,8 +24,8 @@ ENV_REVIEW_VERIFY_PHASE = "REVIEW_VERIFY_PHASE"
 def apply_guard_env(inv: AgentInvocation) -> dict[str, str]:
     """The subprocess environment, with the review guard's roots added.
 
-    ``REVIEW_VERIFY_PHASE`` is set for every verify gate
-    (``agent.registry.VERIFY_PHASES``), so review-guard permits
+    ``REVIEW_VERIFY_PHASE`` is set for every read-only fix phase
+    (``agent.registry.READ_ONLY_FIX_PHASES``), so review-guard permits
     writes to the tracking file and other add_dirs outside the worktree, not
     to the worktree itself.
     """
@@ -34,6 +34,6 @@ def apply_guard_env(inv: AgentInvocation) -> dict[str, str]:
     extra = [d for d in inv.add_dirs if d]
     if extra:
         env[ENV_REVIEW_ALLOWED_DIRS] = os.pathsep.join(extra)
-    if agent.registry.is_verify_phase(inv.phase):
+    if agent.registry.is_read_only_fix_phase(inv.phase):
         env[ENV_REVIEW_VERIFY_PHASE] = "1"
     return env

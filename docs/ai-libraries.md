@@ -335,12 +335,14 @@ but multiplicatively rather than as a layer in that chain: a deeper review buys
 turns on top of whatever the winning layer said, where a level it flattened
 would discard a per-phase override.
 
-**Reviews never run on the light tier.** Every review-domain phase reads the
-standard or deep tier, and a review phase that resolves to the light tier or a
-Haiku model — from any layer, a tier set to Haiku included — raises
-`ReviewModelTooLight`. A review pass that finds nothing on a light model cannot
-be told from a clean PR; ``models.light`` serves only the phases that are not
-reviews. A review phase can be pinned to another provider by config alone on
+**Reviews, plan and escalation never run on the light tier.** Every
+review-domain phase, plus ``comments_plan`` and ``comments_escalate``, reads
+the standard or deep tier, and a phase that ``refuses_light`` and resolves to
+the light tier or a Haiku model — from any layer, a tier set to Haiku included
+— raises `ReviewModelTooLight`. A review pass that finds nothing on a light
+model cannot be told from a clean PR; ``models.light`` serves only the phases
+that are not on that floor. A review phase can be pinned to another provider
+by config alone on
 the ``pi`` backend (``agent.phases.scout.model:
 google-vertex/gemini-3.1-pro-preview:medium``); the Claude backend serves only
 Anthropic, Vertex-Claude and Bedrock models.
@@ -780,6 +782,15 @@ module is the decision: auto-detect, require, or discard, keyed on the PR,
 the branch, HEAD, and the agent's file blobs. Nothing here writes a
 checkpoint; ``fix.comments.run_pass`` and the adapter's ``advance`` do that.
 
+### fix/comments_stages.py
+
+Comments-domain wiring for the plan / implement / escalate stages.
+
+The engine's hooks are defaulted off. This module turns them on for a comments
+pass when ``fix.plan_stage`` is set and the plan model can actually run. Off,
+or when the deep tier is unset or a light model is forced, the adapter is
+today's ``comments_fix`` path — one error line, nothing else.
+
 ### fix/containment.py
 
 Content snapshots that restore a phase's writes in a named worktree.
@@ -865,6 +876,26 @@ the commit is unconditional and the push waits for ``--post``; :mod:`land`'s
 module docstring makes that argument, and a pass that wanted the other split would
 be a fix pass asserting something outward nobody approved.
 
+### fix/engine_checks.py
+
+The engine's half of ``fix.suite``: resolve the command, run it, apply.
+
+A red result withdraws the pass's verification claims before ``landing``
+renders a body that would otherwise say those claims held. Config is re-read
+from the worktree rather than taken from ``adapter.config`` because a pass
+launched from another directory carries the config of wherever it was
+launched, and the checks belong to the tree being edited. An adapter that was
+given one still wins: it is the same file when the two agree, and the
+caller's explicit choice when they do not.
+
+### fix/escalate.py
+
+One deep pass over items that are still going to a person.
+
+No retries (``produced=None``). An item the plan already decided is not
+escalated again (C1). Escalation never lifts a publishing hold (C4) — this
+module does not touch holds.
+
 ### fix/gate.py
 
 The verify gate: when it runs, and what its verdicts mean.
@@ -931,6 +962,22 @@ the landing. A later run reads those records back through these helpers —
 answers, the agent's files, the suite result, the landing — so it can skip
 work that already finished. Nothing here writes a checkpoint; the adapter's
 ``checkpoint`` hook is what persists.
+
+### fix/plan_model.py
+
+The plan a deep pass writes for one fix item.
+
+Owned by the shared engine, not by a domain: a comments round is the first
+adopter, but CI and review will hand the same record to the same stages. The
+JSON lives under the pass's artifacts directory and is never posted publicly.
+
+### fix/plan_store.py
+
+Load and save per-item plans under a pass's artifacts directory.
+
+Plans are local JSON beside the run — never posted. A write is atomic through
+``core.serde.write_json``. An interrupted pass does not resume from these
+files; they are an audit record and the input the implementer is handed.
 
 ### fix/reconcile.py
 
@@ -1030,6 +1077,21 @@ the agent changed nothing, so there is nothing to commit. None says the
 worktree could not be read, so the pass cannot tell its own work from what was
 already there — which is the one case where committing nothing is right and
 committing everything is how unreviewed content reaches a branch.
+
+### fix/stage_tracking.py
+
+Checklists the plan, implement and escalate stages answer in.
+
+Reuses :mod:`fix.tracking`'s box type and parser so the three vocabularies
+cannot drift from the format the engine already reads. An untouched item still
+reads as ``DEFERRED``.
+
+### fix/stages.py
+
+Plan then implement, or fall back to today's agent path.
+
+Called from the engine only when ``adapter.plan_phase`` is set. Existing
+adapters leave that unset and never reach this module.
 
 ### fix/verify.py
 
@@ -2674,8 +2736,8 @@ lives in, belong to `pr.comments_state`.
 
 A thread's lifecycle state is what decides whether the run may report itself
 done. `--post` is a request, not a guarantee: if triage routes any thread to
-`needs_human` — contested, conflicting, a question, or too complex to
-auto-fix — the fix pass *holds* publishing for the rest of the process, and the
+`needs_human` — contested, conflicting, a question, or needs discussion —
+the fix pass *holds* publishing for the rest of the process, and the
 hold outranks `--post`. Nothing reopens it (see `publishing`).
 
 The fixes still get applied and still get committed. What waits is everything
@@ -7351,7 +7413,7 @@ nothing gets exactly the pass it got before this module existed, plus a line
 saying nothing ran.
 
 **What a red run does.** It marks every claimed fix unverified and holds
-publishing for the whole run (`fix.engine._verify_suite`), so nothing replies,
+publishing for the whole run (`fix.engine_checks._verify_suite`), so nothing replies,
 resolves or pushes off a failing tree. The hold is central rather than left to
 a domain's `after_verify` because a demotion leaves the item at `FIXED` and
 touches only `verified` — every per-item filter in the codebase selects on the

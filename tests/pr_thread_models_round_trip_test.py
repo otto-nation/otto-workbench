@@ -11,8 +11,11 @@ if str(LIB_DIR) not in sys.path:
 # `_no_published_summary` is autouse: imported so pytest applies it here,
 # never referenced by name.
 from review_threads_support import _no_published_summary  # noqa: E402
-from pr.fix import FixOutcome, ItemOutcome, SettledBy
-from pr.thread_models import CommentItem, TrackingResult, TriageStats, triage_result_from_dict
+from pr.fix import Escalation, FixOutcome, Handoff, ItemOutcome, SettledBy
+from pr.thread_models import (
+    CommentFixResult, CommentItem, Downgrade, TrackingResult, TriageStats,
+    triage_result_from_dict,
+)
 
 
 # ── triage_result_from_dict ──────────────────────────────────────────────
@@ -170,3 +173,38 @@ class TestMergeTracking:
         total.drop(FixOutcome.DEFERRED)
         assert total.both(FixOutcome.DEFERRED) == []
         assert total.bucket(FixOutcome.FIXED) == ["k"]
+
+
+class TestStagedFieldsSurviveTheEntry:
+    def test_handoff_and_plan_path_round_trip_through_the_entry(self):
+        outcome = ItemOutcome(
+            id="t1", outcome=FixOutcome.NEEDS_HUMAN,
+            handoff=Handoff.PLAN_FAILED,
+            escalation=Escalation.CONFIRMED,
+            escalation_note="missing fn",
+            plan_path="/tmp/plans/t1.json",
+        )
+        assert CommentItem.from_outcome(outcome).to_outcome() == outcome
+
+    def test_from_outcomes_copies_staged_fields_onto_the_entry(self):
+        source = CommentItem(id="t1", summary="s")
+        recorded = ItemOutcome(
+            id="t1", outcome=FixOutcome.NEEDS_HUMAN,
+            handoff=Handoff.PLAN_NEEDS_HUMAN,
+            plan_path="/tmp/plans/t1.json",
+        )
+        result = TrackingResult.from_outcomes([recorded], [source])
+        [entry] = result.bucket(FixOutcome.NEEDS_HUMAN)
+        assert entry.handoff is Handoff.PLAN_NEEDS_HUMAN
+        assert entry.plan_path == "/tmp/plans/t1.json"
+
+    def test_old_json_without_downgrade_loads_as_downgrade_none(self):
+        result = triage_result_from_dict({"comment_items": [{"id": "t1"}]})
+        [item] = result.comment_items
+        assert item.id == "t1"
+        assert item.downgrade is Downgrade.NONE
+        assert item.handoff is None
+
+    def test_comment_fix_result_counts_default_to_zero(self):
+        assert CommentFixResult().planned == 0
+        assert CommentFixResult().escalated == 0

@@ -496,7 +496,7 @@ The global `commit-msg` hook is advisory (`git commit --no-verify` / `-n` skips 
 
 ### Which model each phase runs on
 
-`otto-workbench config phases [--json] [DIR]` reports each phase's model and thinking level, and which setting answered. `DIR` names another repo. Example: `otto-workbench config phases --json`. Exit 0 when the config loads (unset tiers are data), 1 when a file cannot be read, 2 on usage. JSON schema and source layers: [`agent/phase_report.py`](ai-libraries.md#agentphase_reportpy). Precedence: [`agent/phases.py`](ai-libraries.md#agentphasespy). Review phases never run on the light tier or a Haiku model; the same page says what stops the run. To try a model for one run without saving it, pass `pr --phase-model PHASE=MODEL …` (repeatable; the same layer as `WORKBENCH_AI_<PHASE>_MODEL`, so `--model` outranks it). To save one, `otto-workbench config model scout google-vertex/gemini-3.1-pro-preview:medium [--project|--container]` (a phase or a tier; `--unset` clears it; the review floor applies; `--container` suits trying models out).
+`otto-workbench config phases [--json] [DIR]` reports each phase's model and thinking level, and which setting answered. `DIR` names another repo. Example: `otto-workbench config phases --json`. Exit 0 when the config loads (unset tiers are data), 1 when a file cannot be read, 2 on usage. JSON schema and source layers: [`agent/phase_report.py`](ai-libraries.md#agentphase_reportpy). Precedence: [`agent/phases.py`](ai-libraries.md#agentphasespy). Review, plan and escalation phases never run on the light tier or a Haiku model; the same page says what stops the run. To try a model for one run without saving it, pass `pr --phase-model PHASE=MODEL …` (repeatable; the same layer as `WORKBENCH_AI_<PHASE>_MODEL`, so `--model` outranks it). To save one, `otto-workbench config model scout google-vertex/gemini-3.1-pro-preview:medium [--project|--container]` (a phase or a tier; `--unset` clears it; the review floor applies; `--container` suits trying models out).
 
 ### Usage ledger
 
@@ -815,6 +815,8 @@ two of them apart — and cites the branch's own history from there. Nothing
 clears on a guess: a commit still on the branch is unpushed for the ordinary
 reason, and an orphan with no replay, or with two, holds too and says how to
 recover. Re-running `--fix` after a completed pass discards reviewed replies; an interrupted pass resumes on the same HEAD (`--no-resume` starts over). Checkpoint resume skips finished phases. Leftover-adoption (`interrupted-pass.json`, written whenever a comments pass is interrupted) applies unless the pass resumes from a fix-checkpoint at `AGENT_RUNNING` or later (`--no-resume`, HEAD moved, new feedback, or a checkpoint before `AGENT_RUNNING`).
+
+**Plan, implement, verify, escalate (`pr comments --fix`).** When `fix.plan_stage` is on (default) and the plan model can run, comments `--fix` plans each fixable item (deep, read-only), implements from that plan (cheaper), verifies, then escalates anything still going to a person — one deep pass, no retry. High-complexity valids are fixable on this path (the plan may still return `needs_human`); `needs_discussion`, questions, conflicting, and contested stay mechanical hand-backs. Hand-backs carry the escalation's one-sentence reason. Plans are local artifacts and never posted. Off, or if the deep tier cannot run, today's `comments_fix` path. Models: `otto-workbench config phases`. Other adapters keep today's path until they set `plan_phase`.
 
 ### Closing out comments
 

@@ -239,13 +239,13 @@ FIX_DENIED_TOOLS = ",".join((
     *(f"Bash(git {s}:*)" for s in agent.git_guard.GUARDED_SUBCOMMANDS),
 ))
 
-# Edit/Write on the verify gates only. The fix agent needs both. Process writes
+# Edit/Write on read-only fix phases only. The fix agent needs both. Process writes
 # (Bash, a suite) bypass this, which is why fix.containment is the real control.
 _VERIFY_DENIED_TOOLS = ",".join((FIX_DENIED_TOOLS, "Edit", "Write"))
 
 
 def _fix_denied_tools(inv: AgentInvocation) -> str:
-    if agent.registry.is_verify_phase(inv.phase):
+    if agent.registry.is_read_only_fix_phase(inv.phase):
         return _VERIFY_DENIED_TOOLS
     return FIX_DENIED_TOOLS
 

@@ -194,6 +194,24 @@ def test_light_models_still_serve_the_phases_that_are_not_reviews(roots):
     assert agent.phases.phase_model(Phase.CREATE, "claude-haiku-4-5", cfg) == "claude-haiku-4-5"
 
 
+@pytest.mark.parametrize("phase", [Phase.COMMENTS_PLAN, Phase.COMMENTS_ESCALATE])
+@pytest.mark.parametrize("value", ["claude-haiku-4-5@20251001", "light"])
+def test_plan_and_escalate_refuse_the_light_tier(roots, monkeypatch, phase, value):
+    cfg = _cfg(roots, "models:\n  light: claude-haiku-4-5\n  deep: claude-opus-4-5\n")
+    assert agent.phases.refuses_light(phase)
+    with pytest.raises(agent.phases.ReviewModelTooLight):
+        agent.phases.phase_model(phase, value, cfg)
+    monkeypatch.setenv(phase.model_env_key, value)
+    with pytest.raises(agent.phases.ReviewModelTooLight):
+        agent.phases.phase_model(phase, None, cfg)
+
+
+def test_implement_may_run_on_the_light_tier(roots):
+    cfg = _cfg(roots, "models:\n  light: claude-haiku-4-5\n")
+    assert not agent.phases.refuses_light(Phase.COMMENTS_IMPLEMENT)
+    assert agent.phases.phase_model(Phase.COMMENTS_IMPLEMENT, "light", cfg) == "claude-haiku-4-5"
+
+
 def test_a_review_phase_can_be_pinned_to_another_provider(roots):
     cfg = _cfg(roots, "agent:\n  phases:\n    scout:\n      model: google-vertex/gemini-3.1-pro-preview:medium\n")
     got = agent.phases.phase_settings(Phase.SCOUT, None, cfg)

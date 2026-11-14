@@ -26,6 +26,7 @@ import core.publishing
 import core.run_lock
 import fix.comments
 import fix.comments_resume
+import fix.comments_stages
 from git.land import CommitStatus
 from gh.pr_data import PRData, fetch_pr_data
 import gh.owners
@@ -338,10 +339,13 @@ def run_threads(trail, args, ctx) -> int:
             return rc
 
         if args.fix and triage_result:
+            plan_complex = fix.comments_stages.plan_complex_for(toplevel)
             fixable_count = len(
-                pr.triage_round.classify_entries(triage_result.threads).fixable)
+                pr.triage_round.classify_entries(
+                    triage_result.threads, plan_complex=plan_complex).fixable)
             fixable_items_count = len(
-                pr.triage_round.classify_entries(triage_result.comment_items).fixable)
+                pr.triage_round.classify_entries(
+                    triage_result.comment_items, plan_complex=plan_complex).fixable)
             trail.decision(
                 "fix_classification",
                 f"{fixable_count} fixable threads, {fixable_items_count} fixable items identified",

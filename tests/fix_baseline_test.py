@@ -24,6 +24,7 @@ import core.proc  # noqa: E402
 import core.trail  # noqa: E402
 import fix.baseline  # noqa: E402
 import fix.engine  # noqa: E402
+import fix.engine_checks  # noqa: E402
 import fix.suite  # noqa: E402
 import git.client  # noqa: E402
 from config.workbench_config import FixConfig, WorkbenchConfig  # noqa: E402
@@ -323,7 +324,7 @@ def test_run_checks_hands_the_baseline_the_time_left(tmp_path):
     config = WorkbenchConfig(fix=FixConfig(verify_command="c", verify_timeout=900))
     with patch.object(fix.suite, "run", return_value=result) as run, \
             patch.object(fix.baseline, "label_preexisting", side_effect=capture):
-        out = fix.engine._run_checks(
+        out = fix.engine_checks._run_checks(
             adapter, config, None, base="HEAD", baseline_ref="abc", paths={"a.py"})
     assert run.call_args.args[2] == 900
     assert seen["timeout_s"] == 1

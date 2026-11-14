@@ -314,6 +314,75 @@
       },
       "error": null
     },
+    "comments_plan": {
+      "domain": "comments",
+      "tier": "deep",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "tier",
+        "key": "models.deep",
+        "scope": "global",
+        "via": null
+      },
+      "thinking": "high",
+      "thinking_source": {
+        "layer": "tier_model",
+        "key": "models.deep",
+        "scope": "global",
+        "via": null
+      },
+      "error": null
+    },
+    "comments_implement": {
+      "domain": "comments",
+      "tier": "standard",
+      "model": {
+        "provider": "openai",
+        "id": "gpt-6",
+        "level": null
+      },
+      "model_source": {
+        "layer": "tier",
+        "key": "models.standard",
+        "scope": "project",
+        "via": null
+      },
+      "thinking": "low",
+      "thinking_source": {
+        "layer": "spec",
+        "key": null,
+        "scope": "default",
+        "via": null
+      },
+      "error": null
+    },
+    "comments_escalate": {
+      "domain": "comments",
+      "tier": "deep",
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
+      },
+      "model_source": {
+        "layer": "tier",
+        "key": "models.deep",
+        "scope": "global",
+        "via": null
+      },
+      "thinking": "high",
+      "thinking_source": {
+        "layer": "tier_model",
+        "key": "models.deep",
+        "scope": "global",
+        "via": null
+      },
+      "error": null
+    },
     "rebase": {
       "domain": "rebase",
       "tier": "standard",

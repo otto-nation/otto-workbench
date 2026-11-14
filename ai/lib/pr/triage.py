@@ -40,8 +40,8 @@ import pr.triage_prompt
 from pr.comments_state import ThreadState
 from pr.fix import decision_stamp
 from pr.thread_models import (
-    CommentItem, CommentSourceKind, Complexity, PRReport, TriageResult, TriageStats,
-    Verification, triage_result_from_dict,
+    CommentItem, CommentSourceKind, Complexity, Downgrade, PRReport, TriageResult,
+    TriageStats, Verification, triage_result_from_dict,
 )
 
 _DOWNGRADE_REASON = (
@@ -195,6 +195,7 @@ def downgrade_unsupported_verdicts(
         entry.evidence_file = ""
         entry.evidence_line = 0
         entry.reasoning = f"{entry.reasoning} ({reason})".strip()
+        entry.downgrade = Downgrade.UNSUPPORTED
         downgraded += 1
     return downgraded
 
@@ -228,6 +229,7 @@ def downgrade_unpublished_verdicts(
         entry.verification = Verification.NEEDS_DISCUSSION
         entry.complexity = Complexity.UNSET
         entry.reasoning = f"{entry.reasoning} ({reason})".strip()
+        entry.downgrade = Downgrade.UNPUBLISHED
         downgraded += 1
     return downgraded
 

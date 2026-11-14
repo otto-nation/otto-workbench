@@ -204,6 +204,7 @@ Every key any of them accepts:
 | `fix.verify_command` | string | — |
 | `fix.verify_timeout` | integer | `900` |
 | `fix.verify_progress_interval` | integer | `60` |
+| `fix.plan_stage` | boolean | `true` |
 | `wiki.dir` | string | `wiki` |
 | `wiki.link` | boolean | `false` |
 | `wiki.root` | string | — |
@@ -213,7 +214,7 @@ Every key any of them accepts:
 | `batch.cpu_pressure_max` | number | `30.0` |
 | `batch.mem_pressure_max` | number | `5.0` |
 
-`<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `ci_fix`, `ci_verify`, `rebase`, `prepush_fix`, `describe`, `create`
+`<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `comments_plan`, `comments_implement`, `comments_escalate`, `ci_fix`, `ci_verify`, `rebase`, `prepush_fix`, `describe`, `create`
 
 `context.compact_at` may only be written at global scope: both harnesses keep it in machine-wide settings, and Pi takes no per-run override, so a repo's value would never reach Pi.
 

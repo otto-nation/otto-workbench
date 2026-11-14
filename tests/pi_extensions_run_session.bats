@@ -419,6 +419,22 @@ _wired() {
   [ "$output" = '{"failed":true,"filed":true,"cursor":true,"resent":true}' ]
 }
 
+@test "run-session: a first open whose report fails still files state, so a resume is a run session" {
+  _wired '
+    const f = fakePi({ sessionId: "batch-" + ID });
+    f.control.reportCode = 1;
+    wire(f.pi, deps({ WORKBENCH_RUN_DIR: RUN }));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    const filed = ofType(f.entries, m.STATE_TYPE).length;
+    const g = fakePi({ sessionId: "batch-" + ID, entries: f.entries });
+    wire(g.pi, deps({}));
+    await g.calls.handlers.session_start({ reason: "resume" }, g.ctx);
+    console.log(JSON.stringify([filed, g.calls.tools.length]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[1,1]' ]
+}
+
 @test "run-session: before a turn in a session that is no run's own it does nothing" {
   _wired '
     const f = fakePi({ sessionId: "abc" });

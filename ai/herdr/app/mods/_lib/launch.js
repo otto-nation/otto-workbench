@@ -10,6 +10,8 @@ export const LABEL_REPO = 'otto.repo';
 // Constant on every terminal the PR surfaces start: the one label `hc ls --label` can select on.
 export const LABEL_APP = 'otto.app';
 export const APP_NAME = 'pr';
+// A batch run's pi session terminal: the session id `pr batch session --json` named.
+export const LABEL_SESSION = 'otto.session';
 
 export function prKey(repo, n) {
   return `${repo}#${n}`;
@@ -74,6 +76,23 @@ export function hcBatchArgv({ repo, cwd, on, argv }) {
       `${LABEL_REPO}=${repo}`,
       `${LABEL_ACTION}=batch`,
       `${LABEL_APP}=${APP_NAME}`,
+    ],
+  });
+}
+
+// A terminal running `pr batch session RUN_ID`, which execs pi with the run's env in its checkout.
+// The session label is how herdr finds it again: `hc ls --json` lists no labels, but `--label`
+// filters by them.
+export function hcSessionArgv({ repo, runId, sessionId, cwd, on }) {
+  return hcLaunchArgv({
+    cwd,
+    on,
+    argv: ['pr', 'batch', 'session', String(runId)],
+    labels: [
+      ...(repo ? [`${LABEL_REPO}=${repo}`] : []),
+      `${LABEL_ACTION}=session`,
+      `${LABEL_APP}=${APP_NAME}`,
+      `${LABEL_SESSION}=${sessionId}`,
     ],
   });
 }

@@ -82,3 +82,21 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = '[{"level":"success","title":"Review finished"},"Review finished",{"level":"error","title":"Recovery failed (exit 1)"},{"level":"error","title":"Approval ended unexpectedly"},"Draft post finished","Publish finished","Action finished",{"level":"success","title":"Fix finished"}]' ]
 }
+
+@test "hcSessionArgv local runs pr batch session in the checkout with the session label" {
+  _js 'm.hcSessionArgv({repo:"o/n",runId:"20261114T100000-ab12",sessionId:"batch-20261114T100000-ab12",cwd:"/w/n"})'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["run","--bg","--json","--cwd","/w/n","--label","otto.repo=o/n","--label","otto.action=session","--label","otto.app=pr","--label","otto.session=batch-20261114T100000-ab12","--","pr","batch","session","20261114T100000-ab12"]' ]
+}
+
+@test "hcSessionArgv remote puts --on after --cwd and runs pr inside the workbench env preamble" {
+  _js 'm.hcSessionArgv({repo:"o/n",runId:"R1",sessionId:"batch-R1",cwd:"/w/n",on:"homelab"})'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["run","--bg","--json","--cwd","/w/n","--on","homelab","--label","otto.repo=o/n","--label","otto.action=session","--label","otto.app=pr","--label","otto.session=batch-R1","--","sh","-c","<PREAMBLE>","sh","pr","batch","session","R1"]' ]
+}
+
+@test "hcSessionArgv with no repo carries no empty otto.repo label" {
+  _js 'm.hcSessionArgv({repo:null,runId:"R1",sessionId:"batch-R1",cwd:"/w/n"}).filter((a) => a.startsWith("otto."))'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["otto.action=session","otto.app=pr","otto.session=batch-R1"]' ]
+}

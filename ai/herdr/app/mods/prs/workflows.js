@@ -1,5 +1,5 @@
 // Workflows: `pr batch` runs on every machine the board reads, shown from the Batch button and a PR's Batch tab.
-import { exec, watchFolder, run } from "herdr";
+import { exec, watchFolder, run, panes, spaces } from "herdr";
 import {
   listArgv, statusArgv, reportArgv, logTailArgv, parseRunList, parseRunDoc, parseSessions,
   stateChanged, laneOf, STEP_ORDER, trailArgv,
@@ -7,6 +7,7 @@ import {
 import { cancelArgv, runProgress } from "./_lib/batch_launch.js";
 import { invoke, readJson } from "./_lib/board_data.js";
 import { parseRunReply } from "./_lib/launch.js";
+import { openRunSession, sessionGate, waitingText } from "./_lib/run_session.js";
 
 function k(on) { return String(on ?? ""); }
 
@@ -43,6 +44,11 @@ export class Workflows {
     this.onRun = null;
     this.onTerminal = null;
     this.trailError = null;
+    // Which machine's `pr` can open run sessions; board_view sets it from the board's features.
+    this.featuresOf = () => null;
+    // Per run (machine and id): {opening, error} for Open session, and the report's session count.
+    this.sessionUi = new Map();
+    this.runWaiting = new Map();
     // The log path being read, so a slow tail is not doubled by the 3 s timer; another step's
     // click still starts its own read.
     this.logInflight = null;
@@ -138,6 +144,7 @@ export class Workflows {
     m.docs = next;
     m.error = err;
     this.ensureSession(cx);
+    if (this.pinned && k(this.pinned.on) === key) this.loadRunWaiting(cx, this.pinned.on, this.pinned.id);
     if (m.ctx.on != null) return;
     for (const r of m.runs) {
       if (r.active && r.runDir) this.startWatch(cx, r.runDir);
@@ -276,6 +283,11 @@ export class Workflows {
       onPickRun: (r) => this.pickRun(r),
       trailError: this.trailError,
       onOpenTrail: (r) => this.openTrail(r),
+      // Only the pinned run's row is expanded, so only it offers Open session.
+      session: pin
+        ? this.runSession(pin.on, pin.id, run?.id === pin.id ? (run.repos?.[0] ?? null) : null,
+          this.runWaiting.get(this.runKeyOf(pin.on, pin.id))?.count ?? null)
+        : null,
     };
   }
 
@@ -306,6 +318,60 @@ export class Workflows {
     });
   }
 
+  runKeyOf(on, id) {
+    return `${k(on)}\0${id}`;
+  }
+
+  // Open session for a run: focus the terminal already running its pi session, or start one.
+  openSession(on, runId, repo) {
+    const key = this.runKeyOf(on, runId);
+    if (this.sessionUi.get(key)?.opening) return;
+    this.sessionUi.set(key, { opening: true, error: null });
+    const ctx = this.machines.get(k(on))?.ctx ?? { on, cwd: null };
+    const target = { on, cwd: ctx.cwd ?? null, runId, repo, features: this.featuresOf(on) };
+    this.acx.spawn(async (cx) => {
+      let res;
+      try {
+        res = await openRunSession({ exec, run, panes, spaces }, target);
+      } catch (err) {
+        // openRunSession never rejects; a throwing host call still ends "Opening".
+        res = { ok: false, message: String(err?.message ?? err) };
+      }
+      this.sessionUi.set(key, { opening: false, error: res.ok ? null : res.message });
+      cx.notify();
+    });
+    this.acx.notify();
+  }
+
+  // The pinned run's report session count, re-read only when its items' states change.
+  loadRunWaiting(cx, on, id) {
+    const key = this.runKeyOf(on, id);
+    const doc = this.docOf(on, id);
+    const stamp = (doc?.items ?? []).map((i) => `${i.key}:${i.status}:${(i.findings ?? []).length}`).join(",");
+    const cur = this.runWaiting.get(key);
+    if (cur && cur.stamp === stamp) return;
+    this.runWaiting.set(key, { stamp, count: cur?.count ?? null });
+    const ctx = this.machines.get(k(on))?.ctx ?? { on, cwd: null };
+    cx.spawn(async (cx) => {
+      const parsed = await prParse(ctx, reportArgv(id), parseSessions);
+      if (this.runWaiting.get(key)?.stamp !== stamp) return;
+      this.runWaiting.set(key, { stamp, count: parsed.ok ? parsed.sessions.size : null });
+      cx.notify();
+    });
+  }
+
+  // What the views draw for one run's Open session; `waiting` is the report's session count.
+  runSession(on, runId, repo, waiting) {
+    const ui = this.sessionUi.get(this.runKeyOf(on, runId)) ?? {};
+    return {
+      gate: sessionGate(this.featuresOf(on)),
+      opening: Boolean(ui.opening),
+      error: ui.error ?? null,
+      waiting: waitingText(waiting),
+      onOpen: () => this.openSession(on, runId, repo),
+    };
+  }
+
   sessionOf(key) {
     return this.sessionMap?.get(String(key ?? "").toLowerCase()) ?? null;
   }
@@ -325,6 +391,9 @@ export class Workflows {
       sessionError: this.sessionError,
       onRun: this.onRun,
       onTerminal: local ? this.onTerminal : null,
+      runSession: hit?.run?.id
+        ? this.runSession(hit.on, hit.run.id, hit.item?.repo ?? null, this.sessionMap?.size ?? null)
+        : null,
     };
   }
 

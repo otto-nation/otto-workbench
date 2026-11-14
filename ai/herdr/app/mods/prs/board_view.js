@@ -24,6 +24,7 @@ import { BatchLauncher } from "./batch_launcher.js";
 import { renderBatchPage } from "./batch_page.js";
 import { FilterBar } from "./filter_bar.js";
 import { prKey } from "./_lib/launch.js";
+import { machineFeatures } from "./_lib/run_session.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import { segment, segmented, emptyPane, pinned, pane, button, iconButton, tag, text, type, statusText, badge, placeholder, errorLine } from "./_ui/ui.js";
 
@@ -77,6 +78,8 @@ export default class PrsBoard extends View {
       });
     }
     this.workflows = new Workflows(cx, () => this.activeTargets());
+    // A run's machine can open sessions when its `pr board` features say so (_lib/run_session.js).
+    this.workflows.featuresOf = (on) => machineFeatures(this.stateView().prs, on);
     // The Batch form's Drafts chip is the Mine tab's: one setting, so the list and the form agree.
     // The Batch form's chips are the board's: one prs.filters, so a view and the form agree.
     this.launcher = new BatchLauncher(cx, this.workflows, {

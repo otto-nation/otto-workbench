@@ -90,3 +90,36 @@ RUNS_JS
   [ "$status" -eq 0 ]
   [ "$output" = '{"gate":"outdated","error":"Update pr on this machine to open sessions (otto-workbench sync)","seen":0}' ]
 }
+
+@test "run session: the pinned run's row offers Open session with the report's count beside it" {
+  _host "$RUNS
+    const { w, settle } = await load();
+    const unpinned = w.barState().session;
+    w.pin(null, 'R1'); await settle();
+    const s = w.barState().session;
+    const reports = seen.filter((x) => x.line.includes('batch report')).length;
+    w.refresh(w.acx); await settle();
+    s.onOpen(); await settle();
+    out({ unpinned, gate: s.gate, waiting: s.waiting, reports,
+      again: seen.filter((x) => x.line.includes('batch report')).length, ran });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"unpinned":null,"gate":"unknown","waiting":"waiting on you: 2 PRs","reports":1,"again":1,"ran":[["terminal.keep",{"terminal":"t9"}]]}' ]
+}
+
+@test "run session: the board hands Workflows each machine's pr board features" {
+  _host "
+    const fs = await import('node:fs');
+    const doc = JSON.parse(fs.readFileSync(FIX, 'utf8'));
+    H.spacesList = [{ active: true, machine: null, folder: '/w/box', tabs: [{ id: 'tab0' }] }];
+    H.panesList = [{ pane: 'p0', tab: 'tab0', cwd: '/w/box' }];
+    H.focusedPane = { pane: 'p0' };
+    H.exec = fakePr(doc);
+    const { default: PrsBoard } = await import(M + '/board_view.js');
+    const b = new PrsBoard();
+    const host = fakeCx();
+    b.init({}, host.cx);
+    await host.settle();
+    out([b.workflows.featuresOf(null), b.workflows.featuresOf('elsewhere')]);"
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["review-publish","batch-session"],null]' ]
+}

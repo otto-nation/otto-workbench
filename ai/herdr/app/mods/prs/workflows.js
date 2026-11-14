@@ -144,6 +144,7 @@ export class Workflows {
     m.docs = next;
     m.error = err;
     this.ensureSession(cx);
+    if (this.pinned && k(this.pinned.on) === key) this.loadRunWaiting(cx, this.pinned.on, this.pinned.id);
     if (m.ctx.on != null) return;
     for (const r of m.runs) {
       if (r.active && r.runDir) this.startWatch(cx, r.runDir);
@@ -282,6 +283,11 @@ export class Workflows {
       onPickRun: (r) => this.pickRun(r),
       trailError: this.trailError,
       onOpenTrail: (r) => this.openTrail(r),
+      // Only the pinned run's row is expanded, so only it offers Open session.
+      session: pin
+        ? this.runSession(pin.on, pin.id, run?.id === pin.id ? (run.repos?.[0] ?? null) : null,
+          this.runWaiting.get(this.runKeyOf(pin.on, pin.id))?.count ?? null)
+        : null,
     };
   }
 
@@ -335,6 +341,23 @@ export class Workflows {
       cx.notify();
     });
     this.acx.notify();
+  }
+
+  // The pinned run's report session count, re-read only when its items' states change.
+  loadRunWaiting(cx, on, id) {
+    const key = this.runKeyOf(on, id);
+    const doc = this.docOf(on, id);
+    const stamp = (doc?.items ?? []).map((i) => `${i.key}:${i.status}:${(i.findings ?? []).length}`).join(",");
+    const cur = this.runWaiting.get(key);
+    if (cur && cur.stamp === stamp) return;
+    this.runWaiting.set(key, { stamp, count: cur?.count ?? null });
+    const ctx = this.machines.get(k(on))?.ctx ?? { on, cwd: null };
+    cx.spawn(async (cx) => {
+      const parsed = await prParse(ctx, reportArgv(id), parseSessions);
+      if (this.runWaiting.get(key)?.stamp !== stamp) return;
+      this.runWaiting.set(key, { stamp, count: parsed.ok ? parsed.sessions.size : null });
+      cx.notify();
+    });
   }
 
   // What the views draw for one run's Open session; `waiting` is the report's session count.

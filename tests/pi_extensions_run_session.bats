@@ -191,3 +191,38 @@ EOF
   [ "$status" -eq 0 ]
   [ "$output" = $'## Now — run R1\nNothing in the report: no PR has findings or commands.' ]
 }
+
+@test "run-session: the latest well-formed state entry on the branch wins" {
+  _eval session.ts '[m.latestState(JSON.parse(args[0])), m.latestState([])]' '[
+    {"type":"custom","customType":"workbench-run","data":{"runDir":"/a","runId":"a","cursor":3,"nowDigest":"x"}},
+    {"type":"message"},
+    {"type":"custom","customType":"other","data":{"runDir":"/b","runId":"b","cursor":1}},
+    {"type":"custom","customType":"workbench-run","data":{"runDir":"/a","runId":"a","cursor":9}},
+    {"type":"custom","customType":"workbench-run","data":{"runDir":"/a","runId":"a","cursor":"12"}}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"runDir":"/a","runId":"a","cursor":9,"nowDigest":""},null]' ]
+}
+
+@test "run-session: the report argv reads the run offline as JSON" {
+  _eval session.ts 'm.reportArgv("R1")'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["batch","report","R1","--offline","--format","json"]' ]
+}
+
+@test "run-session: a decision becomes pr batch note with every flag value attached" {
+  _eval session.ts '[m.noteArgv("R1", { pr: "o/r#1", finding: "ci_failing:ci", verdict: "deferred", reason: "-flaky", commands: ["pr ci --fix", "--x"] }), m.noteArgv("R1", { pr: "2", finding: "a:b", verdict: "fixed", reason: "ok" })]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["batch","note","R1","o/r#1","--finding=ci_failing:ci","--verdict=deferred","--reason=-flaky","--command=pr ci --fix","--command=--x"],["batch","note","R1","2","--finding=a:b","--verdict=fixed","--reason=ok"]]' ]
+}
+
+@test "run-session: the tool schema offers exactly the verdicts and requires the note's fields" {
+  _eval session.ts '[m.DECISION_SCHEMA.properties.verdict.enum, m.VERDICTS, m.DECISION_SCHEMA.required, m.TOOL_NAME]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["fixed","dismissed","deferred","handed_off"],["fixed","dismissed","deferred","handed_off"],["pr","finding","verdict","reason"],"record_decision"]' ]
+}
+
+@test "run-session: the system note names the run, the tool, the history file and the push rule" {
+  _eval session.ts '(() => { const n = m.systemNote({ runDir: "/s/batch/R1", runId: "R1", cursor: 0, nowDigest: "" }, "/checkout"); return ["R1", "/checkout", "record_decision", "/s/batch/R1/events.jsonl", "Never push", "without --offline"].map((s) => n.includes(s)); })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[true,true,true,true,true,true]' ]
+}

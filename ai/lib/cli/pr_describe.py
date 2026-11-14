@@ -45,6 +45,7 @@ import argparse
 import sys
 
 import cli.boundary
+import cli.contract_notes
 import cli.locks
 import core.command_contract
 import core.log
@@ -102,8 +103,11 @@ CONTRACT = core.command_contract.CommandContract(
             "bad flags, unreadable --body-file"),
         core.command_contract.ExitOutcome(
             ExitCode.TEMPFAIL,
-            "another pr run holds this branch or checkout; retry once it "
-            "finishes"),
+            "another pr run holds this branch or checkout, or no otto-queue "
+            "slot came in time; retry once it finishes"),
+        core.command_contract.ExitOutcome(
+            ExitCode.CANCELLED,
+            "waiting for an otto-queue slot was cancelled"),
     ),
     examples=(
         core.command_contract.Example(
@@ -117,6 +121,7 @@ CONTRACT = core.command_contract.CommandContract(
             "apply the revision and link issue 941 to close on merge"),
     ),
     notes=(
+        cli.contract_notes.QUEUED,
         "Without --post the edit is drafted to stderr; the bare invocation "
         "writes nothing on GitHub.",
         "--dry-run prints the revision and records nothing, even with --post.",

@@ -94,3 +94,11 @@ def test_a_waiting_v1_run_exits_failed_not_10():
 def test_schema_version_is_2():
     doc = batch.report.build(_run([_item(1, status=ItemStatus.DONE)]), active=False)
     assert doc["schema_version"] == 2
+
+
+def test_items_carry_wait_reason():
+    item = _item(1, status=ItemStatus.RUNNING,
+                 wait_reason="waiting for an otto-queue slot (entry 9)")
+    doc = batch.report.build(_run([item], status=RunStatus.RUNNING), active=True)
+    assert doc["items"][0]["wait_reason"] == "waiting for an otto-queue slot (entry 9)"
+    assert doc["schema_version"] == 2

@@ -18,6 +18,20 @@ from batch.model import Step  # noqa: E402
 from conftest import add_self_origin, commit_all, git_in, init_repo, seed_repo  # noqa: E402
 
 
+@pytest.mark.parametrize("step,ai,want", [
+    (Step.REVIEW, True, True),
+    (Step.REVIEW, False, True),
+    (Step.COMMENTS, True, True),
+    (Step.COMMENTS, False, True),
+    (Step.REBASE, True, True),
+    (Step.REBASE, False, False),
+    (Step.CI, True, True),
+    (Step.CI, False, False),
+])
+def test_queues_itself(step, ai, want):
+    assert batch.steps.queues_itself(step, ai) is want
+
+
 def test_every_step_runs_drafted():
     assert batch.steps.step_argv(Step.REBASE, "pr", "/wt") == \
         ["pr", "rebase", "--fix", "--no-push", "--repo-dir", "/wt"]

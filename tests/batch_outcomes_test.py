@@ -291,3 +291,40 @@ def test_the_module_docstring_names_every_failure_reason():
     """The published reason list and the enum cannot drift apart."""
     listed = set(re.findall(r"^- `([a-z_]+)`:", batch.outcomes.__doc__, re.M))
     assert listed == {r.value for r in batch.outcomes.FailureReason}
+
+
+@pytest.mark.parametrize("code", [130, 143, 129])
+def test_a_stop_exit_is_interrupted_not_a_failure(code):
+    r = batch.outcomes.classify(batch.model.Step.REVIEW, code, "", item=ITEM,
+                                log_tail=["working"], cancelled=True)
+    assert r.status is batch.model.StepStatus.INTERRUPTED
+    assert r.decisions == []
+
+
+@pytest.mark.parametrize("code", [130, 143, 129])
+def test_a_stop_exit_outside_a_cancel_is_a_failure(code):
+    r = batch.outcomes.classify(batch.model.Step.REVIEW, code, "", item=ITEM,
+                                log_tail=["working"])
+    assert r.status is batch.model.StepStatus.FAILED
+
+
+def test_an_unmarked_tempfail_is_a_failure():
+    r = batch.outcomes.classify(batch.model.Step.REVIEW, 75, "", item=ITEM,
+                                log_tail=["otto-queue: queue busy: x"])
+    assert r.status is batch.model.StepStatus.FAILED
+
+
+def test_a_ticket_tempfail_is_not_an_ordinary_failure():
+    r = batch.outcomes.classify(
+        batch.model.Step.REVIEW, 75, "", item=ITEM,
+        log_tail=["otto-queue: entry 3 found no room in infs"])
+    assert r.status is batch.model.StepStatus.INTERRUPTED
+    assert r.decisions == []
+
+
+def test_lock_busy_at_tempfail_is_still_lock_busy():
+    r = batch.outcomes.classify(
+        batch.model.Step.COMMENTS, 75, "", item=ITEM,
+        log_tail=[f"pr: {batch.outcomes.LOCK_BUSY_MARKER} by pid 4"])
+    assert r.status is batch.model.StepStatus.FAILED
+    assert r.decisions[0].payload["reason"] == "lock_busy"

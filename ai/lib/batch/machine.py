@@ -1,5 +1,8 @@
 """What every batch driver on this machine is running, so admission sees all of them.
 
+The registry counts the steps batch admits itself (non-AI); AI steps are
+admitted by the otto-queue.
+
 Each driver decides alone whether the host can take one more step
 (`batch.admission.decide`), but memory and CPU are the machine's, not the
 run's. Counting only its own steps, and always admitting a run's first one,

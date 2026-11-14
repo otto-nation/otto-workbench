@@ -3,6 +3,7 @@
 Every step is its own process so concurrent steps share no interpreter state,
 and each gets a new session with stdin closed: no prompt in any child can
 reach a terminal, whether the batch runs under a server or in a shell.
+AI steps wait on their own otto-queue ticket rather than batch's host admission.
 """
 
 # doc-group: batch
@@ -75,6 +76,16 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
         argv = [pr_bin, "review", "--self", "--fix", "--force"]
         argv += [f"--focus={text}" for text in focus]
     return argv + ["--repo-dir", worktree]
+
+
+def queues_itself(step: Step, ai: bool) -> bool:
+    """Whether the child takes an otto-queue ticket.
+
+    Must agree with `cli.registry`'s `queue=` for the argv `step_argv` builds
+    — held by a test.
+    """
+    return step in (Step.REVIEW, Step.COMMENTS) or (
+        ai and step in (Step.REBASE, Step.CI))
 
 
 @dataclass(frozen=True)

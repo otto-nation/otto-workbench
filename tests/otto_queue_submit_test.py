@@ -70,6 +70,25 @@ def _await_path(path):
     pytest.fail(f"{path} was never created")
 
 
+def test_a_job_keeps_its_label():
+    result = _submit(("true",), _alive, label="nightly")
+    assert Ledger.open().get(result.entry_id).label == "nightly"
+
+
+def test_a_job_claimed_back_as_a_ticket_keeps_its_label(tmp_path, monkeypatch):
+    seen = {}
+    real = otto_queue.ticket.run_claimed
+
+    def wrap(ledger, res, request, policy, **kw):
+        seen["label"] = request.label
+        return real(ledger, res, request, policy, **kw)
+
+    monkeypatch.setattr(otto_queue.ticket, "run_claimed", wrap)
+    result = _submit(touch_argv(tmp_path / "ran"), _down, label="nightly")
+    assert seen["label"] == "nightly"
+    assert Ledger.open().get(result.entry_id).label == "nightly"
+
+
 def test_with_a_worker_the_job_is_queued_and_not_run_here(tmp_path):
     result = _submit(touch_argv(tmp_path / "ran"), _alive)
     entry = Ledger.open().get(result.entry_id)

@@ -43,7 +43,7 @@ CONTRACT = core.command_contract.CommandContract(
             "room instead of overloading the host.",
     groups=(
         core.command_contract.FlagGroup(
-            "run", ("--ticket", "--class", "--key", "--force", "--no-reuse", "--wait", "argv")),
+            "run", ("--ticket", "--class", "--label", "--key", "--force", "--no-reuse", "--wait", "argv")),
         core.command_contract.FlagGroup(
             "submit", ("--queue-only",)),
         core.command_contract.FlagGroup("worker", ("--idle",)),
@@ -84,6 +84,9 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.Example(
             "otto-queue run --ticket --class light -- pytest tests/foo_test.py",
             "wait for a light slot, then run pytest here"),
+        core.command_contract.Example(
+            "otto-queue run --ticket --label nightly-build -- make",
+            "show a label instead of the command in status"),
         core.command_contract.Example(
             "otto-queue run --ticket --key review:main -- pr review --self",
             "join a live review with that key, or reuse a done one's status"),
@@ -130,6 +133,8 @@ def _add_entry_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--class", dest="entry_class", choices=[c.value for c in EntryClass],
                         default=EntryClass.HEAVY.value,
                         help="heavy: counted and memory-checked (default); light: counted only")
+    parser.add_argument("--label",
+                        help="What `status` and the Herdr queue view show for this entry")
     parser.add_argument("--key", help="Join a live entry with this key, or return a done one's status")
     parser.add_argument("--force", action="store_true", help="Run even when --key matches an entry")
     parser.add_argument("--no-reuse", dest="reuse", action="store_false",
@@ -175,7 +180,7 @@ def reference_shape() -> core.cli_reference.CLIShape:
     )
 
 
-def _policy() -> batch.admission.QueuePolicy:
+def machine_policy() -> batch.admission.QueuePolicy:
     return batch.admission.QueuePolicy(config.workbench_config.load_config_or_default(None).batch)
 
 
@@ -189,15 +194,17 @@ def _command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple
 def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     request = otto_queue.ticket.TicketRequest(
         argv=_command(args, parser), cwd=os.getcwd(), entry_class=EntryClass(args.entry_class),
-        idem_key=args.key, force=args.force, reuse=args.reuse, wait_s=args.wait)
-    return otto_queue.ticket.run_ticket(request, _policy()).exit_status
+        idem_key=args.key, force=args.force, reuse=args.reuse, wait_s=args.wait,
+        label=args.label)
+    return otto_queue.ticket.run_ticket(request, machine_policy()).exit_status
 
 
 def _submit(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     request = otto_queue.submit.SubmitRequest(
         argv=_command(args, parser), cwd=os.getcwd(), entry_class=EntryClass(args.entry_class),
-        idem_key=args.key, force=args.force, reuse=args.reuse, run_here=args.run_here)
-    return otto_queue.submit.submit(request, _policy()).exit_status
+        idem_key=args.key, force=args.force, reuse=args.reuse, run_here=args.run_here,
+        label=args.label)
+    return otto_queue.submit.submit(request, machine_policy()).exit_status
 
 
 def _shim() -> Path:
@@ -249,8 +256,9 @@ def _line(entry: Entry, now: float) -> str:
     retry = ""
     if entry.state is EntryState.QUEUED and entry.not_before is not None and entry.not_before > now:
         retry = f"  retry in {_age(entry.not_before - now)}, attempt {entry.attempts + 1}"
+    title = entry.label if entry.label else shlex.join(entry.argv)
     return (f"  #{entry.id:<5} {entry.kind.value:<6} {entry.entry_class.value:<5} {entry.state.value:<9} "
-            f"{_age(now - since):>5}{status}{retry}  {shlex.join(entry.argv)}")
+            f"{_age(now - since):>5}{status}{retry}  {title}")
 
 
 def _status(args: argparse.Namespace) -> int:
@@ -261,7 +269,7 @@ def _status(args: argparse.Namespace) -> int:
         for entry in entries:
             print(json.dumps(core.serde.to_dict(entry)))
         return ExitCode.OK
-    policy = _policy()
+    policy = machine_policy()
     running = [e for e in entries if e.state is EntryState.RUNNING]
     print(" · ".join(f"{c.value} {sum(e.entry_class is c for e in running)}/{policy.limit(c)} running"
                      for c in EntryClass))

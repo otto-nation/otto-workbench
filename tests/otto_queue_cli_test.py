@@ -100,12 +100,19 @@ def test_run_without_ticket_is_refused():
     assert proc.returncode == 2 and "--ticket" in proc.stderr
 
 
+def test_run_records_the_label():
+    proc = _shim("run", "--ticket", "--label", "L", "--", "true")
+    assert proc.returncode == 0
+    assert Ledger.open().entries()[0].label == "L"
+
+
 def test_status_json_prints_one_object_per_entry(capsys):
     _light(0)
     _light(3)
     assert cli.otto_queue.main(["status", "--json"]) == 0
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [(r["state"], r["exit_status"], r["argv"][0]) for r in rows] == [("done", 0, PY), ("failed", 3, PY)]
+    assert all("label" in r for r in rows)
 
 
 def test_status_text_shows_the_budget_and_each_entry(capsys):
@@ -114,6 +121,16 @@ def test_status_text_shows_the_budget_and_each_entry(capsys):
     first, second = capsys.readouterr().out.splitlines()
     assert first.startswith("heavy 0/") and "light 0/" in first
     assert "#1" in second and "done" in second and "exit 0" in second
+
+
+def test_status_text_shows_the_label_instead_of_the_command(capsys):
+    proc = _shim("run", "--ticket", "--class", "light", "--label", "nightly-build",
+                 "--", PY, "-c", "pass")
+    assert proc.returncode == 0
+    assert cli.otto_queue.main(["status"]) == 0
+    _header, line = capsys.readouterr().out.splitlines()
+    assert "nightly-build" in line
+    assert PY not in line
 
 
 def test_cancel_of_an_unknown_entry_exits_1():

@@ -22,7 +22,7 @@ def test_fix_help_prints_post_and_describe(capsys):
 
 def test_fix_exit_codes():
     assert [int(o.code) for o in cli.pr_commands.FIX_CONTRACT.exits] == [
-        0, 1, 2, 4, 75]
+        0, 1, 2, 4, 75, 130]
     assert cli.pr_commands.FIX_CONTRACT.exits[0].code is ExitCode.OK
     assert cli.pr_commands.FIX_CONTRACT.exits[3].code is ExitCode.REFUSED
 

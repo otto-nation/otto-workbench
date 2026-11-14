@@ -262,3 +262,101 @@ EOF
   run grep -E '@earendil-works' "$EXT/detect.ts"
   [ "$status" -ne 0 ]
 }
+
+# _event JSON — appends one line to the run's history, as core/run_events.py does.
+_event() {
+  printf '%s\n' "$1" >> "$RUN/events.jsonl"
+}
+
+# _wired BODY — runs BODY under node with wire (wire.ts), m (detect.ts),
+# fakePi/ofType (tests/pi_run_session_fake.mjs), fs, RUN, ID and deps(env) in
+# scope. BODY is substituted, never re-expanded by bash.
+_wired() {
+  run node --input-type=module -e "
+    const { wire } = await import('$EXT/wire.ts');
+    const m = await import('$EXT/detect.ts');
+    const { fakePi, ofType } = await import('$REPO_ROOT/tests/pi_run_session_fake.mjs');
+    const fs = await import('node:fs');
+    const RUN = process.argv[1];
+    const ID = m.runIdOf(RUN);
+    const deps = (env) => ({ env, block: (text) => ({ text }), pr: 'pr' });
+    $1
+  " -- "$RUN"
+}
+
+@test "run-session: a session that is no run's own is left alone" {
+  _wired '
+    const f = fakePi({ sessionId: "abc" });
+    wire(f.pi, deps({}));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    const g = fakePi({ sessionId: "child-1" });
+    wire(g.pi, deps({ WORKBENCH_RUN_DIR: RUN }));
+    await g.calls.handlers.session_start({ reason: "startup" }, g.ctx);
+    console.log(JSON.stringify([f.entries.length, f.calls.messages.length, f.calls.execs.length,
+      g.entries.length, g.calls.messages.length, g.calls.execs.length]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = "[0,0,0,0,0,0]" ]
+}
+
+@test "run-session: the first open files history, cursor and Now, and starts no turn" {
+  _event '{"schema_version":1,"kind":"run_started","at":"2026-11-14T12:00:00+00:00","run":"r","steps":["rebase"],"pool":1,"with_ai":null,"rebase":"conflicts"}'
+  _event '{"schema_version":1,"kind":"step_finished","at":"2026-11-14T12:01:00+00:00","run":"r","item":"o/r#1","step":"rebase","status":"passed","exit_code":0,"log_path":"/l/1.log"}'
+  _wired '
+    const f = fakePi({ sessionId: "batch-" + ID });
+    wire(f.pi, deps({ WORKBENCH_RUN_DIR: RUN }));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    const states = ofType(f.entries, m.STATE_TYPE);
+    console.log(JSON.stringify({
+      history: ofType(f.entries, m.HISTORY_TYPE).map((e) => e.data.text.split("\n")),
+      states: states.length,
+      cursorAtEnd: states[0].data.cursor === fs.statSync(RUN + "/events.jsonl").size,
+      message: f.calls.messages.map((x) => [x.message.customType, x.message.display, x.options ?? null]),
+      now: f.calls.messages[0].message.content.split("\n")[0],
+      exec: f.calls.execs.map((x) => [x.command, ...x.args, x.options.cwd]),
+      rendered: f.calls.renderers[m.HISTORY_TYPE]({ data: { text: "hi" } }),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"history":[["Run 20261114T120000-ab12 history (2 events)","- 12:00 run started: steps rebase · pool 1 · AI steps none · rebase conflicts","o/r#1","  - 12:01 rebase passed (exit 0) log /l/1.log"]],"states":1,"cursorAtEnd":true,"message":[["workbench-run-now",true,null]],"now":"## Now — run 20261114T120000-ab12","exec":[["pr","batch","report","20261114T120000-ab12","--offline","--format","json","/checkout"]],"rendered":{"text":"hi"}}' ]
+}
+
+@test "run-session: a run with no history file still opens, and says so" {
+  _wired '
+    const f = fakePi({ sessionId: "batch-" + ID });
+    wire(f.pi, deps({ WORKBENCH_RUN_DIR: RUN }));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    console.log(JSON.stringify([ofType(f.entries, m.HISTORY_TYPE).map((e) => e.data.text), f.calls.messages.length]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["Run 20261114T120000-ab12: no history recorded (the run predates events.jsonl)."],1]' ]
+}
+
+@test "run-session: reopening shows only events past the cursor and an unchanged Now not at all" {
+  _event '{"kind":"run_started","at":"2026-11-14T12:00:00+00:00","steps":["rebase"],"pool":1}'
+  _wired '
+    const entries = [];
+    const a = fakePi({ sessionId: "batch-" + ID, entries });
+    wire(a.pi, deps({ WORKBENCH_RUN_DIR: RUN }));
+    await a.calls.handlers.session_start({ reason: "startup" }, a.ctx);
+    fs.appendFileSync(RUN + "/events.jsonl", JSON.stringify({ kind: "item_finished", at: "2026-11-14T12:05:00+00:00", item: "o/r#1", status: "needs_session" }) + "\n");
+    const b = fakePi({ sessionId: "elsewhere", entries });
+    wire(b.pi, deps({}));
+    await b.calls.handlers.session_start({ reason: "resume" }, b.ctx);
+    const c = fakePi({ sessionId: "elsewhere", entries });
+    wire(c.pi, deps({}));
+    await c.calls.handlers.session_start({ reason: "resume" }, c.ctx);
+    const texts = ofType(entries, m.HISTORY_TYPE).map((e) => e.data.text);
+    console.log(JSON.stringify({ histories: texts.length, latest: texts.at(-1).split("\n"),
+      states: ofType(entries, m.STATE_TYPE).length, messages: [a, b, c].map((x) => x.calls.messages.length) }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"histories":2,"latest":["Run 20261114T120000-ab12: new since last look (1 events)","o/r#1","  - 12:05 finished: needs_session"],"states":2,"messages":[1,0,0]}' ]
+}
+
+@test "run-session: wire.ts imports the SDK as types only" {
+  run grep -nE '^import .*@earendil-works' "$EXT/wire.ts"
+  [ "$status" -eq 0 ]
+  run grep -nE '^import \{.*@earendil-works' "$EXT/wire.ts"
+  [ "$status" -ne 0 ]
+}

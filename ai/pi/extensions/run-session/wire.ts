@@ -162,7 +162,7 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
     // An unavailable paragraph is shown but never filed as the stored digest:
     // a later session must still be sent the real Now.
     const filed = available ? nowDigest : s.nowDigest;
-    if (next.cursor !== s.cursor || filed !== s.nowDigest) pi.appendEntry(STATE_TYPE, { ...next, nowDigest: filed });
+    if (first || next.cursor !== s.cursor || filed !== s.nowDigest) pi.appendEntry(STATE_TYPE, { ...next, nowDigest: filed });
     return { state: next, now: nowDigest === s.nowDigest ? null : now };
   }
 

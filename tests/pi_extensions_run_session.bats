@@ -226,3 +226,39 @@ EOF
   [ "$status" -eq 0 ]
   [ "$output" = '[true,true,true,true,true,true]' ]
 }
+
+@test "run-session: readEvents returns the history, or null for a run without one" {
+  printf '{"kind":"a"}\n' > "$RUN/events.jsonl"
+  _eval detect.ts '[Buffer.from(m.readEvents(args[0])).toString(), m.readEvents(args[1])]' "$RUN" "$TMPDIR/batch/none"
+  [ "$status" -eq 0 ]
+  [ "$output" = '["{\"kind\":\"a\"}\n",null]' ]
+}
+
+@test "run-session: readEvents throws rather than calling an unreadable history absent" {
+  printf 'not a dir\n' > "$TMPDIR/file"
+  _eval detect.ts '(() => { try { m.readEvents(args[0]); return "read"; } catch (e) { return e.code; } })()' "$TMPDIR/file"
+  [ "$status" -eq 0 ]
+  [ "$output" = '"ENOTDIR"' ]
+}
+
+@test "run-session: digest is stable sha256 hex" {
+  _eval detect.ts '[m.digest("x"), m.digest("x") === m.digest("y")]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",false]' ]
+}
+
+@test "run-session: pr is the checkout's ai/bin/pr, else pr on PATH" {
+  _eval detect.ts '[m.prBinary(), m.prBinary(args[0])]' "$TMPDIR/no-such-pr"
+  [ "$status" -eq 0 ]
+  # import.meta.url is the module's real path: compare against the physical root.
+  [ "$output" = "[\"$(cd "$REPO_ROOT" && pwd -P)/ai/bin/pr\",\"pr\"]" ]
+}
+
+@test "run-session: the pure modules import nothing, and detect.ts no SDK" {
+  run grep -nE '^import ' "$EXT/session.ts" "$EXT/events.ts"
+  [ "$status" -ne 0 ]
+  run grep -hE '^import ' "$EXT/now.ts"
+  [ "$output" = 'import { decisionKey, type RunEvent } from "./events.ts";' ]
+  run grep -E '@earendil-works' "$EXT/detect.ts"
+  [ "$status" -ne 0 ]
+}

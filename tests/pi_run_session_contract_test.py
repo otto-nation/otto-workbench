@@ -25,6 +25,7 @@ RUN_DIR_TS = EXT_DIR / "_shared" / "run-dir.ts"
 EVENTS_TS = EXT_DIR / "run-session" / "events.ts"
 NOW_TS = EXT_DIR / "run-session" / "now.ts"
 SESSION_TS = EXT_DIR / "run-session" / "session.ts"
+DETECT_TS = EXT_DIR / "run-session" / "detect.ts"
 NODE_TIMEOUT = 60
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
@@ -140,3 +141,7 @@ def test_the_now_block_renders_the_real_report_with_its_latest_decision(capsys):
     assert "  decided: fixed — re-ran green" in text
     assert "first look" not in text
     assert "- run `pr ci --fix --repo-dir /r --branch b1` — fix failing CI" in text
+
+
+def test_the_extension_reads_the_file_core_run_events_writes():
+    assert _ts({"m": DETECT_TS}, "m.EVENTS_FILE") == core.run_events.EVENTS_FILE

@@ -8,6 +8,8 @@ adapters leave that unset and never reach this module.
 
 from __future__ import annotations
 
+import traceback
+
 import core.log
 import agent.phases
 import fix.containment
@@ -36,7 +38,10 @@ def run_planned(adapter: fix.engine.FixAdapter, start: fix.engine._PassStart):
     try:
         plans = _plan(adapter, start, work)
     except Exception as exc:
-        core.log.error(f"plan stage failed — running today's path ({exc})")
+        core.log.error(
+            f"plan stage failed — running today's path ({exc})\n"
+            f"{traceback.format_exc()}"
+        )
         return _legacy(adapter, start, items)
     usable = {
         item_id: plan for item_id, plan in plans.items() if plan_is_usable(plan)
@@ -60,36 +65,39 @@ def _plan(adapter, start, items) -> dict[str, object]:
     ):
         for n, chunk in enumerate(batched, start=1):
             label = name if len(batched) == 1 else f"{name} (batch {n}/{len(batched)})"
-            stage = BatchStage(
-                phase=phase,
-                template=PHASES[phase].template_for(),
-                boxes=PLAN_BOXES,
-                title="Plan",
-                tracking_path=adapter.plan_tracking_path(n),
-                session_log=adapter.plan_session_log(n),
-                use_adapter_model=False,
-            )
-            run_batch(adapter, chunk, label, stage=stage)
-            parsed = parse_plan(
-                adapter.plan_tracking_path(n), chunk,
-                head_sha=start.head_before,
-                pr_files=adapter.pr_files(),
-            )
-            for plan in parsed.values():
-                save(plan, adapter.plans_dir)
-            plans.update(parsed)
+            plans.update(_plan_chunk(adapter, start, phase, chunk, n, label))
     return plans
+
+
+def _plan_chunk(adapter, start, phase, chunk, n, label) -> dict[str, object]:
+    stage = BatchStage(
+        phase=phase,
+        template=PHASES[phase].template_for(),
+        boxes=PLAN_BOXES,
+        title="Plan",
+        tracking_path=adapter.plan_tracking_path(n),
+        session_log=adapter.plan_session_log(n),
+        use_adapter_model=False,
+    )
+    run_batch(adapter, chunk, label, stage=stage)
+    parsed = parse_plan(
+        adapter.plan_tracking_path(n), chunk,
+        head_sha=start.head_before,
+        pr_files=adapter.pr_files(),
+    )
+    for plan in parsed.values():
+        save(plan, adapter.plans_dir)
+    return parsed
 
 
 def _act(adapter, start, work, by_staged, usable, original):
     decided: list[ItemOutcome] = []
     implement: list[FixItem] = []
     plan_paths: dict[str, str] = {}
-    fallback: list[FixItem] = []
     for item in work:
         plan = usable.get(item.id)
         if plan is None:
-            fallback.append(item)
+            decided.append(_plan_invalid(item))
             continue
         path = save(plan, adapter.plans_dir)
         plan_paths[item.id] = str(path)
@@ -117,18 +125,19 @@ def _act(adapter, start, work, by_staged, usable, original):
             outcome.plan_path = plan_paths.get(outcome.id, outcome.plan_path)
         results.append(_batch(settled.outcomes, settled.exit_code, settled.stop))
         local += n
-    if fallback:
-        legacy, start, n = _run_stage(adapter, start, fallback, None)
-        results.extend(legacy)
-        local += n
-    unseen = [item for item in original if item.id not in {w.id for w in work}]
-    if unseen:
-        extra, start, n = _run_stage(adapter, start, unseen, None)
-        results.extend(extra)
-        local += n
     if not results:
         return _legacy(adapter, start, original)
     return fix.engine._AgentRun(start, tuple(results), local)
+
+
+def _plan_invalid(item: FixItem) -> ItemOutcome:
+    """No usable plan: a hand-back, never the raw comment to the cheap agent."""
+    return ItemOutcome(
+        id=item.id, file=item.file, line=item.line,
+        outcome=FixOutcome.NEEDS_HUMAN,
+        reason="the plan stage returned no usable plan for this item",
+        handoff=Handoff.PLAN_INVALID,
+    )
 
 
 def _from_plan(item: FixItem, plan, path: str, mode: PlanMode) -> ItemOutcome:

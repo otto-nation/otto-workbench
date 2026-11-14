@@ -20,6 +20,21 @@ from fix.stage_tracking import ESCALATE_BOXES, parse_escalate
 from pr.fix import Escalation, FixOutcome, Handoff, ItemOutcome
 
 
+def _apply(outcome: ItemOutcome, answer: ItemOutcome | None, asked: bool) -> bool:
+    """Fold `answer` into `outcome`; True when it now claims a fix."""
+    if answer is None:
+        if asked:
+            outcome.escalation = Escalation.UNANSWERED
+        return False
+    outcome.outcome = answer.outcome
+    outcome.reason = answer.reason or outcome.reason
+    outcome.escalation = answer.escalation
+    outcome.escalation_note = answer.escalation_note
+    if outcome.outcome is FixOutcome.FIXED:
+        outcome.handoff = None
+    return outcome.outcome.counts_as_fixed
+
+
 def run(
     adapter: fix.engine.FixAdapter,
     settled: Settled,
@@ -69,19 +84,11 @@ def run(
         run_batch(adapter, chunk, label, stage=stage)
         for outcome in parse_escalate(adapter.escalate_tracking_path(n)):
             answers[outcome.id] = outcome
-    claimed: list[ItemOutcome] = []
-    for outcome in settled.outcomes:
-        answer = answers.get(outcome.id)
-        if answer is None:
-            if outcome.id in {item.id for item in items}:
-                outcome.escalation = Escalation.UNANSWERED
-            continue
-        outcome.outcome = answer.outcome
-        outcome.reason = answer.reason or outcome.reason
-        outcome.escalation = answer.escalation
-        outcome.escalation_note = answer.escalation_note
-        if outcome.outcome.counts_as_fixed:
-            claimed.append(outcome)
+    asked = {item.id for item in items}
+    claimed = [
+        outcome for outcome in settled.outcomes
+        if _apply(outcome, answers.get(outcome.id), outcome.id in asked)
+    ]
     if not claimed:
         return
     with fix.containment.around(

@@ -198,8 +198,10 @@ class TestStagedFieldsSurviveTheEntry:
         assert entry.handoff is Handoff.PLAN_NEEDS_HUMAN
         assert entry.plan_path == "/tmp/plans/t1.json"
 
-    def test_old_json_without_downgrade_loads_as_none(self):
-        item = CommentItem()
+    def test_old_json_without_downgrade_loads_as_downgrade_none(self):
+        result = triage_result_from_dict({"comment_items": [{"id": "t1"}]})
+        [item] = result.comment_items
+        assert item.id == "t1"
         assert item.downgrade is Downgrade.NONE
         assert item.handoff is None
 

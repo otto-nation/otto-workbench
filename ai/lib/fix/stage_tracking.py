@@ -62,6 +62,18 @@ _BOX_LINE_RE = re.compile(r"^- \[[ xX]\] ")
 _PLAN_BOX_RE = box_pattern(PLAN_BOXES)
 
 
+def _field_end(lines: list[str], start: int) -> int:
+    """Index of the first line after `start` that ends the field running there."""
+    i = start + 1
+    while i < len(lines) and not _is_field_boundary(lines[i]):
+        i += 1
+    return i
+
+
+def _is_field_boundary(line: str) -> bool:
+    return bool(_FIELD_RE.match(line) or _BOX_LINE_RE.match(line))
+
+
 def _fields(body: str) -> dict[str, str]:
     """Labelled fields in `body`, each running to the next field, box, or end."""
     found: dict[str, str] = {}
@@ -72,25 +84,40 @@ def _fields(body: str) -> dict[str, str]:
         if not match:
             i += 1
             continue
-        name, first = match.group(1), match.group(2)
-        chunks = [first] if first.strip() else []
-        i += 1
-        while i < len(lines):
-            if _FIELD_RE.match(lines[i]) or _BOX_LINE_RE.match(lines[i]):
-                break
-            chunks.append(lines[i])
-            i += 1
-        found[name] = "\n".join(chunks).strip()
+        end = _field_end(lines, i)
+        first = match.group(2)
+        chunks = ([first] if first.strip() else []) + lines[i + 1:end]
+        found[match.group(1)] = "\n".join(chunks).strip()
+        i = end
     return found
 
 
 def _file_list(raw: str) -> tuple[str, ...]:
     names: list[str] = []
     for line in raw.replace(",", "\n").splitlines():
-        name = line.strip().strip("- ").strip()
+        name = line.strip().removeprefix("- ").strip()
         if name:
             names.append(name)
     return tuple(names)
+
+
+def _plan_verdict(body: str) -> tuple[PlanVerdict, str] | None:
+    ticked = _ticked_reasons(body, _PLAN_BOX_RE)
+    for box in PLAN_BOXES:
+        if box.label in ticked:
+            return _PLAN_OUTCOME[box.label], ticked[box.label]
+    return None
+
+
+def _evidence(verdict: PlanVerdict, reason: str) -> tuple[str, int]:
+    """`file:line` an ALREADY_ADDRESSED reason opens with, else empty."""
+    if verdict is not PlanVerdict.ALREADY_ADDRESSED or ":" not in reason:
+        return "", 0
+    loc = reason.partition(" — ")[0].strip()
+    file, _, line_s = loc.rpartition(":")
+    if not file or not line_s.isdigit():
+        return "", 0
+    return file, int(line_s)
 
 
 def parse_plan(
@@ -113,28 +140,15 @@ def parse_plan(
         end = matches[n + 1].start() if n + 1 < len(matches) else len(text)
         item_id = match.group("id")
         body = text[match.end():end]
-        ticked = _ticked_reasons(body, _PLAN_BOX_RE)
-        verdict = None
-        reason = ""
-        for box in PLAN_BOXES:
-            if box.label in ticked:
-                verdict = _PLAN_OUTCOME[box.label]
-                reason = ticked[box.label]
-                break
-        if verdict is None:
+        picked = _plan_verdict(body)
+        if picked is None:
             continue
+        verdict, reason = picked
         fields = _fields(body)
         files = _file_list(fields.get("Files", ""))
         change = fields.get("Change", "")[:CHANGE_CAP]
         test = fields.get("Test", "")
-        evidence_file, evidence_line = "", 0
-        if verdict is PlanVerdict.ALREADY_ADDRESSED and ":" in reason:
-            loc, _, _rest = reason.partition(" — ")
-            loc = loc.strip()
-            if ":" in loc:
-                evidence_file, _, line_s = loc.rpartition(":")
-                if line_s.isdigit():
-                    evidence_line = int(line_s)
+        evidence_file, evidence_line = _evidence(verdict, reason)
         _rejected, outside = classify_paths(files, pr_files)
         source = by_id.get(item_id)
         plans[item_id] = ItemPlan(

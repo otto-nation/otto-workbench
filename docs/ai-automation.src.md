@@ -562,12 +562,14 @@ pr push --expect <origin tip> — then re-run pr comments --finish --post` (exit
 1, no JSON). A successful bare `--finish` also prints no JSON; `--fix --finish`
 still does.
 
-`--settle <id>` records a thread that is on the PR even when it is missing from the fix snapshot (`recorded as … (not in the fix snapshot — taken from the PR)`). An id found neither place is still refused.
+`--settle <id>` records a thread that is on the PR even when it is missing from
+the fix snapshot (`recorded as … (not in the fix snapshot — taken from the
+PR)`). An id found neither place is still refused.
 
 Closeout warns `<id>: left open — <reason>` for FIXED/ALREADY_ADDRESSED threads
 it did not resolve. Every reason except `not on the PR` keeps reply debt, so
 `pr status` still shows closeout owed. Open unanswered threads with no snapshot
-row are listed with `pr comments --fix` or `pr comments --settle`.
+row are listed with `pr comments --fix` or `pr comments --settle`. A comments `--fix` stopped mid-agent records leftovers (`interrupted-pass.json`) and, on the next pass at the same HEAD, resumes matching blobs so they can be committed unless that pass resumes from a fix-checkpoint at `AGENT_RUNNING` or later. An empty round will not commit those leftovers.
 
 ### The summary comments are the record, not the state file
 

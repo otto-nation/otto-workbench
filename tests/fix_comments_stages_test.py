@@ -32,7 +32,7 @@ from agent.registry import PHASES
 from config.workbench_config import FixConfig, ModelsConfig, WorkbenchConfig
 from core.phases import Phase
 from pr.comments_state import ThreadState
-from pr.fix import Escalation, FixOutcome, Handoff, ItemOutcome
+from pr.fix import FixOutcome, Handoff, ItemOutcome
 from pr.thread_models import (
     Classification, CommentItem, PRReport, ReportThread, TriageResult,
 )
@@ -195,6 +195,29 @@ def _force_stages(adapter):
     adapter.escalate_phase = Phase.COMMENTS_ESCALATE
 
 
+def _write_plan(artifacts, plan):
+    for path in sorted(artifacts.glob("plan-tracking-*.md")):
+        if plan != "fix":
+            _tick(path, "needs a person", "design call")
+            continue
+        _tick(path, "fix")
+        path.write_text(path.read_text().replace(
+            "- [x] fix",
+            "- [x] fix\n\nFiles: f.go\nChange: edit f\nTest: test_x\n",
+            1,
+        ))
+
+
+def _write_escalate(artifacts, escalate, reason, analysis):
+    box = escalate or "needs a person"
+    for path in sorted(artifacts.glob("escalate-tracking-*.md")):
+        _tick(path, box, reason)
+        if analysis:
+            path.write_text(path.read_text().replace(
+                f"- [x] {box}", f"Analysis: {analysis}\n\n- [x] {box}", 1,
+            ))
+
+
 def _staged_run_fix(artifacts, *, plan="fix", implement="fixed", escalate=None,
                     implement_reason="test_x — asserts x",
                     escalate_reason="ask the author", analysis=""):
@@ -203,29 +226,12 @@ def _staged_run_fix(artifacts, *, plan="fix", implement="fixed", escalate=None,
     def run_fix(phase, prompt, **kwargs):
         captured.append((phase, prompt, kwargs))
         if phase is Phase.COMMENTS_PLAN:
-            for path in sorted(artifacts.glob("plan-tracking-*.md")):
-                if plan == "fix":
-                    _tick(path, "fix")
-                    path.write_text(path.read_text().replace(
-                        "- [x] fix",
-                        "- [x] fix\n\nFiles: f.go\nChange: edit f\nTest: test_x\n",
-                        1,
-                    ))
-                else:
-                    _tick(path, "needs a person", "design call")
+            _write_plan(artifacts, plan)
         elif phase is Phase.COMMENTS_IMPLEMENT:
             tracking = artifacts / "fix-tracking.md"
             _tick(tracking, implement, implement_reason)
         elif phase is Phase.COMMENTS_ESCALATE:
-            for path in sorted(artifacts.glob("escalate-tracking-*.md")):
-                _tick(path, escalate or "needs a person", escalate_reason)
-                if analysis:
-                    path.write_text(path.read_text().replace(
-                        f"- [x] {escalate or 'needs a person'}",
-                        f"Analysis: {analysis}\n\n"
-                        f"- [x] {escalate or 'needs a person'}",
-                        1,
-                    ))
+            _write_escalate(artifacts, escalate, escalate_reason, analysis)
         elif phase is Phase.COMMENTS_VERIFY:
             return agent.invoke.FixResult(0, None)
         else:

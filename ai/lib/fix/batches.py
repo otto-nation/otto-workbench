@@ -61,6 +61,7 @@ TRACKING_FILENAME = "fix-tracking.md"
 # revisions wrote; review/gc.py removes that name explicitly alongside the
 # glob, and can stop once no in-flight review predates the suffix.
 VERIFY_TRACKING_GLOB = "verify-tracking-*.md"
+STAGE_TRACKING_GLOBS = ("plan-tracking-*.md", "escalate-tracking-*.md")
 
 # What a retry is told about the file it is handed. The first pass's settled
 # items are not in it, and an agent that assumes otherwise re-reads work that is
@@ -323,7 +324,11 @@ def batch_scope(
         relative_to(adapter.workdir, path)
         for path in (
             [adapter.tracking_path]
-            + sorted(adapter.artifacts.glob(VERIFY_TRACKING_GLOB))
+            + [
+                found
+                for glob in (VERIFY_TRACKING_GLOB, *STAGE_TRACKING_GLOBS)
+                for found in sorted(adapter.artifacts.glob(glob))
+            ]
         )
     }
     return fix.scope.BatchScope(files=scope.files - {a for a in artifacts if a})

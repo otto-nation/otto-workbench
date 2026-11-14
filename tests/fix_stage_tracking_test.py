@@ -52,6 +52,13 @@ class TestPlanVocabulary:
         assert plan.test == "test_g — asserts g"
         assert plan.valid
 
+    def test_dashed_file_names_survive(self, tmp_path):
+        path = _write(tmp_path / "p.md", stage.PLAN_BOXES, body=(
+            "Files:\n- -foo.py\n- a-\nChange: x\nTest: t\n"
+        ))
+        path.write_text(_tick(path.read_text(), "fix"))
+        assert stage.parse_plan(path, [_item()])["T1"].files == ("-foo.py", "a-")
+
     def test_untouched_item_is_absent(self, tmp_path):
         path = _write(tmp_path / "p.md", stage.PLAN_BOXES)
         assert stage.parse_plan(path, [_item()]) == {}

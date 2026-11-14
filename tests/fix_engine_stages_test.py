@@ -44,6 +44,27 @@ def _tick(path: Path, label: str, reason: str = "") -> None:
     path.write_text(text)
 
 
+def _write_plan(adapter, plan):
+    for path in sorted(adapter.artifacts.glob("plan-tracking-*.md")):
+        _tick(path, plan)
+        if plan == "fix":
+            path.write_text(path.read_text().replace(
+                "- [x] fix",
+                "- [x] fix\n\nFiles: a.py\nChange: edit f\nTest: test_x\n",
+                1,
+            ))
+
+
+def _write_escalate(adapter, escalate, reason, analysis):
+    box = escalate or "needs a person"
+    for path in sorted(adapter.artifacts.glob("escalate-tracking-*.md")):
+        _tick(path, box, reason)
+        if analysis:
+            path.write_text(path.read_text().replace(
+                f"- [x] {box}", f"Analysis: {analysis}\n\n- [x] {box}", 1,
+            ))
+
+
 def _staged_fix(
     adapter, *, plan="fix", implement="fixed", escalate=None,
     implement_reason="test_x — asserts x", escalate_reason="ask the author",
@@ -54,27 +75,11 @@ def _staged_fix(
     def run_fix(phase, prompt, **kwargs):
         captured.append((phase, prompt, kwargs))
         if phase is Phase.COMMENTS_PLAN:
-            for path in sorted(adapter.artifacts.glob("plan-tracking-*.md")):
-                _tick(path, plan)
-                if plan == "fix":
-                    text = path.read_text()
-                    path.write_text(text.replace(
-                        "- [x] fix",
-                        "- [x] fix\n\nFiles: a.py\nChange: edit f\nTest: test_x\n",
-                        1,
-                    ))
+            _write_plan(adapter, plan)
         elif phase is Phase.COMMENTS_IMPLEMENT:
             _tick(adapter.tracking_path, implement, implement_reason)
         elif phase is Phase.COMMENTS_ESCALATE:
-            for path in sorted(adapter.artifacts.glob("escalate-tracking-*.md")):
-                _tick(path, escalate or "needs a person", escalate_reason)
-                if analysis:
-                    text = path.read_text()
-                    path.write_text(text.replace(
-                        f"- [x] {escalate or 'needs a person'}",
-                        f"Analysis: {analysis}\n\n- [x] {escalate or 'needs a person'}",
-                        1,
-                    ))
+            _write_escalate(adapter, escalate, escalate_reason, analysis)
         else:
             return _answer(adapter)(phase, prompt, **kwargs)
         return agent.invoke.FixResult(0, None)
@@ -119,6 +124,7 @@ def test_plan_failed_is_escalated_and_can_fix(tmp_path, landed, head):
     phases = [c.args[0] for c in inv.call_args_list]
     assert Phase.COMMENTS_ESCALATE in phases
     assert run.outcomes[0].outcome is FixOutcome.FIXED
+    assert run.outcomes[0].handoff is None
     assert run.outcomes[0].escalation is Escalation.RESOLVED
 
 
@@ -139,10 +145,8 @@ def test_escalation_confirms_needs_human_with_its_reason(tmp_path, landed, head)
 
 def test_plan_needs_human_is_not_escalated(tmp_path, landed, head):
     adapter = StagedAdapter(tmp_path)
-    stub = _staged_fix(adapter, plan="needs a person")
-    # Give the needs-a-person box a reason so the plan is usable.
+
     def run_fix(phase, prompt, **kwargs):
-        stub.captured.append((phase, prompt, kwargs))
         if phase is Phase.COMMENTS_PLAN:
             for path in sorted(adapter.artifacts.glob("plan-tracking-*.md")):
                 _tick(path, "needs a person", "design call")
@@ -153,6 +157,28 @@ def test_plan_needs_human_is_not_escalated(tmp_path, landed, head):
     assert inv.call_args.args[0] is Phase.COMMENTS_PLAN
     assert run.outcomes[0].outcome is FixOutcome.NEEDS_HUMAN
     assert run.outcomes[0].handoff is Handoff.PLAN_NEEDS_HUMAN
+
+
+def test_partially_usable_plan_hands_the_unusable_item_back(
+    tmp_path, landed, head,
+):
+    adapter = StagedAdapter(tmp_path, count=2)
+    inner = _staged_fix(adapter, escalate="needs a person")
+
+    def run_fix(phase, prompt, **kwargs):
+        result = inner(phase, prompt, **kwargs)
+        if phase is Phase.COMMENTS_PLAN:
+            for path in sorted(adapter.artifacts.glob("plan-tracking-*.md")):
+                # Un-answer the second item's section.
+                before, mark, tail = path.read_text().partition("<!-- fix:i1 -->")
+                path.write_text(before + mark + tail.replace("- [x]", "- [ ]"))
+        return result
+    run, inv = _run(adapter, run_fix=run_fix)
+    by_id = {o.id: o for o in run.outcomes}
+    assert Phase.CI_FIX not in [c.args[0] for c in inv.call_args_list]
+    assert by_id["i1"].outcome is FixOutcome.NEEDS_HUMAN
+    assert by_id["i1"].handoff is Handoff.PLAN_INVALID
+    assert by_id["i0"].outcome is FixOutcome.FIXED
 
 
 def test_adapter_escalates_false_skips_escalation(tmp_path, landed, head):

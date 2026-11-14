@@ -77,13 +77,11 @@ def _clear(adapter) -> None:
 def escalates(adapter, outcome, staged=None) -> bool:
     """C1, plus skip question / conflicting / contested (never staged)."""
     entry = _entry(adapter, outcome.id)
-    if entry is not None:
-        if entry.classification in _SKIP_CLASSIFICATIONS:
-            return False
-        if str(entry.state) == ThreadState.CONTESTED.value:
-            return False
+    if entry is not None and entry.classification in _SKIP_CLASSIFICATIONS:
+        return False
     thread = getattr(adapter, "threads_by_id", {}).get(outcome.id)
-    if thread is not None and thread.state is ThreadState.CONTESTED:
+    states = {str(getattr(entry, "state", "")), str(getattr(thread, "state", ""))}
+    if ThreadState.CONTESTED.value in states:
         return False
     if outcome.handoff is Handoff.PLAN_NEEDS_HUMAN:
         return True
@@ -109,8 +107,9 @@ def _entry(adapter, item_id: str) -> CommentItem | None:
     round_ = getattr(adapter, "round", None)
     if round_ is None:
         return None
-    for bucket in (round_.fixable, round_.fixable_items, round_.needs_human):
-        for entry in bucket:
-            if entry.id == item_id:
-                return entry
-    return None
+    entries = (
+        entry for bucket in
+        (round_.fixable, round_.fixable_items, round_.needs_human)
+        for entry in bucket
+    )
+    return next((entry for entry in entries if entry.id == item_id), None)

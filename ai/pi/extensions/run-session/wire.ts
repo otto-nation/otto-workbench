@@ -8,15 +8,18 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component } from "@earendil-works/pi-tui";
 import {
+  DECISION_SCHEMA,
   HISTORY_TYPE,
   NOW_TYPE,
   SECTION_NAME,
   STATE_TYPE,
+  TOOL_NAME,
   consume,
   digest,
   historyText,
   latestDecisions,
   latestState,
+  noteArgv,
   parseReport,
   prBinary,
   readEvents,
@@ -25,6 +28,7 @@ import {
   runIdOf,
   runSessionDir,
   systemNote,
+  type DecisionInput,
   type RunEvent,
   type RunState,
 } from "./detect.ts";
@@ -41,6 +45,9 @@ export interface Deps {
 /** How long one offline report may take before Now says it is unavailable. */
 export const REPORT_TIMEOUT_MS = 30_000;
 
+/** How long one `pr batch note` may take before record_decision reports it stopped. */
+export const NOTE_TIMEOUT_MS = 30_000;
+
 interface Refreshed {
   state: RunState;
   /** The Now text when it changed since the stored digest, else null. */
@@ -51,6 +58,39 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
   const pr = deps.pr ?? prBinary();
   // The run this session belongs to; null while it is not a run session.
   let state: RunState | null = null;
+  let toolRegistered = false;
+
+  /** record_decision, registered once and only once this session is a run session. */
+  function registerTool(): void {
+    if (toolRegistered) return;
+    toolRegistered = true;
+    pi.registerTool({
+      name: TOOL_NAME,
+      label: "Record decision",
+      description:
+        "Record a verdict on one finding of this pr batch run in the run's history, through `pr batch note`. Changes no item state.",
+      promptSnippet: "Record a verdict on one finding of this batch run (pr batch note)",
+      promptGuidelines: [
+        "Use record_decision for every verdict on a finding in this batch run, once the operator agrees; it records the verdict and changes no item state.",
+      ],
+      parameters: DECISION_SCHEMA,
+      async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+        if (!state) throw new Error("record_decision: this session is not a batch run session");
+        const input = params as DecisionInput;
+        const result = await pi.exec(pr, noteArgv(state.runId, input), {
+          cwd: ctx.cwd,
+          timeout: NOTE_TIMEOUT_MS,
+          signal,
+        });
+        if (result.killed) throw new Error(`pr batch note was stopped after ${NOTE_TIMEOUT_MS / 1000}s`);
+        if (result.code !== 0) throw new Error(`pr batch note exited ${result.code}: ${result.stderr.trim()}`);
+        return {
+          content: [{ type: "text", text: `Recorded ${input.verdict} on ${input.pr} ${input.finding}.` }],
+          details: { stdout: result.stdout.trim() },
+        };
+      },
+    });
+  }
 
   pi.registerEntryRenderer(HISTORY_TYPE, (entry) => {
     const text = (entry.data as { text?: unknown } | undefined)?.text;
@@ -122,6 +162,7 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
     const stored = latestState(ctx.sessionManager.getBranch());
     const runDir = stored ? null : runSessionDir(deps.env, ctx.sessionManager.getSessionId());
     if (!stored && !runDir) return;
+    registerTool();
     const base: RunState = stored ?? {
       runDir: runDir as string,
       runId: runIdOf(runDir as string),

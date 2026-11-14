@@ -408,3 +408,47 @@ _wired() {
   [ "$status" -eq 0 ]
   [ "$output" = '[null,{},0]' ]
 }
+
+@test "run-session: record_decision runs pr batch note in the checkout with the decision's flags" {
+  _wired '
+    const f = fakePi({ sessionId: "batch-" + ID });
+    wire(f.pi, deps({ WORKBENCH_RUN_DIR: RUN }));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    const tool = f.calls.tools[0];
+    const res = await tool.execute("t1", { pr: "o/r#1", finding: "ci_failing:ci", verdict: "deferred", reason: "-flaky runner", commands: ["pr ci --fix"] }, undefined, undefined, f.ctx);
+    const note = f.calls.execs.find((x) => x.args[1] === "note");
+    console.log(JSON.stringify({ tools: f.calls.tools.map((t) => t.name), schema: tool.parameters === m.DECISION_SCHEMA,
+      argv: note.args, cwd: note.options.cwd, text: res.content[0].text }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"tools":["record_decision"],"schema":true,"argv":["batch","note","20261114T120000-ab12","o/r#1","--finding=ci_failing:ci","--verdict=deferred","--reason=-flaky runner","--command=pr ci --fix"],"cwd":"/checkout","text":"Recorded deferred on o/r#1 ci_failing:ci."}' ]
+}
+
+@test "run-session: a note pr refuses comes back as a tool error naming why" {
+  _wired '
+    const f = fakePi({ sessionId: "batch-" + ID });
+    f.control.noteCode = 2;
+    f.control.noteStderr = "pr batch: o/r#1 has no finding x:y (have ci_failing:ci)\n";
+    wire(f.pi, deps({ WORKBENCH_RUN_DIR: RUN }));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    try {
+      await f.calls.tools[0].execute("t1", { pr: "o/r#1", finding: "x:y", verdict: "fixed", reason: "r" }, undefined, undefined, f.ctx);
+      console.log("no error");
+    } catch (err) {
+      console.log(err.message);
+    }
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = "pr batch note exited 2: pr batch: o/r#1 has no finding x:y (have ci_failing:ci)" ]
+}
+
+@test "run-session: no record_decision in a session that is no run's own" {
+  _wired '
+    const f = fakePi({ sessionId: "abc" });
+    wire(f.pi, deps({ WORKBENCH_RUN_DIR: RUN }));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    console.log(f.calls.tools.length);
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = "0" ]
+}

@@ -24,7 +24,7 @@ nothing gets exactly the pass it got before this module existed, plus a line
 saying nothing ran.
 
 **What a red run does.** It marks every claimed fix unverified and holds
-publishing for the whole run (`fix.engine._verify_suite`), so nothing replies,
+publishing for the whole run (`fix.engine_checks._verify_suite`), so nothing replies,
 resolves or pushes off a failing tree. The hold is central rather than left to
 a domain's `after_verify` because a demotion leaves the item at `FIXED` and
 touches only `verified` — every per-item filter in the codebase selects on the

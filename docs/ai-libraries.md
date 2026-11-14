@@ -865,6 +865,18 @@ the commit is unconditional and the push waits for ``--post``; :mod:`land`'s
 module docstring makes that argument, and a pass that wanted the other split would
 be a fix pass asserting something outward nobody approved.
 
+### fix/engine_checks.py
+
+The engine's half of ``fix.suite``: resolve the command, run it, apply.
+
+A red result withdraws the pass's verification claims before ``landing``
+renders a body that would otherwise say those claims held. Config is re-read
+from the worktree rather than taken from ``adapter.config`` because a pass
+launched from another directory carries the config of wherever it was
+launched, and the checks belong to the tree being edited. An adapter that was
+given one still wins: it is the same file when the two agree, and the
+caller's explicit choice when they do not.
+
 ### fix/gate.py
 
 The verify gate: when it runs, and what its verdicts mean.
@@ -7351,7 +7363,7 @@ nothing gets exactly the pass it got before this module existed, plus a line
 saying nothing ran.
 
 **What a red run does.** It marks every claimed fix unverified and holds
-publishing for the whole run (`fix.engine._verify_suite`), so nothing replies,
+publishing for the whole run (`fix.engine_checks._verify_suite`), so nothing replies,
 resolves or pushes off a failing tree. The hold is central rather than left to
 a domain's `after_verify` because a demotion leaves the item at `FIXED` and
 touches only `verified` — every per-item filter in the codebase selects on the

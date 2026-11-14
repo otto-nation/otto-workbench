@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { runSessionDir } from "../_shared/run-dir.ts";
 
 /**
  * Records this Pi session as editing a worktree, kept apart from the wiring.
  *
  * index.ts imports from the Pi SDK as a value, so it can only load inside a
- * session. This file pulls in one node builtin and nothing else, so
- * tests/pi_extensions_issues.bats can exercise it under plain `node` — which matters
+ * session. This file pulls in node builtins and ../_shared/run-dir.ts and nothing else, so
+ * tests/pi_extensions_issues.bats and tests/pi_extensions_session_lock.bats can exercise it under plain `node` — which matters
  * most here, because a renamed binary or a moved lock path makes the claim
  * silently never happen, and a session that never recorded itself looks
  * exactly like one nobody is editing.
@@ -73,4 +74,20 @@ export function releaseFor(cwd: string, pid: number): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether a session started with `env` and `sessionId` claims its worktree.
+ *
+ * A batch run's own session does not (../_shared/run-dir.ts says which that
+ * is): its cwd is the run's checkout, and batch reuses whichever worktree
+ * already holds an item's branch (ai/lib/batch/steps.py ensure_worktree), so a
+ * claim there would make that item's later `--fix` steps refuse. No Claude
+ * Code twin: only pi is ever started as a run session.
+ */
+export function claimsWorktree(
+  env: Record<string, string | undefined>,
+  sessionId: string,
+): boolean {
+  return runSessionDir(env, sessionId) === null;
 }

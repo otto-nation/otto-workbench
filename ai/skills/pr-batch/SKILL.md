@@ -111,6 +111,18 @@ command: read the log or wait.
 
 ---
 
+## Run session
+
+`pr batch session RUN_ID` opens the run's own pi session in its checkout
+(`pr batch session RUN_ID --json` prints how, for a UI). There the run's history
+and the report's Now block are shown, and the model records each verdict with
+`record_decision`, which runs `pr batch note RUN_ID PR` with `--finding`,
+`--verdict`, `--reason` and `--command`. A note changes no item state: a PR stops
+needing a person only when the report stops showing its finding. Outside that
+session, record a verdict with `pr batch note` directly.
+
+---
+
 ## Stacks
 
 `stack_wait_base` waits for the base PR to merge. Then rebase the child;

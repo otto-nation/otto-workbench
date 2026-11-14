@@ -86,6 +86,9 @@ class _Box(NamedTuple):
     label: str
     outcome: FixOutcome
     contract: str
+    # False for a box whose reason lives in labelled fields instead of after
+    # the tick (the plan vocabulary's `fix` box).
+    asks: bool = True
 
 
 # The boxes offered for each item, in the order they are rendered and the order
@@ -187,6 +190,8 @@ def _suffix(box: _Box, reasoned: frozenset) -> str:
     parameter is what lets one change its mind without silently moving the
     other. A single shared set would make that drift invisible.
     """
+    if not box.asks:
+        return ""
     return f" — {_WHY}" if box.outcome in reasoned else ""
 
 
@@ -276,7 +281,7 @@ _VERDICT_OK: dict[str, bool | None] = {
 }
 
 
-def instructions(noun: str) -> str:
+def instructions(noun: str, boxes: tuple[_Box, ...] = _BOXES) -> str:
     """How to answer the file, in the words `parse` reads back.
 
     Every domain's prompt asks for the same three boxes, so the ask is rendered
@@ -289,10 +294,11 @@ def instructions(noun: str) -> str:
     with their pipelines, and a prompt that asks for a box `parse` no longer
     looks for fails silently — every item comes back reading as work still owed.
     """
-    boxes = "\n".join(
-        f"- `- [x] {box.label}{_suffix(box, _REASONED)}` — "
+    reasoned = _reasoned_for(boxes)
+    listed = "\n".join(
+        f"- `- [x] {box.label}{_suffix(box, reasoned)}` — "
         f"{box.contract.format(noun=noun)}"
-        for box in _BOXES
+        for box in boxes
     )
     return textwrap.dedent("""\
         Every {noun} above carries three boxes. Answer each one by ticking exactly
@@ -310,7 +316,7 @@ def instructions(noun: str) -> str:
         Leave all three boxes unticked only for a {noun} you never got to. That
         reads as work still owed and the {noun} is handed to another pass, so use
         it for what you ran out of turns for — never as a way to pass over a
-        {noun} you read and had an answer for.""").format(noun=noun, boxes=boxes)
+        {noun} you read and had an answer for.""").format(noun=noun, boxes=listed)
 
 
 def write(
@@ -368,10 +374,14 @@ _VERIFY_REASONED = frozenset(box.outcome for box in VERIFY_BOXES)
 
 def _reasoned_for(boxes: tuple[_Box, ...]) -> frozenset:
     """Which of `boxes` owe the agent's words after the tick."""
-    return _VERIFY_REASONED if boxes is VERIFY_BOXES else _REASONED
+    if boxes is VERIFY_BOXES:
+        return _VERIFY_REASONED
+    if boxes is _BOXES:
+        return _REASONED
+    return frozenset(box.outcome for box in boxes if box.asks)
 
 
-def parse(path: Path) -> list[ItemOutcome]:
+def parse(path: Path, boxes: tuple[_Box, ...] = _BOXES) -> list[ItemOutcome]:
     """What the agent recorded, one outcome per section, in file order.
 
     A file that does not exist is a pass that never got as far as writing one,
@@ -390,11 +400,13 @@ def parse(path: Path) -> list[ItemOutcome]:
     matches = list(_SECTION_RE.finditer(text))
     for n, match in enumerate(matches):
         end = matches[n + 1].start() if n + 1 < len(matches) else len(text)
-        outcomes.append(_section_outcome(match, text[match.end():end]))
+        outcomes.append(_section_outcome(
+            match, text[match.end():end], boxes,
+        ))
     return outcomes
 
 
-def checked(path: Path) -> int:
+def checked(path: Path, boxes: tuple[_Box, ...] = _BOXES) -> int:
     """How many boxes the agent ticked, across every section.
 
     The guard that decides whether a pass produced anything asks this, so it
@@ -403,17 +415,20 @@ def checked(path: Path) -> int:
     """
     if not path.exists():
         return 0
+    pattern = _BOX_RE if boxes is _BOXES else box_pattern(boxes)
     return sum(
-        1 for box in _BOX_RE.finditer(path.read_text())
+        1 for box in pattern.finditer(path.read_text())
         if box.group("mark") in "xX"
     )
 
 
-def _section_outcome(match: re.Match, body: str) -> ItemOutcome:
+def _section_outcome(
+    match: re.Match, body: str, boxes: tuple[_Box, ...] = _BOXES,
+) -> ItemOutcome:
     """One section's outcome — its heading gives the anchor, its boxes the verdict."""
     outcome = _anchor(match.group("heading"))
     outcome.id = match.group("id")
-    _record_verdict(outcome, body)
+    _record_verdict(outcome, body, boxes)
     return outcome
 
 
@@ -434,7 +449,9 @@ def _anchor(heading: str) -> ItemOutcome:
     return ItemOutcome(file=anchored.group("file"), line=int(anchored.group("line")))
 
 
-def _record_verdict(into: ItemOutcome, body: str) -> None:
+def _record_verdict(
+    into: ItemOutcome, body: str, boxes: tuple[_Box, ...] = _BOXES,
+) -> None:
     """Set the outcome and reason a section's boxes record.
 
     Ticking nothing leaves `ItemOutcome`'s own `DEFERRED` default standing.
@@ -455,8 +472,9 @@ def _record_verdict(into: ItemOutcome, body: str) -> None:
     `fix.batches.record_unevidenced`, which emits one trail event per pass so
     the claim is still answerable once the terminal has scrolled away.
     """
-    ticked = _ticked_reasons(body, _BOX_RE)
-    for box in _BOXES:
+    pattern = _BOX_RE if boxes is _BOXES else box_pattern(boxes)
+    ticked = _ticked_reasons(body, pattern)
+    for box in boxes:
         if box.label not in ticked:
             continue
         into.outcome = box.outcome

@@ -178,6 +178,37 @@ RECONCILED_REASON = "reconciled: handled outside the fix pass"
 SETTLED_REASON = "settled: recorded by hand"
 
 
+class Handoff(StrEnum):
+    """Why a staged pass sent (or nearly sent) an item to a person.
+
+    Unset on every outcome a stage-less pass writes, so a state file from
+    before this existed loads as "not staged". The strings are persisted;
+    renaming a member is a silent data loss there.
+    """
+
+    PLAN_NEEDS_HUMAN = "plan_needs_human"
+    PLAN_DECLINED = "plan_declined"
+    PLAN_ADVISED = "plan_advised"
+    PLAN_INVALID = "plan_invalid"
+    PLAN_FAILED = "plan_failed"
+    VERIFY_BROKEN = "verify_broken"
+    AGENT_HANDBACK = "agent_handback"
+    TRIAGE_FALSIFIED = "triage_falsified"
+
+
+class Escalation(StrEnum):
+    """What the one escalation pass did with an item.
+
+    Unset when escalation did not run. Persisted strings, same rule as
+    :class:`Handoff`.
+    """
+
+    RESOLVED = "resolved"
+    CONFIRMED = "confirmed"
+    FALSIFIED = "falsified"
+    UNANSWERED = "unanswered"
+
+
 @dataclass
 class ItemOutcome:
     """What one fix pass did about one item.
@@ -263,6 +294,13 @@ class ItemOutcome:
     # outcome written before the field existed, which is never settled: no
     # instant here says what conversation it answered.
     decided_at: str = ""
+    # Staged-pass provenance. All defaulted so a state file written before
+    # them loads as "the pass did not stage". `plan_path` is local-only —
+    # plans are never posted publicly.
+    handoff: Handoff | None = None
+    escalation: Escalation | None = None
+    escalation_note: str = ""
+    plan_path: str = ""
 
 
 def decision_stamp() -> str:

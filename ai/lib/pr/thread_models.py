@@ -14,7 +14,7 @@ from enum import StrEnum
 
 import core.serde
 from pr.comments_state import ThreadState
-from pr.fix import FixOutcome, ItemOutcome, SettledBy
+from pr.fix import Escalation, FixOutcome, Handoff, ItemOutcome, SettledBy
 
 
 # ── Core types ─────────────────────────────────────────────────────────────
@@ -119,6 +119,18 @@ class Complexity(Vocabulary):
     MEDIUM = "medium"
     HIGH = "high"
     UNSET = ""
+
+
+class Downgrade(StrEnum):
+    """Which triage demotion, if any, rewrote an entry's verification.
+
+    Structured so routing does not have to match prose in `reasoning`.
+    `NONE` is the default, including every entry written before this existed.
+    """
+
+    NONE = "none"
+    UNSUPPORTED = "unsupported"
+    UNPUBLISHED = "unpublished"
 
 
 class CommentSourceKind(Vocabulary):
@@ -270,6 +282,13 @@ class CommentItem:
     # triage's round is read, and carried through the record so a replay does
     # not move it later than the conversation it was decided against.
     decided_at: str = ""
+    # Staged-pass provenance, mirrored from ItemOutcome so a drain from state
+    # still has them. Defaulted: old entries load as unstaged.
+    handoff: Handoff | None = None
+    escalation: Escalation | None = None
+    escalation_note: str = ""
+    plan_path: str = ""
+    downgrade: Downgrade = Downgrade.NONE
 
     def __post_init__(self) -> None:
         self.line = int(self.line or 0)
@@ -340,6 +359,10 @@ class CommentItem:
             verified=self.verified,
             verify_detail=self.verify_detail,
             decided_at=self.decided_at,
+            handoff=self.handoff,
+            escalation=self.escalation,
+            escalation_note=self.escalation_note,
+            plan_path=self.plan_path,
         )
 
     @classmethod
@@ -379,6 +402,10 @@ class CommentItem:
             verified=outcome.verified,
             verify_detail=outcome.verify_detail,
             decided_at=outcome.decided_at,
+            handoff=outcome.handoff,
+            escalation=outcome.escalation,
+            escalation_note=outcome.escalation_note,
+            plan_path=outcome.plan_path,
             **{reason_field: outcome.reason},
         )
 
@@ -630,7 +657,14 @@ class TrackingResult:
             reason = recorded.reason or _UNSTATED_REASON.get(recorded.outcome, "")
             result.add(
                 recorded.outcome,
-                dataclass_replace(source, reason=reason or source.reason),
+                dataclass_replace(
+                    source,
+                    reason=reason or source.reason,
+                    handoff=recorded.handoff,
+                    escalation=recorded.escalation,
+                    escalation_note=recorded.escalation_note,
+                    plan_path=recorded.plan_path,
+                ),
                 item=is_item,
             )
 
@@ -786,6 +820,8 @@ class CommentFixResult:
     max_turns: int = 0
     max_budget: float = 0.0
     batches: int = 0
+    planned: int = 0
+    escalated: int = 0
 
 
 # ── Deserialization helpers ───────────────────────────────────────────────

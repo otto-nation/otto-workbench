@@ -268,6 +268,7 @@ class TestUnsupportedVerdictDowngrade:
         assert pr.triage.downgrade_unsupported_verdicts([item], tmp_path) == 1
         assert item.verification == "needs_discussion"
         assert item.complexity == ""
+        assert item.downgrade.value == "unsupported"
 
     def test_uncited_already_addressed_becomes_needs_discussion(self, tmp_path):
         item = self._item(verification="already_addressed")

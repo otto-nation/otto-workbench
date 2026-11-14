@@ -946,6 +946,22 @@ answers, the agent's files, the suite result, the landing — so it can skip
 work that already finished. Nothing here writes a checkpoint; the adapter's
 ``checkpoint`` hook is what persists.
 
+### fix/plan_model.py
+
+The plan a deep pass writes for one fix item.
+
+Owned by the shared engine, not by a domain: a comments round is the first
+adopter, but CI and review will hand the same record to the same stages. The
+JSON lives under the pass's artifacts directory and is never posted publicly.
+
+### fix/plan_store.py
+
+Load and save per-item plans under a pass's artifacts directory.
+
+Plans are local JSON beside the run — never posted. A write is atomic through
+``core.serde.write_json``. An interrupted pass does not resume from these
+files; they are an audit record and the input the implementer is handed.
+
 ### fix/reconcile.py
 
 What the agent said against what the worktree shows, per item.
@@ -1044,6 +1060,14 @@ the agent changed nothing, so there is nothing to commit. None says the
 worktree could not be read, so the pass cannot tell its own work from what was
 already there — which is the one case where committing nothing is right and
 committing everything is how unreviewed content reaches a branch.
+
+### fix/stage_tracking.py
+
+Checklists the plan, implement and escalate stages answer in.
+
+Reuses :mod:`fix.tracking`'s box type and parser so the three vocabularies
+cannot drift from the format the engine already reads. An untouched item still
+reads as ``DEFERRED``.
 
 ### fix/verify.py
 

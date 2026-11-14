@@ -218,3 +218,30 @@ def test_no_domain_drops_the_record_on_the_way_through(name, cls):
     """
     merged = cls(updated_at="t2").merge_into(cls(fix=_record("a"), updated_at="t1"))
     assert [item.id for item in merged.fix.items] == ["a"]
+
+
+# ── staged-pass fields ────────────────────────────────────────────────────
+
+
+def test_old_json_without_staged_fields_loads_as_unstaged():
+    restored = core.serde.from_dict(pr.fix.ItemOutcome, {"id": "i1", "outcome": "fixed"})
+    assert restored.handoff is None
+    assert restored.escalation is None
+    assert restored.escalation_note == ""
+    assert restored.plan_path == ""
+
+
+def test_staged_fields_round_trip():
+    item = pr.fix.ItemOutcome(
+        id="i1", outcome=pr.fix.FixOutcome.NEEDS_HUMAN,
+        handoff=pr.fix.Handoff.PLAN_FAILED,
+        escalation=pr.fix.Escalation.CONFIRMED,
+        escalation_note="the plan named a missing function",
+        plan_path="/tmp/plans/i1.json",
+    )
+    assert core.serde.from_dict(pr.fix.ItemOutcome, core.serde.to_dict(item)) == item
+
+
+def test_handoff_and_escalation_keep_their_persisted_strings():
+    assert pr.fix.Handoff.PLAN_FAILED == "plan_failed"
+    assert pr.fix.Escalation.CONFIRMED == "confirmed"

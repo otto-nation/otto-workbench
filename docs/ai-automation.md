@@ -1608,7 +1608,7 @@ Items end `done` or `needs_session` with `findings` (`batch/findings.py`). A
 stored waiting v1 run converts on `resume` (one-way). Report keys: `run` (`id`,
 `status`, `active`, `exit_hint`, `hint`, `pending_requests`, `failed_requests`),
 `counts`, `items` (non-terminal), `github`, `sessions` (`pr batch report` only).
-`resume` replays `--focus`. `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`, and each is also appended to the run's `events.jsonl` ([`core/run_events.py`](ai-libraries.md#corerun_eventspy)). `pr batch session RUN_ID` opens the run's pi session in its checkout (`--json` prints how, for UIs), and `pr batch note` records an operator verdict there as a `decision` event without changing item state ([`batch/run_session.py`](ai-libraries.md#batchrun_sessionpy)).
+`resume` replays `--focus`. `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`, and each is also appended to the run's `events.jsonl` ([`core/run_events.py`](ai-libraries.md#corerun_eventspy)). `pr batch session RUN_ID` opens the run's pi session in its checkout (`--json` prints how, for UIs), and `pr batch note` records an operator verdict there as a `decision` event without changing item state ([`batch/run_session.py`](ai-libraries.md#batchrun_sessionpy)). Inside that session the `run-session` Pi extension shows the run's history and report and records verdicts through `pr batch note` ([extensions README](../ai/pi/extensions/README.md#run-session)).
 `github` is omitted under `--offline`; keys and checkout rules are in
 [`batch/live.py`](ai-libraries.md#batchlivepy). Step output stays in the run's
 `logs/`. Admission is [`batch/machine.py`](ai-libraries.md#batchmachinepy): `batch.pool_max`

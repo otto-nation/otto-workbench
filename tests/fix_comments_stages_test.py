@@ -14,7 +14,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 from review_threads_support import (  # noqa: E402
-    _answering_the_owner, _fake_ctx, _git_ran, _no_published_summary,
+    _answering_the_owner, _fake_ctx, _git_ran,
     _triaged_round,
 )
 

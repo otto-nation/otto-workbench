@@ -14,6 +14,7 @@ import core.log
 import agent.phases
 import fix.containment
 import fix.engine
+import fix.pass_resume
 from agent.registry import PHASES
 from fix.batches import Batch, BatchStage, chunks, run_batch, settle
 from fix.plan_model import PlanMode, PlanVerdict, StagedItem
@@ -23,6 +24,7 @@ from fix.stage_tracking import (
     render_plan_body,
 )
 from fix.types import FixItem
+from pr.fix_checkpoint import CheckpointPhase
 from pr.fix import FixOutcome, Handoff, ItemOutcome
 
 
@@ -187,19 +189,46 @@ def _legacy(adapter, start, items):
 def _run_stage(adapter, start, items, stage: BatchStage | None):
     phase = stage.phase if stage is not None else adapter.phase
     chunk_size = agent.phases.phase_chunk_size(phase)
-    batched = chunks(items, chunk_size)
+    prior = {}
+    if start.resume_phase is CheckpointPhase.AGENT_RUNNING:
+        prior = fix.pass_resume.prior_answers(
+            start.prior, adapter.tracking_path, overlay=True,
+        )
+    remaining = [item for item in items if item.id not in prior]
+    batched = chunks(remaining, chunk_size)
     if batched == [[]]:
         batched = []
     name = PHASES[phase].label
     results: list[Batch] = []
+    if prior:
+        results.append(fix.engine._prior_batch(list(prior.values()), start.prior))
     dirty_before = set(start.dirty_before)
+    collected = list(prior.values())
+    origin = start.prior.batches if start.prior else 0
     for n, chunk in enumerate(batched, start=1):
         label = name if len(batched) == 1 else f"{name} (batch {n}/{len(batched)})"
-        results.append(run_batch(
+        batch = run_batch(
             adapter, chunk, label,
-            before=(None if n > 1 else dirty_before),
+            before=(
+                None if start.resume_phase is not None or n > 1 or prior
+                else dirty_before
+            ),
             stage=stage,
-        ))
+        )
+        results.append(batch)
+        collected.extend(fix.pass_resume.answered(batch.outcomes))
+        blobs = fix.pass_resume.recorded_agent_files(
+            adapter.workdir, dirty_before, start.head_before,
+            fix.engine._records(adapter),
+        )
+        start = fix.engine._note(
+            adapter, start, CheckpointPhase.AGENT_RUNNING,
+            answers=collected, blobs=blobs, batches=origin + n,
+            max_turns=max((b.max_turns for b in results), default=0),
+            max_budget=max((b.max_budget for b in results), default=0.0),
+            exit_code=max((b.exit_code for b in results), default=0),
+            stop=next((b.stop for b in results if b.stop is not None), None),
+        )
     return results, start, len(batched)
 
 

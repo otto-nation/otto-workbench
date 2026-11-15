@@ -4855,6 +4855,28 @@ holder dies. A dead holder leaves the request in the inbox for the next
 session's entry drain. Each pass applies or rejects every request it saw, so
 the loop ends.
 
+### batch/target_report.py
+
+What one PR target waits on, as the one-entry sessions document a run session reads.
+
+`report(state, worktree)` is `{schema_version, sessions}` with at most one entry,
+in `batch.session_report.SessionEntry`'s shape, so the reader of a batch report
+reads it unchanged. It is read from the target's saved `pr` state only,
+through `pr.needs_person`:
+
+- threads that need a person (`threads_need_human`; each thread's id, outcome
+  and summary in `data.threads`, and the ids in `detail`);
+- the latest stored CI run's failing jobs (`ci_failing`; `data.jobs`, and the
+  commit in `detail`);
+- an owed closeout (`closeout_owed`).
+
+Each finding carries its `pr.needs_person.next_command` on the worktree. With
+no worktree there are no commands, and a note says so. Threads are settled one
+at a time with `pr comments --settle`, which a note names with its verdicts.
+An entry's `state` is `needs_session`, the batch item status the session
+counts as waiting. No state, no PR number, or nothing found is an empty
+`sessions`. `FINDING_KEYS` is every finding key this report can show.
+
 ### batch/targets.py
 
 Which `pr` target each batch item is, so a run can hold their locks and hand each child its own.

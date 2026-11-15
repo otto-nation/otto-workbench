@@ -162,7 +162,7 @@ def _session(run: Run, item: Item, closeout: CloseoutFn, tree: TreeFn | None) ->
     if planned is not None:
         _apply_plan(findings, planned)
     after = _after(run, item)
-    severity = _severity(findings)
+    severity = severity_for(findings)
     checkout = _checkout(item)
     commands = _commands(item, findings, planned, checkout)
     notes = _notes(item, commands, checkout)
@@ -220,7 +220,7 @@ def _after(run: Run, item: Item) -> list[str]:
     return [item.stacked_on] if not base.terminal else []
 
 
-def _severity(findings: list[Finding]) -> Severity:
+def severity_for(findings: list[Finding]) -> Severity:
     if not findings:
         return Severity.ACT
     return min((severity_of(f) for f in findings), key=lambda s: _SEV_RANK[s])

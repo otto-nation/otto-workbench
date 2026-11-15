@@ -41,6 +41,7 @@ import git.push
 import git.topology
 import pr.ci_need
 import pr.context
+import pr.needs_person
 import pr.owed_feedback
 import pr.settlement
 import pr.state
@@ -198,7 +199,7 @@ class PlanRow:
 
     @property
     def key(self) -> str:
-        return f"{self.repo}#{self.pr}"
+        return pr.needs_person.pr_key(self.repo, self.pr)
 
     def need_for(self, step: Step, when: RebaseWhen = RebaseWhen.CONFLICTS) -> StepNeed | None:
         """This row's need for *step*, the rebase need judged by *when*."""

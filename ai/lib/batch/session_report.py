@@ -35,13 +35,13 @@ no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
 
 from __future__ import annotations
 
-import shlex
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import batch.plan
 import batch.publish
+import pr.needs_person
 import review.deferred_issue
 import review.finding_issue
 import review.issue
@@ -50,7 +50,7 @@ from batch.findings import CLOSEOUT_WHY, findings_from_decisions
 from batch.model import (Finding, FindingReason, Item, ItemStatus, Run, RunStatus, Severity,
                          severity_of)
 from batch.publish import Refusal, TreeState
-from pr.comments_fix import CLOSEOUT_COMMAND, CloseoutDebt
+from pr.comments_fix import CloseoutDebt
 
 CloseoutFn = Callable[[str, str], CloseoutDebt]
 TreeFn = Callable[[Item], TreeState | None]
@@ -64,7 +64,7 @@ TEAM_NOTE = "otto-workbench config set issues.team TEAM --project"
 # run's state, each with the step it is shown under. One table, so the report
 # and `pr batch note` agree on which findings a session can show.
 DERIVED_STEPS: dict[FindingReason, str] = {
-    FindingReason.CLOSEOUT_OWED: "comments",
+    FindingReason.CLOSEOUT_OWED: pr.needs_person.FINDING_STEPS[pr.needs_person.CLOSEOUT_OWED],
     FindingReason.READY_TO_PUSH: "publish",
     FindingReason.WRONG_BRANCH: "publish",
     FindingReason.PUSH_REFUSED: "publish",
@@ -89,7 +89,6 @@ def _derived(reason: FindingReason, detail: str = "", data: dict | None = None) 
 
 _ACTIVE = frozenset({RunStatus.RUNNING})
 _SEV_RANK = {Severity.BLOCK: 0, Severity.WAIT: 1, Severity.ACT: 2}
-_CLOSEOUT_ARGV = tuple(shlex.split(CLOSEOUT_COMMAND))
 
 
 @dataclass(frozen=True)
@@ -270,10 +269,10 @@ def _command_for(item: Item, finding: Finding, checkout: str | None) -> SessionC
             "rebuild generated files, or declare `rebase.regenerate` and run `pr rebase --no-push`",
             action="rebase_generated",
         )
-    if finding.reason is FindingReason.CI_FAILING and repo:
-        jobs = finding.data.get("jobs") or []
-        why = f"fix failing CI ({', '.join(jobs)})" if jobs else "fix failing CI"
-        return SessionCommand(("pr", "ci", "--fix", *repo), why, action="ci")
+    if finding.reason.value in pr.needs_person.NEXT_REASONS and repo:
+        nxt = pr.needs_person.next_command(finding.reason.value, repo,
+                                           finding.data.get("jobs") or ())
+        return SessionCommand(nxt.argv, nxt.why, action=nxt.action)
     if finding.reason is FindingReason.REVIEW_FINDINGS and repo:
         return SessionCommand(("pr", "review", "--self", "--fix", *repo),
                               "address open review findings", action="review")
@@ -281,11 +280,6 @@ def _command_for(item: Item, finding: Finding, checkout: str | None) -> SessionC
         if git_cmd := _git(item, checkout, "reset", "--hard", item.pre_rebase_head):
             return SessionCommand(git_cmd, "undo the rebase, then regenerate",
                                   action="undo_rebase")
-    if finding.reason is FindingReason.THREADS_NEED_HUMAN and repo:
-        return SessionCommand(("pr", "comments", "--fix", *repo), "address review comments",
-                              action="comments")
-    if finding.reason is FindingReason.CLOSEOUT_OWED and repo:
-        return SessionCommand((*_CLOSEOUT_ARGV, *repo), CLOSEOUT_WHY, action="closeout")
     if finding.reason is FindingReason.WRONG_BRANCH:
         if git_cmd := _git(item, checkout, "switch", item.branch):
             return SessionCommand(git_cmd, f"check out {item.branch}",
@@ -367,9 +361,7 @@ def _checkout(item: Item) -> str | None:
 def _repo_args(item: Item, checkout: str | None) -> tuple[str, ...] | None:
     if checkout is None:
         return None
-    if checkout == item.worktree:
-        return ("--repo-dir", checkout)
-    return ("--repo-dir", checkout, "--branch", item.branch)
+    return pr.needs_person.repo_args(checkout, "" if checkout == item.worktree else item.branch)
 
 
 def _git(item: Item, checkout: str | None, *args: str) -> tuple[str, ...] | None:

@@ -38,9 +38,8 @@ from batch.model import (FINISHED_RUN, Decision, DecisionKind, EvidenceKind, Fin
 from batch.outcomes import FailureReason
 from batch.publish import Refusal
 from rebase.types import ConflictStrategy
+from pr.needs_person import CLOSEOUT_WHY
 from review.types import SEVERITY_MUST, severity_by_key
-
-CLOSEOUT_WHY = "closeout owed per pr state"
 _PUSH_REFUSALS = frozenset(r.value for r in Refusal if r is not Refusal.WRONG_BRANCH)
 _GENERATED = {ConflictStrategy.ACCEPT_THEIRS.value, ConflictStrategy.REGENERATE.value}
 

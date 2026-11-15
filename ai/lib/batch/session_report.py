@@ -46,11 +46,12 @@ import review.deferred_issue
 import review.finding_issue
 import review.issue
 import review.paths
-from batch.findings import CLOSEOUT_WHY, findings_from_decisions
+from batch.findings import findings_from_decisions
 from batch.model import (Finding, FindingReason, Item, ItemStatus, Run, RunStatus, Severity,
                          severity_of)
 from batch.publish import Refusal, TreeState
 from pr.comments_fix import CloseoutDebt
+from pr.needs_person import CLOSEOUT_WHY
 
 CloseoutFn = Callable[[str, str], CloseoutDebt]
 TreeFn = Callable[[Item], TreeState | None]

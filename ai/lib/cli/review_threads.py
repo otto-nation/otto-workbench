@@ -407,9 +407,9 @@ def main(argv: list[str] | None = None) -> int:
         history = (pr.target_events.NO_HISTORY if args.reply else
                    pr.target_events.step_history(ctx, trail.invocation,
                                                  pr.needs_person.STEP_COMMENTS))
-        history.started()
         code = None
         try:
+            history.started()
             code = _run_locked(trail, args, ctx, route, body)
             return code
         except Exception as exc:

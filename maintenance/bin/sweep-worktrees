@@ -18,6 +18,10 @@
 #
 # Env:
 #   WT_CLEANUP_BIN  — override the wt-cleanup path (default: $_WB/bin/wt-cleanup)
+#
+# Stdout:
+#   repos=<N> removed=<M> dirty=<D> failed=<K>
+#   dirty is merged worktrees still holding uncommitted changes.
 
 set -e
 
@@ -29,7 +33,8 @@ Sweep merged worktrees in every registered repo. One wt-cleanup --quiet
 --count per repo, from the default-branch worktree of a bare container
 when that checkout exists, otherwise from the registered leader.
 
-Prints one line on stdout: repos=<N> removed=<M> failed=<K>
+Prints one line on stdout: repos=<N> removed=<M> dirty=<D> failed=<K>
+(dirty = merged worktrees still holding uncommitted changes).
 Warnings go to stderr. Always exits 0.
 
 Env:
@@ -73,6 +78,7 @@ _sweep_dir() {
 # sweep runs in, and the count is per repo rather than per worktree.
 repos=0
 removed_total=0
+dirty_total=0
 failed=0
 line=""
 # shellcheck disable=SC2034
@@ -82,12 +88,18 @@ dir=""
 out=""
 rc=0
 removed=0
+dirty=0
 while IFS= read -r line; do
   _split_repo_worktree_line "$line" id leader
   [[ -n "$leader" ]] || continue
   dir="$(_sweep_dir "$leader")"
   repos=$((repos + 1))
   rc=0
+  # ceiling: the per-repo sweep has no time limit because wt-cleanup runs
+  # `wt remove`, a git write that must not be killed mid-write, so one hung
+  # repo can hold the cycle and its heavy queue slot. Upgrade trigger: if a
+  # sweep is observed holding the queue slot for over an hour, bound it with
+  # coreutils `timeout <seconds>` (SIGTERM first) per repo.
   # wt-cleanup stays unbounded: it runs `wt remove`, an UNBOUNDED-class git
   # write. Same reason otto-workbench-maintenance leaves the post-sync steps
   # unbounded (the block that used to call wt-cleanup inline).
@@ -98,13 +110,20 @@ while IFS= read -r line; do
     continue
   fi
   removed=0
+  dirty=0
   if [[ "$out" == *removed=* ]]; then
     removed="${out#*removed=}"
     removed="${removed%%[!0-9]*}"
     [[ -n "$removed" ]] || removed=0
   fi
+  if [[ "$out" == *dirty_merged=* ]]; then
+    dirty="${out#*dirty_merged=}"
+    dirty="${dirty%%[!0-9]*}"
+    [[ -n "$dirty" ]] || dirty=0
+  fi
   removed_total=$((removed_total + removed))
+  dirty_total=$((dirty_total + dirty))
 done < <(project_repo_leaders)
 
-printf 'repos=%s removed=%s failed=%s\n' "$repos" "$removed_total" "$failed"
+printf 'repos=%s removed=%s dirty=%s failed=%s\n' "$repos" "$removed_total" "$dirty_total" "$failed"
 exit 0

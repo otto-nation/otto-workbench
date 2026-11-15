@@ -335,7 +335,7 @@ maintenance_cleanup_record() {
   [[ -z "$json" ]] || wb_write_json_file "$MAINTENANCE_CLEANUP_FILE" "$json" || true
 
   blob="$sweep_line $prune_line"
-  repos=0 removed=0 pressure=""
+  repos=0 removed=0 dirty=0 pressure=""
   if [[ "$blob" == *repos=* ]]; then
     repos="${blob##*repos=}"
     repos="${repos%% *}"
@@ -343,6 +343,10 @@ maintenance_cleanup_record() {
   if [[ "$blob" == *removed=* ]]; then
     removed="${blob##*removed=}"
     removed="${removed%% *}"
+  fi
+  if [[ "$blob" == *dirty=* ]]; then
+    dirty="${blob##*dirty=}"
+    dirty="${dirty%% *}"
   fi
   if [[ "$blob" == *pressure=* ]]; then
     pressure="${blob##*pressure=}"
@@ -352,7 +356,7 @@ maintenance_cleanup_record() {
   # A missing otto-log must not fail the cycle.
   "$WORKBENCH_DIR/ai/bin/otto-log" record \
     --script maintenance --action cleanup --detail "$summary" \
-    --data "repos=$repos" --data "removed=$removed" --data "pressure=$pressure" \
+    --data "repos=$repos" --data "removed=$removed" --data "dirty=$dirty" --data "pressure=$pressure" \
     > /dev/null || true
 
   echo "$summary"

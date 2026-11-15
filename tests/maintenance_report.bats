@@ -23,7 +23,7 @@ setup() {
   . "$REPO_ROOT/lib/maintenance.sh"
 
   STUB_BIN="$TEST_HOME/.local/bin"
-  SWEEP_LINE="repos=2 removed=3 failed=0"
+  SWEEP_LINE="repos=2 removed=3 dirty=1 failed=0"
   PRUNE_LINE="pressure=yes disk_pct=91 go=1.2GB(pressure) mise=0.0GB(pressure) docker=off"
   SUMMARY="Cleanup: $SWEEP_LINE $PRUNE_LINE"
 }
@@ -71,6 +71,7 @@ hits = [e for e in events if e.get("action") == "cleanup"]
 assert hits, events
 data = hits[0].get("data") or {}
 assert data.get("removed") == 3, data
+assert data.get("dirty") == 1, data
 assert data.get("pressure") == "yes", data
 ' <<< "$output"
 }
@@ -99,7 +100,7 @@ events = [json.loads(line) for line in sys.stdin if line.strip()]
 hits = [e for e in events if e.get("action") == "cleanup"]
 assert hits, events
 data = hits[0].get("data") or {}
-for k in ("repos", "removed"):
+for k in ("repos", "removed", "dirty"):
     assert str(data.get(k, 0)).isdigit(), data
 ' <<< "$output"
 }

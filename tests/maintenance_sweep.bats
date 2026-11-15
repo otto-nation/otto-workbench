@@ -28,8 +28,9 @@ teardown() {
 
 # _stub_wt_cleanup — records "$PWD" per call, prints a count line, and exits 3
 # when PWD matches FAIL_IN. STUB_NO_COUNT suppresses the count line.
+# STUB_NO_DIRTY prints removed= without a dirty_merged token.
 _stub_wt_cleanup() {
-  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$PWD" >> "%s"\nif [[ -n "${FAIL_IN:-}" && "$PWD" == "$FAIL_IN" ]]; then\n  exit 3\nfi\nif [[ -n "${STUB_NO_COUNT:-}" ]]; then\n  exit 0\nfi\nprintf "removed=%%s dirty_merged=0\\n" "${STUB_REMOVED:-1}"\n' \
+  printf '#!/usr/bin/env bash\nprintf "%%s\\n" "$PWD" >> "%s"\nif [[ -n "${FAIL_IN:-}" && "$PWD" == "$FAIL_IN" ]]; then\n  exit 3\nfi\nif [[ -n "${STUB_NO_COUNT:-}" ]]; then\n  exit 0\nfi\nif [[ -n "${STUB_NO_DIRTY:-}" ]]; then\n  printf "removed=%%s\\n" "${STUB_REMOVED:-1}"\n  exit 0\nfi\nprintf "removed=%%s dirty_merged=%%s\\n" "${STUB_REMOVED:-1}" "${STUB_DIRTY:-0}"\n' \
     "$SWEEP_LOG" > "$STUB_BIN/wt-cleanup"
   chmod +x "$STUB_BIN/wt-cleanup"
 }
@@ -46,7 +47,9 @@ _run_sweep() {
     WT_CLEANUP_BIN="$STUB_BIN/wt-cleanup" \
     FAIL_IN="${FAIL_IN:-}" \
     STUB_REMOVED="${STUB_REMOVED:-}" \
+    STUB_DIRTY="${STUB_DIRTY:-}" \
     STUB_NO_COUNT="${STUB_NO_COUNT:-}" \
+    STUB_NO_DIRTY="${STUB_NO_DIRTY:-}" \
     bash -c "cd / && '$SCRIPT'"
 }
 
@@ -63,7 +66,7 @@ _run_sweep() {
 
   _run_sweep
   [ "$status" -eq 0 ]
-  [ "$output" = "repos=2 removed=2 failed=0" ]
+  [ "$output" = "repos=2 removed=2 dirty=0 failed=0" ]
   [ "$(wc -l < "$SWEEP_LOG" | tr -d ' ')" = "2" ]
   grep -qx "$repo_a" "$SWEEP_LOG"
   grep -qx "$repo_b" "$SWEEP_LOG"
@@ -79,7 +82,7 @@ _run_sweep() {
   _run_sweep
   [ "$status" -eq 0 ]
   [[ "$output" == *"WARNING: wt-cleanup failed in"* ]]
-  [[ "$output" == *"repos=2 removed=1 failed=1"* ]]
+  [[ "$output" == *"repos=2 removed=1 dirty=0 failed=1"* ]]
   [ "$(wc -l < "$SWEEP_LOG" | tr -d ' ')" = "2" ]
 }
 
@@ -96,14 +99,14 @@ _run_sweep() {
 
   _run_sweep
   [ "$status" -eq 0 ]
-  [ "$output" = "repos=1 removed=1 failed=0" ]
+  [ "$output" = "repos=1 removed=1 dirty=0 failed=0" ]
   [ "$(cat "$SWEEP_LOG")" = "$container/main" ]
 }
 
 @test "an empty registry visits nothing" {
   _run_sweep
   [ "$status" -eq 0 ]
-  [ "$output" = "repos=0 removed=0 failed=0" ]
+  [ "$output" = "repos=0 removed=0 dirty=0 failed=0" ]
   [ ! -f "$SWEEP_LOG" ]
 }
 
@@ -113,7 +116,26 @@ _run_sweep() {
 
   _run_sweep
   [ "$status" -eq 0 ]
-  [ "$output" = "repos=1 removed=0 failed=0" ]
+  [ "$output" = "repos=1 removed=0 dirty=0 failed=0" ]
   [ "$(wc -l < "$SWEEP_LOG" | tr -d ' ')" = "1" ]
+}
+
+@test "dirty_merged counts sum across repos" {
+  gate_repo a >/dev/null
+  gate_repo b >/dev/null
+  STUB_DIRTY=2
+
+  _run_sweep
+  [ "$status" -eq 0 ]
+  [ "$output" = "repos=2 removed=2 dirty=4 failed=0" ]
+}
+
+@test "a missing dirty_merged token is counted as zero" {
+  gate_repo a >/dev/null
+  STUB_NO_DIRTY=1
+
+  _run_sweep
+  [ "$status" -eq 0 ]
+  [ "$output" = "repos=1 removed=1 dirty=0 failed=0" ]
 }
 

@@ -119,9 +119,9 @@ RUNS_JS
     const host = fakeCx();
     b.init({}, host.cx);
     await host.settle();
-    out([b.workflows.featuresOf(null), b.workflows.featuresOf('elsewhere')]);"
+    out([JSON.stringify(b.workflows.featuresOf(null)) === JSON.stringify(doc.features), b.workflows.featuresOf('elsewhere')]);"
   [ "$status" -eq 0 ]
-  [ "$output" = '[["review-publish","batch-session"],null]' ]
+  [ "$output" = '[true,null]' ]
 }
 
 @test "run session: the run row and the Needs-you card both draw sessionControl, labelled Open session" {

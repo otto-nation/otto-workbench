@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for maintenance/bin/prune-caches — Go build cache and mise installs.
+# Tests for maintenance/bin/prune-caches — Go build cache, mise installs, Docker images.
 #
 # select-on: maintenance/bin/prune-caches lib/constants.sh ai/lib/config/workbench_config.py
 
@@ -77,6 +77,23 @@ EOF
   chmod +x "$STUB_BIN/mise"
 }
 
+_stub_docker() {
+  cat > "$STUB_BIN/docker" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$CALLS"
+if [[ "\$1" == context && "\$2" == inspect ]]; then
+  printf 'unix://%s\n' "$TEST_HOME/docker.sock"
+  exit 0
+fi
+if [[ "\$1" == image ]]; then
+  printf 'Total reclaimed space: 1.5GB\n'
+  exit 0
+fi
+exit 1
+EOF
+  chmod +x "$STUB_BIN/docker"
+}
+
 _write_config() {
   mkdir -p "$WORKBENCH_CONFIG_DIR"
   printf '%s\n' "$1" > "$WORKBENCH_CONFIG_DIR/config.yml"
@@ -95,6 +112,7 @@ _run_prune() {
     MISE_DATA_DIR="$TEST_HOME/mise" \
     CALLS="$CALLS" \
     STUB_DF_PCT="${STUB_DF_PCT:-50}" \
+    DOCKER_HOST="${DOCKER_HOST:-}" \
     bash -c "cd / && '$SCRIPT'"
 }
 
@@ -177,4 +195,50 @@ assert hits, events
 freed = hits[0].get("data", {}).get("bytes_freed")
 assert isinstance(freed, (int, float)), freed
 ' <<< "$output"
+}
+
+@test "docker and mise enabled with both tools absent report mise=absent docker=absent" {
+  _write_config $'maintenance:\n  prune:\n    docker: true\n    mise: true\n'
+
+  _run_prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"mise=absent"* ]]
+  [[ "$output" == *"docker=absent"* ]]
+}
+
+@test "defaults with a docker stub present leave docker=off and do not call it" {
+  _stub_docker
+
+  _run_prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"docker=off"* ]]
+  [ ! -f "$CALLS" ]
+}
+
+@test "docker true on an owned unix socket prunes images without --volumes" {
+  _stub_docker
+  python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$TEST_HOME/docker.sock"
+  _write_config $'maintenance:\n  prune:\n    docker: true\n'
+
+  _run_prune
+  [ "$status" -eq 0 ]
+  grep -qx -- 'image prune -a -f --filter until=168h' "$CALLS"
+  ! grep -q -- '--volumes' "$CALLS"
+  [[ "$output" == *"docker=1.4GB"* ]]
+}
+
+@test "docker true with DOCKER_HOST pointing at a regular file is not-own" {
+  _stub_docker
+  printf x > "$TEST_HOME/not-a-socket"
+  export DOCKER_HOST="unix://$TEST_HOME/not-a-socket"
+  _write_config $'maintenance:\n  prune:\n    docker: true\n'
+
+  _run_prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"docker=not-own"* ]]
+  [ ! -f "$CALLS" ]
+}
+
+@test "docker ownership check uses -O on the socket" {
+  grep -q -- '-O "$sock"' "$SCRIPT"
 }

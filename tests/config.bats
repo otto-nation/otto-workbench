@@ -172,6 +172,11 @@ print(workbench_config.$1, end='')
 @test "the config keys bash reads match ai/lib/config/workbench_config.py" {
   [ "$GITHUB_SSH_443_CONFIG_KEY" = "$(resolve_python GITHUB_SSH_443_KEY)" ]
   [ "$ISSUE_PROVIDER_CONFIG_KEY" = "$(resolve_python ISSUE_PROVIDER_KEY)" ]
+  [ "$MAINTENANCE_PRUNE_GO_CACHE_CONFIG_KEY" = "$(resolve_python MAINTENANCE_PRUNE_GO_CACHE_KEY)" ]
+  [ "$MAINTENANCE_PRUNE_GO_CACHE_GB_CONFIG_KEY" = "$(resolve_python MAINTENANCE_PRUNE_GO_CACHE_GB_KEY)" ]
+  [ "$MAINTENANCE_PRUNE_MISE_CONFIG_KEY" = "$(resolve_python MAINTENANCE_PRUNE_MISE_KEY)" ]
+  [ "$MAINTENANCE_PRUNE_DOCKER_CONFIG_KEY" = "$(resolve_python MAINTENANCE_PRUNE_DOCKER_KEY)" ]
+  [ "$MAINTENANCE_DISK_PCT_CONFIG_KEY" = "$(resolve_python MAINTENANCE_DISK_PCT_KEY)" ]
 }
 
 @test "the scope name bash matches on is the one the resolver prints" {

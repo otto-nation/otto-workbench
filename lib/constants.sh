@@ -151,6 +151,11 @@ WORKBENCH_CONFIG_HEADER="# yaml-language-server: \$schema=$WORKBENCH_CONFIG_SCHE
 # tests/config.bats fails when a pair drifts.
 GITHUB_SSH_443_CONFIG_KEY="github.ssh_over_443"
 ISSUE_PROVIDER_CONFIG_KEY="issues.provider"
+MAINTENANCE_PRUNE_GO_CACHE_CONFIG_KEY="maintenance.prune.go_cache"
+MAINTENANCE_PRUNE_GO_CACHE_GB_CONFIG_KEY="maintenance.prune.go_cache_gb"
+MAINTENANCE_PRUNE_MISE_CONFIG_KEY="maintenance.prune.mise"
+MAINTENANCE_PRUNE_DOCKER_CONFIG_KEY="maintenance.prune.docker"
+MAINTENANCE_DISK_PCT_CONFIG_KEY="maintenance.disk_pct"
 
 # The name `otto-workbench config get` prints for the machine-wide scope. A
 # report over other people's repos distinguishes an answer a repo gave from one

@@ -350,6 +350,31 @@
           "type": "number"
         }
       }
+    },
+    "maintenance": {
+      "type": "object",
+      "properties": {
+        "prune": {
+          "type": "object",
+          "properties": {
+            "go_cache": {
+              "type": "boolean"
+            },
+            "go_cache_gb": {
+              "type": "integer"
+            },
+            "mise": {
+              "type": "boolean"
+            },
+            "docker": {
+              "type": "boolean"
+            }
+          }
+        },
+        "disk_pct": {
+          "type": "integer"
+        }
+      }
     }
   }
 }

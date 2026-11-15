@@ -137,6 +137,15 @@ def test_a_repo_with_no_config_resolves_to_the_default(capsys, repo):
     assert records == [(config.workbench_config.DEFAULT_SCOPE, "", str(repo))]
 
 
+def test_a_bool_default_is_spelled_lowercase_false(capsys, repo):
+    """Bash-visible bools are lowercase true/false, never Python True/False."""
+    code, records = _run(
+        capsys, config.workbench_config.MAINTENANCE_PRUNE_MISE_KEY, str(repo),
+    )
+    assert code == 0
+    assert records == [(config.workbench_config.DEFAULT_SCOPE, "false", str(repo))]
+
+
 def test_a_directory_that_is_gone_resolves_to_the_default(capsys, tmp_path):
     absent = tmp_path / "never-existed"
     code, records = _run(capsys, KEY, str(absent))

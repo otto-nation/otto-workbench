@@ -213,6 +213,11 @@ Every key any of them accepts:
 | `batch.mem_reserve` | string | `2G` |
 | `batch.cpu_pressure_max` | number | `30.0` |
 | `batch.mem_pressure_max` | number | `5.0` |
+| `maintenance.prune.go_cache` | boolean | `true` |
+| `maintenance.prune.go_cache_gb` | integer | `15` |
+| `maintenance.prune.mise` | boolean | `false` |
+| `maintenance.prune.docker` | boolean | `false` |
+| `maintenance.disk_pct` | integer | `85` |
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `comments_plan`, `comments_implement`, `comments_escalate`, `ci_fix`, `ci_verify`, `rebase`, `prepush_fix`, `describe`, `create`
 
@@ -229,6 +234,16 @@ Every key any of them accepts:
 `github.owners` may only be written at global scope: it decides which repositories an agent may post to, and a repo's .workbench.yml is read by everyone who clones it — an upstream clone could otherwise declare itself ours.
 
 `github.ssh_over_443` may only be written at global scope: it describes the network this machine is on, never the repo, and a repo's .workbench.yml is read by everyone who clones it.
+
+`maintenance.disk_pct` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
+
+`maintenance.prune.docker` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
+
+`maintenance.prune.go_cache` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
+
+`maintenance.prune.go_cache_gb` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
+
+`maintenance.prune.mise` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
 
 `wiki.root` may only be written at global scope: it is an absolute path on this machine, which means nothing on any other, and a repo's .workbench.yml is read by everyone who clones it.
 

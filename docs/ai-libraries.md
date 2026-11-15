@@ -4026,6 +4026,32 @@ replays it — belong to `git.replay` at layer 2, so the rebase subsystem that
 causes these rewrites can reach the same answers. What is here is the part that
 knows about a `PRState` and a `FixRecord`.
 
+### pr/needs_person.py
+
+What on one PR needs a person: the reasons, the readers over saved state, the next commands.
+
+Shared by `pr batch`'s report and the one-PR target report, so neither
+re-derives the other's answer. Everything here reads saved `pr` state; nothing
+fetches.
+
+- The reason strings `threads_need_human`, `ci_failing` and `closeout_owed`,
+  and the steps they are shown under (`FINDING_STEPS`: `comments`, `ci`).
+  `batch.model.FindingReason` and `batch.model.Step` take their values from
+  these, so a finding key `<reason>:<step>` is spelled once.
+- `owed_threads(state)`: the comment pass's outcomes still owed, exactly
+  `pr.settlement.UNSETTLED_OUTCOMES` (deferred, needs_human, declined). A
+  declined thread is owed: the pass handed it to a person, and
+  `pr comments --finish --post` refuses the summary until it is answered.
+  Synthetic `ic-`/`rb-` ids are marked not replyable.
+- `failing_ci(ci)`: the failing jobs of the latest stored CI run and the commit
+  it ran on, or None when it recorded none.
+- `next_command(reason, repo, jobs)`: the command that acts on a reason —
+  `pr ci --fix`, `pr comments --fix`, or the bare closeout command — with the
+  `repo_args(repo_dir, branch)` it was given appended: `--repo-dir` an
+  absolute checkout, `--branch` only when that checkout is not the branch's
+  worktree. No `cd`.
+- `pr_key(repo, number)`: `owner/repo#N`, how every report and history names a PR.
+
 ### pr/review_sync.py
 
 The only writer of the review domain.
@@ -4318,6 +4344,22 @@ code, not an invitation to rebuild the path elsewhere: this module is the owner,
 and another repo that wants to know what has been reviewed asks the CLI (see
 ``review.listing``) rather than deriving where a review would sit.
 
+### pr/target_events.py
+
+The history of one PR target: `<target-dir>/events.jsonl`.
+
+`pr comments` and `pr ci` (`cli.review_threads.main`, `cli.ci_check.main`,
+which the `pr batch` CI and comments steps also run) file a `step_started` and
+a `step_finished` (`step` `comments` or `ci`, `status` `done` or `failed`,
+`exit_code`, None when the command raised) for every run that reaches its
+trail, so hand runs, herdr runs and batch steps land in one history. The target
+note command files a `decision`. The envelope is `core.run_events.record`'s;
+`run` is the writing command's trail invocation and `item` the PR key
+(`pr.needs_person.pr_key`). A branch with no PR files nothing, and neither does
+a target directory that does not exist: the target lock creates it, and a
+history never resurrects a pruned target. An append that fails warns once per
+target on stderr and never fails the command.
+
 ## Batch
 
 Running rebase, CI fixes, comments and self-review across many open PRs at once: admission, scheduling, step processes, publishing, and the decisions a run waits on.
@@ -4386,7 +4428,7 @@ The state file is authoritative; events only save a consumer from polling it.
 Every event `emit` prints is also appended, as the identical JSON line, to the
 run's `events.jsonl` through `core.run_events`. That history is what a run
 session shows; nothing reads it to decide what a run does. An append that fails
-warns once per run on stderr and never fails the run. An event naming no run
+warns once per run on stderr and never fails the run (`core.run_events.append_or_warn`). An event naming no run
 (`item_skipped_held`, printed before the run exists) is printed only.
 `run_summary`'s `run` is the run view, filed under its `id`.
 
@@ -4399,6 +4441,7 @@ warns once per run on stderr and never fails the run. An event naming no run
 `decision` is an operator verdict `pr batch note` appends to the history (`item`,
 `finding` as `<reason>:<step>`, `verdict`, `reason`, `commands`); it is never
 printed by a run and changes no item state. The latest per (`item`, `finding`) wins.
+`latest_decisions` is `core.run_events.latest_decisions`.
 
 ### batch/findings.py
 
@@ -4811,6 +4854,60 @@ request reported queued is applied by that holder or a successor, unless the
 holder dies. A dead holder leaves the request in the inbox for the next
 session's entry drain. Each pass applies or rejects every request it saw, so
 the loop ends.
+
+### batch/target_report.py
+
+What one PR target waits on, as the one-entry sessions document a run session reads.
+
+`report(state, worktree)` is `{schema_version, sessions}` with at most one entry,
+in `batch.session_report.SessionEntry`'s shape, so the reader of a batch report
+reads it unchanged. It is read from the target's saved `pr` state only,
+through `pr.needs_person`:
+
+- threads that need a person (`threads_need_human`; each thread's id, outcome
+  and summary in `data.threads`, and the ids in `detail`);
+- the latest stored CI run's failing jobs (`ci_failing`; `data.jobs`, and the
+  commit in `detail`);
+- an owed closeout (`closeout_owed`).
+
+Each finding carries its `pr.needs_person.next_command` on the worktree. With
+no worktree there are no commands, and a note says so. Threads are settled one
+at a time with `pr comments --settle`, which a note names with its verdicts.
+An entry's `state` is `needs_session`, the batch item status the session
+counts as waiting. No state, no PR number, or nothing found is an empty
+`sessions`. `FINDING_KEYS` is every finding key this report can show.
+
+### batch/target_session.py
+
+How to open one PR target's pi session, and the operator decisions recorded in it.
+
+`session_id(target_dir)` is `target-` plus the first 16 hex characters of the
+SHA-256 of the target directory's name (`<repo-key>-<branch-slug>`). It has a
+fixed length, is the same in every process and on every machine, and is always
+a valid pi session id. The directory name itself is not one: its slug can be
+empty or end in `_`, and it can run past pi's id budget.
+
+`recipe(ctx)` is the one owner of a target session's identity:
+
+- that id;
+- the name `target <repo> <branch>`;
+- the branch's worktree as the working directory;
+- argv `pi --session-id ID --name NAME`;
+- env carrying the target directory (`WORKBENCH_TARGET_DIR`) and the expected
+  session id (`WORKBENCH_SESSION_ID`), so nothing downstream re-derives either.
+
+A branch with no worktree has no target session and raises
+`TargetSessionError`.
+
+`note(...)` appends one `decision` event (`item`, `finding` as
+`<reason>:<step>`, `verdict`, `reason`, `commands`; `run` is the writing
+command's trail invocation) to the target's `events.jsonl`. Before it does, it
+checks that the PR is the target's, that the finding is one the target report
+can show (`batch.target_report.FINDING_KEYS`), and that the reason is not
+empty. It changes nothing else: a thread is settled with
+`pr comments --settle`, and a PR stops waiting only when the report stops
+deriving its finding. The latest note per (item, finding) wins
+(`core.run_events.latest_decisions`).
 
 ### batch/targets.py
 
@@ -6721,20 +6818,23 @@ it lives here rather than being spelled out again in each binary that reports.
 
 ### core/run_events.py
 
-The append-only history of one run: `<run-dir>/events.jsonl`.
+The append-only history of one run or one PR target: `<dir>/events.jsonl`.
 
-The only Python that opens the file. Each line is one JSON object; its caller
-builds the envelope (`schema_version`, `kind`, `at`, `run`, then the event's own
-fields), and `append` requires only a string `kind`. A history is a record of
-what happened, never state: nothing reads it to decide what a run does next.
+The only Python that opens the file. Each line is one JSON object built by
+`record`: `schema_version`, `kind`, `at` (`now_iso`, the UTC second), then the
+event's own fields. A history is a record of what happened, never state:
+nothing reads it to decide what a run does next.
 
-`append` writes the whole line with one `O_APPEND` write, so a run's driver and
-a `pr batch note` appending beside it never interleave inside a line. It never
-creates the run directory, so an append racing a reap fails instead of
-resurrecting a deleted run. `read` returns the parsed events in file order and
-counts what it skipped: a torn line, a line that is not a JSON object, or one
-with no string `kind`. An unknown `kind` is returned like any other, so a
-history written by a newer build still reads.
+`append` writes the whole line with one `O_APPEND` write, so writers appending
+side by side never interleave inside a line. It never creates the directory,
+so an append racing a reap fails instead of resurrecting a deleted run.
+`append_or_warn` is the policy every command writer uses: an append that fails
+warns once per key on stderr and never fails the caller, whose own state stays
+authoritative. `read` returns the parsed events in file order and counts what
+it skipped: a torn line, a line that is not a JSON object, or one with no
+string `kind`. An unknown `kind` is returned like any other, so a history
+written by a newer build still reads. `latest_decisions` is the last
+`decision` per (`item`, `finding`): the latest operator verdict wins.
 
 ### core/run_lock.py
 
@@ -9458,6 +9558,18 @@ Exit codes, remote writes and examples are `CONTRACT` below, rendered into
 `pr stack`: the repo's open PRs as a stack graph, as versioned JSON.
 
 Exit codes, remote writes and examples are `CONTRACT` below.
+
+### cli/pr_target.py
+
+`pr target`: one PR target's session — what it waits on, how to open it, and verdicts in it.
+
+    pr target report     the target's report: a one-entry sessions document (JSON)
+    pr target session [--json]   open the target's pi session in its worktree (--json prints how)
+    pr target note PR --finding R:S --verdict V --reason TEXT   record a verdict in the target's history
+
+The target is the branch `pr` resolves with git alone (the global `--repo-dir`
+/ `--branch`). Nothing here asks GitHub, takes a lock, or writes outside the
+target's history. What the report holds is `batch.target_report`.
 
 ### cli/promote_scan.py
 

@@ -12,11 +12,13 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+import pr.needs_person
+
 
 class Step(StrEnum):
     REBASE = "rebase"
-    CI = "ci"
-    COMMENTS = "comments"
+    CI = pr.needs_person.STEP_CI
+    COMMENTS = pr.needs_person.STEP_COMMENTS
     REVIEW = "review"
 
 
@@ -115,10 +117,10 @@ class FindingReason(StrEnum):
     WORKTREE_COLLISION = "worktree_collision"
     DIRTY_WORKTREE = "dirty_worktree"
     WRONG_BRANCH = "wrong_branch"
-    CI_FAILING = "ci_failing"
+    CI_FAILING = pr.needs_person.CI_FAILING
     REVIEW_FINDINGS = "review_findings"
-    THREADS_NEED_HUMAN = "threads_need_human"
-    CLOSEOUT_OWED = "closeout_owed"
+    THREADS_NEED_HUMAN = pr.needs_person.THREADS_NEED_HUMAN
+    CLOSEOUT_OWED = pr.needs_person.CLOSEOUT_OWED
     READY_TO_PUSH = "ready_to_push"
     PUSH_REFUSED = "push_refused"
     BUDGET_EXHAUSTED = "budget_exhausted"

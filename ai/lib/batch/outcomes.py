@@ -41,6 +41,7 @@ import git.client
 import git.regenerate
 import pr.ci_report
 import pr.fix
+import pr.needs_person
 import pr.settlement
 import pr.state
 import pr.target
@@ -63,9 +64,6 @@ _PROVIDER_LIMIT_PHRASES = (
 )
 # The steps that run a fix engine: they commit, and they leave Fix-Checks trailers.
 _FIXING_STEPS = (Step.REVIEW, Step.CI, Step.COMMENTS)
-_OWED = (pr.fix.FixOutcome.NEEDS_HUMAN, pr.fix.FixOutcome.DEFERRED)
-_SYNTHETIC_ID = re.compile(r"^(ic|rb)-\d+-\d+$")
-
 # How many trailing log lines a failure keeps: the scheduler's live tail and a
 # failed publish's payload both cut to this.
 LOG_TAIL_LINES = 40
@@ -303,11 +301,7 @@ def _load_pr_state(item: Item):
 
 def comment_items(item: Item) -> list[dict]:
     state = _load_pr_state(item)
-    if state is None:
-        return []
-    return [{"id": i.id, "outcome": i.outcome.value, "summary": i.summary, "reason": i.reason,
-             "file": i.file, "line": i.line, "replyable": not _SYNTHETIC_ID.match(i.id)}
-            for i in state.fix.fix.items if i.outcome in _OWED]
+    return pr.needs_person.owed_threads(state) if state is not None else []
 
 
 def open_findings(item: Item) -> list[dict]:

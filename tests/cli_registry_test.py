@@ -48,7 +48,7 @@ CREATE = pr.context.WorktreeNeed.CREATE
 def test_the_registry_names_every_subcommand():
     assert set(COMMANDS) == {"create", "status", "ci", "review", "comments",
                              "fix", "rebase", "push", "describe", "stack", "board", "models",
-                             "batch", "gc"}
+                             "batch", "target", "gc"}
 
 
 def test_no_command_is_declared_twice():
@@ -84,7 +84,7 @@ def test_the_delegating_commands_name_their_script():
 
 
 def test_the_internal_commands_name_no_script():
-    for name in ("create", "status", "fix", "gc", "push", "stack", "board", "models"):
+    for name in ("create", "status", "fix", "gc", "push", "stack", "board", "models", "target"):
         assert COMMANDS[name].script is None, name
 
 
@@ -103,7 +103,7 @@ def test_a_script_is_a_name_and_not_a_path():
 def test_only_create_takes_no_target():
     """`takes_target` replaced a hand-maintained set; the membership is the same."""
     assert {name for name, spec in COMMANDS.items() if not spec.takes_target} \
-        == {"create", "batch", "board", "models"}
+        == {"create", "batch", "board", "models", "target"}
 
 
 # ── handler paths ─────────────────────────────────────────────────────────
@@ -132,6 +132,7 @@ _HANDLERS = {
     "board":    "cli.pr_board:cmd_board",
     "models":   "cli.pr_models:cmd_models",
     "batch":    "cli.pr_batch:cmd_batch",
+    "target":   "cli.pr_target:cmd_target",
     "gc":       "cli.pr_commands:cmd_gc",
 }
 
@@ -167,7 +168,7 @@ def test_the_registry_is_the_only_list_of_subcommands():
 # reordering would change.
 _DISPLAY_ORDER = ["create", "status", "ci", "review", "comments",
                   "fix", "rebase", "push", "describe", "stack", "board", "models",
-                  "batch", "gc"]
+                  "batch", "target", "gc"]
 
 
 def test_the_declaration_order_is_the_display_order():
@@ -594,8 +595,9 @@ def test_no_cli_module_installs_a_signal_handler():
     assert offenders == [], offenders
 
 
-def test_only_batch_parses_its_own_argv():
+def test_only_the_subcommand_groups_parse_their_own_argv():
     own = {n: s for n, s in COMMANDS.items() if s.parses_own_argv}
-    assert set(own) == {"batch"}
+    assert set(own) == {"batch", "target"}
     assert own["batch"].parser == "cli.pr_batch:build_parser"
+    assert own["target"].parser == "cli.pr_target:build_parser"
     assert all(s.parser is None for s in COMMANDS.values() if not s.parses_own_argv)

@@ -486,6 +486,7 @@ class Trail:
         self._debug = debug
         self._start_ns = start_ns
         self._record = record
+        self._finished = False
         # Named per artifact rather than per action: one invocation fails more
         # than once — a refused push, the commit that tries to fix it, the retry
         # — and the action alone would have them overwrite each other. `next` on
@@ -723,6 +724,14 @@ class Trail:
             Level.INFO, EventType.SUMMARY, action, detail, data=data, context=context))
 
     def finish(self) -> None:
+        """Record the invocation's summary, once.
+
+        A second call is a no-op: a caller that finishes the trail before an exec that never
+        returns still has its own finally run when the exec fails.
+        """
+        if self._finished:
+            return
+        self._finished = True
         elapsed_ms = (time.monotonic_ns() - self._start_ns) // NS_PER_MS
         self._emit(self._make_event(
             Level.INFO, EventType.SUMMARY, FINISH_ACTION, "", duration_ms=elapsed_ms))

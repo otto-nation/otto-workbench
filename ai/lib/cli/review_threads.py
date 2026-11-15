@@ -48,7 +48,9 @@ import fix.resume
 import pr.comments_fix
 import pr.context
 import pr.fix_checkpoint
+import pr.needs_person
 import pr.settlement
+import pr.target_events
 import pr.thread_replies
 from pr.fix import FixOutcome
 import review.closeout
@@ -399,10 +401,19 @@ def main(argv: list[str] | None = None) -> int:
             context={"repo": repo, "pr": pr_number, "branch": branch},
             debug=args.debug,
         )
-
+        # After Trail.start, so only the process doing the work files it: a
+        # queued `pr comments --fix` parent returns at `pr`'s gate before this
+        # main runs. A --reply reaching here answers a review body, not a step.
+        history = (pr.target_events.NO_HISTORY if args.reply else
+                   pr.target_events.step_history(ctx, trail.invocation,
+                                                 pr.needs_person.STEP_COMMENTS))
+        code = None
         try:
-            return _run_locked(trail, args, ctx, route, body)
+            history.started()
+            code = _run_locked(trail, args, ctx, route, body)
+            return code
         except Exception as exc:
             cli.boundary.reraise(trail, exc)
         finally:
+            history.finished(code)
             trail.finish()

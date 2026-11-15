@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+from collections.abc import Callable
 
 import batch.run_session
 import batch.store
@@ -42,24 +43,31 @@ def cmd_session(args) -> int:
     if args.json:
         core.report.emit_json(recipe.to_dict())
         return int(ExitCode.OK)
-    return _exec(recipe)
+    return exec_recipe(recipe, cli.pr_batch_common.fail)
 
 
-def _exec(recipe: batch.run_session.SessionRecipe) -> int:
+def _nothing() -> None:
+    return None
+
+
+def exec_recipe(recipe: batch.run_session.SessionRecipe, fail: Callable[[str], int],
+                before_exec: Callable[[], None] = _nothing) -> int:
+    """Start *recipe*'s pi in its cwd, replacing this process; *fail* reports why it could not."""
     if not os.path.isdir(recipe.cwd):
-        return cli.pr_batch_common.fail(f"checkout {recipe.cwd} does not exist")
+        return fail(f"checkout {recipe.cwd} does not exist")
     sys.stdout.flush()
     sys.stderr.flush()
     os.chdir(recipe.cwd)
+    # exec never returns to the caller's finally, so a caller holding a trail
+    # finishes it here; `pr batch` records none and passes nothing.
+    before_exec()
     try:
-        # Replaces this process. `pr` records no trail for batch (it resolves
-        # nothing and holds no lock), so nothing is left unfinished by not returning.
         os.execvpe(recipe.argv[0], list(recipe.argv), {**os.environ, **recipe.env})
     except OSError as exc:
-        return cli.pr_batch_common.fail(f"could not start {recipe.argv[0]}: {exc}")
+        return fail(f"could not start {recipe.argv[0]}: {exc}")
 
 
-def _finding(text: str) -> str:
+def finding_arg(text: str) -> str:
     reason, sep, step = text.partition(":")
     if not (reason and sep and step):
         raise argparse.ArgumentTypeError(f"--finding wants REASON:STEP, got {text!r}")
@@ -71,7 +79,7 @@ def add_note_parser(sub) -> None:
                                     "changes no item state")
     n.add_argument("run_id", help="Run holding the PR")
     n.add_argument("pr", help="Item key owner/repo#N, or a PR number unique in the run")
-    n.add_argument("--finding", type=_finding, required=True, metavar="REASON:STEP",
+    n.add_argument("--finding", type=finding_arg, required=True, metavar="REASON:STEP",
                    help="The finding as the report names it: its reason and step")
     n.add_argument("--verdict", choices=[v.value for v in Verdict], required=True,
                    help="What was decided")

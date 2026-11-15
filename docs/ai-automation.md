@@ -1350,7 +1350,7 @@ The PR board document (JSON). Requires the global --schema-version (the versions
 - `pr --schema-version 1 board --checkout ~/git/o/r/main --phase listing` — print the listing document
 - `pr --schema-version 1 board --checkout ~/git/o/r/main --phase status --prs 12,15` — status for named PRs
 
-> Writes nothing remotely. --schema-version is a global flag. complete is false for status --prs and owed (clients merge by (repo, number)). Clients hide a row whose effective team lane is landed. The full document carries features (this build's pr capabilities a board consumer drives; currently review-publish and batch-session).
+> Writes nothing remotely. --schema-version is a global flag. complete is false for status --prs and owed (clients merge by (repo, number)). Clients hide a row whose effective team lane is landed. The full document carries features (this build's pr capabilities a board consumer drives; currently review-publish, batch-session and target-session).
 
 #### pr models contract
 
@@ -1404,6 +1404,28 @@ Rebase, CI, comments and (opt-in) self-review across my open PRs. A default run 
 
 > Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > Batch declares NO_LOCK; 75 is not an exit. LockBusy on an item is exit 1 (fail), not TEMPFAIL. A default run never opens a decision.
+
+#### pr target contract
+
+One PR target's session: report prints what it waits on (JSON); session opens its pi session. Reads saved state only; --repo-dir/--branch are the global flags.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | a document printed |  |
+| `1` | no origin to key the target on; session: no worktree holds the branch, or pi could not start; note: the history could not be written |  |
+| `2` | bad flags, or a note naming a PR or finding this target does not have, or an empty reason |  |
+
+**Examples**
+
+- `pr target report` — what this branch's PR waits on, and the commands that act on it
+- `pr target session` — open this branch's target session in its worktree
+- `pr target note 7 --finding ci_failing:ci --verdict deferred --reason 'flaky runner'` — record a verdict; changes no state
+
+> Writes nothing remotely. report prints {schema_version, sessions} with at most one entry, in pr batch report's sessions shape.
 
 #### pr gc contract
 
@@ -1629,7 +1651,7 @@ Items end `done` or `needs_session` with `findings` (`batch/findings.py`). A
 stored waiting v1 run converts on `resume` (one-way). Report keys: `run` (`id`,
 `status`, `active`, `exit_hint`, `hint`, `pending_requests`, `failed_requests`),
 `counts`, `items` (non-terminal), `github`, `sessions` (`pr batch report` only).
-`resume` replays `--focus`. `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`, and each is also appended to the run's `events.jsonl` ([`core/run_events.py`](ai-libraries.md#corerun_eventspy)). `pr batch session RUN_ID` opens the run's pi session in its checkout (`--json` prints how, for UIs), and `pr batch note` records an operator verdict there as a `decision` event without changing item state ([`batch/run_session.py`](ai-libraries.md#batchrun_sessionpy)). Inside that session the `run-session` Pi extension shows the run's history and report and records verdicts through `pr batch note` ([extensions README](../ai/pi/extensions/README.md#run-session)).
+`resume` replays `--focus`. `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`, and each is also appended to the run's `events.jsonl` ([`core/run_events.py`](ai-libraries.md#corerun_eventspy)). `pr batch session RUN_ID` opens the run's pi session in its checkout (`--json` prints how, for UIs), and `pr batch note` records an operator verdict there as a `decision` event without changing item state ([`batch/run_session.py`](ai-libraries.md#batchrun_sessionpy)). Inside that session the `run-session` Pi extension shows the run's history and report and records verdicts through `pr batch note` ([extensions README](../ai/pi/extensions/README.md#run-session)). `pr comments` and `pr ci` (and so batch's comments and CI steps) also append `step_started`/`step_finished` to their target's `events.jsonl` ([`pr/target_events.py`](ai-libraries.md#prtarget_eventspy)); for one PR without a run, `pr target report` prints what it waits on, `pr target session` opens its pi session in the branch's worktree, and `pr target note` records a verdict there ([`batch/target_session.py`](ai-libraries.md#batchtarget_sessionpy)).
 `github` is omitted under `--offline`; keys and checkout rules are in [`batch/live.py`](ai-libraries.md#batchlivepy). Step output stays in the run's `logs/`. AI steps (review, comments, rebase/CI under `--with-ai`) start within `batch.pool_max` (2) and each wait on their own otto-queue ticket (`pr batch · <step> · <repo>#<n>`); a waiter shows `items[].wait_reason` and an `admission_wait` event, stays `running`, and a plain `pr batch cancel` (no `--kill`) SIGTERMs it. `--pool` still caps every live step, waiters included. Plain steps are still admitted by [`batch/machine.py`](ai-libraries.md#batchmachinepy) against `batch.pool_default` (1) without host metrics, plus `batch.mem_reserve`, `batch.cpu_pressure_max`, `batch.mem_pressure_max`. State lives under `~/.local/state/workbench/batch/<run-id>/`; `pr gc` removes finished runs and orphaned `refs/pr-batch/` namespaces ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
 
 ### pr status

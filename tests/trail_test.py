@@ -110,6 +110,16 @@ class TestTrailRoot:
         Trail.start(script="test-script", context={"repo": "org/repo"}).finish()
         assert core.workbench_paths.trail_dir().is_dir()
 
+    def test_finish_is_recorded_once_however_often_it_is_called(self):
+        trail = Trail.start(script="test-script", context={})
+        trail.finish()
+        trail.finish()
+        events = [json.loads(line) for p in core.workbench_paths.trail_dir().glob("*.jsonl")
+                  for line in p.read_text().splitlines()]
+        finishes = [e for e in events if e["invocation"] == trail.invocation
+                    and e["action"] == FINISH_ACTION]
+        assert len(finishes) == 1
+
     def test_events_land_in_this_months_file(self):
         trail = Trail.start(script="test-script", context={})
         trail.info("fetch", "fetched")

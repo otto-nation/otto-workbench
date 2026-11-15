@@ -1157,6 +1157,26 @@ Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [con
 | `--reason` `<reason>` | Why, in a sentence; must not be empty. Required. |
 | `--command` `<cmd>` | A command run to act on it, as typed; repeatable. |
 
+**`pr target report`** — Print what this target waits on (JSON), read offline
+
+Takes no flags.
+
+**`pr target session`** — Open this target's pi session, or print how to (--json)
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Print {schema_version, session_id, name, cwd, argv, env} instead of starting pi; UIs open the session from this, never their own argv. |
+
+**`pr target note`** — Record a verdict on one finding in the target's history; changes no state
+
+| Flag | Description |
+|------|-------------|
+| `<pr>` | The target's PR: owner/repo#N or N. |
+| `--finding` `<reason:step>` | The finding as the report names it. Required. |
+| `--verdict` `<fixed\|dismissed\|deferred\|handed_off>` | What was decided. Required. |
+| `--reason` `<reason>` | Why, in a sentence; must not be empty. Required. |
+| `--command` `<cmd>` | A command run to act on it, as typed; repeatable. |
+
 **`pr gc`** — Clean up stale PR artifacts
 
 Takes no flags.

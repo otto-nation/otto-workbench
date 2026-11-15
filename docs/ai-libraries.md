@@ -4344,6 +4344,22 @@ code, not an invitation to rebuild the path elsewhere: this module is the owner,
 and another repo that wants to know what has been reviewed asks the CLI (see
 ``review.listing``) rather than deriving where a review would sit.
 
+### pr/target_events.py
+
+The history of one PR target: `<target-dir>/events.jsonl`.
+
+`pr comments` and `pr ci` (`cli.review_threads.main`, `cli.ci_check.main`,
+which the `pr batch` CI and comments steps also run) file a `step_started` and
+a `step_finished` (`step` `comments` or `ci`, `status` `done` or `failed`,
+`exit_code`, None when the command raised) for every run that reaches its
+trail, so hand runs, herdr runs and batch steps land in one history. The target
+note command files a `decision`. The envelope is `core.run_events.record`'s;
+`run` is the writing command's trail invocation and `item` the PR key
+(`pr.needs_person.pr_key`). A branch with no PR files nothing, and neither does
+a target directory that does not exist: the target lock creates it, and a
+history never resurrects a pruned target. An append that fails warns once per
+target on stderr and never fails the command.
+
 ## Batch
 
 Running rebase, CI fixes, comments and self-review across many open PRs at once: admission, scheduling, step processes, publishing, and the decisions a run waits on.

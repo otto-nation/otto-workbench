@@ -34,6 +34,8 @@ import pr.ci_check
 import pr.ci_runs
 import pr.context
 import pr.domains
+import pr.needs_person
+import pr.target_events
 import rebase.ci_fix
 
 _FIX_POST_HOW = (
@@ -216,19 +218,27 @@ def main(argv: list[str] | None = None, *,
             context={"repo": ctx.repo, "pr": ctx.pr_number, "branch": ctx.branch},
             debug=args.debug,
         )
+        # After the queue gate and Trail.start, so only the process doing the
+        # work files it: a waiting parent returned at the gate above.
+        history = pr.target_events.step_history(ctx, trail.invocation, pr.needs_person.STEP_CI)
+        history.started()
+        code = None
         try:
             report = pr.ci_check.run_ci_wait(trail, args, ctx) if args.wait else pr.ci_check.run_ci(trail, args, ctx)
-            return rebase.ci_fix.run_fix(
+            code = rebase.ci_fix.run_fix(
                 trail, report, ctx,
                 rebase_first=not args.no_rebase, verify=not args.no_verify,
                 wait_timeout=args.wait_timeout, wait_interval=args.wait_interval,
             ) if args.fix else 0
+            return code
         except pr.ci_runs.RunUnavailable as exc:
             # Expected: there is no run to report on. Trailed where it was raised,
             # so it is the exit code that is left to decide.
             core.log.error(str(exc))
-            return 1
+            code = 1
+            return code
         except Exception as exc:
             cli.boundary.reraise(trail, exc)
         finally:
+            history.finished(code)
             trail.finish()

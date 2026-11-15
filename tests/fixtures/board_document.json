@@ -515,7 +515,8 @@
   ],
   "features": [
     "review-publish",
-    "batch-session"
+    "batch-session",
+    "target-session"
   ],
   "stamp": ""
 }

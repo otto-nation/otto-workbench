@@ -60,8 +60,11 @@ SSH_KNOWN_HOSTS_FILE="$SSH_DIR/known_hosts"
 LOCAL_BIN_DIR="$HOME/.local/bin"
 # Where mise puts the shims for the tools it manages — resolved the way mise
 # itself resolves its data dir: MISE_DATA_DIR, else $XDG_DATA_HOME/mise, else
-# ~/.local/share/mise.
-MISE_SHIMS_DIR="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims"
+# ~/.local/share/mise. MISE_SHIMS_DIR keeps the same value it had when it
+# inlined this expression; MISE_INSTALLS_DIR is the tree `mise prune` drains.
+MISE_DATA_ROOT="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}"
+MISE_SHIMS_DIR="$MISE_DATA_ROOT/shims"
+MISE_INSTALLS_DIR="$MISE_DATA_ROOT/installs"
 # mise's own installer, which puts the binary in ~/.local/bin. Used by the mise
 # component and by the package installer when a machine has neither installer.
 MISE_INSTALL_URL="https://mise.run"

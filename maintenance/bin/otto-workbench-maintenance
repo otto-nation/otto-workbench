@@ -130,6 +130,9 @@ log "Sweeping merged worktrees in every registered repo"
 sweep_result="$("$MAIN_WORKTREE/maintenance/bin/sweep-worktrees")" || sweep_result=""
 log "Worktree sweep: ${sweep_result:-failed}"
 
+prune_result="$("$MAIN_WORKTREE/maintenance/bin/prune-caches")" || prune_result=""
+log "Cache prune: ${prune_result:-failed}"
+
 # Unlike the two blocks above, which run scripts out of the repo itself, `pr`
 # is a symlink the ai/claude component installs. Components install
 # independently, so its absence is a machine that never asked for it — a skip,

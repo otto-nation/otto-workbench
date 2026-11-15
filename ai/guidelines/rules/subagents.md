@@ -43,6 +43,11 @@ and test specifics live with their owners (pointers below).
   work uncommitted in the worktree; the retry, told to inspect `git diff` and
   finish, completed it. Brief a continuation with what is already done and what is
   missing. Revisit when the stall timeout or the model changes
+- A dispatch that fails with an empty `Subagent failed:` message is the service,
+  not the task, once a trivial no-tools probe fails the same way. Observed 2026-11
+  (grok through pi's `subagent` tool): three failures in a row, the last a
+  one-word probe, with the worktree left clean each time. Stop retrying, do a
+  small item directly, and revisit when the model or provider changes
 - Never put a bare coreutils `timeout` around a long `pr review --self --fix`: a
   3000s bound killed one mid-fix, and a rerun was owed. Start it with `job_start`
   under Pi (`run_in_background` under Claude Code; see `general.md`) and a
@@ -110,6 +115,12 @@ and test specifics live with their owners (pointers below).
   controller's runs were green every time and the validator exits 0 when run
   directly. Re-run it where you stand before chasing it, and tell the child not
   to edit anything to make it pass
+- A child's own checks are not the push gate's. Observed 2026-11 (grok through
+  pi's `subagent` tool): children wrote `.bats` suites and ran shellcheck only on
+  the scripts, so the pre-push hook later refused the push over a bare `! grep`
+  that Bats never fails on (SC2314, an assertion that could not fail) and unused
+  variables read by a shared helper. Tell a child that writes shell tests to run
+  `shellcheck --severity=warning` over every `.bats` file it adds
 - After any subagent history rewrite (fold, rebase, squash), check
   `git diff --stat origin/main...HEAD` (three dots) and expect only the
   branch's own files: a subagent's `reset --soft origin/main` produced a

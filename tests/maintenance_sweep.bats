@@ -138,4 +138,3 @@ _run_sweep() {
   [ "$status" -eq 0 ]
   [ "$output" = "repos=1 removed=1 dirty=0 failed=0" ]
 }
-

@@ -32,6 +32,7 @@ import pr.domains  # noqa: E402
 import pr.state  # noqa: E402
 import review.gc  # noqa: E402
 import cli.pr_batch  # noqa: E402
+import cli.pr_target  # noqa: E402
 import cli.review_modes  # noqa: E402
 import core.tool_parser  # noqa: E402
 import pr.context  # noqa: E402
@@ -415,7 +416,7 @@ def test_main_reports_contention_and_exits_75(mock_resolve, worktree, capsys):
 _RESOLVES_LOCALLY = {
     "create": False, "status": True, "ci": False, "review": False,
     "comments": False, "fix": False, "rebase": False, "push": True, "describe": False,
-    "stack": True, "board": False, "models": False, "batch": False, "gc": False,
+    "stack": True, "board": False, "models": False, "batch": False, "target": True, "gc": False,
 }
 
 # Which commands fetch and fast-forward the worktree first. The old
@@ -424,7 +425,7 @@ _RESOLVES_LOCALLY = {
 _FETCHES = {
     "create": False, "status": False, "ci": True, "review": True,
     "comments": True, "fix": True, "rebase": False, "push": False, "describe": True,
-    "stack": False, "board": False, "models": False, "batch": False, "gc": False,
+    "stack": False, "board": False, "models": False, "batch": False, "target": False, "gc": False,
 }
 
 # Which bare invocations may create a worktree. Flag variants that flip this
@@ -433,7 +434,7 @@ _FETCHES = {
 _CREATES_WORKTREE = {
     "create": False, "status": False, "ci": False, "review": False,
     "comments": False, "fix": True, "rebase": True, "push": False, "describe": False,
-    "stack": False, "board": False, "models": False, "batch": False, "gc": False,
+    "stack": False, "board": False, "models": False, "batch": False, "target": False, "gc": False,
 }
 
 
@@ -519,16 +520,19 @@ _DECLARED_LOCKS = {
     ("batch", ("session", "r")): _NO,
     ("batch", ("note", "r", "o/r#1", "--finding", "f:s", "--verdict", "fixed", "--reason", "x")): _NO,
     ("batch", ("plan", "--checkout", "/r")): _NO,
+    ("target", ("report",)): _NO,
     ("gc", ()): _T,
 }
 
 
-def test_the_lock_table_covers_every_command_mode_and_batch_subcommand():
+def test_the_lock_table_covers_every_command_mode_and_subcommand():
     assert {name for name, _ in _DECLARED_LOCKS} == set(cli.registry.COMMANDS)
     review_flags = {a for name, argv in _DECLARED_LOCKS if name == "review" for a in argv}
     assert set(cli.review_modes.MODES) <= review_flags
     batch_subs = {argv[0] for name, argv in _DECLARED_LOCKS if name == "batch" and argv}
     assert batch_subs == set(core.tool_parser.subparsers(cli.pr_batch.build_parser()))
+    target_subs = {argv[0] for name, argv in _DECLARED_LOCKS if name == "target" and argv}
+    assert target_subs == set(core.tool_parser.subparsers(cli.pr_target.build_parser()))
 
 
 @pytest.mark.parametrize("command,argv", sorted(_DECLARED_LOCKS))

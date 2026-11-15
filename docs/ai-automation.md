@@ -1405,6 +1405,26 @@ Rebase, CI, comments and (opt-in) self-review across my open PRs. A default run 
 > Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > Batch declares NO_LOCK; 75 is not an exit. LockBusy on an item is exit 1 (fail), not TEMPFAIL. A default run never opens a decision.
 
+#### pr target contract
+
+One PR target's session: report prints what it waits on (JSON). Reads saved state only; --repo-dir/--branch are the global flags.
+
+**Writes remotely:** nothing.
+
+**Exit codes**
+
+| Code | Meaning | Next |
+|---|---|---|
+| `0` | a document printed |  |
+| `1` | no origin to key the target on |  |
+| `2` | bad flags |  |
+
+**Examples**
+
+- `pr target report` — what this branch's PR waits on, and the commands that act on it
+
+> Writes nothing remotely. report prints {schema_version, sessions} with at most one entry, in pr batch report's sessions shape.
+
 #### pr gc contract
 
 Deletes stale review and PR-state artifacts on this machine. Reads GitHub (gh pr list/view) whether each PR ended; never writes to GitHub. Deletes local artifacts only.

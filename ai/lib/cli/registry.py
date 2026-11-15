@@ -215,6 +215,15 @@ _SPECS: tuple[CommandSpec, ...] = (
                 handler="cli.pr_batch:cmd_batch", parses_own_argv=True,
                 parser="cli.pr_batch:build_parser",
                 contract="cli.pr_batch:CONTRACT"),
+    # One PR target's session. Reads the target's saved state with git alone
+    # and holds no lock: report and session only read, and note appends one
+    # line to the target's history with a single O_APPEND write.
+    CommandSpec("target",   "One PR target's session: report, session, note",
+                Need(LOCAL, update=False, locks=NO_LOCK), takes_target=False,
+                queue=None,
+                handler="cli.pr_target:cmd_target", parses_own_argv=True,
+                parser="cli.pr_target:build_parser",
+                contract="cli.pr_target:CONTRACT"),
     CommandSpec("gc",       "Clean up stale PR artifacts",
                 Need(REMOTE, update=False, locks=TARGET_ONLY), queue=None,
                 handler="cli.pr_commands:cmd_gc",

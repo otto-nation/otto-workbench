@@ -9559,6 +9559,16 @@ Exit codes, remote writes and examples are `CONTRACT` below, rendered into
 
 Exit codes, remote writes and examples are `CONTRACT` below.
 
+### cli/pr_target.py
+
+`pr target`: one PR target's session — what it waits on, how to open it, and verdicts in it.
+
+    pr target report     the target's report: a one-entry sessions document (JSON)
+
+The target is the branch `pr` resolves with git alone (the global `--repo-dir`
+/ `--branch`). Nothing here asks GitHub, takes a lock, or writes outside the
+target's history. What the report holds is `batch.target_report`.
+
 ### cli/promote_scan.py
 
 Scan memories and workbench artifacts for promotion evaluation.

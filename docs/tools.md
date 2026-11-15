@@ -1155,6 +1155,10 @@ Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [con
 | `--reason` `<reason>` | Why, in a sentence; must not be empty. Required. |
 | `--command` `<cmd>` | A command run to act on it, as typed; repeatable. |
 
+**`pr target report`** — Print what this target waits on (JSON), read offline
+
+Takes no flags.
+
 **`pr gc`** — Clean up stale PR artifacts
 
 Takes no flags.

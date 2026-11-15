@@ -76,6 +76,7 @@ _CLASS_CASES = (
     ("board", [], None),
     ("models", [], None),
     ("batch", [], None),
+    ("target", [], None),
     ("gc", [], None),
 )
 

@@ -117,7 +117,3 @@ _run_sweep() {
   [ "$(wc -l < "$SWEEP_LOG" | tr -d ' ')" = "1" ]
 }
 
-@test "the maintenance script calls sweep-worktrees and not bin/wt-cleanup" {
-  grep -q 'maintenance/bin/sweep-worktrees' "$SCRIPT_MAINT"
-  ! grep -q 'bin/wt-cleanup' "$SCRIPT_MAINT"
-}

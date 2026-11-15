@@ -58,7 +58,7 @@ One REST request per branch, against the `core` hourly budget. An aliased
 GraphQL query would answer every branch for a single point, which is cheaper
 on paper and worse here: `gh pr view`, `gh pr list` and every read the review
 pipeline makes spend the *graphql* budget, and this runs unattended on every
-session exit. It has been observed asking its question with graphql exhausted
+maintenance cycle, once per registered repo. It has been observed asking its question with graphql exhausted
 and core almost untouched, where the batch returns no answer at all — and no
 answer means a squash-merged worktree is kept forever, since git alone cannot
 see that merge. Nothing else in `bin/` or `lib/` spends core.
@@ -213,6 +213,11 @@ Every key any of them accepts:
 | `batch.mem_reserve` | string | `2G` |
 | `batch.cpu_pressure_max` | number | `30.0` |
 | `batch.mem_pressure_max` | number | `5.0` |
+| `maintenance.prune.go_cache` | boolean | `true` |
+| `maintenance.prune.go_cache_gb` | integer | `15` |
+| `maintenance.prune.mise` | boolean | `false` |
+| `maintenance.prune.docker` | boolean | `false` |
+| `maintenance.disk_pct` | integer | `85` |
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `comments_plan`, `comments_implement`, `comments_escalate`, `ci_fix`, `ci_verify`, `rebase`, `prepush_fix`, `describe`, `create`
 
@@ -229,6 +234,8 @@ Every key any of them accepts:
 `github.owners` may only be written at global scope: it decides which repositories an agent may post to, and a repo's .workbench.yml is read by everyone who clones it — an upstream clone could otherwise declare itself ours.
 
 `github.ssh_over_443` may only be written at global scope: it describes the network this machine is on, never the repo, and a repo's .workbench.yml is read by everyone who clones it.
+
+`maintenance.disk_pct`, `maintenance.prune.docker`, `maintenance.prune.go_cache`, `maintenance.prune.go_cache_gb` and `maintenance.prune.mise` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
 
 `wiki.root` may only be written at global scope: it is an absolute path on this machine, which means nothing on any other, and a repo's .workbench.yml is read by everyone who clones it.
 
@@ -563,14 +570,20 @@ Sourced by the top-level `install.sh` and by `bin/otto-workbench`. Requires
 ### maintenance.sh
 
 Maintenance scheduling on both platforms — launchd agent on macOS, systemd
-user timer on Linux.
+user timer on Linux. Records each cleanup cycle and prints it from
+`maintenance status`.
 
-Sourced by `bin/otto-workbench`; `lib/discover.sh` reads its globals
-(`_MAINTENANCE_*`, `_SYSTEMD_*`, `_format_interval`).
+Callers must load lib/config.sh (`wb_write_json_file`, `wb_config_get`) and
+lib/portable.sh (`fs_used_pct`). `bin/otto-workbench` already loads both
+through `ui.sh`; the maintenance script sources them explicitly.
+`lib/discover.sh` reads its globals (`_MAINTENANCE_*`, `_SYSTEMD_*`,
+`_format_interval`).
 
 | Function | Purpose |
 |----------|---------|
 | `maintenance_refresh_schedule` | re-installs an installed maintenance schedule whose files no longer match what the templates render, keeping its interval. A repo that moved leaves the schedule naming a path that no longer exists, and a template change otherwise reaches a machine only through `maintenance start`. Called by sync. A machine with no schedule installed is left without one, and a plist launchd has not loaded is corrected but not started. Skipped when sync runs inside the launchd job itself: reloading the job would end the run in progress, and a job that is running found its program. Non-fatal: always returns 0. |
+| `maintenance_cleanup_record SWEEP_LINE PRUNE_LINE` | records one cleanup cycle and prints `Cleanup: SWEEP_LINE PRUNE_LINE`. |
+| `maintenance_cleanup_status` | prints home disk use and the last cleanup line. |
 
 ### migrations.sh
 
@@ -708,6 +721,7 @@ file_mode  PATH   # permission bits, octal — e.g. 644
 load_average      # one-minute load average, e.g. 3.72
 iso_to_epoch TS   # ISO 8601 UTC timestamp to epoch seconds
 cpu_count         # CPUs the machine reports, e.g. 18
+fs_used_pct PATH  # used percent of PATH's filesystem, digits only
 ```
 
 Each prints nothing and returns 1 when neither form resolves the value, so
@@ -725,6 +739,7 @@ ts=$(file_mtime "$f") || ts=0
 | `load_average` | the machine's one-minute load average, as the kernel spells it. |
 | `iso_to_epoch TIMESTAMP` | an ISO 8601 UTC timestamp (`2026-09-09T16:15:52Z`) in epoch seconds. |
 | `cpu_count` | how many CPUs the machine reports, as a decimal string. |
+| `fs_used_pct PATH` | used percent of the filesystem PATH sits on, digits only. |
 
 Loaded via `ui.sh`.
 

@@ -60,8 +60,11 @@ SSH_KNOWN_HOSTS_FILE="$SSH_DIR/known_hosts"
 LOCAL_BIN_DIR="$HOME/.local/bin"
 # Where mise puts the shims for the tools it manages — resolved the way mise
 # itself resolves its data dir: MISE_DATA_DIR, else $XDG_DATA_HOME/mise, else
-# ~/.local/share/mise.
-MISE_SHIMS_DIR="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}/shims"
+# ~/.local/share/mise. MISE_SHIMS_DIR keeps the same value it had when it
+# inlined this expression; MISE_INSTALLS_DIR is the tree `mise prune` drains.
+MISE_DATA_ROOT="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}"
+MISE_SHIMS_DIR="$MISE_DATA_ROOT/shims"
+MISE_INSTALLS_DIR="$MISE_DATA_ROOT/installs"
 # mise's own installer, which puts the binary in ~/.local/bin. Used by the mise
 # component and by the package installer when a machine has neither installer.
 MISE_INSTALL_URL="https://mise.run"
@@ -109,6 +112,8 @@ MIGRATIONS_STATE_FILE="$WORKBENCH_STATE_DIR/migrations.applied"
 # Written by maintenance/bin/otto-workbench-maintenance, read by `otto-workbench
 # maintenance status`.
 MAINTENANCE_LAST_FILE="$WORKBENCH_STATE_DIR/maintenance.last"
+# Written by the maintenance script, read by `maintenance status`.
+MAINTENANCE_CLEANUP_FILE="$WORKBENCH_STATE_DIR/maintenance.cleanup.json"
 INSTALLED_STATE_FILE="$WORKBENCH_STATE_DIR/installed.components"
 # State despite the name reading like config: lib/state.sh writes it through
 # state_record and state_set, and it is what installed.components migrated
@@ -151,6 +156,11 @@ WORKBENCH_CONFIG_HEADER="# yaml-language-server: \$schema=$WORKBENCH_CONFIG_SCHE
 # tests/config.bats fails when a pair drifts.
 GITHUB_SSH_443_CONFIG_KEY="github.ssh_over_443"
 ISSUE_PROVIDER_CONFIG_KEY="issues.provider"
+MAINTENANCE_PRUNE_GO_CACHE_CONFIG_KEY="maintenance.prune.go_cache"
+MAINTENANCE_PRUNE_GO_CACHE_GB_CONFIG_KEY="maintenance.prune.go_cache_gb"
+MAINTENANCE_PRUNE_MISE_CONFIG_KEY="maintenance.prune.mise"
+MAINTENANCE_PRUNE_DOCKER_CONFIG_KEY="maintenance.prune.docker"
+MAINTENANCE_DISK_PCT_CONFIG_KEY="maintenance.disk_pct"
 
 # The name `otto-workbench config get` prints for the machine-wide scope. A
 # report over other people's repos distinguishes an answer a repo gave from one

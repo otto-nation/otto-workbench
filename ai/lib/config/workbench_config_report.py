@@ -228,20 +228,31 @@ def _scope_restriction_lines() -> list[str]:
     """The note naming keys that only one scope may hold, or nothing.
 
     Rendered from the same ``scope_rules`` the writer refuses against, so the
-    table cannot promise a scope the write would reject. A column in the key
+    table cannot promise a scope the write would reject. Keys that share both
+    their allowed scopes and their reason are named in one sentence, so a family
+    of keys with one rule does not repeat it once per key. A column in the key
     table would read better and costs more than it is worth here: the rows come
     back as plain tuples, and widening them is a change to every caller of
-    ``_reference_rows`` for something only two keys have.
+    ``_reference_rows`` for a note only a few keys carry.
     """
     rules = scope_rules()
-    if not rules:
-        return []
-    lines = []
+    groups: dict[tuple[str, str], list[str]] = {}
     for key in sorted(rules):
         allowed = ", ".join(sorted(rules[key].allowed))
+        groups.setdefault((allowed, rules[key].reason), []).append(key)
+    lines = []
+    for (allowed, reason), keys in groups.items():
         lines.append("")
-        lines.append(f"`{key}` may only be written at {allowed} scope: {rules[key].reason}.")
+        lines.append(f"{_join_keys(keys)} may only be written at {allowed} scope: {reason}.")
     return lines
+
+
+def _join_keys(keys: list[str]) -> str:
+    """``a``, ``b`` and ``c`` — backticked, in the order given."""
+    ticked = [f"`{key}`" for key in keys]
+    if len(ticked) == 1:
+        return ticked[0]
+    return f"{', '.join(ticked[:-1])} and {ticked[-1]}"
 
 
 @dataclasses.dataclass(frozen=True)

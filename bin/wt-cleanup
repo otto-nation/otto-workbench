@@ -8,7 +8,7 @@
 # says nothing about whether the work landed.
 #
 # ```
-# wt-cleanup [--age <days>] [--no-grace-period] [--dry-run] [--quiet]
+# wt-cleanup [--age <days>] [--no-grace-period] [--dry-run] [--quiet] [--count]
 # ```
 #
 # | Flag | Description | Default |
@@ -16,8 +16,12 @@
 # | `--age <days>` | Also remove worktrees inactive for N+ days | — |
 # | `--no-grace-period` | Skip the 600s grace period (remove immediately) | grace period on |
 # | `--dry-run` | Show what would be removed | — |
-# | `--quiet` | No output (for hooks) | — |
+# | `--quiet` | No output (for unattended callers) | — |
+# | `--count` | Print `removed=N dirty_merged=M` (even with `--quiet`) | — |
 # | `-h`, `--help` | Show help | — |
+#
+# `--count` is not printed when `wt` is absent (the early return); callers treat
+# a missing line as 0.
 #
 # A merged worktree holding uncommitted changes is reported rather than removed,
 # and the question of what counts as a change is asked of the default branch rather
@@ -42,10 +46,8 @@
 # The worktree list comes from `wt list --format json`, whose payload carries a
 # `schema` number. The script reads schema 2 and refuses any other with an error
 # rather than reading fields that may have moved — a mismatch means worktrunk
-# changed the format and `wt-cleanup` needs updating for it. This is deliberately
-# noisy: the bump to schema 2 moved every field the script read, and because the
-# call site swallowed the failure it no-opped silently on every session exit
-# instead of reporting anything.
+# changed the format and `wt-cleanup` needs updating for it. A schema mismatch
+# is reported, not a silent no-op.
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 WORKBENCH_DIR="${WORKBENCH_DIR:-$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)}"
@@ -55,8 +57,7 @@ WORKBENCH_DIR="${WORKBENCH_DIR:-$(git -C "$(dirname "$_SELF")" rev-parse --show-
 GRACE_PERIOD_SECS=600
 # The `wt list --format json` schema this script reads. Worktrunk stamps its
 # payload with a `schema` number; an unrecognised one is refused rather than
-# indexed blindly, because the last bump moved every field this script reads
-# and the failure was a silent no-op on every session stop.
+# indexed blindly. A schema mismatch is reported, not a silent no-op.
 WT_LIST_SCHEMA=2
 CLEANUP_LOG_DIR="${CLEANUP_LOG_DIR:-$WORKBENCH_STATE_DIR/logs}"
 CLEANUP_LOG="${CLEANUP_LOG:-$CLEANUP_LOG_DIR/wt-cleanup.log}"
@@ -92,7 +93,8 @@ Options:
   --age <days>       Also remove worktrees inactive for <days>+ days
   --no-grace-period  Skip the ${GRACE_PERIOD_SECS}s grace period (remove immediately)
   --dry-run          Show what would be removed
-  --quiet            No output (for hooks)
+  --quiet            No output (for unattended callers)
+  --count            Print removed=N dirty_merged=M (even with --quiet)
   -h, --help         Show this help
 EOF
 }
@@ -396,6 +398,7 @@ main() {
 
   dry_run=false
   quiet=false
+  count_report=false
   max_age_days=""
   grace_period=true
 
@@ -403,6 +406,7 @@ main() {
     case "$1" in
       --dry-run)          dry_run=true; shift ;;
       --quiet)            quiet=true; shift ;;
+      --count)            count_report=true; shift ;;
       --age)              max_age_days="$2"; shift 2 ;;
       --no-grace-period)  grace_period=false; shift ;;
       *) echo "Unknown option: $1" >&2; return 1 ;;
@@ -606,6 +610,10 @@ main() {
   done
 
   _log "END removed=$removed dirty_merged=${#dirty_merged_branches[@]}"
+
+  if [[ "$count_report" == "true" ]]; then
+    printf 'removed=%s dirty_merged=%s\n' "$removed" "${#dirty_merged_branches[@]}"
+  fi
 
   if [[ "$quiet" != "true" && "$removed" -eq 0 && ${#dirty_merged_branches[@]} -eq 0 ]]; then
     echo "no stale worktrees"

@@ -300,7 +300,7 @@ The headless session runs the full hook set and reaches its own Stop hook, so `r
 
 The Stop hook only fires under Claude Code, so the same gates are asked again by `maintenance/bin/run-due-auto-tasks` on the 12h maintenance timer — otherwise a machine working in another harness trips nothing. The gates are cooldowns over file mtimes rather than events, so the timer is a true second caller and not an approximation of one. It starts at most one task per cycle, longest cooldown first, as an otto-queue job keyed by task and UTC day — detached, as the Stop hook does, where no worker can be started — and skips silently where Claude Code is not installed.
 
-Additionally, `wt-cleanup --quiet` runs on every session exit to remove stale git worktrees.
+Worktree cleanup is not a session hook: each maintenance cycle runs `wt-cleanup` in every registered repo, then prunes the Go build cache and, when enabled or under disk pressure, mise tool versions and Docker images. `otto-workbench maintenance status` shows the last cycle; see [Execution Flow](execution-flow.md).
 
 ### Manual triggers
 

@@ -456,7 +456,7 @@ no commits newer than that many days; those branches are kept, since inactivity
 says nothing about whether the work landed.
 
 ```
-wt-cleanup [--age <days>] [--no-grace-period] [--dry-run] [--quiet]
+wt-cleanup [--age <days>] [--no-grace-period] [--dry-run] [--quiet] [--count]
 ```
 
 | Flag | Description | Default |
@@ -464,8 +464,12 @@ wt-cleanup [--age <days>] [--no-grace-period] [--dry-run] [--quiet]
 | `--age <days>` | Also remove worktrees inactive for N+ days | — |
 | `--no-grace-period` | Skip the 600s grace period (remove immediately) | grace period on |
 | `--dry-run` | Show what would be removed | — |
-| `--quiet` | No output (for hooks) | — |
+| `--quiet` | No output (for unattended callers) | — |
+| `--count` | Print `removed=N dirty_merged=M` (even with `--quiet`) | — |
 | `-h`, `--help` | Show help | — |
+
+`--count` is not printed when `wt` is absent (the early return); callers treat
+a missing line as 0.
 
 A merged worktree holding uncommitted changes is reported rather than removed,
 and the question of what counts as a change is asked of the default branch rather
@@ -490,10 +494,8 @@ is skipped, merged or not, and so is one the probe could not answer for.
 The worktree list comes from `wt list --format json`, whose payload carries a
 `schema` number. The script reads schema 2 and refuses any other with an error
 rather than reading fields that may have moved — a mismatch means worktrunk
-changed the format and `wt-cleanup` needs updating for it. This is deliberately
-noisy: the bump to schema 2 moved every field the script read, and because the
-call site swallowed the failure it no-opped silently on every session exit
-instead of reporting anything.
+changed the format and `wt-cleanup` needs updating for it. A schema mismatch
+is reported, not a silent no-op.
 
 ### `wt-init`
 

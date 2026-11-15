@@ -1,0 +1,280 @@
+#!/usr/bin/env bash
+# Prune the Go build cache and unused mise installs on the maintenance timer.
+#
+# Usage: prune-caches
+#
+# Called by otto-workbench-maintenance after the worktree sweep. Each step is
+# skipped silently when its tool is absent. Never sudo, never volumes or
+# containers.
+#
+# Steps:
+#   go    go clean -cache when the cache exceeds maintenance.prune.go_cache_gb
+#         (default 15). Off when maintenance.prune.go_cache is false.
+#   mise  mise prune --yes when maintenance.prune.mise is true (default false).
+#   docker docker image prune -a when maintenance.prune.docker is true (default false).
+#
+# Prints one stdout line:
+#   pressure=<yes|no> disk_pct=<n> go=<word> mise=<word> docker=<word>
+# A word is a GB figure like 12.3GB, or one of off|absent|below|failed|not-own.
+# Logs go to stderr. Exit 0 unless the script itself is broken — a failing
+# step is a word, not an exit.
+#
+# Env:
+#   HOME, PATH, WORKBENCH_CONFIG_DIR, WORKBENCH_STATE_DIR, MISE_DATA_DIR
+#
+# Exit codes:
+#   0  Always, when the script ran.
+
+set -e
+
+usage() {
+  cat <<EOF
+Usage: prune-caches
+
+Prune the Go build cache and unused mise installs. Called by
+otto-workbench-maintenance on the timer.
+
+Every step is skipped silently when its tool is absent. Never sudo, never
+volumes or containers.
+
+Prints one line on stdout:
+  pressure=<yes|no> disk_pct=<n> go=<word> mise=<word> docker=<word>
+A word is a GB figure like 12.3GB, or one of off|absent|below|failed|not-own.
+Warnings go to stderr. Always exits 0 unless the script itself is broken.
+
+Env:
+  HOME, PATH, WORKBENCH_CONFIG_DIR, WORKBENCH_STATE_DIR, MISE_DATA_DIR
+EOF
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+
+WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=../../lib/constants.sh
+. "$WORKBENCH_DIR/lib/constants.sh"
+# shellcheck source=../../lib/config.sh
+. "$WORKBENCH_DIR/lib/config.sh"
+# shellcheck source=../../lib/portable.sh
+. "$WORKBENCH_DIR/lib/portable.sh"
+
+# PATH is the maintenance script's: this is a child of
+# otto-workbench-maintenance, which already sourced zsh/env.sh. Sourcing it
+# again would re-order PATH under a timer that already set it.
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2; }
+
+# _cfg KEY DEFAULT — machine-wide config only. A repo's .workbench.yml must
+# not steer machine-wide cleanup, so the read runs from / where project and
+# container scopes never apply.
+_cfg() {
+  local value
+  value="$(
+    cd /
+    wb_config_get "$1" "$2"
+  )"
+  printf '%s' "$value"
+  return 0
+}
+
+# _size_kb DIR — du -sk, or 0 when DIR is absent.
+_size_kb() {
+  local kb
+  kb="$(du -sk "$1" 2>/dev/null | awk '{print $1}')" || true
+  printf '%s' "${kb:-0}"
+  return 0
+}
+
+# _gb KB — one-decimal GB figure, including the unit.
+_gb() {
+  awk -v kb="$1" 'BEGIN { printf "%.1fGB", kb / 1024 / 1024 }'
+}
+
+# _record STEP KB — trail the bytes this step freed. Non-fatal: the cache
+# work already ran, and a missing otto-log must not turn that into `failed`.
+_record() {
+  "$WORKBENCH_DIR/ai/bin/otto-log" record \
+    --script maintenance \
+    --action "prune-$1" \
+    --data "bytes_freed=$(( $2 * 1024 ))" \
+    --data "pressure=$pressure" \
+    > /dev/null \
+    || log "WARNING: could not record prune-$1 to the trail"
+  return 0
+}
+
+# _prune_go NAME — result word in the nameref NAME.
+_prune_go() {
+  local -n __out=$1
+  local enabled gb cache before after threshold_kb freed
+
+  enabled="$(_cfg "$MAINTENANCE_PRUNE_GO_CACHE_CONFIG_KEY" true)"
+  if [[ "$enabled" != true && "$pressure" != yes ]]; then
+    __out=off
+    return 0
+  fi
+
+  if ! command -v go >/dev/null 2>&1; then
+    __out=absent
+    return 0
+  fi
+
+  cache="$(go env GOCACHE 2>/dev/null)" || cache=""
+  if [[ -z "$cache" ]]; then
+    __out=failed
+    return 0
+  fi
+  before="$(_size_kb "$cache")"
+  gb="$(_cfg "$MAINTENANCE_PRUNE_GO_CACHE_GB_CONFIG_KEY" 15)"
+  [[ "$gb" =~ ^[0-9]+$ ]] || gb=15
+  threshold_kb=$((gb * 1024 * 1024))
+  if [[ "$pressure" == yes ]]; then
+    threshold_kb=0
+  fi
+  if (( before <= threshold_kb )); then
+    __out=below
+    return 0
+  fi
+
+  if ! wb_run_bounded --tier REFRESH -- go clean -cache; then
+    __out=failed
+    return 0
+  fi
+
+  after="$(_size_kb "$cache")"
+  freed=$((before - after))
+  if (( freed < 0 )); then
+    freed=0
+  fi
+  _record go "$freed"
+  __out="$(_gb "$freed")"
+  return 0
+}
+
+# _prune_mise NAME — result word in the nameref NAME.
+_prune_mise() {
+  local -n __out=$1
+  local enabled before after freed
+
+  enabled="$(_cfg "$MAINTENANCE_PRUNE_MISE_CONFIG_KEY" false)"
+  if [[ "$enabled" != true && "$pressure" != yes ]]; then
+    __out=off
+    return 0
+  fi
+
+  if ! command -v mise >/dev/null 2>&1; then
+    __out=absent
+    return 0
+  fi
+
+  before="$(_size_kb "$MISE_INSTALLS_DIR")"
+  if ! wb_run_bounded --tier REFRESH -- mise prune --yes; then
+    __out=failed
+    return 0
+  fi
+
+  after="$(_size_kb "$MISE_INSTALLS_DIR")"
+  freed=$((before - after))
+  if (( freed < 0 )); then
+    freed=0
+  fi
+  _record mise "$freed"
+  __out="$(_gb "$freed")"
+  return 0
+}
+
+# ceiling: a daemon reached over tcp:// is skipped even when it is the user's own. Upgrade trigger: if a machine's own daemon is only reachable over tcp://.
+_docker_socket_is_own() {
+  local endpoint sock
+  if [[ -n "${DOCKER_HOST:-}" ]]; then
+    endpoint="$DOCKER_HOST"
+  else
+    endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}')" || return 1
+  fi
+  [[ "$endpoint" == unix://* ]] || return 1
+  sock="${endpoint#unix://}"
+  if [[ -S "$sock" && -O "$sock" ]]; then
+    return 0
+  fi
+  return 1
+}
+
+# _prune_docker NAME — result word in the nameref NAME.
+_prune_docker() {
+  local -n __out=$1
+  local enabled out kb
+
+  enabled="$(_cfg "$MAINTENANCE_PRUNE_DOCKER_CONFIG_KEY" false)"
+  if [[ "$enabled" != true && "$pressure" != yes ]]; then
+    __out=off
+    return 0
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    __out=absent
+    return 0
+  fi
+
+  if ! _docker_socket_is_own; then
+    __out=not-own
+    return 0
+  fi
+
+  if ! out="$(wb_run_bounded --tier TRANSFER --relay -- docker image prune -a -f --filter until=168h 2>&1)"; then
+    __out=failed
+    return 0
+  fi
+
+  kb="$(printf '%s\n' "$out" | awk '
+    BEGIN { kb = 0 }
+    /Total reclaimed space:/ {
+      val = $0
+      sub(/^.*Total reclaimed space:[ \t]*/, "", val)
+      gsub(/[ \t]+$/, "", val)
+      n = val
+      gsub(/[^0-9.]/, "", n)
+      unit = val
+      gsub(/[0-9. \t]/, "", unit)
+      bytes = 0
+      if (unit == "B") bytes = n
+      else if (unit == "kB" || unit == "KB") bytes = n * 1000
+      else if (unit == "MB") bytes = n * 1000 * 1000
+      else if (unit == "GB") bytes = n * 1000 * 1000 * 1000
+      else if (unit == "TB") bytes = n * 1000 * 1000 * 1000 * 1000
+      kb = int(bytes / 1024)
+    }
+    END { print kb + 0 }
+  ')"
+  _record docker "$kb"
+  __out="$(_gb "$kb")"
+  return 0
+}
+
+pressure=no
+disk_pct_now="$(fs_used_pct "$HOME")" || disk_pct_now=""
+limit="$(_cfg "$MAINTENANCE_DISK_PCT_CONFIG_KEY" 85)"
+[[ "$limit" =~ ^[0-9]+$ ]] || limit=85
+# ceiling: disk pressure is sampled once per maintenance cycle, so a home filesystem that fills between 12-hour runs waits for the next one. Upgrade to a short-interval pressure timer if a machine is observed past 95% between two cycles.
+if [[ -n "$disk_pct_now" ]] && (( disk_pct_now >= limit )); then
+  pressure=yes
+  log "Disk pressure: $HOME at ${disk_pct_now}% (limit ${limit}%) — running every prune step"
+elif [[ -z "$disk_pct_now" ]]; then
+  log "Disk pressure: could not read used percent for $HOME — leaving pressure off"
+fi
+disk_pct="$disk_pct_now"
+go_word=""
+mise_word=""
+docker_word=""
+_prune_go go_word
+_prune_mise mise_word
+_prune_docker docker_word
+if [[ "$pressure" == yes ]]; then
+  go_word="${go_word}(pressure)"
+  mise_word="${mise_word}(pressure)"
+  docker_word="${docker_word}(pressure)"
+fi
+printf 'pressure=%s disk_pct=%s go=%s mise=%s docker=%s\n' \
+  "$pressure" "$disk_pct" "$go_word" "$mise_word" "$docker_word"
+exit 0

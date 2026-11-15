@@ -164,6 +164,16 @@ GITHUB_SSH_443_KEY = "github.ssh_over_443"
 # Which GitHub owners are ours, grouped. Read by gh.owners from the global file
 # alone — see GitHubConfig.owners for why the merged config is never asked.
 GITHUB_OWNERS_KEY = "github.owners"
+# Read from bash rather than written: prune-caches asks for these through
+# wb_config_get. lib/constants.sh spells the same strings, and tests/config.bats
+# cross-validates every pair.
+MAINTENANCE_PRUNE_GO_CACHE_KEY = "maintenance.prune.go_cache"
+MAINTENANCE_PRUNE_GO_CACHE_GB_KEY = "maintenance.prune.go_cache_gb"
+MAINTENANCE_PRUNE_MISE_KEY = "maintenance.prune.mise"
+MAINTENANCE_PRUNE_DOCKER_KEY = "maintenance.prune.docker"
+MAINTENANCE_DISK_PCT_KEY = "maintenance.disk_pct"
+DISK_PCT_MIN = 50
+DISK_PCT_MAX = 99
 
 # The label the workbench puts on an issue its automation files, and the
 # default contents of ISSUE_LABELS_KEY. A value rather than a key: both
@@ -650,6 +660,55 @@ class BatchConfig:
     mem_pressure_max: float = 5.0
 
 
+_MACHINE_ONLY = ScopeRule(
+    frozenset({GLOBAL_SCOPE}),
+    "maintenance runs once per machine on its timer, from no repo in particular,"
+    " so a repo's value would never be the one it read",
+)
+
+
+@dataclass(frozen=True)
+class MaintenancePruneConfig:
+    """Which caches the machine-wide maintenance cleanup may prune.
+
+    ``go_cache`` runs ``go clean -cache`` when the Go cache exceeds
+    ``go_cache_gb`` gigabytes (0 means clean whenever the cache is non-empty).
+    ``mise`` runs ``mise prune --yes``. ``docker`` runs ``docker image prune``
+    against a daemon socket the invoking user owns — never the root-owned
+    system socket, never volumes or containers, never via sudo.
+
+    Disk pressure overrides every switch: Go runs at threshold 0, and mise and
+    Docker run even when off. Docker still only ever touches a socket the user
+    owns; pressure does not lift that.
+    """
+
+    go_cache: bool = field(default=True, metadata={"scope": _MACHINE_ONLY})
+    go_cache_gb: int = field(default=15, metadata={"scope": _MACHINE_ONLY})
+    mise: bool = field(default=False, metadata={"scope": _MACHINE_ONLY})
+    docker: bool = field(default=False, metadata={"scope": _MACHINE_ONLY})
+
+    def __post_init__(self):
+        if self.go_cache_gb < 0:
+            raise ValueError(f"maintenance.prune.go_cache_gb must be 0 or more, not {self.go_cache_gb}")
+
+
+@dataclass(frozen=True)
+class MaintenanceConfig:
+    """Machine-wide cache cleanup and the disk-pressure trigger that forces it.
+
+    ``disk_pct`` is the home-filesystem used-percent at which prune-caches
+    enters pressure mode. Maintenance runs once per machine on its timer,
+    from no repo in particular.
+    """
+
+    prune: MaintenancePruneConfig = field(default_factory=MaintenancePruneConfig)
+    disk_pct: int = field(default=85, metadata={"scope": _MACHINE_ONLY})
+
+    def __post_init__(self):
+        if self.disk_pct < DISK_PCT_MIN or self.disk_pct > DISK_PCT_MAX:
+            raise ValueError(f"maintenance.disk_pct must be {DISK_PCT_MIN} to {DISK_PCT_MAX}, not {self.disk_pct}")
+
+
 @dataclass(frozen=True)
 class WorkbenchConfig:
     reuse: ReuseConfig = field(default_factory=ReuseConfig)
@@ -663,6 +722,7 @@ class WorkbenchConfig:
     fix: FixConfig = field(default_factory=FixConfig)
     wiki: WikiConfig = field(default_factory=WikiConfig)
     batch: BatchConfig = field(default_factory=BatchConfig)
+    maintenance: MaintenanceConfig = field(default_factory=MaintenanceConfig)
 
 
 def global_config_path() -> Path:

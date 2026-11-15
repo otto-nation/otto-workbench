@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Scheduled maintenance for otto-workbench.
 # Triggered by launchd (macOS) or a systemd timer (Linux), which only submit it to otto-queue; the queue's worker runs the body as a job.
-# Pulls latest changes, runs sync, cleans stale worktrees, and collects stale PR artifacts.
+# Pulls latest changes, runs sync, sweeps merged worktrees in every registered repo, and collects stale PR artifacts.
 #
 # Exit codes:
 #   0  Success (updated or already up-to-date)
@@ -20,6 +20,10 @@ WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$WORKBENCH_DIR/lib/constants.sh"
 # shellcheck source=../../lib/config.sh
 . "$WORKBENCH_DIR/lib/config.sh"
+# shellcheck source=../../lib/portable.sh
+. "$WORKBENCH_DIR/lib/portable.sh"
+# shellcheck source=../../lib/maintenance.sh
+. "$WORKBENCH_DIR/lib/maintenance.sh"
 
 # launchd and systemd both hand this script a system PATH and none of
 # ~/.env.local. What this script calls, it calls by absolute path; this is for
@@ -126,12 +130,15 @@ fi
 # code 75, which run-bounded would collapse to 1, and run-due-auto-tasks spawns
 # detached agents where no worker can take them as queue jobs, which a
 # process-group kill would take down with it.
-log "Cleaning stale worktrees"
-if "$MAIN_WORKTREE/bin/wt-cleanup" --quiet 2>&1; then
-  log "Worktree cleanup complete"
-else
-  log "WARNING: worktree cleanup failed (non-fatal)"
-fi
+log "Sweeping merged worktrees in every registered repo"
+sweep_result="$("$MAIN_WORKTREE/maintenance/bin/sweep-worktrees")" || sweep_result=""
+log "Worktree sweep: ${sweep_result:-failed}"
+
+prune_result="$("$MAIN_WORKTREE/maintenance/bin/prune-caches")" || prune_result=""
+log "Cache prune: ${prune_result:-failed}"
+
+summary="$(maintenance_cleanup_record "$sweep_result" "$prune_result")"
+log "$summary"
 
 # Unlike the two blocks above, which run scripts out of the repo itself, `pr`
 # is a symlink the ai/claude component installs. Components install

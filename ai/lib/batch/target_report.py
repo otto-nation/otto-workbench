@@ -23,6 +23,7 @@ counts as waiting. No state, no PR number, or nothing found is an empty
 
 from __future__ import annotations
 
+import git.client
 import pr.needs_person
 import pr.settlement
 import pr.state
@@ -58,7 +59,7 @@ def findings(state: pr.state.PRState) -> list[Finding]:
                               {"threads": owed}))
     ci = pr.needs_person.failing_ci(state.ci)
     if ci is not None:
-        found.append(_finding(pr.needs_person.CI_FAILING, f"failing at {ci.head_sha[:12]}",
+        found.append(_finding(pr.needs_person.CI_FAILING, f"failing at {git.client.abbrev(ci.head_sha)}",
                               {"jobs": list(ci.jobs)}))
     if state.fix.closeout_debt().owed:
         found.append(_finding(pr.needs_person.CLOSEOUT_OWED, pr.needs_person.CLOSEOUT_WHY))

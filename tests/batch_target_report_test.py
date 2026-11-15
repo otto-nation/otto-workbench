@@ -13,6 +13,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.target_report  # noqa: E402
+import git.client  # noqa: E402
 from batch.session_report import NO_CHECKOUT  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr_target_support import CI_SHA, state_with  # noqa: E402
@@ -35,7 +36,7 @@ def test_every_finding_with_its_command():
         "findings": [
             {"reason": "threads_need_human", "step": "comments", "detail": "1 open: PRRT_1",
              "files": [], "data": {"threads": [thread]}, "log": None},
-            {"reason": "ci_failing", "step": "ci", "detail": f"failing at {CI_SHA[:12]}",
+            {"reason": "ci_failing", "step": "ci", "detail": f"failing at {git.client.abbrev(CI_SHA)}",
              "files": [], "data": {"jobs": ["lint", "test"]}, "log": None},
             {"reason": "closeout_owed", "step": "comments",
              "detail": "closeout owed per pr state", "files": [], "data": {}, "log": None},

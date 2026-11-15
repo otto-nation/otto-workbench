@@ -4877,6 +4877,38 @@ An entry's `state` is `needs_session`, the batch item status the session
 counts as waiting. No state, no PR number, or nothing found is an empty
 `sessions`. `FINDING_KEYS` is every finding key this report can show.
 
+### batch/target_session.py
+
+How to open one PR target's pi session, and the operator decisions recorded in it.
+
+`session_id(target_dir)` is `target-` plus the first 16 hex characters of the
+SHA-256 of the target directory's name (`<repo-key>-<branch-slug>`). It has a
+fixed length, is the same in every process and on every machine, and is always
+a valid pi session id. The directory name itself is not one: its slug can be
+empty or end in `_`, and it can run past pi's id budget.
+
+`recipe(ctx)` is the one owner of a target session's identity:
+
+- that id;
+- the name `target <repo> <branch>`;
+- the branch's worktree as the working directory;
+- argv `pi --session-id ID --name NAME`;
+- env carrying the target directory (`WORKBENCH_TARGET_DIR`) and the expected
+  session id (`WORKBENCH_SESSION_ID`), so nothing downstream re-derives either.
+
+A branch with no worktree has no target session and raises
+`TargetSessionError`.
+
+`note(...)` appends one `decision` event (`item`, `finding` as
+`<reason>:<step>`, `verdict`, `reason`, `commands`; `run` is the writing
+command's trail invocation) to the target's `events.jsonl`. Before it does, it
+checks that the PR is the target's, that the finding is one the target report
+can show (`batch.target_report.FINDING_KEYS`), and that the reason is not
+empty. It changes nothing else: a thread is settled with
+`pr comments --settle`, and a PR stops waiting only when the report stops
+deriving its finding. The latest note per (item, finding) wins
+(`core.run_events.latest_decisions`).
+
 ### batch/targets.py
 
 Which `pr` target each batch item is, so a run can hold their locks and hand each child its own.

@@ -67,7 +67,7 @@ def exec_recipe(recipe: batch.run_session.SessionRecipe, fail: Callable[[str], i
         return fail(f"could not start {recipe.argv[0]}: {exc}")
 
 
-def _finding(text: str) -> str:
+def finding_arg(text: str) -> str:
     reason, sep, step = text.partition(":")
     if not (reason and sep and step):
         raise argparse.ArgumentTypeError(f"--finding wants REASON:STEP, got {text!r}")
@@ -79,7 +79,7 @@ def add_note_parser(sub) -> None:
                                     "changes no item state")
     n.add_argument("run_id", help="Run holding the PR")
     n.add_argument("pr", help="Item key owner/repo#N, or a PR number unique in the run")
-    n.add_argument("--finding", type=_finding, required=True, metavar="REASON:STEP",
+    n.add_argument("--finding", type=finding_arg, required=True, metavar="REASON:STEP",
                    help="The finding as the report names it: its reason and step")
     n.add_argument("--verdict", choices=[v.value for v in Verdict], required=True,
                    help="What was decided")

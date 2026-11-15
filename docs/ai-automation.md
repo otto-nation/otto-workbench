@@ -1416,13 +1416,14 @@ One PR target's session: report prints what it waits on (JSON); session opens it
 | Code | Meaning | Next |
 |---|---|---|
 | `0` | a document printed |  |
-| `1` | no origin to key the target on; session: no worktree holds the branch, or pi could not start |  |
-| `2` | bad flags |  |
+| `1` | no origin to key the target on; session: no worktree holds the branch, or pi could not start; note: the history could not be written |  |
+| `2` | bad flags, or a note naming a PR or finding this target does not have, or an empty reason |  |
 
 **Examples**
 
 - `pr target report` — what this branch's PR waits on, and the commands that act on it
 - `pr target session` — open this branch's target session in its worktree
+- `pr target note 7 --finding ci_failing:ci --verdict deferred --reason 'flaky runner'` — record a verdict; changes no state
 
 > Writes nothing remotely. report prints {schema_version, sessions} with at most one entry, in pr batch report's sessions shape.
 

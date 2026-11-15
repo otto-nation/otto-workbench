@@ -9565,6 +9565,7 @@ Exit codes, remote writes and examples are `CONTRACT` below.
 
     pr target report     the target's report: a one-entry sessions document (JSON)
     pr target session [--json]   open the target's pi session in its worktree (--json prints how)
+    pr target note PR --finding R:S --verdict V --reason TEXT   record a verdict in the target's history
 
 The target is the branch `pr` resolves with git alone (the global `--repo-dir`
 / `--branch`). Nothing here asks GitHub, takes a lock, or writes outside the

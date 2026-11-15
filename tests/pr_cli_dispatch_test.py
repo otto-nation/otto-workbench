@@ -522,6 +522,7 @@ _DECLARED_LOCKS = {
     ("batch", ("plan", "--checkout", "/r")): _NO,
     ("target", ("report",)): _NO,
     ("target", ("session",)): _NO,
+    ("target", ("note", "o/r#1", "--finding", "f:s", "--verdict", "fixed", "--reason", "x")): _NO,
     ("gc", ()): _T,
 }
 

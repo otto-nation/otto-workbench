@@ -20,6 +20,10 @@ WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$WORKBENCH_DIR/lib/constants.sh"
 # shellcheck source=../../lib/config.sh
 . "$WORKBENCH_DIR/lib/config.sh"
+# shellcheck source=../../lib/portable.sh
+. "$WORKBENCH_DIR/lib/portable.sh"
+# shellcheck source=../../lib/maintenance.sh
+. "$WORKBENCH_DIR/lib/maintenance.sh"
 
 # launchd and systemd both hand this script a system PATH and none of
 # ~/.env.local. What this script calls, it calls by absolute path; this is for
@@ -132,6 +136,9 @@ log "Worktree sweep: ${sweep_result:-failed}"
 
 prune_result="$("$MAIN_WORKTREE/maintenance/bin/prune-caches")" || prune_result=""
 log "Cache prune: ${prune_result:-failed}"
+
+summary="$(maintenance_cleanup_record "$sweep_result" "$prune_result")"
+log "$summary"
 
 # Unlike the two blocks above, which run scripts out of the repo itself, `pr`
 # is a symlink the ai/claude component installs. Components install

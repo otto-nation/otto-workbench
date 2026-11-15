@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Maintenance scheduling on both platforms — launchd agent on macOS, systemd
-# user timer on Linux.
+# user timer on Linux. Records each cleanup cycle and prints it from
+# `maintenance status`.
 #
-# Sourced by `bin/otto-workbench`; `lib/discover.sh` reads its globals
-# (`_MAINTENANCE_*`, `_SYSTEMD_*`, `_format_interval`).
+# Callers must load lib/config.sh (`wb_write_json_file`, `wb_config_get`) and
+# lib/portable.sh (`fs_used_pct`). `bin/otto-workbench` already loads both
+# through `ui.sh`; the maintenance script sources them explicitly.
+# `lib/discover.sh` reads its globals (`_MAINTENANCE_*`, `_SYSTEMD_*`,
+# `_format_interval`).
 
 [[ -n "${_LIB_MAINTENANCE_SH:-}" ]] && return
 _LIB_MAINTENANCE_SH=1
@@ -304,4 +308,69 @@ _format_interval() {
   else
     echo "${seconds}s"
   fi
+}
+
+# _maintenance_date EPOCH — prints EPOCH as `YYYY-MM-DD HH:MM:SS`, or `unknown`.
+_maintenance_date() {
+  local epoch="$1"
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    date -r "$epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown"
+  else
+    date -d "@$epoch" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown"
+  fi
+}
+
+# maintenance_cleanup_record SWEEP_LINE PRUNE_LINE — records one cleanup cycle
+# and prints `Cleanup: SWEEP_LINE PRUNE_LINE`.
+#
+# Writes `{at,line}` to `$MAINTENANCE_CLEANUP_FILE` and trails a `cleanup`
+# event. Every side effect is non-fatal: the cycle already finished.
+maintenance_cleanup_record() {
+  local sweep_line="$1" prune_line="$2"
+  local summary json blob repos removed pressure
+  summary="Cleanup: $sweep_line $prune_line"
+
+  json=$(jq -n --arg line "$summary" --argjson at "$(date +%s)" '{at:$at, line:$line}') || true
+  # The cycle already finished; a status write must not fail it.
+  [[ -z "$json" ]] || wb_write_json_file "$MAINTENANCE_CLEANUP_FILE" "$json" || true
+
+  blob="$sweep_line $prune_line"
+  repos="${blob##*repos=}"
+  repos="${repos%% *}"
+  removed="${blob##*removed=}"
+  removed="${removed%% *}"
+  pressure="${blob##*pressure=}"
+  pressure="${pressure%% *}"
+
+  # A missing otto-log must not fail the cycle.
+  "$WORKBENCH_DIR/ai/bin/otto-log" record \
+    --script maintenance --action cleanup --detail "$summary" \
+    --data "repos=$repos" --data "removed=$removed" --data "pressure=$pressure" \
+    > /dev/null || true
+
+  echo "$summary"
+  return 0
+}
+
+# maintenance_cleanup_status — prints home disk use and the last cleanup line.
+#
+# Disk percent is `fs_used_pct "$HOME"`; the prune-pressure limit is the
+# global `maintenance.disk_pct` (read from `/` so no project scope applies).
+# An unreadable state file prints `Last cleanup: unknown`; a missing file
+# prints no last-cleanup line.
+maintenance_cleanup_status() {
+  local pct limit at line last_date
+  pct=$(fs_used_pct "$HOME") || pct=
+  limit=$(cd / && wb_config_get "$MAINTENANCE_DISK_PCT_CONFIG_KEY" 85) || limit=85
+  echo "  Home filesystem: ${pct}% used (prune pressure at ${limit}%)"
+  [[ -f "$MAINTENANCE_CLEANUP_FILE" ]] || return 0
+  at=$(jq -r '.at // empty' "$MAINTENANCE_CLEANUP_FILE" 2>/dev/null) || at=
+  line=$(jq -r '.line // empty' "$MAINTENANCE_CLEANUP_FILE" 2>/dev/null) || line=
+  if [[ -z "$at" || -z "$line" ]]; then
+    echo "  Last cleanup: unknown"
+    return 0
+  fi
+  last_date=$(_maintenance_date "$at")
+  echo "  Last cleanup: $last_date — $line"
+  return 0
 }

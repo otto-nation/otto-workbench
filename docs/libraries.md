@@ -578,14 +578,20 @@ Sourced by the top-level `install.sh` and by `bin/otto-workbench`. Requires
 ### maintenance.sh
 
 Maintenance scheduling on both platforms — launchd agent on macOS, systemd
-user timer on Linux.
+user timer on Linux. Records each cleanup cycle and prints it from
+`maintenance status`.
 
-Sourced by `bin/otto-workbench`; `lib/discover.sh` reads its globals
-(`_MAINTENANCE_*`, `_SYSTEMD_*`, `_format_interval`).
+Callers must load lib/config.sh (`wb_write_json_file`, `wb_config_get`) and
+lib/portable.sh (`fs_used_pct`). `bin/otto-workbench` already loads both
+through `ui.sh`; the maintenance script sources them explicitly.
+`lib/discover.sh` reads its globals (`_MAINTENANCE_*`, `_SYSTEMD_*`,
+`_format_interval`).
 
 | Function | Purpose |
 |----------|---------|
 | `maintenance_refresh_schedule` | re-installs an installed maintenance schedule whose files no longer match what the templates render, keeping its interval. A repo that moved leaves the schedule naming a path that no longer exists, and a template change otherwise reaches a machine only through `maintenance start`. Called by sync. A machine with no schedule installed is left without one, and a plist launchd has not loaded is corrected but not started. Skipped when sync runs inside the launchd job itself: reloading the job would end the run in progress, and a job that is running found its program. Non-fatal: always returns 0. |
+| `maintenance_cleanup_record SWEEP_LINE PRUNE_LINE` | records one cleanup cycle and prints `Cleanup: SWEEP_LINE PRUNE_LINE`. |
+| `maintenance_cleanup_status` | prints home disk use and the last cleanup line. |
 
 ### migrations.sh
 

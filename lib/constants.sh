@@ -112,6 +112,8 @@ MIGRATIONS_STATE_FILE="$WORKBENCH_STATE_DIR/migrations.applied"
 # Written by maintenance/bin/otto-workbench-maintenance, read by `otto-workbench
 # maintenance status`.
 MAINTENANCE_LAST_FILE="$WORKBENCH_STATE_DIR/maintenance.last"
+# Written by the maintenance script, read by `maintenance status`.
+MAINTENANCE_CLEANUP_FILE="$WORKBENCH_STATE_DIR/maintenance.cleanup.json"
 INSTALLED_STATE_FILE="$WORKBENCH_STATE_DIR/installed.components"
 # State despite the name reading like config: lib/state.sh writes it through
 # state_record and state_set, and it is what installed.components migrated

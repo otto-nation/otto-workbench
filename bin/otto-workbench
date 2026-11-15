@@ -678,18 +678,13 @@ cmd_maintenance_status() {
   if [[ "$running" == false ]]; then
     echo -e "  ${DIM}Not running${NC}"
     echo -e "  ${DIM}Start with: otto-workbench maintenance start${NC}"
-    return
+  elif [[ -f "$MAINTENANCE_LAST_FILE" ]]; then
+    local ts last_date
+    ts=$(cat "$MAINTENANCE_LAST_FILE")
+    last_date=$(_maintenance_date "$ts")
+    echo -e "  ${DIM}Last run: $last_date${NC}"
   fi
-
-  [[ -f "$MAINTENANCE_LAST_FILE" ]] || return 0
-  local ts last_date
-  ts=$(cat "$MAINTENANCE_LAST_FILE")
-  if [[ "$OSTYPE" == "darwin"* ]]; then
-    last_date=$(date -r "$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
-  else
-    last_date=$(date -d "@$ts" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "unknown")
-  fi
-  echo -e "  ${DIM}Last run: $last_date${NC}"
+  maintenance_cleanup_status
 }
 
 cmd_maintenance_run() {
@@ -721,7 +716,7 @@ _maintenance_usage() {
   cat <<EOF
 Usage: otto-workbench maintenance <command>
 
-Scheduled maintenance via $(if [[ "$OSTYPE" == "darwin"* ]]; then echo "launchd"; else echo "systemd"; fi). Pulls changes, runs sync, cleans stale worktrees, and collects stale PR artifacts.
+Scheduled maintenance via $(if [[ "$OSTYPE" == "darwin"* ]]; then echo "launchd"; else echo "systemd"; fi). Pulls changes, runs sync, cleans merged worktrees in every registered repo, prunes caches, and collects stale PR artifacts.
 
 Commands:
 $(commands_usage COMMANDS_MAINTENANCE)

@@ -15,7 +15,6 @@ setup() {
   gate_sandbox
 
   SCRIPT="$REPO_ROOT/maintenance/bin/sweep-worktrees"
-  SCRIPT_MAINT="$REPO_ROOT/maintenance/bin/otto-workbench-maintenance"
   SWEEP_LOG="$TEST_HOME/sweep.log"
   STUB_BIN="$TEST_HOME/stub-bin"
   mkdir -p "$STUB_BIN"
@@ -70,7 +69,7 @@ _run_sweep() {
   [ "$(wc -l < "$SWEEP_LOG" | tr -d ' ')" = "2" ]
   grep -qx "$repo_a" "$SWEEP_LOG"
   grep -qx "$repo_b" "$SWEEP_LOG"
-  ! grep -qx "$extra" "$SWEEP_LOG"
+  run ! grep -qx "$extra" "$SWEEP_LOG"
 }
 
 @test "a failed repo is counted and the rest still run" {

@@ -14,6 +14,7 @@ setup() {
   export HOME="$TEST_HOME"
   gate_sandbox
 
+  # shellcheck disable=SC2034  # read by _run_prune in maintenance_prune_helper.bash
   SCRIPT="$REPO_ROOT/maintenance/bin/prune-caches"
   STUB_BIN="$TEST_HOME/stub-bin"
   NARROW="$TEST_HOME/narrow"
@@ -91,6 +92,7 @@ teardown() {
   _stub_docker
   printf x > "$TEST_HOME/not-a-socket"
   export DOCKER_HOST="unix://$TEST_HOME/not-a-socket"
+  # shellcheck disable=SC2034  # read by _run_prune in maintenance_prune_helper.bash
   STUB_DF_PCT=85
 
   _run_prune

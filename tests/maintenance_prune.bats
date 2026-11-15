@@ -14,6 +14,7 @@ setup() {
   export HOME="$TEST_HOME"
   gate_sandbox
 
+  # shellcheck disable=SC2034  # read by _run_prune in maintenance_prune_helper.bash
   SCRIPT="$REPO_ROOT/maintenance/bin/prune-caches"
   STUB_BIN="$TEST_HOME/stub-bin"
   NARROW="$TEST_HOME/narrow"
@@ -134,8 +135,9 @@ assert isinstance(freed, (int, float)), freed
   _run_prune
   [ "$status" -eq 0 ]
   grep -qx -- 'image prune -a -f --filter until=168h' "$CALLS"
-  ! grep -q -- '--volumes' "$CALLS"
   [[ "$output" == *"docker=1.4GB"* ]]
+  # Last: `run` replaces $output with the grep's own.
+  run ! grep -q -- '--volumes' "$CALLS"
 }
 
 @test "docker true with DOCKER_HOST pointing at a regular file is not-own" {

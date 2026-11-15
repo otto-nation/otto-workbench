@@ -4386,7 +4386,7 @@ The state file is authoritative; events only save a consumer from polling it.
 Every event `emit` prints is also appended, as the identical JSON line, to the
 run's `events.jsonl` through `core.run_events`. That history is what a run
 session shows; nothing reads it to decide what a run does. An append that fails
-warns once per run on stderr and never fails the run. An event naming no run
+warns once per run on stderr and never fails the run (`core.run_events.append_or_warn`). An event naming no run
 (`item_skipped_held`, printed before the run exists) is printed only.
 `run_summary`'s `run` is the run view, filed under its `id`.
 
@@ -4399,6 +4399,7 @@ warns once per run on stderr and never fails the run. An event naming no run
 `decision` is an operator verdict `pr batch note` appends to the history (`item`,
 `finding` as `<reason>:<step>`, `verdict`, `reason`, `commands`); it is never
 printed by a run and changes no item state. The latest per (`item`, `finding`) wins.
+`latest_decisions` is `core.run_events.latest_decisions`.
 
 ### batch/findings.py
 
@@ -6721,20 +6722,23 @@ it lives here rather than being spelled out again in each binary that reports.
 
 ### core/run_events.py
 
-The append-only history of one run: `<run-dir>/events.jsonl`.
+The append-only history of one run or one PR target: `<dir>/events.jsonl`.
 
-The only Python that opens the file. Each line is one JSON object; its caller
-builds the envelope (`schema_version`, `kind`, `at`, `run`, then the event's own
-fields), and `append` requires only a string `kind`. A history is a record of
-what happened, never state: nothing reads it to decide what a run does next.
+The only Python that opens the file. Each line is one JSON object built by
+`record`: `schema_version`, `kind`, `at` (`now_iso`, the UTC second), then the
+event's own fields. A history is a record of what happened, never state:
+nothing reads it to decide what a run does next.
 
-`append` writes the whole line with one `O_APPEND` write, so a run's driver and
-a `pr batch note` appending beside it never interleave inside a line. It never
-creates the run directory, so an append racing a reap fails instead of
-resurrecting a deleted run. `read` returns the parsed events in file order and
-counts what it skipped: a torn line, a line that is not a JSON object, or one
-with no string `kind`. An unknown `kind` is returned like any other, so a
-history written by a newer build still reads.
+`append` writes the whole line with one `O_APPEND` write, so writers appending
+side by side never interleave inside a line. It never creates the directory,
+so an append racing a reap fails instead of resurrecting a deleted run.
+`append_or_warn` is the policy every command writer uses: an append that fails
+warns once per key on stderr and never fails the caller, whose own state stays
+authoritative. `read` returns the parsed events in file order and counts what
+it skipped: a torn line, a line that is not a JSON object, or one with no
+string `kind`. An unknown `kind` is returned like any other, so a history
+written by a newer build still reads. `latest_decisions` is the last
+`decision` per (`item`, `finding`): the latest operator verdict wins.
 
 ### core/run_lock.py
 

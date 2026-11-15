@@ -1,17 +1,20 @@
-"""The append-only history of one run: `<run-dir>/events.jsonl`.
+"""The append-only history of one run or one PR target: `<dir>/events.jsonl`.
 
-The only Python that opens the file. Each line is one JSON object; its caller
-builds the envelope (`schema_version`, `kind`, `at`, `run`, then the event's own
-fields), and `append` requires only a string `kind`. A history is a record of
-what happened, never state: nothing reads it to decide what a run does next.
+The only Python that opens the file. Each line is one JSON object built by
+`record`: `schema_version`, `kind`, `at` (`now_iso`, the UTC second), then the
+event's own fields. A history is a record of what happened, never state:
+nothing reads it to decide what a run does next.
 
-`append` writes the whole line with one `O_APPEND` write, so a run's driver and
-a `pr batch note` appending beside it never interleave inside a line. It never
-creates the run directory, so an append racing a reap fails instead of
-resurrecting a deleted run. `read` returns the parsed events in file order and
-counts what it skipped: a torn line, a line that is not a JSON object, or one
-with no string `kind`. An unknown `kind` is returned like any other, so a
-history written by a newer build still reads.
+`append` writes the whole line with one `O_APPEND` write, so writers appending
+side by side never interleave inside a line. It never creates the directory,
+so an append racing a reap fails instead of resurrecting a deleted run.
+`append_or_warn` is the policy every command writer uses: an append that fails
+warns once per key on stderr and never fails the caller, whose own state stays
+authoritative. `read` returns the parsed events in file order and counts what
+it skipped: a torn line, a line that is not a JSON object, or one with no
+string `kind`. An unknown `kind` is returned like any other, so a history
+written by a newer build still reads. `latest_decisions` is the last
+`decision` per (`item`, `finding`): the latest operator verdict wins.
 """
 
 # doc-group: platform
@@ -20,14 +23,29 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 
 EVENTS_FILE = "events.jsonl"
+SCHEMA_VERSION = 1
 
 
 def events_path(run_dir: Path) -> Path:
     return Path(run_dir) / EVENTS_FILE
+
+
+def now_iso() -> str:
+    """The current UTC second, the form every history's `at` is written in."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def record(kind: str, at: str, **fields) -> dict:
+    """The envelope every history line carries: `schema_version`, `kind`, `at`, then *fields*."""
+    if not isinstance(kind, str) or not kind:
+        raise ValueError("a run event needs a non-empty string kind")
+    return {"schema_version": SCHEMA_VERSION, "kind": kind, "at": at, **fields}
 
 
 def append(run_dir: Path, record: dict) -> None:
@@ -44,6 +62,21 @@ def append(run_dir: Path, record: dict) -> None:
             data = data[os.write(fd, data):]
     finally:
         os.close(fd)
+
+
+def append_or_warn(run_dir: Path, line: dict, *, warned: set[str], key: str,
+                   subject: str, consequence: str) -> None:
+    """Append *line*; on OSError print `subject (error); consequence` once per *key*, never raise."""
+    try:
+        append(run_dir, line)
+    except OSError as exc:
+        # A history only saves a session from rebuilding what happened; the
+        # caller's own state stays authoritative, so a full disk or a reaped
+        # directory costs the history, never the command.
+        if key in warned:
+            return
+        warned.add(key)
+        print(f"{subject} ({exc}); {consequence}", file=sys.stderr)
 
 
 @dataclass(frozen=True)
@@ -74,3 +107,13 @@ def read(run_dir: Path) -> History:
             continue
         events.append(obj)
     return History(events, skipped)
+
+
+def latest_decisions(events: list[dict]) -> dict[tuple[str, str], dict]:
+    """The last `decision` per (item, finding) in *events*, read in file order."""
+    latest: dict[tuple[str, str], dict] = {}
+    for event in events:
+        item, finding = event.get("item"), event.get("finding")
+        if event.get("kind") == "decision" and isinstance(item, str) and isinstance(finding, str):
+            latest[(item, finding)] = event
+    return latest

@@ -235,15 +235,7 @@ Every key any of them accepts:
 
 `github.ssh_over_443` may only be written at global scope: it describes the network this machine is on, never the repo, and a repo's .workbench.yml is read by everyone who clones it.
 
-`maintenance.disk_pct` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
-
-`maintenance.prune.docker` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
-
-`maintenance.prune.go_cache` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
-
-`maintenance.prune.go_cache_gb` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
-
-`maintenance.prune.mise` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
+`maintenance.disk_pct`, `maintenance.prune.docker`, `maintenance.prune.go_cache`, `maintenance.prune.go_cache_gb` and `maintenance.prune.mise` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
 
 `wiki.root` may only be written at global scope: it is an absolute path on this machine, which means nothing on any other, and a repo's .workbench.yml is read by everyone who clones it.
 

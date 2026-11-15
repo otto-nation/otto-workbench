@@ -361,3 +361,34 @@ def test_the_docs_link_to_the_schema_resolves_from_the_docs_directory():
     link = f"({config.workbench_config_report._DOCS_TO_ROOT}{config.workbench_config.SCHEMA_PATH})"
     assert link in config.workbench_config_report.docs_reference()
     assert (docs_dir / f"{config.workbench_config_report._DOCS_TO_ROOT}{config.workbench_config.SCHEMA_PATH}").resolve().is_file()
+
+
+def _restriction_paragraphs() -> list[str]:
+    lines = config.workbench_config_report._scope_restriction_lines()
+    return [line for line in lines if line]
+
+
+def test_keys_sharing_one_rule_are_named_in_one_paragraph():
+    maintenance_keys = [k for k in config.workbench_config.scope_rules() if k.startswith("maintenance.")]
+    assert len(maintenance_keys) > 1
+    paragraphs = [p for p in _restriction_paragraphs() if "maintenance." in p]
+    assert len(paragraphs) == 1
+    assert all(f"`{key}`" in paragraphs[0] for key in maintenance_keys)
+    reason = config.workbench_config.scope_rules()[maintenance_keys[0]].reason
+    assert paragraphs[0].count(reason) == 1
+
+
+def test_a_key_with_its_own_rule_keeps_its_own_paragraph_in_the_old_form():
+    rule = config.workbench_config.scope_rules()["github.owners"]
+    expected = f"`github.owners` may only be written at {', '.join(sorted(rule.allowed))} scope: {rule.reason}."
+    assert expected in _restriction_paragraphs()
+
+
+def test_two_keys_sharing_a_rule_read_as_a_and_b(monkeypatch):
+    shared = config.workbench_config.ScopeRule(frozenset({"global"}), "one reason")
+    monkeypatch.setattr(
+        config.workbench_config_report,
+        "scope_rules",
+        lambda: {"b.key": shared, "a.key": shared},
+    )
+    assert _restriction_paragraphs() == ["`a.key` and `b.key` may only be written at global scope: one reason."]

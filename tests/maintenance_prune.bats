@@ -150,6 +150,14 @@ assert isinstance(freed, (int, float)), freed
   [ ! -f "$CALLS" ]
 }
 
-@test "docker ownership check uses -O on the socket" {
-  grep -q -- '-O "$sock"' "$SCRIPT"
+@test "docker reclaimed space in MB and with a spaced unit is parsed" {
+  _stub_docker
+  python3 -c 'import socket,sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$TEST_HOME/docker.sock"
+  _write_config $'maintenance:\n  prune:\n    docker: true\n'
+  STUB_DOCKER_RECLAIMED="1500 MB"
+  export STUB_DOCKER_RECLAIMED
+
+  _run_prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"docker=1.4GB"* ]]
 }

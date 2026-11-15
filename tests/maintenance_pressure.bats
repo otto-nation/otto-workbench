@@ -111,3 +111,14 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"pressure=no"* ]]
 }
+
+@test "go env failing reports go=failed and the script still exits 0" {
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$STUB_BIN/go"
+  chmod +x "$STUB_BIN/go"
+  _stub_mise
+  _stub_docker
+
+  _run_prune
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"go=failed"* ]]
+}

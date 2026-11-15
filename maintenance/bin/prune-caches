@@ -121,9 +121,14 @@ _prune_go() {
     return 0
   fi
 
-  cache="$(go env GOCACHE)"
+  cache="$(go env GOCACHE 2>/dev/null)" || cache=""
+  if [[ -z "$cache" ]]; then
+    __out=failed
+    return 0
+  fi
   before="$(_size_kb "$cache")"
   gb="$(_cfg "$MAINTENANCE_PRUNE_GO_CACHE_GB_CONFIG_KEY" 15)"
+  [[ "$gb" =~ ^[0-9]+$ ]] || gb=15
   threshold_kb=$((gb * 1024 * 1024))
   if [[ "$pressure" == yes ]]; then
     threshold_kb=0
@@ -225,11 +230,13 @@ _prune_docker() {
   kb="$(printf '%s\n' "$out" | awk '
     BEGIN { kb = 0 }
     /Total reclaimed space:/ {
-      val = $NF
+      val = $0
+      sub(/^.*Total reclaimed space:[ \t]*/, "", val)
+      gsub(/[ \t]+$/, "", val)
       n = val
       gsub(/[^0-9.]/, "", n)
       unit = val
-      gsub(/[0-9.]/, "", unit)
+      gsub(/[0-9. \t]/, "", unit)
       bytes = 0
       if (unit == "B") bytes = n
       else if (unit == "kB" || unit == "KB") bytes = n * 1000
@@ -248,6 +255,7 @@ _prune_docker() {
 pressure=no
 disk_pct_now="$(fs_used_pct "$HOME")" || disk_pct_now=""
 limit="$(_cfg "$MAINTENANCE_DISK_PCT_CONFIG_KEY" 85)"
+[[ "$limit" =~ ^[0-9]+$ ]] || limit=85
 # ceiling: disk pressure is sampled once per maintenance cycle, so a home filesystem that fills between 12-hour runs waits for the next one. Upgrade to a short-interval pressure timer if a machine is observed past 95% between two cycles.
 if [[ -n "$disk_pct_now" ]] && (( disk_pct_now >= limit )); then
   pressure=yes

@@ -62,7 +62,7 @@ if [[ "\$1" == context && "\$2" == inspect ]]; then
   exit 0
 fi
 if [[ "\$1" == image ]]; then
-  printf 'Total reclaimed space: 1.5GB\n'
+  printf 'Total reclaimed space: %s\n' "\${STUB_DOCKER_RECLAIMED:-1.5GB}"
   exit 0
 fi
 exit 1

@@ -86,6 +86,24 @@ assert data.get("pressure") == "yes", data
   [[ "$output" == *"$SUMMARY"* ]]
 }
 
+@test "maintenance_cleanup_record with an empty sweep line keeps repos and removed numeric" {
+  SWEEP_LINE=""
+  _record
+  [ "$status" -eq 0 ]
+  run env HOME="$TEST_HOME" WORKBENCH_STATE_DIR="$WORKBENCH_STATE_DIR" \
+    "$REPO_ROOT/ai/bin/otto-log" query --script maintenance --json
+  [ "$status" -eq 0 ]
+  python3 -c '
+import json, sys
+events = [json.loads(line) for line in sys.stdin if line.strip()]
+hits = [e for e in events if e.get("action") == "cleanup"]
+assert hits, events
+data = hits[0].get("data") or {}
+for k in ("repos", "removed"):
+    assert str(data.get(k, 0)).isdigit(), data
+' <<< "$output"
+}
+
 @test "maintenance status with no cleanup file prints disk use and no last-cleanup line" {
   _status
   [ "$status" -eq 0 ]
@@ -100,8 +118,8 @@ assert data.get("pressure") == "yes", data
   # that never persisted its summary.
   local script="$REPO_ROOT/maintenance/bin/otto-workbench-maintenance"
   local call_line stamp_line
-  call_line="$(grep -n 'maintenance_cleanup_record' "$script" | head -1 | cut -d: -f1)"
-  stamp_line="$(grep -n 'MAINTENANCE_LAST_FILE\"$' "$script" | tail -1 | cut -d: -f1)"
+  call_line="$(grep -n '^[^#]*maintenance_cleanup_record' "$script" | head -1 | cut -d: -f1)"
+  stamp_line="$(grep -n '^[^#]*MAINTENANCE_LAST_FILE' "$script" | tail -1 | cut -d: -f1)"
   [ -n "$call_line" ]
   [ -n "$stamp_line" ]
   [ "$call_line" -lt "$stamp_line" ]

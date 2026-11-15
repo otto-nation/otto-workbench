@@ -335,12 +335,19 @@ maintenance_cleanup_record() {
   [[ -z "$json" ]] || wb_write_json_file "$MAINTENANCE_CLEANUP_FILE" "$json" || true
 
   blob="$sweep_line $prune_line"
-  repos="${blob##*repos=}"
-  repos="${repos%% *}"
-  removed="${blob##*removed=}"
-  removed="${removed%% *}"
-  pressure="${blob##*pressure=}"
-  pressure="${pressure%% *}"
+  repos=0 removed=0 pressure=""
+  if [[ "$blob" == *repos=* ]]; then
+    repos="${blob##*repos=}"
+    repos="${repos%% *}"
+  fi
+  if [[ "$blob" == *removed=* ]]; then
+    removed="${blob##*removed=}"
+    removed="${removed%% *}"
+  fi
+  if [[ "$blob" == *pressure=* ]]; then
+    pressure="${blob##*pressure=}"
+    pressure="${pressure%% *}"
+  fi
 
   # A missing otto-log must not fail the cycle.
   "$WORKBENCH_DIR/ai/bin/otto-log" record \
@@ -362,7 +369,9 @@ maintenance_cleanup_status() {
   local pct limit at line last_date
   pct=$(fs_used_pct "$HOME") || pct=
   limit=$(cd / && wb_config_get "$MAINTENANCE_DISK_PCT_CONFIG_KEY" 85) || limit=85
-  echo "  Home filesystem: ${pct}% used (prune pressure at ${limit}%)"
+  local pct_text="unknown"
+  [[ -z "$pct" ]] || pct_text="${pct}%"
+  echo "  Home filesystem: $pct_text used (prune pressure at ${limit}%)"
   [[ -f "$MAINTENANCE_CLEANUP_FILE" ]] || return 0
   at=$(jq -r '.at // empty' "$MAINTENANCE_CLEANUP_FILE" 2>/dev/null) || at=
   line=$(jq -r '.line // empty' "$MAINTENANCE_CLEANUP_FILE" 2>/dev/null) || line=

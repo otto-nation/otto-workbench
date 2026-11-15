@@ -20,6 +20,7 @@
 # load_average      # one-minute load average, e.g. 3.72
 # iso_to_epoch TS   # ISO 8601 UTC timestamp to epoch seconds
 # cpu_count         # CPUs the machine reports, e.g. 18
+# fs_used_pct PATH  # used percent of PATH's filesystem, digits only
 # ```
 #
 # Each prints nothing and returns 1 when neither form resolves the value, so
@@ -113,4 +114,16 @@ cpu_count() {
     || n=$(nproc 2>/dev/null) \
     || return 1
   printf '%s' "$n"
+}
+
+# fs_used_pct PATH — used percent of the filesystem PATH sits on, digits only.
+#
+# `df -Pk` so Capacity is 1024-byte blocks on both GNU and BSD. Prints nothing
+# and returns 1 when the table is missing or Capacity is not an integer, so a
+# caller that wants a default supplies it: `pct=$(fs_used_pct "$HOME") || pct=`.
+fs_used_pct() {
+  local pct
+  pct=$(df -Pk "$1" 2>/dev/null | awk 'NR==2 {sub(/%/, "", $5); print $5}') || return 1
+  [[ "$pct" =~ ^[0-9]+$ ]] || return 1
+  printf '%s' "$pct"
 }

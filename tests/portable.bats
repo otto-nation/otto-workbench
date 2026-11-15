@@ -212,3 +212,14 @@ teardown() {
   unset -f nproc
   [ "$output" = "8" ]
 }
+
+@test "fs_used_pct reads the Capacity percent from df -Pk" {
+  df() {
+    printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+    printf '/dev/disk 100 50 50 85%% /\n'
+  }
+  run fs_used_pct /
+  unset -f df
+  [ "$status" -eq 0 ]
+  [ "$output" = "85" ]
+}

@@ -723,6 +723,7 @@ file_mode  PATH   # permission bits, octal — e.g. 644
 load_average      # one-minute load average, e.g. 3.72
 iso_to_epoch TS   # ISO 8601 UTC timestamp to epoch seconds
 cpu_count         # CPUs the machine reports, e.g. 18
+fs_used_pct PATH  # used percent of PATH's filesystem, digits only
 ```
 
 Each prints nothing and returns 1 when neither form resolves the value, so
@@ -740,6 +741,7 @@ ts=$(file_mtime "$f") || ts=0
 | `load_average` | the machine's one-minute load average, as the kernel spells it. |
 | `iso_to_epoch TIMESTAMP` | an ISO 8601 UTC timestamp (`2026-09-09T16:15:52Z`) in epoch seconds. |
 | `cpu_count` | how many CPUs the machine reports, as a decimal string. |
+| `fs_used_pct PATH` | used percent of the filesystem PATH sits on, digits only. |
 
 Loaded via `ui.sh`.
 

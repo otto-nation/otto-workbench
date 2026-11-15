@@ -57,6 +57,8 @@ WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$WORKBENCH_DIR/lib/constants.sh"
 # shellcheck source=../../lib/config.sh
 . "$WORKBENCH_DIR/lib/config.sh"
+# shellcheck source=../../lib/portable.sh
+. "$WORKBENCH_DIR/lib/portable.sh"
 
 # PATH is the maintenance script's: this is a child of
 # otto-workbench-maintenance, which already sourced zsh/env.sh. Sourcing it
@@ -103,15 +105,6 @@ _record() {
   return 0
 }
 
-# _disk_pct — home filesystem percent used, digits only.
-_disk_pct() {
-  local pct
-  pct="$(df -P "$HOME" 2>/dev/null | awk 'NR==2 { gsub(/%/, "", $5); print $5 }')" || true
-  pct="$(printf '%s' "$pct" | tr -cd '0-9')"
-  printf '%s' "${pct:-0}"
-  return 0
-}
-
 # _prune_go NAME — result word in the nameref NAME.
 _prune_go() {
   local -n __out=$1
@@ -132,6 +125,9 @@ _prune_go() {
   before="$(_size_kb "$cache")"
   gb="$(_cfg "$MAINTENANCE_PRUNE_GO_CACHE_GB_CONFIG_KEY" 15)"
   threshold_kb=$((gb * 1024 * 1024))
+  if [[ "$pressure" == yes ]]; then
+    threshold_kb=0
+  fi
   if (( before <= threshold_kb )); then
     __out=below
     return 0
@@ -250,13 +246,27 @@ _prune_docker() {
 }
 
 pressure=no
-disk_pct="$(_disk_pct)"
+disk_pct_now="$(fs_used_pct "$HOME")" || disk_pct_now=""
+limit="$(_cfg "$MAINTENANCE_DISK_PCT_CONFIG_KEY" 85)"
+# ceiling: disk pressure is sampled once per maintenance cycle, so a home filesystem that fills between 12-hour runs waits for the next one. Upgrade to a short-interval pressure timer if a machine is observed past 95% between two cycles.
+if [[ -n "$disk_pct_now" ]] && (( disk_pct_now >= limit )); then
+  pressure=yes
+  log "Disk pressure: $HOME at ${disk_pct_now}% (limit ${limit}%) — running every prune step"
+elif [[ -z "$disk_pct_now" ]]; then
+  log "Disk pressure: could not read used percent for $HOME — leaving pressure off"
+fi
+disk_pct="$disk_pct_now"
 go_word=""
 mise_word=""
 docker_word=""
 _prune_go go_word
 _prune_mise mise_word
 _prune_docker docker_word
+if [[ "$pressure" == yes ]]; then
+  go_word="${go_word}(pressure)"
+  mise_word="${mise_word}(pressure)"
+  docker_word="${docker_word}(pressure)"
+fi
 printf 'pressure=%s disk_pct=%s go=%s mise=%s docker=%s\n' \
   "$pressure" "$disk_pct" "$go_word" "$mise_word" "$docker_word"
 exit 0

@@ -290,6 +290,10 @@ class CIDomain(Domain):
     runs: dict[int, RunState] = field(default_factory=dict)
     latest_run_id: int | None = None
 
+    def latest_run(self) -> RunState | None:
+        """The latest stored run, or None before the first: the one owner of that lookup."""
+        return self.runs.get(self.latest_run_id) if self.latest_run_id is not None else None
+
     def verdict_sha(self) -> str:
         """The commit the latest stored run was for.
 
@@ -297,7 +301,7 @@ class CIDomain(Domain):
         per run, `sync_ci_domain` already stores it there, and a second copy on
         the summary is one more field to keep in step with `latest_run_id`.
         """
-        run = self.runs.get(self.latest_run_id) if self.latest_run_id is not None else None
+        run = self.latest_run()
         return run.head_sha if run else ""
 
     def render_status(self) -> list[str]:

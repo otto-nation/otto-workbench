@@ -300,6 +300,24 @@ JSON
   [ -z "$output" ]
 }
 
+@test "--quiet --count prints removed=1 dirty_merged=0" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/old","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  _run_cleanup --quiet --count
+  [ "$status" -eq 0 ]
+  [ "$output" = "removed=1 dirty_merged=0" ]
+}
+
+@test "--quiet without --count stays silent" {
+  _write_worktrees <<'JSON'
+[{"branch":"feat/silent","is_main":false,"is_current":false,"main_state":"integrated","symbols":"⊂","commit":{"timestamp":0}}]
+JSON
+  _run_cleanup --quiet
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+}
+
 # ── Uncommitted changes protection ──────────────────────────────────────────
 
 @test "merged worktree with uncommitted changes is not removed" {

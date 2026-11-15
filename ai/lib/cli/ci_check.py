@@ -221,9 +221,9 @@ def main(argv: list[str] | None = None, *,
         # After the queue gate and Trail.start, so only the process doing the
         # work files it: a waiting parent returned at the gate above.
         history = pr.target_events.step_history(ctx, trail.invocation, pr.needs_person.STEP_CI)
-        history.started()
         code = None
         try:
+            history.started()
             report = pr.ci_check.run_ci_wait(trail, args, ctx) if args.wait else pr.ci_check.run_ci(trail, args, ctx)
             code = rebase.ci_fix.run_fix(
                 trail, report, ctx,

@@ -23,6 +23,8 @@ import core.run_events  # noqa: E402
 import pr.ci_check  # noqa: E402
 import pr.ci_runs  # noqa: E402
 import pr.context  # noqa: E402
+import pr.target_events  # noqa: E402
+import core.trail  # noqa: E402
 import rebase.ci_fix  # noqa: E402
 
 
@@ -79,3 +81,16 @@ def test_the_queued_parent_files_nothing_and_the_admitted_child_files_once(targe
     monkeypatch.setenv(cli.queue_gate.QUEUED_MARKER, "1")
     assert _main(target, ["--fix"]) == 0
     assert [k for k, *_ in _kinds(target)] == ["step_started", "step_finished"]
+
+
+def test_a_misbehaving_history_does_not_skip_trail_finish_(target):
+    finished = []
+    real = core.trail.Trail.finish
+    with patch.object(pr.target_events.StepHistory, "started", side_effect=RuntimeError("boom")), \
+         patch.object(core.trail.Trail, "finish",
+                      lambda self: (finished.append(1), real(self))[1]):
+        try:
+            code = _main(target, ["--no-rebase", "--head-sha", "abc"], install_signal_handler=False)
+        except RuntimeError:
+            code = "raised"
+    assert finished == [1]

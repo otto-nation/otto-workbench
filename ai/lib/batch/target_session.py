@@ -87,5 +87,9 @@ def note(state: pr.state.PRState | None, target_dir: Path, given_pr: str, findin
         raise TargetSessionError(f"{key} has no finding {finding} (have {known})")
     rec = pr.target_events.record("decision", run=run, item=key, finding=finding,
                                   verdict=verdict.value, reason=text, commands=list(commands))
-    core.run_events.append(Path(target_dir), rec)
+    try:
+        core.run_events.append(Path(target_dir), rec)
+    except FileNotFoundError as exc:
+        raise TargetSessionError(f"target {Path(target_dir).name} has never been claimed "
+                                 f"(no directory to record in): {exc}") from exc
     return rec

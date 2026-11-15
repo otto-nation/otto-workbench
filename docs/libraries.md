@@ -58,7 +58,7 @@ One REST request per branch, against the `core` hourly budget. An aliased
 GraphQL query would answer every branch for a single point, which is cheaper
 on paper and worse here: `gh pr view`, `gh pr list` and every read the review
 pipeline makes spend the *graphql* budget, and this runs unattended on every
-session exit. It has been observed asking its question with graphql exhausted
+maintenance cycle, once per registered repo. It has been observed asking its question with graphql exhausted
 and core almost untouched, where the batch returns no answer at all — and no
 answer means a squash-merged worktree is kept forever, since git alone cannot
 see that merge. Nothing else in `bin/` or `lib/` spends core.

@@ -1159,6 +1159,12 @@ Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [con
 
 Takes no flags.
 
+**`pr target session`** — Open this target's pi session, or print how to (--json)
+
+| Flag | Description |
+|------|-------------|
+| `--json` | Print {schema_version, session_id, name, cwd, argv, env} instead of starting pi; UIs open the session from this, never their own argv. |
+
 **`pr gc`** — Clean up stale PR artifacts
 
 Takes no flags.

@@ -4,12 +4,17 @@ import sqlite3
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-from otto_queue.ledger import LedgerBusy, LedgerError, _translate  # noqa: E402
+import otto_queue.ledger  # noqa: E402
+import otto_queue.paths  # noqa: E402
+from otto_queue.ledger import Ledger, LedgerBusy, LedgerError, _translate  # noqa: E402
+from otto_queue.model import EntryState  # noqa: E402
 
 
 def _operr(msg, *, code=None, name=None):
@@ -57,3 +62,61 @@ def test_translate_locked_is_ledger_busy(tmp_path):
 def test_translate_locking_protocol_message_without_code_is_ledger_busy(tmp_path):
     err = _translate(tmp_path, _operr("locking protocol"))
     assert type(err) is LedgerBusy
+
+
+def _protocol():
+    return _operr("locking protocol", code=sqlite3.SQLITE_PROTOCOL, name="SQLITE_PROTOCOL")
+
+
+def _sql(root):
+    return sqlite3.connect(str(otto_queue.paths.db_path(root)), isolation_level=None)
+
+
+def _row(root, *, state="queued"):
+    conn = _sql(root)
+    try:
+        cur = conn.execute(
+            "INSERT INTO entries (kind, entry_class, argv, cwd, state, created_at) "
+            "VALUES ('ticket', 'heavy', ?, '/', ?, ?)",
+            ('["true"]', state, 0.0))
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def _patch_connect(monkeypatch, remaining):
+    real = otto_queue.ledger._connect
+
+    def flaky(root, *, timeout):
+        if remaining[0] > 0:
+            remaining[0] -= 1
+            raise _protocol()
+        return real(root, timeout=timeout)
+
+    monkeypatch.setattr(otto_queue.ledger, "_connect", flaky)
+    monkeypatch.setattr(otto_queue.ledger, "_sleep", lambda _s: None, raising=False)
+
+
+def test_get_survives_locking_protocol_then_succeeds(tmp_path, monkeypatch):
+    ledger = Ledger.open(tmp_path)
+    entry_id = _row(tmp_path)
+    _patch_connect(monkeypatch, [3])
+    entry = ledger.get(entry_id)
+    assert entry is not None and entry.state is EntryState.QUEUED
+
+
+def test_a_write_survives_locking_protocol_then_succeeds(tmp_path, monkeypatch):
+    ledger = Ledger.open(tmp_path)
+    entry_id = _row(tmp_path)
+    _patch_connect(monkeypatch, [3])
+    ledger.fail(entry_id)
+    assert ledger.get(entry_id).state is EntryState.FAILED
+
+
+def test_get_raises_ledger_busy_after_the_retry_bound(tmp_path, monkeypatch):
+    ledger = Ledger.open(tmp_path)
+    entry_id = _row(tmp_path)
+    monkeypatch.setattr(otto_queue.ledger, "TRANSIENT_RETRY_S", 0.0, raising=False)
+    _patch_connect(monkeypatch, [99])
+    with pytest.raises(LedgerBusy):
+        ledger.get(entry_id)

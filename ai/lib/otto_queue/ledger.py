@@ -52,9 +52,10 @@ from __future__ import annotations
 import contextlib
 import itertools
 import json
+import random
 import sqlite3
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -145,6 +146,21 @@ _OPEN_BUSY_TIMEOUT = 0.0
 # Pause between SQLITE_BUSY retries while opening.
 _OPEN_BUSY_POLL_S = 0.05
 
+# How long a ledger operation retries SQLITE_BUSY / LOCKED / PROTOCOL before
+# raising LedgerBusy. SQLite does not call the busy handler for PROTOCOL, so
+# connect(timeout=) never waits those out; this loop is the wait.
+TRANSIENT_RETRY_S = 60.0
+_TRANSIENT_START_S = 0.025
+_TRANSIENT_CAP_S = 1.0
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def _backoff(delay: float) -> float:
+    return delay * random.uniform(0.5, 1.5)
+
 
 def _connect(root: Path, *, timeout: float) -> sqlite3.Connection:
     conn = sqlite3.connect(str(otto_queue.paths.db_path(root)),
@@ -183,6 +199,25 @@ def _translate(root: Path, exc: sqlite3.Error) -> LedgerError:
     if _is_busy(exc):
         return LedgerBusy(f"cannot use {path}: queue busy")
     return LedgerError(f"cannot use {path}: {exc}")
+
+
+def _run(root: Path, fn: Callable[[sqlite3.Connection], object], *, write: bool = False):
+    """Run *fn* on a fresh connection; retry a transient failure as a whole."""
+    deadline = time.monotonic() + TRANSIENT_RETRY_S
+    delay = _TRANSIENT_START_S
+    while True:
+        try:
+            with contextlib.closing(_connect(root, timeout=0.0)) as conn:
+                if write:
+                    with _transaction(conn):
+                        return fn(conn)
+                return fn(conn)
+        except sqlite3.Error as exc:
+            if not _is_busy(exc) or time.monotonic() >= deadline:
+                raise _translate(root, exc) from exc
+            remaining = deadline - time.monotonic()
+            _sleep(min(_backoff(delay), remaining))
+            delay = min(delay * 2, _TRANSIENT_CAP_S)
 
 
 @contextlib.contextmanager
@@ -381,33 +416,20 @@ class Ledger:
             raise LedgerError(f"cannot open {otto_queue.paths.db_path(root)}: {exc}") from exc
         return cls(root)
 
-    @contextlib.contextmanager
-    def _conn(self) -> Iterator[sqlite3.Connection]:
-        try:
-            with contextlib.closing(_connect(self.root, timeout=core.timeouts.LOCAL)) as conn:
-                yield conn
-        except sqlite3.Error as exc:
-            raise _translate(self.root, exc) from exc
-
-    @contextlib.contextmanager
-    def _write(self) -> Iterator[sqlite3.Connection]:
-        with self._conn() as conn, _transaction(conn):
-            yield conn
-
     def schema_version(self) -> int:
-        with self._conn() as conn:
-            return _stored_version(conn)
+        return _run(self.root, _stored_version)
 
     def get(self, entry_id: int) -> Entry | None:
-        with self._conn() as conn:
-            return _entry(_row(conn, entry_id))
+        return _run(self.root, lambda conn: _entry(_row(conn, entry_id)))
 
     def entries(self, *, recent: int = RECENT_TERMINAL) -> list[Entry]:
         """Every live entry and the *recent* newest finished ones, oldest first."""
-        with self._conn() as conn:
+        def read(conn):
             live = conn.execute(f"SELECT * FROM entries WHERE state IN {_LIVE_IN}", _LIVE).fetchall()
             ended = conn.execute(f"SELECT * FROM entries WHERE state NOT IN {_LIVE_IN} "
                                  "ORDER BY id DESC LIMIT ?", (*_LIVE, recent)).fetchall()
+            return live, ended
+        live, ended = _run(self.root, read)
         rows = sorted([*live, *ended], key=lambda r: r["id"])
         return [e for e in map(_entry, rows) if e is not None]
 
@@ -419,12 +441,19 @@ class Ledger:
         """
         self.reap_orphans()
         # A ticket lease is taken inside the transaction. If anything after that
-        # raises — including COMMIT when this `with` exits — the row rolls back
-        # and sqlite reuses the id; the flock must not stay held.
+        # raises — including COMMIT — the row rolls back and sqlite reuses the
+        # id; the flock must not stay held. A retried attempt releases the last
+        # try's lease before taking another.
         taken: list[otto_queue.lease.Lease] = []
+
+        def tx(conn):
+            for lease in taken:
+                lease.release()
+            taken.clear()
+            return _resolve_tx(self.root, conn, new, force, reuse, pid, taken)
+
         try:
-            with self._write() as conn:
-                return _resolve_tx(self.root, conn, new, force, reuse, pid, taken)
+            return _run(self.root, tx, write=True)
         except BaseException:
             for lease in taken:
                 lease.release()
@@ -432,12 +461,13 @@ class Ledger:
 
     def mark_running(self, entry_id: int, pid: int, *, log_path: str | None = None) -> bool:
         """Move a queued entry to running under *pid*; False if it is no longer queued."""
-        with self._write() as conn:
+        def tx(conn):
             cur = conn.execute(
                 "UPDATE entries SET state = ?, attempts = attempts + 1, started_at = ?, pid = ?, "
                 "log_path = COALESCE(?, log_path) WHERE id = ? AND state = ?",
                 (EntryState.RUNNING.value, time.time(), pid, log_path, entry_id, EntryState.QUEUED.value))
             return cur.rowcount == 1
+        return _run(self.root, tx, write=True)
 
     def claim_as_ticket(self, entry_id: int, pid: int) -> Resolution | None:
         """Turn a queued job into a ticket *pid* runs, holding its lease; None once a worker has it.
@@ -446,9 +476,15 @@ class Ledger:
         key, so a request already joined to the job is joined to the ticket.
         """
         taken: list[otto_queue.lease.Lease] = []
+
+        def tx(conn):
+            for lease in taken:
+                lease.release()
+            taken.clear()
+            return _claim_tx(self.root, conn, entry_id, pid, taken)
+
         try:
-            with self._write() as conn:
-                return _claim_tx(self.root, conn, entry_id, pid, taken)
+            return _run(self.root, tx, write=True)
         except BaseException as exc:
             for lease in taken:
                 lease.release()
@@ -458,7 +494,7 @@ class Ledger:
 
     def finish(self, entry_id: int, exit_status: int) -> EntryState | None:
         """Record *exit_status* and the state it implies; a cancelled entry stays `cancelled`."""
-        with self._write() as conn:
+        def tx(conn):
             cur = conn.execute(
                 f"UPDATE entries SET state = ?, exit_status = ?, finished_at = ? "
                 f"WHERE id = ? AND state IN {_LIVE_IN}",
@@ -473,41 +509,44 @@ class Ledger:
                     (exit_status, entry_id, EntryState.CANCELLED.value,
                      core.proc.INTERRUPT_RETURNCODE))
             entry = _entry(_row(conn, entry_id))
-        return entry.state if entry is not None else None
+            return entry.state if entry is not None else None
+        return _run(self.root, tx, write=True)
 
     def fail(self, entry_id: int) -> None:
         """Mark a live entry `failed` with no exit status; a terminal row is left as it is."""
-        with self._write() as conn:
+        def tx(conn):
             conn.execute(
                 "UPDATE entries SET state = ?, finished_at = ? "
                 f"WHERE id = ? AND state IN {_LIVE_IN}",
                 (EntryState.FAILED.value, time.time(), entry_id, *_LIVE))
+        _run(self.root, tx, write=True)
 
     def requeue(self, entry_id: int, exit_status: int, not_before: float) -> bool:
         """Put a running job back in the queue to run again at *not_before*; False if it is no longer running."""
-        with self._write() as conn:
+        def tx(conn):
             cur = conn.execute(
                 "UPDATE entries SET state = ?, exit_status = ?, pid = NULL, not_before = ? "
                 "WHERE id = ? AND kind = ? AND state = ?",
                 (EntryState.QUEUED.value, exit_status, not_before, entry_id,
                  EntryKind.JOB.value, EntryState.RUNNING.value))
             return cur.rowcount == 1
+        return _run(self.root, tx, write=True)
 
     def next_job(self, entry_class: EntryClass, now: float) -> Entry | None:
         """The oldest queued job of *entry_class* whose retry time has come, or None."""
-        with self._conn() as conn:
-            row = conn.execute(
+        def read(conn):
+            return conn.execute(
                 "SELECT * FROM entries WHERE kind = ? AND state = ? AND entry_class = ? "
                 "AND (not_before IS NULL OR not_before <= ?) ORDER BY id LIMIT 1",
                 (EntryKind.JOB.value, EntryState.QUEUED.value, entry_class.value, now)).fetchone()
-        return _entry(row)
+        return _entry(_run(self.root, read))
 
     def live_jobs(self) -> int:
         """How many jobs are queued (retry pending included) or running."""
-        with self._conn() as conn:
-            row = conn.execute(f"SELECT COUNT(*) AS n FROM entries WHERE kind = ? AND state IN {_LIVE_IN}",
-                               (EntryKind.JOB.value, *_LIVE)).fetchone()
-        return row["n"]
+        def read(conn):
+            return conn.execute(f"SELECT COUNT(*) AS n FROM entries WHERE kind = ? AND state IN {_LIVE_IN}",
+                                (EntryKind.JOB.value, *_LIVE)).fetchone()
+        return _run(self.root, read)["n"]
 
     def cancel(self, entry_id: int) -> Entry | None:
         """Mark a live entry `cancelled`; return it as it was before, or None if there is none.
@@ -515,7 +554,7 @@ class Ledger:
         A queued entry gets the interrupt status (130) now, since nothing will run
         to report one. A running entry's status arrives when its process exits.
         """
-        with self._write() as conn:
+        def tx(conn):
             before = _entry(_row(conn, entry_id))
             if before is None or not before.state.live:
                 return before
@@ -523,15 +562,18 @@ class Ledger:
             conn.execute("UPDATE entries SET state = ?, exit_status = ?, finished_at = ? WHERE id = ?",
                          (EntryState.CANCELLED.value, status, time.time(), entry_id))
             return before
+        return _run(self.root, tx, write=True)
 
     def reap_orphans(self) -> list[int]:
         """End every live entry whose lease nothing holds, and return their ids."""
-        with self._write() as conn:
+        def tx(conn):
             rows = conn.execute(f"SELECT * FROM entries WHERE state IN {_LIVE_IN}", _LIVE).fetchall()
-            orphans = [e for e in map(_entry, rows) if e is not None and e.holds_lease
-                       and otto_queue.lease.orphaned(self.root, e.id)]
-            for entry in orphans:
+            found = [e for e in map(_entry, rows) if e is not None and e.holds_lease
+                     and otto_queue.lease.orphaned(self.root, e.id)]
+            for entry in found:
                 _end_orphan(conn, entry)
+            return found
+        orphans = _run(self.root, tx, write=True)
         # A job's lease file stays: the worker restarts that id and takes it again.
         for entry in orphans:
             if entry.kind is EntryKind.TICKET:
@@ -547,13 +589,14 @@ class Ledger:
         will start holds every ticket behind it.
         """
         moment = time.time() if now is None else now
-        with self._conn() as conn:
-            row = conn.execute(
+
+        def read(conn):
+            return conn.execute(
                 "SELECT MIN(id) AS id FROM entries WHERE state = ? AND entry_class = ? "
                 "AND (kind = ? OR (? AND kind = ? AND (not_before IS NULL OR not_before <= ?)))",
                 (EntryState.QUEUED.value, entry_class.value, EntryKind.TICKET.value, int(jobs),
                  EntryKind.JOB.value, moment)).fetchone()
-        return row["id"]
+        return _run(self.root, read)["id"]
 
     def compact(self, *, retention_s: float, now: float) -> list[int]:
         """Prune finished entries older than *retention_s*, truncate the WAL, and return the pruned ids.
@@ -566,23 +609,24 @@ class Ledger:
         """
         # ceiling: kept done rows grow ~4/day from daily-keyed auto-tasks;
         # revisit if status or compaction slows once the kept set is in the thousands.
-        with self._write() as conn:
+        def prune(conn):
             ids = [r["id"] for r in conn.execute(_PRUNABLE, (*_TERMINAL, now - retention_s,
                                                              EntryState.DONE.value))]
             conn.executemany("DELETE FROM entries WHERE id = ?", [(i,) for i in ids])
             conn.execute(_SET_META, (_COMPACTED_KEY, repr(now)))
+            return ids
+        ids = _run(self.root, prune, write=True)
         # Outside any transaction: a checkpoint cannot run inside one. A reader that
         # is mid-read makes it partial, which is not an error and is retried next time.
-        with self._conn() as conn:
-            conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        _run(self.root, lambda conn: conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone())
         for entry_id in ids:
             _remove_files(self.root, entry_id)
         return ids
 
     def compacted_at(self) -> float | None:
         """When `compact` last ran, or None if never (or the record is unreadable)."""
-        with self._conn() as conn:
-            row = conn.execute("SELECT value FROM meta WHERE name = ?", (_COMPACTED_KEY,)).fetchone()
+        row = _run(self.root, lambda conn: conn.execute(
+            "SELECT value FROM meta WHERE name = ?", (_COMPACTED_KEY,)).fetchone())
         try:
             return float(row["value"]) if row is not None else None
         except ValueError:

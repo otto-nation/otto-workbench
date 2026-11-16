@@ -124,6 +124,8 @@ def test_a_write_after_open_raises_ledger_busy(tmp_path, monkeypatch):
     try:
         holder.execute("BEGIN EXCLUSIVE")
         monkeypatch.setattr(core.timeouts, "LOCAL", 0.2)
+        monkeypatch.setattr(otto_queue.ledger, "TRANSIENT_RETRY_S", 0.05)
+        monkeypatch.setattr(otto_queue.ledger, "_sleep", lambda _s: None)
         with pytest.raises(LedgerBusy):
             ledger.fail(entry_id)
     finally:

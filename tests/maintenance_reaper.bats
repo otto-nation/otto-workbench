@@ -20,10 +20,18 @@ setup() {
   # minutes. The processes the script signals are real.
   cat > "$STUB_BIN/ps" <<EOF2
 #!/usr/bin/env bash
-if [[ " \$* " == *" -p "* ]]; then
-  PATH="\${PATH#"$STUB_BIN:"}" exec ps "\$@"
-fi
-cat "$PS_TABLE"
+# Identity queries (-o comm= / -o etimes= -p PID) answer from the table, or from
+# the override file for comm; other -p queries are the real ps.
+case "\$*" in
+  "-o comm= -p "*)
+    if [[ -f "$PS_TABLE.comm" ]]; then cat "$PS_TABLE.comm"; exit 0; fi
+    awk -v p="\${@: -1}" '\$1 == p { print \$4 }' "$PS_TABLE" ;;
+  "-o etimes= -p "*)
+    awk -v p="\${@: -1}" '\$1 == p { print \$3 }' "$PS_TABLE" ;;
+  *" -p "*)
+    PATH="\${PATH#"$STUB_BIN:"}" exec ps "\$@" ;;
+  *) cat "$PS_TABLE" ;;
+esac
 EOF2
   chmod +x "$STUB_BIN/ps"
 }
@@ -165,6 +173,19 @@ _run_reap() {
   [ "$output" = "reaped=1" ]
   [[ "$stderr" == *"SIGKILL $pid"* ]]
   run ! _alive "$pid"
+}
+
+@test "a pid that is no longer the listed process is not sent SIGKILL" {
+  local pid
+  _spawn_deaf pid
+  _row "$pid" 99999 $(( 31 * 60 )) golangci-lint
+  # After the TERM the pid answers as an unrelated command, as a reused one would.
+  printf 'unrelated\n' > "$PS_TABLE.comm"
+  _config $'reaper:\n  grace_s: 5\n'
+  _run_reap
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"no longer golangci-lint"* ]]
+  _alive "$pid"
 }
 
 @test "the script's own ancestors are never signalled" {

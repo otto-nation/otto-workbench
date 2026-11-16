@@ -11,3 +11,6 @@ Environment=PATH=/usr/local/bin:/usr/bin:/bin
 # Only reap-hung's own process is the unit's: whatever it signals is not ours to
 # take down with it when the unit ends.
 KillMode=process
+# The run sleeps reaper.grace_s (up to 300s) between SIGTERM and SIGKILL; a
+# start timeout that cut it off would leave what it TERMed without the follow-up.
+TimeoutStartSec=infinity

@@ -182,6 +182,27 @@ _install_reaper_units() {
   grep -qx "systemctl --user restart otto-workbench-reaper.timer" "$CALLS"
 }
 
+@test "stop removes the reaper units even when the maintenance timer is not active" {
+  _install_reaper_units
+  # is-active answers "inactive"; every other call is recorded.
+  printf '#!/usr/bin/env bash\n[[ "$2" == is-active ]] && exit 3\necho "systemctl $*" >> "%s"\nexit 0\n' "$CALLS" > "$TMPDIR/bin/systemctl"
+  run env PATH="$TMPDIR/bin:$PATH" HOME="$HOME" NO_COLOR=1 bash -c '
+    export NO_COLOR=1
+    WORKBENCH_DIR="$1"
+    . "$1/lib/ui.sh"
+    . "$1/lib/maintenance.sh"
+    _systemd_stop
+  ' _ "$REPO_ROOT"
+  [ "$status" -eq 0 ]
+  [ ! -e "$HOME/.config/systemd/user/otto-workbench-reaper.timer" ]
+  [ ! -e "$HOME/.config/systemd/user/otto-workbench-reaper.service" ]
+  grep -qx "systemctl --user disable --now otto-workbench-reaper.timer" "$CALLS"
+}
+
+@test "the reaper service has no start timeout to cut its grace sleep short" {
+  grep -qx 'TimeoutStartSec=infinity' "$REPO_ROOT/maintenance/systemd/otto-workbench-reaper.service.template"
+}
+
 @test "the reaper timer is a wall-clock schedule that does not catch up" {
   local template="$REPO_ROOT/maintenance/systemd/otto-workbench-reaper.timer.template"
   grep -Fqx 'OnCalendar=*:0/5' "$template"

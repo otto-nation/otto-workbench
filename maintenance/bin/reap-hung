@@ -174,14 +174,46 @@ for pid in "${TREE[@]}"; do
   fi
 done
 
-sleep "$GRACE_S"
+# _any_alive — true while any signalled pid still exists.
+_any_alive() {
+  local pid
+  for pid in "${TREE[@]}"; do
+    if kill -0 "$pid" 2>/dev/null; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# The grace period is a ceiling, not a wait: stop as soon as everything is gone.
+waited=0
+while (( waited < GRACE_S )) && _any_alive; do
+  sleep 1
+  waited=$(( waited + 1 ))
+done
+
+# _same_process PID — true while PID is still the process that was listed: the
+# same command name, and at least as old as when it was listed. A pid the kernel
+# reused during the grace sleep fails both.
+_same_process() {
+  local comm age
+  comm="$(ps -o comm= -p "$1" 2>/dev/null | tr -d ' ')" || return 1
+  age="$(ps -o etimes= -p "$1" 2>/dev/null | tr -d ' ')" || return 1
+  [[ "${comm##*/}" == "${COMM_OF[$1]}" && "$age" =~ ^[0-9]+$ ]] || return 1
+  (( age >= AGE_OF[$1] ))
+}
 
 for pid in "${TREE[@]}"; do
-  if kill -0 "$pid" 2>/dev/null; then
-    kill -KILL "$pid" 2>/dev/null || true
-    log "SIGKILL $pid (${COMM_OF[$pid]}) still alive after ${GRACE_S}s"
-    _record "$pid" KILL
+  if ! kill -0 "$pid" 2>/dev/null; then
+    continue
   fi
+  if ! _same_process "$pid"; then
+    log "pid $pid is no longer ${COMM_OF[$pid]}; not sending SIGKILL"
+    continue
+  fi
+  kill -KILL "$pid" 2>/dev/null || true
+  log "SIGKILL $pid (${COMM_OF[$pid]}) still alive after ${GRACE_S}s"
+  _record "$pid" KILL
 done
 
 echo "reaped=${#TREE[@]}"

@@ -180,15 +180,23 @@ _systemd_start() {
 }
 
 _systemd_stop() {
+  local stopped=1
   if _systemd_is_active; then
     systemctl --user disable --now "${_SYSTEMD_UNIT}.timer"
-    systemctl --user disable --now "${_SYSTEMD_REAPER_UNIT}.timer" 2>/dev/null || true
-    rm -f "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}".{service,timer} \
-      "$_SYSTEMD_USER_DIR/${_SYSTEMD_REAPER_UNIT}".{service,timer}
-    systemctl --user daemon-reload
-    return 0
+    rm -f "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}".{service,timer}
+    stopped=0
   fi
-  return 1
+  # The reaper is torn down on its own evidence, not the maintenance timer's: a
+  # machine whose maintenance timer is already gone must not keep the reaper.
+  if [[ -e "$_SYSTEMD_USER_DIR/${_SYSTEMD_REAPER_UNIT}.timer" || -e "$_SYSTEMD_USER_DIR/${_SYSTEMD_REAPER_UNIT}.service" ]]; then
+    systemctl --user disable --now "${_SYSTEMD_REAPER_UNIT}.timer" 2>/dev/null || true
+    rm -f "$_SYSTEMD_USER_DIR/${_SYSTEMD_REAPER_UNIT}".{service,timer}
+    stopped=0
+  fi
+  if [[ "$stopped" -eq 0 ]]; then
+    systemctl --user daemon-reload
+  fi
+  return "$stopped"
 }
 
 _systemd_status() {

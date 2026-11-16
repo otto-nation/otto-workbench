@@ -68,6 +68,14 @@ def test_reference_shape_emits_the_cli_contract():
     assert text.startswith("#### otto-queue contract")
 
 
+def test_status_slots_is_on_the_contract():
+    status = next(g for g in cli.otto_queue.CONTRACT.groups if g.title == "status")
+    assert status.flags == ("--json", "--slots")
+    assert any(ex.command == "otto-queue status --json --slots"
+               for ex in cli.otto_queue.CONTRACT.examples)
+    assert "--slots" in cli.otto_queue.build_parser().format_help()
+
+
 def test_every_example_parses_and_runs_a_real_command():
     """An example that does not parse, or hands `--` to run as the command, is a lie in --help."""
     parser = cli.otto_queue.build_parser()

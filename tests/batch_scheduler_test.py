@@ -589,6 +589,16 @@ def test_an_ai_step_gets_its_label_and_unbounded_wait():
     assert otto_queue.ticket.WAIT_ENV not in h.envs[1]
 
 
+def test_an_ai_step_gets_subject_and_action():
+    h = Harness([row(1, _ONLY_REVIEW), row(2, _ONLY_REBASE)],
+                with_ai=[batch.model.Step.REVIEW], pool=2)
+    h.sched._once()
+    assert h.envs[0][otto_queue.ticket.SUBJECT_ENV] == "o/r#1"
+    assert h.envs[0][otto_queue.ticket.ACTION_ENV] == "batch:review"
+    assert otto_queue.ticket.SUBJECT_ENV not in h.envs[1]
+    assert otto_queue.ticket.ACTION_ENV not in h.envs[1]
+
+
 def test_a_waiting_ai_step_does_not_reserve_memory_for_a_plain_step():
     host = batch.admission.HostSample(3 * GiB, 1.0, 0.0)
     h = Harness(

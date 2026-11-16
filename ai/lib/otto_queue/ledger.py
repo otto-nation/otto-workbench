@@ -41,6 +41,8 @@ long: the joiner reaps it and resolves again. An orphaned ticket becomes
 `failed`. A job that exits 75 is put back by `requeue` with `not_before` set;
 `next_job` does not offer it before then. `label` is an optional display
 string stored beside `not_before`; it is never used to match entries.
+`subject`, `action` and `terminal` are optional structured facts about the work
+(`owner/repo#N`, the `pr` subcommand, the herdr pane); they are never used to match.
 `resolve(reuse=False)` joins a live entry but never answers from a `done` one.
 `claim_as_ticket` converts a still-queued job into a ticket for the process
 that runs it.
@@ -109,6 +111,11 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
     ),
     ("ALTER TABLE entries ADD COLUMN not_before REAL",),
     ("ALTER TABLE entries ADD COLUMN label TEXT",),
+    (
+        "ALTER TABLE entries ADD COLUMN subject TEXT",
+        "ALTER TABLE entries ADD COLUMN action TEXT",
+        "ALTER TABLE entries ADD COLUMN terminal TEXT",
+    ),
 )
 
 _VERSION_KEY = "schema_version"
@@ -332,7 +339,8 @@ def _entry(row: sqlite3.Row | None) -> Entry | None:
                  log_path=row["log_path"], result=row["result"], pid=row["pid"],
                  created_at=row["created_at"], started_at=row["started_at"],
                  finished_at=row["finished_at"], not_before=row["not_before"],
-                 label=row["label"])
+                 label=row["label"], subject=row["subject"], action=row["action"],
+                 terminal=row["terminal"])
 
 
 def _first_waiting_id(conn: sqlite3.Connection, entry_class: EntryClass, jobs: bool,
@@ -378,10 +386,10 @@ def _match(conn: sqlite3.Connection, key: str, reuse: bool) -> Resolution | None
 def _insert(conn: sqlite3.Connection, new: NewEntry, pid: int | None) -> int:
     cur = conn.execute(
         "INSERT INTO entries (kind, entry_class, idem_key, argv, cwd, env_allow, state, pid, "
-        "created_at, label) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "created_at, label, subject, action, terminal) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (new.kind.value, new.entry_class.value, new.idem_key, json.dumps(list(new.argv)),
          new.cwd, json.dumps(list(new.env_allow)), EntryState.QUEUED.value, pid, time.time(),
-         new.label))
+         new.label, new.subject, new.action, new.terminal))
     return cur.lastrowid
 
 

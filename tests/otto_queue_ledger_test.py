@@ -174,8 +174,40 @@ def test_a_ledger_from_before_labels_gains_the_column(tmp_path, monkeypatch):
     entry_id = _row(tmp_path)
     monkeypatch.setattr(otto_queue.ledger, "MIGRATIONS", current)
     ledger = Ledger.open(tmp_path)
-    assert ledger.schema_version() == 3
+    assert ledger.schema_version() == len(current)
     assert ledger.get(entry_id).label is None
+
+
+def test_subject_action_and_terminal_are_recorded_and_read_back(tmp_path):
+    ledger = Ledger.open(tmp_path)
+    filled = ledger.resolve(
+        NewEntry(argv=("true",), cwd="/", subject="owner/repo#1",
+                 action="review", terminal="term-9"),
+        force=False, pid=None)
+    empty = ledger.resolve(NewEntry(argv=("true",), cwd="/"), force=False, pid=None)
+    try:
+        got = ledger.get(filled.entry.id)
+        assert (got.subject, got.action, got.terminal) == ("owner/repo#1", "review", "term-9")
+        blank = ledger.get(empty.entry.id)
+        assert (blank.subject, blank.action, blank.terminal) == (None, None, None)
+    finally:
+        if filled.lease is not None:
+            filled.lease.release()
+        if empty.lease is not None:
+            empty.lease.release()
+
+
+def test_a_ledger_from_before_subject_keeps_old_rows(tmp_path, monkeypatch):
+    current = otto_queue.ledger.MIGRATIONS
+    monkeypatch.setattr(otto_queue.ledger, "MIGRATIONS", current[:-1])
+    Ledger.open(tmp_path)
+    entry_id = _row(tmp_path)
+    monkeypatch.setattr(otto_queue.ledger, "MIGRATIONS", current)
+    ledger = Ledger.open(tmp_path)
+    assert ledger.schema_version() == len(current)
+    entry = ledger.get(entry_id)
+    assert entry.state is EntryState.QUEUED
+    assert (entry.subject, entry.action, entry.terminal) == (None, None, None)
 
 
 def test_every_migration_statement_is_additive():

@@ -113,6 +113,44 @@ def test_status_json_prints_one_object_per_entry(capsys):
     rows = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
     assert [(r["state"], r["exit_status"], r["argv"][0]) for r in rows] == [("done", 0, PY), ("failed", 3, PY)]
     assert all("label" in r for r in rows)
+    assert all("id" in r and "slots" not in r for r in rows)
+    assert all("subject" in r and "action" in r and "terminal" in r for r in rows)
+
+
+def test_status_json_includes_subject_action_and_terminal(capsys):
+    Ledger.open().resolve(
+        NewEntry(argv=("true",), cwd="/", subject="owner/repo#1",
+                 action="review", terminal="term-9"),
+        force=False, pid=os.getpid())
+    assert cli.otto_queue.main(["status", "--json"]) == 0
+    [row] = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert (row["subject"], row["action"], row["terminal"]) == (
+        "owner/repo#1", "review", "term-9")
+
+
+def test_status_json_slots_prints_one_leading_line(capsys):
+    ledger = Ledger.open()
+    held = ledger.resolve(
+        NewEntry(argv=("true",), cwd="/", entry_class=EntryClass.HEAVY),
+        force=False, pid=os.getpid())
+    try:
+        ledger.mark_running(held.entry.id, os.getpid())
+        ledger.resolve(
+            NewEntry(argv=("true",), cwd="/", kind=EntryKind.JOB,
+                     entry_class=EntryClass.LIGHT),
+            force=False, pid=None)
+        assert cli.otto_queue.main(["status", "--json", "--slots"]) == 0
+        lines = capsys.readouterr().out.splitlines()
+        header, rows = json.loads(lines[0]), [json.loads(line) for line in lines[1:]]
+        policy = cli.otto_queue.machine_policy()
+        assert header == {"slots": {
+            "heavy": {"running": 1, "limit": policy.limit(EntryClass.HEAVY)},
+            "light": {"running": 0, "limit": policy.limit(EntryClass.LIGHT)},
+        }}
+        assert all("id" in r for r in rows)
+        assert {r["entry_class"] for r in rows} == {"heavy", "light"}
+    finally:
+        held.lease.release()
 
 
 def test_status_text_shows_the_budget_and_each_entry(capsys):

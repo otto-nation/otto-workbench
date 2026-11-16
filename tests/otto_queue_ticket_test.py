@@ -28,10 +28,15 @@ import otto_queue.lease  # noqa: E402
 import otto_queue.slots  # noqa: E402
 from otto_queue.ledger import Ledger  # noqa: E402
 from otto_queue.model import LIVE_STATES, EntryClass, EntryKind, EntryState, NewEntry  # noqa: E402
-from otto_queue.ticket import TicketOutcome, TicketRequest, TicketResult  # noqa: E402
+from otto_queue.ticket import TERMINAL_ENV, TicketOutcome, TicketRequest, TicketResult  # noqa: E402
 from otto_queue_support import PEAK, Room, exit_argv, touch_argv  # noqa: E402
 
 PY = sys.executable
+
+
+@pytest.fixture(autouse=True)
+def _clear_terminal_env(monkeypatch):
+    monkeypatch.delenv(TERMINAL_ENV, raising=False)
 
 # One process per ticket, each admitting against a fixed limit of 2.
 DRIVER = """
@@ -358,6 +363,24 @@ def test_a_tickets_label_is_on_its_entry():
     assert Ledger.open().get(result.entry_id).label == "nightly"
 
 
+def test_a_tickets_subject_and_action_are_on_its_entry():
+    result = _run(exit_argv(0), subject="owner/repo#1", action="review")
+    got = Ledger.open().get(result.entry_id)
+    assert (got.subject, got.action) == ("owner/repo#1", "review")
+
+
+def test_a_ticket_records_hc_terminal_id_when_set(monkeypatch):
+    monkeypatch.setenv(TERMINAL_ENV, "term-9")
+    result = _run(exit_argv(0))
+    assert Ledger.open().get(result.entry_id).terminal == "term-9"
+
+
+# passes-at-base: asserts behaviour this change was careful not to break
+def test_a_ticket_leaves_terminal_blank_without_hc_terminal_id():
+    result = _run(exit_argv(0))
+    assert Ledger.open().get(result.entry_id).terminal is None
+
+
 def test_claimed_request_keeps_the_entrys_label():
     held = Ledger.open().resolve(NewEntry(argv=("true",), cwd="/", label="L"),
                                  force=False, pid=os.getpid())
@@ -366,5 +389,17 @@ def test_claimed_request_keeps_the_entrys_label():
             held.entry, TicketRequest(argv=("other",), cwd="/tmp"))
         assert claimed.label == "L"
         assert claimed.argv == ("true",)
+    finally:
+        held.lease.release()
+
+
+def test_claimed_request_keeps_the_entrys_subject_and_action():
+    held = Ledger.open().resolve(
+        NewEntry(argv=("true",), cwd="/", subject="o/r#1", action="review"),
+        force=False, pid=os.getpid())
+    try:
+        claimed = otto_queue.ticket.claimed_request(
+            held.entry, TicketRequest(argv=("other",), cwd="/tmp"))
+        assert (claimed.subject, claimed.action) == ("o/r#1", "review")
     finally:
         held.lease.release()

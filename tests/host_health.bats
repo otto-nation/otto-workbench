@@ -96,6 +96,15 @@ PS'
   [ "$status" -eq 0 ]
 }
 
+@test "a non-numeric ps field yields exit 0 and null procs" {
+  _stub_ps 'echo "10 alice 01:02:03 1,5 1.0 R go"'
+  _run_hh --json
+  [ "$status" -eq 0 ]
+  local json="$output"
+  run jq -e '.procs == null' <<< "$json"
+  [ "$status" -eq 0 ]
+}
+
 @test "missing meminfo yields exit 0 and .mem null" {
   _run_hh --json
   [ "$status" -eq 0 ]

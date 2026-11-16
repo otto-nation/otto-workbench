@@ -9,7 +9,7 @@ import { friendlyError } from "./_lib/scope.js";
 import { SP, RADIUS, FILL, LAYOUT } from "./_lib/tokens.js";
 import {
   pane, paneBar, scrollBody, sectionLabel, laneTitle, hoverRow, text, type, statusText, button,
-  iconButton, placeholder, errorLine, caption, gauge, scrollInset, selectableCode,
+  dangerButton, iconButton, placeholder, errorLine, caption, gauge, scrollInset, selectableCode,
   keyValue, segment, segmented,
 } from "./_ui/ui.js";
 
@@ -29,8 +29,9 @@ function renderActions(on, row, opts) {
   if (!isLive(row.state)) return null;
   const id = domId(on, row.id);
   if (opts.confirming === opts.rowKey(on, row.id)) {
-    return h_flex().flex_none().gap(SP.xs).items_center()
-      .child(button(`queue-confirm-${id}`, "Confirm cancel", () => opts.onCancel(on, row.id)))
+    return h_flex().flex_none().gap(SP.sm).items_center()
+      .child(caption("Stops this job"))
+      .child(dangerButton(`queue-confirm-${id}`, "Confirm cancel", () => opts.onCancel(on, row.id)))
       .child(button(`queue-keep-${id}`, "Keep", () => opts.onDismiss()));
   }
   return h_flex().flex_none()

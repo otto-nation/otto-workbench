@@ -8,7 +8,7 @@ import { barModel } from "./_lib/filters.js";
 import { prKey } from "./_lib/launch.js";
 import { SP } from "./_lib/tokens.js";
 import {
-  scrollBody, button, solidButton, pane, pinned, checkbox,
+  scrollBody, button, solidButton, dangerButton, pane, pinned, checkbox,
   sectionHeading, text, type, statusText, badge, dangerColor,
   actionBar, caption, errorLine,
 } from "./_ui/ui.js";
@@ -51,7 +51,8 @@ function renderRunning({ launcher: L, workflows, run }) {
       const on = entry.on;
       const id = entry.run.id;
       const killKey = `${on ?? ""}\0${id}`;
-      const confirm = L.confirmKill === killKey;
+      const confirming = L.confirm?.key === killKey;
+      const kill = Boolean(L.confirm?.kill);
       const repos = (entry.run.repos ?? []).map(shortRepo).join(", ");
       const first = entry.run.repos?.[0];
       const terminal = first ? L.terminalFor(on, first) : null;
@@ -62,11 +63,18 @@ function renderRunning({ launcher: L, workflows, run }) {
         .child(badge(runStatus("running")))
         .child(text("meta", `${progress.done} of ${progress.total} done`, t.muted))
         .child(div().flex_1())
-        .when(Boolean(terminal), (e) => e.child(
-          button(`log-${killKey}`, "Log", () => run("terminal.keep", { terminal }))))
-        .child(button(`cancel-${killKey}`, "Cancel", () => { void L.cancel(on, id, false); }))
-        .when(confirm, (e) => e.child(text("body", "Kills the run's processes", dangerColor())))
-        .child(button(`kill-${killKey}`, confirm ? "Confirm kill" : "Kill", () => { void L.cancel(on, id, true); }));
+        .child(h_flex().gap(SP.lg).items_center()
+          .when(Boolean(terminal), (e) => e.child(
+            button(`log-${killKey}`, "Log", () => run("terminal.keep", { terminal }))))
+          .when(confirming, (e) => e.child(
+            h_flex().gap(SP.sm).items_center()
+              .child(caption(kill ? "Kills the run's processes" : "Running steps finish; nothing new starts"))
+              .child(dangerButton(`confirm-${killKey}`, kill ? "Confirm kill" : "Confirm cancel", () => { void L.cancel(on, id); }))
+              .child(button(`keep-${killKey}`, "Keep", () => L.dismissCancel()))))
+          .when(!confirming, (e) => e.child(
+            h_flex().gap(SP.sm).items_center()
+              .child(button(`cancel-${killKey}`, "Cancel", () => L.askCancel(on, id, false)))
+              .child(button(`kill-${killKey}`, "Kill", () => L.askCancel(on, id, true))))));
     }));
 }
 

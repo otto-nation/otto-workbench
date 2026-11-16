@@ -28,6 +28,8 @@ export interface KindSpec {
   dirEnv: string;
   idEnv: string | null;
   idPrefix: string;
+  /** The `pr` command group that owns this kind's report and note. */
+  group: string;
   noun: string;
   subject(id: string): string;
   intro(id: string, dir: string, cwd: string): string;
@@ -44,6 +46,7 @@ export const KINDS: Record<Kind, KindSpec> = {
     dirEnv: "WORKBENCH_RUN_DIR",
     idEnv: null,
     idPrefix: "batch-",
+    group: "batch",
     noun: "pr batch run",
     subject(id) {
       return "run " + id;
@@ -67,6 +70,7 @@ export const KINDS: Record<Kind, KindSpec> = {
     dirEnv: "WORKBENCH_TARGET_DIR",
     idEnv: "WORKBENCH_SESSION_ID",
     idPrefix: "target-",
+    group: "target",
     noun: "PR target",
     subject(id) {
       return "target " + id;
@@ -99,7 +103,7 @@ export function sessionOf(
   env: Record<string, string | undefined>,
   sessionId: string,
 ): { kind: Kind; dir: string } | null {
-  for (const kind of ["batch", "target"] as const) {
+  for (const kind of Object.keys(KINDS) as Kind[]) {
     const spec = KINDS[kind];
     const dir = env[spec.dirEnv]?.trim();
     if (!dir) continue;

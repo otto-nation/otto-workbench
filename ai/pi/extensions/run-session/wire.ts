@@ -72,7 +72,7 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
     if (toolRegistered) return;
     toolRegistered = true;
     const noun = KINDS[kind].noun;
-    const group = KINDS[kind].noteArgv("x")[0];
+    const group = KINDS[kind].group;
     pi.registerTool({
       name: TOOL_NAME,
       label: "Record decision",
@@ -89,17 +89,16 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
         }
         const input = params as DecisionInput;
         const argv = noteArgv(state, input);
-        const groupNow = argv[0];
         const result = await pi.exec(pr, argv, {
           cwd: ctx.cwd,
           timeout: NOTE_TIMEOUT_MS,
           signal,
         });
         if (result.killed) {
-          throw new Error(`pr ${groupNow} note was stopped after ${NOTE_TIMEOUT_MS / 1000}s`);
+          throw new Error(`pr ${group} note was stopped after ${NOTE_TIMEOUT_MS / 1000}s`);
         }
         if (result.code !== 0) {
-          throw new Error(`pr ${groupNow} note exited ${result.code}: ${result.stderr.trim()}`);
+          throw new Error(`pr ${group} note exited ${result.code}: ${result.stderr.trim()}`);
         }
         return {
           content: [{ type: "text", text: `Recorded ${input.verdict} on ${input.pr} ${input.finding}.` }],

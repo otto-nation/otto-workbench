@@ -10,7 +10,7 @@ setup() {
   load 'test_helper'
   common_setup
   # The suite may itself run inside a run session, which exports this.
-  unset WORKBENCH_RUN_DIR
+  unset WORKBENCH_RUN_DIR WORKBENCH_TARGET_DIR WORKBENCH_SESSION_ID
   export NODE_COMPILE_CACHE="$BATS_FILE_TMPDIR/node-compile-cache"
   EXT="$REPO_ROOT/ai/pi/extensions/run-session"
   ID="20261114T120000-ab12"

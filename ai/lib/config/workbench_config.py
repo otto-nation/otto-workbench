@@ -172,6 +172,14 @@ MAINTENANCE_PRUNE_GO_CACHE_GB_KEY = "maintenance.prune.go_cache_gb"
 MAINTENANCE_PRUNE_MISE_KEY = "maintenance.prune.mise"
 MAINTENANCE_PRUNE_DOCKER_KEY = "maintenance.prune.docker"
 MAINTENANCE_DISK_PCT_KEY = "maintenance.disk_pct"
+# Read from bash by maintenance/bin/reap-hung; lib/constants.sh spells the same
+# strings and tests/config.bats cross-validates every pair.
+REAPER_ENABLED_KEY = "reaper.enabled"
+REAPER_GRACE_S_KEY = "reaper.grace_s"
+REAPER_MAX_MINUTES_LINT_KEY = "reaper.max_minutes.lint"
+REAPER_MAX_MINUTES_GO_KEY = "reaper.max_minutes.go"
+REAPER_MAX_MINUTES_GH_KEY = "reaper.max_minutes.gh"
+REAPER_MAX_MINUTES_TASKS_KEY = "reaper.max_minutes.tasks"
 DISK_PCT_MIN = 50
 DISK_PCT_MAX = 99
 

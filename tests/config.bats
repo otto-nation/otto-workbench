@@ -177,6 +177,12 @@ print(workbench_config.$1, end='')
   [ "$MAINTENANCE_PRUNE_MISE_CONFIG_KEY" = "$(resolve_python MAINTENANCE_PRUNE_MISE_KEY)" ]
   [ "$MAINTENANCE_PRUNE_DOCKER_CONFIG_KEY" = "$(resolve_python MAINTENANCE_PRUNE_DOCKER_KEY)" ]
   [ "$MAINTENANCE_DISK_PCT_CONFIG_KEY" = "$(resolve_python MAINTENANCE_DISK_PCT_KEY)" ]
+  [ "$REAPER_ENABLED_CONFIG_KEY" = "$(resolve_python REAPER_ENABLED_KEY)" ]
+  [ "$REAPER_GRACE_S_CONFIG_KEY" = "$(resolve_python REAPER_GRACE_S_KEY)" ]
+  [ "$REAPER_MAX_MINUTES_LINT_CONFIG_KEY" = "$(resolve_python REAPER_MAX_MINUTES_LINT_KEY)" ]
+  [ "$REAPER_MAX_MINUTES_GO_CONFIG_KEY" = "$(resolve_python REAPER_MAX_MINUTES_GO_KEY)" ]
+  [ "$REAPER_MAX_MINUTES_GH_CONFIG_KEY" = "$(resolve_python REAPER_MAX_MINUTES_GH_KEY)" ]
+  [ "$REAPER_MAX_MINUTES_TASKS_CONFIG_KEY" = "$(resolve_python REAPER_MAX_MINUTES_TASKS_KEY)" ]
 }
 
 @test "the scope name bash matches on is the one the resolver prints" {

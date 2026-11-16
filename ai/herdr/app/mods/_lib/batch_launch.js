@@ -46,11 +46,12 @@ export function filterForm(prs, {
   excludeRepos = [],
   excludeLabels = [],
   drafts = DEFAULT_FILTERS.mineDrafts,
+  query = '',
   loaded,
   knownLabels,
 } = {}) {
   const list = (prs ?? []).filter((pr) => drafts || !pr.isDraft);
-  return facetView(list, { repos, labels, excludeRepos, excludeLabels }, {
+  return facetView(list, { repos, labels, excludeRepos, excludeLabels, query }, {
     tab: 'batch',
     loadedRepos: loaded,
     knownLabels,

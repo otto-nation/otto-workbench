@@ -35,13 +35,13 @@ export function batchAction(lane, onBatch) {
 }
 
 // `columns` and `spec` are _lib/board_model.js boardModel's shown lanes and lane order.
-export function renderBoard({ columns, spec, loading, onOpen, onBatch, workflowOf }) {
+export function renderBoard({ columns, spec, loading, onOpen, onBatch, workflowOf, emptyLabel }) {
   const t = theme();
   const board = type(h_flex().id("prs-board").flex_1().h_full().min_h(0).min_w(0).gap(SP.sm).px(SP.lg).py(SP.sm)
     .bg(t.background).text_color(t.foreground).overflow_x_scrollbar(), "body");
   if (loading) return board.children(skeletonLanes(spec));
   if (!columns.length) {
-    return board.child(placeholder("No pull requests").p(SP.lg));
+    return board.child(placeholder(emptyLabel ?? "No pull requests").p(SP.lg));
   }
   return board.children(columns.map((c) => column(c, { onOpen, workflowOf, onBatch })));
 }

@@ -30,7 +30,7 @@ export function renderBoard(el, model, { loading, selectedId, onOpen, itemOf }) 
     return;
   }
   if (!model.columns.length) {
-    el.replaceChildren(h('div', { class: 'none pad' }, 'No pull requests'));
+    el.replaceChildren(h('div', { class: 'none pad' }, model.bar?.emptyLabel ?? 'No pull requests'));
     return;
   }
   el.replaceChildren(...model.columns.map((c) => {
@@ -46,7 +46,7 @@ export function renderBoard(el, model, { loading, selectedId, onOpen, itemOf }) 
 
 export function renderSections(el, model, { loading, collapsed, onToggleSection, selectedId, onOpen, itemOf }) {
   if (!model.sections.length) {
-    el.replaceChildren(h('div', { class: 'none pad' }, loading ? 'Loading…' : 'No pull requests'));
+    el.replaceChildren(h('div', { class: 'none pad' }, loading ? 'Loading…' : (model.bar?.emptyLabel ?? 'No pull requests')));
     return;
   }
   el.replaceChildren(...model.sections.map((s) => {

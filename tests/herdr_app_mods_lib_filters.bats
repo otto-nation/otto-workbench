@@ -34,19 +34,20 @@ _f() {
       excludeAuthors: ["bob"],
     });
     return {
-      missing: [a.repos, a.labels, a.authors, a.excludeRepos, a.excludeLabels, a.excludeAuthors, a.hideBots, a.drafts],
+      missing: [a.repos, a.labels, a.authors, a.excludeRepos, a.excludeLabels, a.excludeAuthors, a.hideBots, a.drafts, a.query],
       flags: [b.drafts, b.mineDrafts],
       lists: [b.repos, b.labels, b.authors, b.excludeRepos, b.excludeLabels, b.excludeAuthors],
+      query: [a.query, b.query],
     };
   })()'
   [ "$status" -eq 0 ]
-  [ "$output" = '{"missing":[[],[],[],[],[],[],false,false],"flags":[true,false],"lists":[["acme/one"],[],["ann"],["acme/two"],["bug"],["bob"]]}' ]
+  [ "$output" = '{"missing":[[],[],[],[],[],[],false,false,""],"flags":[true,false],"lists":[["acme/one"],[],["ann"],["acme/two"],["bug"],["bob"]],"query":["",""]}' ]
 }
 
 @test "normalizeFilters: a value on both sides is exclude" {
   _f 'm.normalizeFilters({repos:["a/one","b/two"],excludeRepos:["A/One"]})'
   [ "$status" -eq 0 ]
-  [ "$output" = '{"drafts":false,"mineDrafts":false,"landed":false,"empty":false,"hideBots":false,"repos":["b/two"],"labels":[],"authors":[],"excludeRepos":["a/one"],"excludeLabels":[],"excludeAuthors":[]}' ]
+  [ "$output" = '{"drafts":false,"mineDrafts":false,"landed":false,"empty":false,"hideBots":false,"repos":["b/two"],"labels":[],"authors":[],"excludeRepos":["a/one"],"excludeLabels":[],"excludeAuthors":[],"query":""}' ]
 }
 
 @test "filterAction: include on/off; include then not- moves and back; flag flip via default" {
@@ -103,16 +104,17 @@ _f() {
       drafts: true, landed: true, empty: true, hideBots: true,
       repos: ["a/one"], labels: ["bug"], authors: ["ann"],
       excludeRepos: ["b/two"], excludeLabels: ["docs"], excludeAuthors: ["bob"],
+      query: "box",
     });
     const team = m.filterAction(dirty, "clear:team");
     const mine = m.filterAction(dirty, "clear:mine");
     const batch = m.filterAction(dirty, "clear:batch");
-    const keys = ["drafts","landed","empty","hideBots","repos","labels","authors","excludeRepos","excludeLabels","excludeAuthors"];
+    const keys = ["drafts","landed","empty","hideBots","repos","labels","authors","excludeRepos","excludeLabels","excludeAuthors","query"];
     const pick = (f) => keys.map((k) => f[k]);
     return { team: pick(team), mine: pick(mine), batch: pick(batch) };
   })()'
   [ "$status" -eq 0 ]
-  [ "$output" = '{"team":[true,true,true,false,[],[],[],[],[],[]],"mine":[true,true,true,true,[],[],["ann"],[],[],["bob"]],"batch":[true,true,true,true,[],[],["ann"],[],[],["bob"]]}' ]
+  [ "$output" = '{"team":[true,true,true,false,[],[],[],[],[],[],""],"mine":[true,true,true,true,[],[],["ann"],[],[],["bob"],""],"batch":[true,true,true,true,[],[],["ann"],[],[],["bob"],""]}' ]
 }
 
 @test "isBot: dependabot[bot] and Renovate[BOT] are bots; bot, botany, [bot]x are not" {
@@ -283,4 +285,80 @@ _f() {
   _f 'm.searchOptions([{value:"ann",label:"ann",state:null},{value:"bob",label:"bob",state:"include"},{value:"cam",label:"cam",state:"exclude"}], "zzz").map((r)=>r.value)'
   [ "$status" -eq 0 ]
   [ "$output" = '["bob","cam"]' ]
+}
+
+@test "matchesQuery: number, #number, title, repo slug and name, author, branch; empty matches all" {
+  _f '(() => {
+    const pr = {number:123,title:"Fix Café login",repoSlug:"Acme/Box",author:"Ann",branch:"feat/login"};
+    const hit = (q) => m.matchesQuery(pr, q);
+    return {
+      number: hit("123"), hash: hit("#123"), title: hit("login"), slug: hit("acme/box"),
+      name: hit("box"), author: hit("ann"), branch: hit("feat/login"),
+      empty: hit(""), blank: hit("   "), none: hit("zzz"), missing: m.matchesQuery({}, ""),
+    };
+  })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"number":true,"hash":true,"title":true,"slug":true,"name":true,"author":true,"branch":true,"empty":true,"blank":true,"none":false,"missing":true}' ]
+}
+
+@test "matchesQuery: multi-term AND, case fold, missing branch is not a match for that term" {
+  _f '(() => {
+    const pr = {number:7,title:"Fix Login",repoSlug:"acme/box",author:"Ann",branch:"feat/login"};
+    const bare = {number:7,title:"Fix Login",repoSlug:"acme/box",author:"Ann"};
+    return {
+      and: m.matchesQuery(pr, "BOX ann"),
+      miss: m.matchesQuery(pr, "box zzz"),
+      fold: m.matchesQuery(pr, "LOGIN"),
+      cafe: m.matchesQuery({...pr, title:"Café"}, "CAFÉ"),
+      noBranch: m.matchesQuery(bare, "feat"),
+    };
+  })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"and":true,"miss":false,"fold":true,"cafe":true,"noBranch":false}' ]
+}
+
+@test "normalizeFilters: keeps a typed query; non-string becomes empty" {
+  _f '[m.normalizeFilters({query:"Fix Login"}).query, m.normalizeFilters({query:12}).query, m.normalizeFilters({query:null}).query]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["Fix Login","",""]' ]
+}
+
+@test "filterAction: query: sets, empty clears, same value is the same object" {
+  _f '(() => {
+    const z = m.normalizeFilters({});
+    const set = m.filterAction(z, "query:Box 7");
+    const same = m.filterAction(set, "query:Box 7");
+    const cleared = m.filterAction(set, "query:");
+    return { q: set.query, same: same === set, cleared: cleared.query, emptySame: m.filterAction(z, "query:") === z };
+  })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"q":"Box 7","same":true,"cleared":"","emptySame":true}' ]
+}
+
+@test "facetView: query filters the list; options still include labels from unmatched PRs" {
+  _f '(() => {
+    const prs = [
+      {n:1,number:1,title:"Alpha",repoSlug:"acme/one",labels:["bug"],author:"ann",branch:"a"},
+      {n:2,number:2,title:"Beta",repoSlug:"acme/two",labels:["docs"],author:"bob",branch:"b"},
+    ];
+    const v = m.facetView(prs, {query:"alpha"});
+    return { ids: v.list.map((p) => p.n), labels: v.options.labels };
+  })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"ids":[1],"labels":["bug","docs"]}' ]
+}
+
+@test "barModel: query-only is active, Clear appears, emptyLabel names the query" {
+  _f '(() => {
+    const opts = {repos:["acme/one","acme/two"],labels:[],authors:[]};
+    const dirty = m.barModel({query:"  Box "}, {tab:"mine", options: opts});
+    const clean = m.barModel({query:""}, {tab:"mine", options: opts});
+    return {
+      query: dirty.query, active: dirty.queryActive, clear: dirty.clear, count: dirty.count,
+      empty: dirty.emptyLabel, cleanClear: clean.clear, cleanActive: clean.queryActive,
+      cleanEmpty: clean.emptyLabel,
+    };
+  })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"query":"  Box ","active":true,"clear":"clear:mine","count":1,"empty":"No PRs match \"Box\"","cleanClear":null,"cleanActive":false,"cleanEmpty":"No pull requests"}' ]
 }

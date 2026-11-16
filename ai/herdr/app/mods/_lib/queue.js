@@ -127,6 +127,18 @@ export async function loadLog(exec, ctx, path) {
   return ran.ok ? { ok: true, text: ran.stdout } : ran;
 }
 
+const TICKET_LOG_NOTE = "Runs in the terminal that started it — no log is kept";
+const QUEUED_LOG_NOTE = "Log starts when it runs";
+const NO_LOG_NOTE = "No log";
+
+// Why there is no log to show, or null when log_path can be tailed.
+export function logNote(row) {
+  if (row?.log_path) return null;
+  if (row?.kind === "ticket") return TICKET_LOG_NOTE;
+  if (row?.state === "queued") return QUEUED_LOG_NOTE;
+  return NO_LOG_NOTE;
+}
+
 export function ageText(row, nowMs) {
   const thenMs = toMs(row?.started_at ?? row?.created_at);
   if (thenMs == null) return '';

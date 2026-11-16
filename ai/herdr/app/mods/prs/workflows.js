@@ -85,19 +85,20 @@ export class Workflows {
     const keys = [...this.targets().keys()].sort().join("\0");
     if (this.keys == null || this.keys !== keys) {
       this.keys = keys;
-      this.refresh(this.acx);
+      // Render is already drawing this frame; skip the empty-set notify (herdr throws).
+      this.refresh(this.acx, { fromShow: true });
     }
   }
 
   hide() { this.visible = false; }
 
-  refresh(cx) {
+  refresh(cx, opts = {}) {
     const wanted = this.targets();
     for (const key of [...this.machines.keys()]) {
       if (!wanted.has(key)) this.machines.delete(key);
     }
     if (this.pinned && !wanted.has(k(this.pinned.on))) this.pinned = null;
-    if (!wanted.size) cx.notify();
+    if (!wanted.size && !opts.fromShow) cx.notify();
     for (const [key, ctx] of wanted) this.refreshOne(cx, key, ctx);
   }
 

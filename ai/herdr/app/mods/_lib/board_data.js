@@ -184,17 +184,17 @@ export function readPages(text) {
 // Below herdr's 30 s exec cap so a hung remote read still settles.
 export const REVIEW_DEADLINE_MS = 20_000;
 
-function withDeadline(promise, deadlineMs) {
-  if (!(deadlineMs > 0)) return promise;
-  let timer;
+function withDeadline(promise, deadlineMs, timer) {
+  if (!(deadlineMs > 0) || timer == null) return promise;
+  let handle;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => {
+    handle = timer.after(deadlineMs, () => {
       const err = new Error('timed out reading the review');
       err.timedOut = true;
       reject(err);
-    }, deadlineMs);
+    });
   });
-  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  return Promise.race([promise, timeout]).finally(() => handle?.cancel());
 }
 
 export async function readReview(readTextFile, path, on, exec = null, opts = {}) {
@@ -212,7 +212,7 @@ export async function readReview(readTextFile, path, on, exec = null, opts = {})
     } else {
       pending = direct;
     }
-    const text = await withDeadline(pending, deadlineMs);
+    const text = await withDeadline(pending, deadlineMs, opts.timer);
     return { ok: true, text: text ?? null };
   } catch (e) {
     if (e && e.timedOut) {

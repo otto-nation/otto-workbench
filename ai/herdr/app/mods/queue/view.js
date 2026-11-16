@@ -5,13 +5,14 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import {
   liveCounts, isLive, stateKind, ageText, rowTitle, rowMeta, commandText, timesText, LOG_TAIL_LINES,
+  logNote,
 } from "./_lib/queue.js";
 import { tailLines } from "./_lib/output.js";
 import { friendlyError } from "./_lib/scope.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import {
   pane, paneBar, scrollBody, sectionLabel, hoverRow, text, type, statusText, button, iconButton,
-  placeholder, errorLine, caption, inset, selectableCode,
+  placeholder, errorLine, caption, scrollInset, selectableCode,
 } from "./_ui/ui.js";
 
 const LOCAL_LABEL = "This computer";
@@ -50,13 +51,14 @@ function renderHead(on, row, opts) {
 }
 
 function renderLog(row, log, id) {
-  if (!row.log_path) return placeholder("No log yet");
+  const note = logNote(row);
+  if (note != null) return caption(note);
   if (log == null) return placeholder("Loading log…");
   if (log.error) return errorLine(log.error);
   const lines = tailLines(log.text ?? "", LOG_TAIL_LINES);
   if (!lines.length) return placeholder(isLive(row.state) ? "No output yet" : "No output");
-  return type(inset({ scroll: false }).text_color(theme().foreground), "code")
-    .child(selectableCode(`queue-log-${id}`, lines, LAYOUT.bodyMaxH));
+  return type(scrollInset(`queue-log-box-${id}`, selectableCode(`queue-log-${id}`, lines))
+    .text_color(theme().foreground), "code");
 }
 
 function renderDetail(on, row, opts) {
@@ -69,8 +71,8 @@ function renderDetail(on, row, opts) {
   ].filter(Boolean).join(" · ");
   const times = timesText(row);
   return v_flex().gap(SP.xs).pl(SP.md).pr(SP.sm).pb(SP.sm)
-    .child(type(inset({ scroll: false }).text_color(theme().foreground), "code")
-      .child(selectableCode(`queue-cmd-${id}`, [commandText(row.argv)], LAYOUT.titleMaxH * 3)))
+    .child(type(scrollInset(`queue-cmd-box-${id}`, selectableCode(`queue-cmd-${id}`, [commandText(row.argv)]),
+      { maxH: LAYOUT.titleMaxH * 3 }).text_color(theme().foreground), "code"))
     .when(Boolean(row.cwd), (e) => e.child(caption(`cwd ${row.cwd}`)))
     .child(caption(facts))
     .when(Boolean(times), (e) => e.child(caption(times)))

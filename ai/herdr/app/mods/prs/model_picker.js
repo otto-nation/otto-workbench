@@ -75,10 +75,15 @@ export class ModelPicker {
     return overrideSummary(this.values(), this.phases);
   }
 
-  clear() {
+  // State only: call from a handler (or from clear). Never from render — set_value is a host call.
+  reset() {
     for (const state of this.fields.values()) state.set_value("");
     this.expanded = null;
     this.custom = false;
+  }
+
+  clear() {
+    this.reset();
     this.acx.notify();
   }
 

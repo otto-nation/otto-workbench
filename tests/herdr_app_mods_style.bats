@@ -105,6 +105,16 @@ teardown() {
   grep -q 'selectableCode(`step-log-' "$MODS/prs/workflows_view.js"
 }
 
+@test "mods never use TextView.scrollable: a self-scrolling TextView lays out at zero in an auto-height parent" {
+  run grep -rnF --include='*.js' '.scrollable(' "$MODS"
+  [ "$status" -eq 1 ]
+}
+
+@test "mods never call setTimeout, clearTimeout, setInterval, or clearInterval" {
+  run grep -rnE --include='*.js' '\b(setTimeout|clearTimeout|setInterval|clearInterval)\s*\(' "$MODS"
+  [ "$status" -eq 1 ]
+}
+
 @test "board load line is one statusRow used by both the wide and compact headers" {
   [ "$(grep -c 'renderLoadLine(' "$MODS/prs/board_view.js")" -eq 1 ]
   grep -A 6 '^  statusRow(' "$MODS/prs/board_view.js" | grep -q 'renderLoadLine('

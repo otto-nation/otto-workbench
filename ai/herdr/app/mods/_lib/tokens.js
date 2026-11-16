@@ -47,8 +47,6 @@ export const ROW_H = {
 // meta line below it.
 export const BREAKPOINT = { compact: BRAND.pane.board, twoLine: 200 };
 export const LAYOUT = { colMin: BRAND.columnMin, colMax: 400, titleLh: BRAND.font.title.lineHeight, headerH: 52, msgMaxW: 480, bodyMaxH: 420, searchW: 220, titleMaxH: 40, monoEm: 0.62, gutterDigits: 5, statusW: 14, cardTitleMaxH: 2 * BRAND.font.title.lineHeight, iconSize: 14 };
-// ceiling: replace with the brand --ow-meter-* tokens once the pinned
-// @otto-nation/brand includes the meter, i.e. when node_modules brand is at
-// or past the release that ships it (2.0.0 does not).
-export const METER = { w: 96, h: 6, gap: 2 };
+// The meter track: the brand's --ow-meter-width / -height / -gap.
+export const METER = { w: BRAND.meterWidth, h: BRAND.meterHeight, gap: BRAND.meterGap };
 export const MONO = { charPx: Math.ceil(TYPE.code.size * LAYOUT.monoEm), gutterDigits: LAYOUT.gutterDigits, gutter: Math.ceil(TYPE.code.size * LAYOUT.monoEm) * LAYOUT.gutterDigits };

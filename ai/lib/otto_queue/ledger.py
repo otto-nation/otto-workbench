@@ -333,6 +333,16 @@ def _entry(row: sqlite3.Row | None) -> Entry | None:
                  label=row["label"])
 
 
+def _first_waiting_id(conn: sqlite3.Connection, entry_class: EntryClass, jobs: bool,
+                      moment: float) -> int | None:
+    row = conn.execute(
+        "SELECT MIN(id) AS id FROM entries WHERE state = ? AND entry_class = ? "
+        "AND (kind = ? OR (? AND kind = ? AND (not_before IS NULL OR not_before <= ?)))",
+        (EntryState.QUEUED.value, entry_class.value, EntryKind.TICKET.value, int(jobs),
+         EntryKind.JOB.value, moment)).fetchone()
+    return row["id"]
+
+
 class Outcome(StrEnum):
     """How `Ledger.resolve` answered a request."""
 
@@ -626,14 +636,21 @@ class Ledger:
         will start holds every ticket behind it.
         """
         moment = time.time() if now is None else now
+        return _run(self.root, lambda conn: _first_waiting_id(conn, entry_class, jobs, moment))
+
+    def wait_poll(self, entry_id: int, entry_class: EntryClass, *, jobs: bool = False,
+                  now: float | None = None) -> tuple[Entry | None, int | None]:
+        """*entry_id*'s row and the oldest waiter of *entry_class*, one connection.
+
+        A waiting ticket's poll needs both; two `_run`s would open two connections.
+        `get` and `first_waiting` keep their own contracts.
+        """
+        moment = time.time() if now is None else now
 
         def read(conn):
-            return conn.execute(
-                "SELECT MIN(id) AS id FROM entries WHERE state = ? AND entry_class = ? "
-                "AND (kind = ? OR (? AND kind = ? AND (not_before IS NULL OR not_before <= ?)))",
-                (EntryState.QUEUED.value, entry_class.value, EntryKind.TICKET.value, int(jobs),
-                 EntryKind.JOB.value, moment)).fetchone()
-        return _run(self.root, read)["id"]
+            return (_entry(_row(conn, entry_id)),
+                    _first_waiting_id(conn, entry_class, jobs, moment))
+        return _run(self.root, read)
 
     def compact(self, *, retention_s: float, now: float) -> list[int]:
         """Prune finished entries older than *retention_s*, truncate the WAL, and return the pruned ids.

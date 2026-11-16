@@ -17,9 +17,12 @@ import core.signal_relay  # noqa: E402
 import otto_queue.ledger  # noqa: E402
 import otto_queue.ticket  # noqa: E402
 from otto_queue.ledger import Ledger, LedgerBusy, LedgerError  # noqa: E402
-from otto_queue.model import EntryState  # noqa: E402
+from otto_queue.model import (  # noqa: E402
+    Entry, EntryClass, EntryKind, EntryState, NewEntry)
+from otto_queue.slots import Admission  # noqa: E402
 from otto_queue.ticket import (  # noqa: E402
-    FAST_WAIT_S, POLL_CAP_S, POLL_S, TicketOutcome, TicketRequest, poll_delay)
+    FAST_WAIT_S, POLL_CAP_S, POLL_S, REAP_EVERY_S, TicketOutcome, TicketRequest,
+    poll_delay)
 from otto_queue_support import Room, exit_argv, touch_argv  # noqa: E402
 
 
@@ -32,16 +35,16 @@ def _ticket(tmp_path, argv, **kw):
 
 
 def test_wait_admits_after_transient_get_failures(tmp_path, monkeypatch):
-    real = Ledger.get
+    real = Ledger.wait_poll
     seen = {"n": 0}
 
-    def flaky(self, entry_id):
+    def flaky(self, entry_id, entry_class, *, jobs=False, now=None):
         seen["n"] += 1
         if seen["n"] <= 2:
             raise LedgerBusy("busy")
-        return real(self, entry_id)
+        return real(self, entry_id, entry_class, jobs=jobs, now=now)
 
-    monkeypatch.setattr(Ledger, "get", flaky)
+    monkeypatch.setattr(Ledger, "wait_poll", flaky)
     result, messages = _ticket(tmp_path, exit_argv(0))
     assert (result.exit_status, result.outcome) == (0, TicketOutcome.RAN)
     assert Ledger.open(tmp_path).get(result.entry_id).state is EntryState.DONE
@@ -49,10 +52,10 @@ def test_wait_admits_after_transient_get_failures(tmp_path, monkeypatch):
 
 
 def test_wait_returns_75_when_the_ledger_stays_busy(tmp_path, monkeypatch):
-    def boom(self, entry_id):
+    def boom(self, *_a, **_k):
         raise LedgerBusy("busy")
 
-    monkeypatch.setattr(Ledger, "get", boom)
+    monkeypatch.setattr(Ledger, "wait_poll", boom)
     result, _ = _ticket(tmp_path, touch_argv(tmp_path / "ran"), wait_s=0.3)
     assert result.exit_status == os.EX_TEMPFAIL
     assert result.outcome is TicketOutcome.TIMED_OUT
@@ -149,3 +152,90 @@ def test_poll_sleep_never_sleeps_past_the_deadline(monkeypatch):
     monkeypatch.setattr(otto_queue.ticket.time, "monotonic", lambda: 11.0)
     otto_queue.ticket._poll_sleep(3.0, 10.0)
     assert slept == []
+
+
+class _Clock:
+    def __init__(self):
+        self.t = 0.0
+
+    def monotonic(self):
+        return self.t
+
+    def sleep(self, seconds):
+        self.t += seconds
+
+
+class _CountingLedger:
+    def __init__(self, entry, first_id):
+        self.root = Path("/nonexistent")
+        self.entry = entry
+        self.first_id = first_id
+        self.reads = 0
+        self.reaps = 0
+
+    def wait_poll(self, entry_id, entry_class, *, jobs=False, now=None):
+        self.reads += 1
+        return self.entry, self.first_id
+
+    def get(self, entry_id):
+        self.reads += 1
+        return self.entry
+
+    def first_waiting(self, entry_class, *, jobs=False, now=None):
+        self.reads += 1
+        return self.first_id
+
+    def reap_orphans(self):
+        self.reaps += 1
+        return []
+
+
+def _queued(entry_id):
+    return Entry(
+        id=entry_id, kind=EntryKind.TICKET, entry_class=EntryClass.HEAVY, idem_key=None,
+        argv=("true",), cwd="/", env_allow=(), state=EntryState.QUEUED, attempts=0,
+        exit_status=None, log_path=None, result=None, pid=1, created_at=0.0,
+        started_at=None, finished_at=None)
+
+
+def _drive_wait(monkeypatch, ledger, entry_id, wait_s):
+    clock = _Clock()
+    monkeypatch.setattr(otto_queue.ticket.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr(otto_queue.ticket.time, "sleep", clock.sleep)
+    monkeypatch.setattr(otto_queue.ticket.random, "Random",
+                        lambda: SimpleNamespace(uniform=lambda a, b: 1.0))
+    request = TicketRequest(argv=("true",), cwd="/", wait_s=wait_s)
+    return otto_queue.ticket._wait_for_slot(
+        ledger, entry_id, request, Room(admit=False), POLL_S, lambda _m: None)
+
+
+def test_a_non_first_waiter_reaps_at_most_every_reap_interval(monkeypatch):
+    waiter = _queued(2)
+    ledger = _CountingLedger(waiter, first_id=1)
+    wait = _drive_wait(monkeypatch, ledger, waiter.id, wait_s=12.0)
+    assert wait.end.value == "timed_out"
+    assert ledger.reaps == int(12.0 / REAP_EVERY_S)
+    assert ledger.reads > ledger.reaps
+
+
+def test_the_first_waiter_reaps_on_every_poll(monkeypatch):
+    waiter = _queued(1)
+    ledger = _CountingLedger(waiter, first_id=1)
+    monkeypatch.setattr(otto_queue.slots, "try_admit",
+                        lambda *_a, **_k: Admission(None, "no room"))
+    wait = _drive_wait(monkeypatch, ledger, waiter.id, wait_s=4.0)
+    assert wait.end.value == "timed_out"
+    assert ledger.reaps == 9
+
+
+def test_wait_poll_returns_the_row_and_the_oldest_waiter(tmp_path):
+    ledger = Ledger.open(tmp_path)
+    older = ledger.resolve(
+        NewEntry(argv=("x",), cwd="/"), force=False, pid=os.getpid())
+    newer = ledger.resolve(
+        NewEntry(argv=("y",), cwd="/"), force=False, pid=os.getpid())
+    entry, first = ledger.wait_poll(newer.entry.id, EntryClass.HEAVY)
+    assert (entry.id, first) == (newer.entry.id, older.entry.id)
+    assert first == ledger.first_waiting(EntryClass.HEAVY)
+    older.lease.release()
+    newer.lease.release()

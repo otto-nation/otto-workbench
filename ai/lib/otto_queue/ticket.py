@@ -17,9 +17,10 @@ the machine's budget, and runs once per idempotency key.
 2. **Wait.** Polls start at `POLL_S` for `FAST_WAIT_S`, then back off
    geometrically to `POLL_CAP_S` (jittered ±20% so waiters do not lockstep;
    the interval resets when the wait reason or joined state changes). A sleep
-   never runs past `wait_s`. Orphans are reaped, and only the oldest waiting
-   entry of the class (tickets, and while a worker is alive its ready jobs)
-   asks `otto_queue.slots.try_admit`. Each new reason for waiting is printed once.
+   never runs past `wait_s`. A waiter that is not first only reads the head of
+   the queue each poll and reaps orphans at most every `REAP_EVERY_S`; the first
+   waiter reaps, then asks `otto_queue.slots.try_admit`. Each new reason for
+   waiting is printed once.
    `LedgerBusy` after the ledger's own retries is printed once (`ledger busy;
    still waiting`) and is not a crash: the ticket keeps waiting until `wait_s`,
    then returns 75. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler
@@ -86,6 +87,7 @@ DEFAULT_WAIT_S = 3600.0
 POLL_S = 0.5
 FAST_WAIT_S = 5.0
 POLL_CAP_S = 3.0
+REAP_EVERY_S = 5.0
 
 # Printed once when a wait poll hits LedgerBusy after the ledger's own retries.
 _BUSY_NOTICE = "otto-queue: ledger busy; still waiting"
@@ -351,11 +353,12 @@ def _admit_and_run(ledger: otto_queue.ledger.Ledger, entry_id: int,
 
 def _slot_once(ledger: otto_queue.ledger.Ledger, entry_id: int,
                entry_class: EntryClass, policy: otto_queue.slots.Policy,
-               said: str) -> tuple[_Wait | None, str]:
-    entry = ledger.get(entry_id)
+               said: str, *, reap: bool) -> tuple[_Wait | None, str]:
+    jobs = otto_queue.lease.worker_alive(ledger.root)
+    entry, first = ledger.wait_poll(entry_id, entry_class, jobs=jobs)
     if entry is None or entry.state is not EntryState.QUEUED:
         return _Wait(_WaitEnd.CANCELLED), said
-    admission = _try_once(ledger, entry_id, entry_class, policy)
+    admission = _try_once(ledger, entry_id, entry_class, policy, first, reap=reap)
     if admission.slot is not None:
         return _Wait(_WaitEnd.ADMITTED, admission.slot), said
     return None, admission.reason
@@ -368,10 +371,16 @@ def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
     origin = time.monotonic()
     said = ""
     rng = random.Random()
+    last_reap = time.monotonic()
     busy_said = False
     while True:
+        now = time.monotonic()
+        reap = now - last_reap >= REAP_EVERY_S
         try:
-            wait, reason = _slot_once(ledger, entry_id, request.entry_class, policy, said)
+            wait, reason = _slot_once(
+                ledger, entry_id, request.entry_class, policy, said, reap=reap)
+            if reap:
+                last_reap = now
         except otto_queue.ledger.LedgerBusy:
             wait, reason = None, said
             busy_said = _note_busy(notify, busy_said)
@@ -387,11 +396,15 @@ def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
 
 
 def _try_once(ledger: otto_queue.ledger.Ledger, entry_id: int, entry_class: EntryClass,
-              policy: otto_queue.slots.Policy) -> otto_queue.slots.Admission:
+              policy: otto_queue.slots.Policy, first: int | None, *,
+              reap: bool) -> otto_queue.slots.Admission:
     """Ask for a slot, unless an older entry of the class is still waiting.
 
     An older entry is a ticket, or a ready job while a worker is alive.
+    A waiter that is not first skips `reap_orphans` unless *reap*.
     """
+    if first is not None and first != entry_id and not reap:
+        return otto_queue.slots.Admission(None, f"behind entry {first}, which queued first")
     ledger.reap_orphans()
     first = ledger.first_waiting(entry_class, jobs=otto_queue.lease.worker_alive(ledger.root))
     if first is not None and first != entry_id:

@@ -44,6 +44,11 @@ export function logTailArgv(path, n = 200) {
   return ['tail', '-n', String(n), path];
 }
 
+// `otto-log show` prints and exits, and herdr cannot keep a terminal whose program has
+// finished ("no running terminal"), so the trail is shown by a shell that then stays: the
+// terminal lives until the reader closes it. The id is a positional, never spliced into the script.
+export const TRAIL_SCRIPT = 'otto-log show "$1"; printf "\\n"; exec "${SHELL:-/bin/sh}"';
+
 // `otto-log show` argv for a herdr terminal on the run's machine, or null when
 // there is no trail id. trailRoot is an invocation id, not a path.
 export function trailArgv(run) {
@@ -54,7 +59,7 @@ export function trailArgv(run) {
     repo,
     cwd: run.cwd || run.runDir || '.',
     on: run.on,
-    argv: ['otto-log', 'show', id],
+    argv: ['sh', '-c', TRAIL_SCRIPT, 'sh', id],
   });
 }
 

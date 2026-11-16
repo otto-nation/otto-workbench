@@ -13,6 +13,7 @@ import { cardId, friendlyError, spaceTargets } from "./_lib/scope.js";
 import { LOAD_DELAY_MS, loadState, errorsStatus } from "./_lib/load_state.js";
 import { runStatus } from "./_lib/batch.js";
 import { createBoardStore, ctxKey, NO_WANT, FULL_PULL_MS } from "./_lib/board_store.js";
+import { createLoadGate, execLoadReader } from "./_lib/load_backoff.js";
 import { boardModel, mineOpen, wantFor } from "./_lib/board_model.js";
 import { normalizeFilters, filterAction } from "./_lib/filters.js";
 import { viewOf } from "./_lib/compact.js";
@@ -94,8 +95,12 @@ export default class PrsBoard extends View {
     this.watchRoot = this.key = null;
     this.pollListing = false;
     this.manual = false;
-    cx.timer.every(FULL_PULL_MS, (cx) => this.refresh(cx));
+    const read = execLoadReader(exec);
+    const fullGate = createLoadGate({ read });
+    const listingGate = createLoadGate({ read });
+    cx.timer.every(FULL_PULL_MS, (cx) => { if (fullGate.pass()) this.refresh(cx); });
     cx.timer.every(15000, (cx) => {
+      if (!listingGate.pass()) return;
       if (this.activeTargets().some((c) => c.on != null) || this.pollListing) this.refresh(cx, { listingOnly: true });
     });
     this.refresh(cx);

@@ -66,6 +66,9 @@ const label = (cmd, args) => {
   return [c, ...a].join(" ");
 };
 const fakePr = (doc, answer = () => null) => async (cmd, args, opts = {}) => {
+  // The timers read machine load (_lib/load_backoff.js); a host that cannot say lets every tick run,
+  // and the probe is not a board call, so it is answered before it is recorded.
+  if (cmd === "nproc" || (cmd === "cat" && args[0] === "/proc/loadavg")) return { code: 1, stdout: "", stderr: "no load" };
   const l = label(cmd, args);
   calls.push({ label: l, cwd: opts.cwd ?? null, on: opts.on ?? null });
   const custom = await answer(l, opts);

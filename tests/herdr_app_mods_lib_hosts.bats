@@ -176,7 +176,7 @@ _js() {
   [ "$status" -eq 0 ]
 }
 
-@test "hostSummary gauges, counts, queue busy, and swap note" {
+@test "hostSummary gauges, counts and queue busy" {
   _js 'const rich = {
          load: { m1: 6 },
          mem: { available_mb: 4000 },
@@ -194,8 +194,7 @@ _js() {
          counts: s.counts,
          busy: busy.counts,
          noQ: noQ.counts,
-         note1024: h.hostSummary({ result: { ok: true, health: health({ mem: { swap_used_mb: 1024 } }) } }, 1).note,
-         note1025: h.hostSummary({ result: { ok: true, health: health({ mem: { swap_used_mb: 1025 } }) } }, 1).note,
+         hasNote: Object.prototype.hasOwnProperty.call(s, "note"),
        })'
   [ "$status" -eq 0 ]
   run jq -e '.keys==["load","mem","disk"] and .kinds==["warn","pass","pass"]
@@ -203,8 +202,31 @@ _js() {
     and .counts=="2 processes, 1 zombies · golangci-lint 2, go 1 · queue 1 running, 3 waiting"
     and (.busy | endswith("queue busy"))
     and (.noQ | test("queue") | not)
-    and .note1024==null
-    and .note1025=="swap 1025 MB"' <<< "$output"
+    and .hasNote==false' <<< "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "topProcesses limit trims after dropping bad rows, defaults to 5" {
+  _js 'const rows = [1, 2, 3, 4, 5, 6].map((n) => ({
+         pid: n, user: "u", age_s: 10, cpu: 7 - n, mem: 1, command: "c" + n,
+       }));
+       const hh = health({ procs: { top_cpu: rows } });
+       const badFirst = health({
+         procs: { top_cpu: [{ pid: 99, user: "u", age_s: 10, cpu: "x", mem: 1, command: "bad" }, ...rows] },
+       });
+       out({
+         def: h.topProcesses(hh).length,
+         three: h.topProcesses(hh, "cpu", 3).map((r) => r.key),
+         ten: h.topProcesses(hh, "cpu", 10).length,
+         zero: h.topProcesses(hh, "cpu", 0),
+         afterBad: h.topProcesses(badFirst, "cpu", 3).map((r) => r.key),
+       })'
+  [ "$status" -eq 0 ]
+  run jq -e '.def==5
+    and .three==["1","2","3"]
+    and .ten==6
+    and .zero==[]
+    and .afterBad==["1","2","3"]' <<< "$output"
   [ "$status" -eq 0 ]
 }
 
@@ -235,29 +257,116 @@ _js() {
   [ "$status" -eq 0 ]
 }
 
-@test "hostsModel collapse defaults, order, keys, and last good health" {
+@test "hostsModel returns neutral cards in order with last good health" {
   _js 'const quiet = health();
-       const strainedH = health({ load: { m1: 12 } });
        const last = health({ mem: { available_mb: 3000 } });
        const local = { on: null, result: { ok: true, health: quiet } };
-       const remote = { on: "homelab", result: { ok: true, health: strainedH } };
-       const failed = { on: "box", result: { ok: false, error: { kind: "timeout" } }, health: last };
-       const absent = h.hostsModel([local, remote], 1);
-       const openLocal = h.hostsModel([local], 1, { "": false });
-       const collapseRemote = h.hostsModel([remote], 1, { homelab: true });
-       const kept = h.hostsModel([failed], 1);
+       const remote = { on: "homelab", result: { ok: false, error: { kind: "timeout" } }, health: last };
+       const cards = h.hostsModel([local, remote], 1);
        out({
-         keys: absent.map((b) => b.key),
-         open: absent.map((b) => b.open),
-         localOpen: openLocal[0].open,
-         remoteOpen: collapseRemote[0].open,
-         failedHealth: kept[0].health,
+         keys: cards.map((b) => b.key),
+         opens: cards.map((b) => Object.prototype.hasOwnProperty.call(b, "open")),
+         summaries: cards.map((b) => Object.prototype.hasOwnProperty.call(b, "summary")),
+         titles: cards.map((b) => b.model.title),
+         remoteStatus: cards[1].model.status.word,
+         remoteWarn: cards[1].model.staleness.warn,
+         remoteMuted: cards[1].model.muted,
+         hasHealth: cards.map((b) => Object.prototype.hasOwnProperty.call(b, "health")),
          last,
+         labels: cards[0].model.meters.map((m) => m.label),
+         glyphs: cards[0].model.meters.map((m) => m.glyph),
+         kinds: cards[0].model.meters.map((m) => m.model.kind),
        })'
   [ "$status" -eq 0 ]
-  run jq -e '.keys==["","homelab"] and .open==[false,true]
-    and .localOpen==true and .remoteOpen==false
-    and .failedHealth==.last' <<< "$output"
+  run jq -e '.keys==["","homelab"]
+    and .opens==[false,false] and .summaries==[false,false]
+    and .titles==["This computer","homelab"]
+    and .remoteStatus=="unreachable" and .remoteWarn==true and .remoteMuted==true
+    and .hasHealth==[false,false]
+    and .labels==["load","mem","disk"] and .glyphs==["pass","pass","pass"]
+    and .kinds==["bar","bar","bar"]' <<< "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "machineModel: staleness warn and muted follow the staleness kind" {
+  _js 'const now = 1_000_000;
+       const hh = health();
+       const of = (entry) => h.machineModel(h.hostSummary(entry, now));
+       out({
+         fresh: of({ result: { ok: true, health: hh }, at: now }),
+         stale: of({ result: { ok: true, health: hh }, at: now - 60_000 }),
+         loading: of({}),
+       })'
+  [ "$status" -eq 0 ]
+  run jq -e '.fresh.staleness.warn==false and .fresh.muted==false
+    and .stale.staleness.warn==true and .stale.muted==true
+    and .loading.staleness.warn==false and .loading.muted==false
+    and .loading.status.word=="loading"' <<< "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "hostPage details strings" {
+  _js 'const cpu = [
+         { pid: 1, user: "u", age_s: 10, cpu: 1, mem: 1, command: "a" },
+         { pid: 2, user: "u", age_s: 10, cpu: 2, mem: 2, command: "b" },
+       ];
+       const memRows = [{ pid: 3, user: "u", age_s: 10, cpu: 1, mem: 9, command: "c" }];
+       const hh = health({
+         cores: 4,
+         load: { m1: 1.5, m5: 1.25, m15: 0.5 },
+         mem: { total_mb: 8192, available_mb: 4608, swap_used_mb: 512 },
+         disk: {
+           home: { size_mb: 102400, used_mb: 42700 },
+           docker: { size_mb: 51200, used_mb: 5120 },
+         },
+         procs: { zombies: 1, top_cpu: cpu, top_mem: memRows },
+         heavy: { go: 1, "golangci-lint": 2 },
+         queue: { running: 1, queued: 3 },
+       });
+       const entry = { on: "homelab", result: { ok: true, health: hh } };
+       const cpuPage = h.hostPage(entry, 1, "cpu");
+       const memPage = h.hostPage(entry, 1, "mem");
+       out({ details: cpuPage.details, cpuN: cpuPage.processes.length, memN: memPage.processes.length })'
+  [ "$status" -eq 0 ]
+  run jq -e '.details==[
+      {"key":"cores","value":"4"},
+      {"key":"load","value":"1.5 · 1.3 · 0.5"},
+      {"key":"memory","value":"3.5 of 8.0 GB used"},
+      {"key":"swap","value":"0.5 GB"},
+      {"key":"disk home","value":"41.7 of 100.0 GB (42%)"},
+      {"key":"disk docker","value":"5.0 of 50.0 GB (10%)"},
+      {"key":"zombies","value":"1"},
+      {"key":"heavy","value":"golangci-lint 2, go 1"},
+      {"key":"queue","value":"1 running, 3 waiting"}
+    ]
+    and .cpuN==2 and .memN==1' <<< "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "hostPage with no health has empty processes and details, and busy queue and null sections are skipped" {
+  _js 'const none = h.hostPage({ result: { ok: true, health: null } }, 1);
+       const skipped = h.hostPage({
+         result: { ok: true, health: health({
+           queue: { busy: true },
+           heavy: { "golangci-lint": 0, go: 0, gh: 0, tasks: 0 },
+           disk: { docker: null },
+           mem: null,
+         }) },
+       }, 1);
+       out({
+         noneP: none.processes,
+         noneD: none.details,
+         keys: skipped.details.map((r) => r.key),
+         queue: skipped.details.find((r) => r.key === "queue"),
+         heavy: skipped.details.find((r) => r.key === "heavy"),
+       })'
+  [ "$status" -eq 0 ]
+  run jq -e '.noneP==[] and .noneD==[]
+    and .queue=={"key":"queue","value":"busy"}
+    and .heavy=={"key":"heavy","value":"none"}
+    and (.keys | index("memory"))==null
+    and (.keys | index("swap"))==null
+    and (.keys | index("disk docker"))==null' <<< "$output"
   [ "$status" -eq 0 ]
 }
 
@@ -295,11 +404,3 @@ _js() {
   [ "$status" -eq 0 ]
 }
 
-@test "toggleCollapsed stores the visible state, returns a new map and keeps other keys" {
-  _js 'const m = { a: true };
-       const next = h.toggleCollapsed(m, "b", true);
-       out({ next, same: next === m, m, none: h.toggleCollapsed(null, "", false) })'
-  [ "$status" -eq 0 ]
-  run jq -e '.next=={a:true,b:true} and .same==false and .m=={a:true} and .none=={"":false}' <<< "$output"
-  [ "$status" -eq 0 ]
-}

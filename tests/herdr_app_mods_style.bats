@@ -146,7 +146,7 @@ teardown() {
   local view="$MODS/queue/view.js"
   grep -q 'laneTitle(lane.label, lane.count)' "$view"
   grep -q 'spinning: props.spinning' "$view"
-  grep -q 'statusText("warn", stale.words)' "$view"
+  grep -q 'warn: kind != null && kind !== "fresh"' "$view"
   grep -q 'row.members.flatMap' "$view"
   grep -q 'row.timing' "$view"
   grep -q 'row.position' "$view"
@@ -173,9 +173,9 @@ teardown() {
   local main="$MODS/queue/main.js"
   grep -q 'homeModel(machines, nowMs)' "$main"
   grep -q 'cards: model.cards' "$main"
-  grep -Fq 'card(`queue-machine-${block.key || "local"}`)' "$view"
-  grep -q 'sectionLabel(block.title)' "$view"
-  grep -q 'caption(block.counts' "$view"
+  grep -Fq 'machineCard(`queue-machine-${block.key || "local"}`' "$view"
+  grep -q 'title: block.title' "$view"
+  grep -q 'counts: hide ? null : block.counts' "$view"
   grep -q 'statusText("warn", block.hostNote)' "$view"
   grep -Fq 'children((opts.cards ?? []).map((block) => renderHomeCard(block, opts)))' "$view"
   run grep -nE 'homeModel|toggleCollapsed|slotGauge' "$view"
@@ -187,7 +187,7 @@ teardown() {
 @test "queue home card opens selectMachine" {
   local view="$MODS/queue/view.js"
   local main="$MODS/queue/main.js"
-  grep -q 'on_click(() => opts.onSelectMachine(block.key))' "$view"
+  grep -q '() => opts.onSelectMachine(block.key)' "$view"
   grep -q 'selectMachine(navState(), key)' "$main"
   grep -q 'setShared("queue.machine"' "$main"
   grep -q 'shared("queue.machine")' "$main"
@@ -283,10 +283,38 @@ teardown() {
   grep -q 'export function meter(model' "$ui"
   grep -q 'meterTrack(model, fill, hair)' "$ui"
   grep -q '.w(METER.w)' "$ui"
-  grep -q 'meter(g, { muted, label: g.class })' "$view"
+  grep -q 'meter(mt.model, { muted })' "$ui"
   run grep -nE 'export function gauge\(|gauge\(' "$ui" "$view"
   [ "$status" -eq 1 ]
   run grep -nE '█|░' "$ui" "$view" "$MODS/queue/main.js"
+  [ "$status" -eq 1 ]
+}
+
+@test "Queue draws machines through the shared machine pieces" {
+  local view="$MODS/queue/view.js"
+  grep -q 'machineCard(' "$view"
+  grep -q 'machineHeader(' "$view"
+  grep -q 'paneHeader(' "$view"
+  run grep -nF 'function renderMeters' "$view"
+  [ "$status" -eq 1 ]
+  run grep -nF 'function staleLine' "$view"
+  [ "$status" -eq 1 ]
+  run grep -nF 'meter(' "$view"
+  [ "$status" -eq 1 ]
+}
+
+@test "Hosts draws machines through the shared machine pieces" {
+  local view="$MODS/hosts/view.js"
+  grep -q 'machineCard(' "$view"
+  grep -q 'machineHeader(' "$view"
+  grep -q 'paneHeader(' "$view"
+  run grep -nF 'function renderMeter' "$view"
+  [ "$status" -eq 1 ]
+  run grep -nF 'function staleLine' "$view"
+  [ "$status" -eq 1 ]
+  run grep -nF 'meter(' "$view"
+  [ "$status" -eq 1 ]
+  run grep -nF 'gauge(' "$view"
   [ "$status" -eq 1 ]
 }
 

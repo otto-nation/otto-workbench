@@ -1,6 +1,7 @@
 /**
- * Queue home model: meters, per-machine overview, machine pages, navigation. Pure.
+ * Queue home model: meters, per-machine overview, machine pages. Pure.
  */
+import { machineKey } from './machine_nav.js';
 import { liveCounts } from './queue.js';
 import { lanesModel, RECENT_TERMINAL, staleness } from './queue_lanes.js';
 
@@ -132,12 +133,6 @@ export function machineSummary(entry, nowMs) {
   };
 }
 
-function machineKey(entry) {
-  if (entry?.key != null) return String(entry.key);
-  if (entry?.on == null || entry.on === '') return '';
-  return String(entry.on);
-}
-
 function cardOf(entry, nowMs) {
   const key = machineKey(entry);
   const summary = machineSummary({ ...entry, title: machineTitle(entry) }, nowMs);
@@ -172,20 +167,3 @@ export function machinePage(entry, nowMs, opts = {}) {
   };
 }
 
-export function selectMachine(state, key) {
-  return { ...(state ?? {}), machine: key ?? null };
-}
-
-export function clearMachine(state) {
-  return { ...(state ?? {}), machine: null };
-}
-
-export function pageOf(state, machines) {
-  const key = state?.machine;
-  if (key == null) return null;
-  const want = String(key);
-  for (const entry of machines ?? []) {
-    if (machineKey(entry) === want) return entry;
-  }
-  return null;
-}

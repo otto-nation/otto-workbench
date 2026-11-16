@@ -6,11 +6,10 @@ import { exec, spaces, panes, run, shared, setShared } from "herdr";
 import { eachByMachine, machineOf } from "./_lib/board_pull.js";
 import { parsePrKey } from "./_lib/launch.js";
 import { LOAD_DELAY_MS } from "./_lib/load_state.js";
+import { clearMachine, navStateOf, pageOf, selectMachine } from "./_lib/machine_nav.js";
 import { remoteOns } from "./_lib/machines.js";
 import { cancelEntry, loadLog, loadStatus, logNote } from "./_lib/queue.js";
-import {
-  clearMachine, homeModel, machinePage, pageOf, selectMachine,
-} from "./_lib/queue_home.js";
+import { homeModel, machinePage } from "./_lib/queue_home.js";
 import { refreshSpinning, staleness } from "./_lib/queue_lanes.js";
 import { focusSteps } from "./_lib/run_session.js";
 import { renderQueue } from "./view.js";
@@ -18,13 +17,7 @@ import { renderQueue } from "./view.js";
 const rowKey = (on, id) => `${machineOf(on)}#${id}`;
 const groupKey = (on, row) => `${machineOf(on)}:${row.key}`;
 
-function navState() {
-  const machine = shared("queue.machine");
-  if (machine == null || machine === "") {
-    return machine === "" ? { machine: "" } : { machine: null };
-  }
-  return { machine };
-}
+const navState = () => navStateOf(shared("queue.machine"));
 
 export default class Queue extends View {
   // Handlers run after the render that built them; a redraw or task requested through that render's

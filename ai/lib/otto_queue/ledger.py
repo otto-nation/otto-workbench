@@ -476,6 +476,18 @@ class Ledger:
         rows = sorted([*live, *ended], key=lambda r: r["id"])
         return [e for e in map(_entry, rows) if e is not None]
 
+    def count_failed_since(self, since: float) -> int:
+        """How many entries ended `failed` with `finished_at` at or after *since*.
+
+        Counts the whole ledger, not the capped recent list `entries()` returns.
+        """
+        def read(conn):
+            return conn.execute(
+                "SELECT COUNT(*) AS n FROM entries WHERE state = ? AND finished_at >= ?",
+                (EntryState.FAILED.value, since),
+            ).fetchone()["n"]
+        return _run(self.root, read)
+
     def resolve(self, new: NewEntry, *, force: bool, pid: int | None, reuse: bool = True) -> Resolution:
         """Accept *new*, or answer it from an entry with the same key; see the module docstring.
 

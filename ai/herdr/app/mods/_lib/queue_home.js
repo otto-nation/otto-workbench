@@ -47,7 +47,7 @@ function runningByClass(rows) {
   return counts;
 }
 
-function failed24h(rows, nowMs) {
+function countFailedRows(rows, nowMs) {
   let n = 0;
   for (const row of rows ?? []) {
     if (row.state !== 'failed') continue;
@@ -57,6 +57,25 @@ function failed24h(rows, nowMs) {
     if (age >= 0 && age <= DAY_MS) n += 1;
   }
   return n;
+}
+
+// One owner for the counts-line failed-today figure: the CLI's uncapped
+// failed_24h when present, else the rows, with 20+ at the recent cap.
+function failedToday(failed24h, rows, nowMs) {
+  if (typeof failed24h === 'number' && Number.isFinite(failed24h)) {
+    return { n: failed24h, label: `${failed24h} failed today` };
+  }
+  const n = countFailedRows(rows, nowMs);
+  if (terminalCount(rows) >= RECENT_TERMINAL) {
+    return { n, label: `${RECENT_TERMINAL}+ failed today` };
+  }
+  return { n, label: `${n} failed today` };
+}
+
+function hostNoteOf(host) {
+  if (host == null || typeof host !== 'object') return null;
+  if (host.admit_heavy !== false) return null;
+  return `heavy waits: ${host.reason}`;
 }
 
 function terminalCount(rows) {
@@ -100,16 +119,16 @@ export function machineSummary(entry, nowMs) {
   const stale = staleness(entry, nowMs);
   const rows = stale.rows ?? [];
   const { queued, running } = liveCounts(rows);
-  const failed = failed24h(rows, nowMs);
+  const today = failedToday(entry?.result?.failed24h, rows, nowMs);
   const truncated = terminalCount(rows) >= RECENT_TERMINAL;
   return {
     title: machineTitle(entry),
     gauges: gaugesOf(rows, entry?.result?.slots ?? null),
-    counts: `${running} running · ${queued} queued · ${failed} failed 24h`,
-    failed,
+    counts: `${running} running · ${queued} queued · ${today.label}`,
+    failed: today.n,
     truncated,
     staleness: staleCaption(stale),
-    hostNote: null,
+    hostNote: hostNoteOf(entry?.result?.host),
   };
 }
 

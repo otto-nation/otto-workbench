@@ -99,7 +99,7 @@ CONTRACT = core.command_contract.CommandContract(
             "otto-queue status --json", "the same, one JSON object per entry"),
         core.command_contract.Example(
             "otto-queue status --json --slots",
-            "the same, with a leading line of running counts and class limits"),
+            "the same, with a leading line of slot counts, the host verdict, and the 24 h failure count"),
         core.command_contract.Example(
             "otto-queue cancel 12", "stop waiting entry 12, or SIGTERM a running one"),
     ),
@@ -166,7 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
     status = sub.add_parser("status", help="List live entries and the most recent finished ones")
     status.add_argument("--json", action="store_true", help="One JSON object per entry")
     status.add_argument("--slots", action="store_true",
-                        help="With --json, a leading line of running counts and class limits")
+                        help="With --json, a leading line of slot counts, the host verdict, and the 24 h failure count")
     cancel = sub.add_parser("cancel", help="Cancel a waiting or running entry")
     cancel.add_argument("id", type=int, help="The entry's id, from status")
     core.command_contract.attach_help(parser, CONTRACT)
@@ -266,13 +266,40 @@ def _line(entry: Entry, now: float) -> str:
             f"{_age(now - since):>5}{status}{retry}  {title}")
 
 
-def _slot_header(entries: list[Entry], policy: batch.admission.QueuePolicy) -> dict:
+SLOTS_HEADER_SCHEMA = 1
+FAILED_24H_S = 24 * 3600
+
+
+def _host_status(policy: batch.admission.QueuePolicy) -> dict | None:
+    """The host check a heavy entry uses; None when the probe cannot run."""
+    try:
+        verdict = batch.admission.room(
+            policy.host(), estimate=batch.admission.QUEUE_HEAVY_ESTIMATE, cfg=policy.cfg)
+    except Exception:
+        return None
+    return {"admit_heavy": verdict.admit, "reason": verdict.reason or None}
+
+
+def _failed_24h(ledger: otto_queue.ledger.Ledger) -> int | None:
+    try:
+        return ledger.count_failed_since(time.time() - FAILED_24H_S)
+    except Exception:
+        return None
+
+
+def _slot_header(entries: list[Entry], policy: batch.admission.QueuePolicy,
+                 ledger: otto_queue.ledger.Ledger) -> dict:
     running = [e for e in entries if e.state is EntryState.RUNNING]
-    return {"slots": {
-        c.value: {"running": sum(e.entry_class is c for e in running),
-                  "limit": policy.limit(c)}
-        for c in EntryClass
-    }}
+    return {
+        "slots": {
+            c.value: {"running": sum(e.entry_class is c for e in running),
+                      "limit": policy.limit(c)}
+            for c in EntryClass
+        },
+        "host": _host_status(policy),
+        "failed_24h": _failed_24h(ledger),
+        "schema": SLOTS_HEADER_SCHEMA,
+    }
 
 
 def _status(args: argparse.Namespace) -> int:
@@ -281,7 +308,7 @@ def _status(args: argparse.Namespace) -> int:
     entries = ledger.entries()
     if args.json:
         if args.slots:
-            print(json.dumps(_slot_header(entries, machine_policy())))
+            print(json.dumps(_slot_header(entries, machine_policy(), ledger)))
         for entry in entries:
             print(json.dumps(core.serde.to_dict(entry)))
         return ExitCode.OK

@@ -1478,7 +1478,7 @@ Run background work through this machine's queue, so it waits for room instead o
 - `otto-queue submit --key nightly -- pr gc` — queue pr gc for the worker and return; runs here if no worker starts
 - `otto-queue status` — list live entries and recent finished ones
 - `otto-queue status --json` — the same, one JSON object per entry
-- `otto-queue status --json --slots` — the same, with a leading line of running counts and class limits
+- `otto-queue status --json --slots` — the same, with a leading line of slot counts, the host verdict, and the 24 h failure count
 - `otto-queue cancel 12` — stop waiting entry 12, or SIGTERM a running one
 
 > run, and submit when it ran the job here, also exit with COMMAND's own status.

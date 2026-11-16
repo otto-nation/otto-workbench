@@ -78,7 +78,7 @@ _js() {
     }));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"title":"This computer","gauges":[{"class":"heavy","kind":"segments","filled":2,"total":3,"text":"2/3"},{"class":"light","kind":"segments","filled":0,"total":4,"text":"0/4"}],"counts":"2 running · 3 queued · 1 failed 24h","failed":1,"truncated":false,"hostNote":null,"staleKind":"fresh","staleWords":"updated 4s ago","sameWords":true}' ]
+  [ "$output" = '{"title":"This computer","gauges":[{"class":"heavy","kind":"segments","filled":2,"total":3,"text":"2/3"},{"class":"light","kind":"segments","filled":0,"total":4,"text":"0/4"}],"counts":"2 running · 3 queued · 1 failed today","failed":1,"truncated":false,"hostNote":null,"staleKind":"fresh","staleWords":"updated 4s ago","sameWords":true}' ]
 }
 
 @test "machineSummary without slots uses running counts and n running text" {
@@ -95,7 +95,7 @@ _js() {
     process.stdout.write(JSON.stringify({title:s.title, gauges:s.gauges, counts:s.counts, truncated:s.truncated}));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"title":"mini","gauges":[{"class":"heavy","kind":"none","filled":1,"total":null,"text":"1 running"},{"class":"light","kind":"none","filled":0,"total":null,"text":"0 running"}],"counts":"1 running · 1 queued · 0 failed 24h","truncated":false}' ]
+  [ "$output" = '{"title":"mini","gauges":[{"class":"heavy","kind":"none","filled":1,"total":null,"text":"1 running"},{"class":"light","kind":"none","filled":0,"total":null,"text":"0 running"}],"counts":"1 running · 1 queued · 0 failed today","truncated":false}' ]
 }
 
 @test "machineSummary sets truncated when the status list is at RECENT_TERMINAL" {
@@ -117,7 +117,7 @@ _js() {
     }));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"cap":20,"under":false,"atCap":true,"failed":1,"counts":"0 running · 0 queued · 1 failed 24h"}' ]
+  [ "$output" = '{"cap":20,"under":false,"atCap":true,"failed":1,"counts":"0 running · 0 queued · 20+ failed today"}' ]
 }
 
 @test "homeModel puts This computer first; cards have no rows and no open state" {
@@ -144,7 +144,7 @@ _js() {
     }));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"keys":["","mini","studio"],"titles":["This computer","mini","studio"],"counts":["1 running · 0 queued · 0 failed 24h","0 running · 0 queued · 0 failed 24h","0 running · 0 queued · 1 failed 24h"],"hostNote":null,"staleKind":"fresh","staleWords":"updated 0s ago","staleRows":null,"open":null,"rows":null}' ]
+  [ "$output" = '{"keys":["","mini","studio"],"titles":["This computer","mini","studio"],"counts":["1 running · 0 queued · 0 failed today","0 running · 0 queued · 0 failed today","0 running · 0 queued · 1 failed today"],"hostNote":null,"staleKind":"fresh","staleWords":"updated 0s ago","staleRows":null,"open":null,"rows":null}' ]
 }
 
 @test "machinePage returns the card from uncoalesced rows, Running first, no filter" {
@@ -176,7 +176,7 @@ _js() {
     }));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"title":"mini","counts":"3 running · 1 queued · 1 failed 24h","hostNote":null,"filter":null,"filterSummary":null,"keys":["running","waiting","finished"],"cards":[true,true,true],"runningCount":3,"runningRows":3,"staleRows":null}' ]
+  [ "$output" = '{"title":"mini","counts":"3 running · 1 queued · 1 failed today","hostNote":null,"filter":null,"filterSummary":null,"keys":["running","waiting","finished"],"cards":[true,true,true],"runningCount":3,"runningRows":3,"staleRows":null}' ]
 }
 
 @test "selectMachine and clearMachine are immutable; pageOf falls back when the machine is gone" {
@@ -201,4 +201,77 @@ _js() {
   '
   [ "$status" -eq 0 ]
   [ "$output" = '{"orig":{"machine":null},"selected":{"machine":"mini"},"cleared":{"machine":null},"same":false,"hit":"mini","miss":null,"home":null,"local":""}' ]
+}
+
+@test "hostNote is the CLI reason when admit_heavy is false, else null" {
+  _js '
+    const NOW = 1_700_000_000_000;
+    const base = {on:"mini", at:NOW, result:{ok:true, rows:[], slots:null}};
+    const refused = h.machineSummary({
+      ...base,
+      result: {
+        ...base.result,
+        host: {admit_heavy: false, reason: "waiting for memory: 0.3 of 1.5 GB"},
+      },
+    }, NOW);
+    const admitted = h.machineSummary({
+      ...base,
+      result: { ...base.result, host: {admit_heavy: true, reason: "host has room"} },
+    }, NOW);
+    const missing = h.machineSummary(base, NOW);
+    const nulled = h.machineSummary({
+      ...base, result: { ...base.result, host: null },
+    }, NOW);
+    const home = h.homeModel([{
+      on:"mini", at:NOW,
+      result: {ok:true, rows:[], host:{admit_heavy:false, reason:"CPU pressure 31% >= 30%"}},
+    }], NOW);
+    process.stdout.write(JSON.stringify({
+      refused: refused.hostNote,
+      admitted: admitted.hostNote,
+      missing: missing.hostNote,
+      nulled: nulled.hostNote,
+      card: home[0].hostNote,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"refused":"heavy waits: waiting for memory: 0.3 of 1.5 GB","admitted":null,"missing":null,"nulled":null,"card":"heavy waits: CPU pressure 31% >= 30%"}' ]
+}
+
+@test "failed today uses failed24h when present, else rows, else 20+ at the cap" {
+  _js '
+    const NOW = 1_700_000_000_000;
+    const SEC = 1_700_000_000;
+    const oneFailed = [{id:1, state:"failed", finished_at: SEC - 60}];
+    const fromHeader = h.machineSummary({
+      on:"mini", at:NOW,
+      result: {ok:true, rows:oneFailed, failed24h:25},
+    }, NOW);
+    const fromRows = h.machineSummary({
+      on:"mini", at:NOW,
+      result: {ok:true, rows:oneFailed},
+    }, NOW);
+    const zeroHeader = h.machineSummary({
+      on:"mini", at:NOW,
+      result: {ok:true, rows:oneFailed, failed24h:0},
+    }, NOW);
+    const atCap = Array.from({length: RECENT_TERMINAL}, (_, i) => ({
+      id: i + 1, state: i === 0 ? "failed" : "done", finished_at: SEC - i,
+    }));
+    const capped = h.machineSummary({
+      on:"mini", at:NOW, result:{ok:true, rows:atCap},
+    }, NOW);
+    const cappedHeader = h.machineSummary({
+      on:"mini", at:NOW, result:{ok:true, rows:atCap, failed24h:25},
+    }, NOW);
+    process.stdout.write(JSON.stringify({
+      fromHeader: {failed: fromHeader.failed, counts: fromHeader.counts},
+      fromRows: {failed: fromRows.failed, counts: fromRows.counts},
+      zeroHeader: {failed: zeroHeader.failed, counts: zeroHeader.counts},
+      capped: {failed: capped.failed, counts: capped.counts, truncated: capped.truncated},
+      cappedHeader: {failed: cappedHeader.failed, counts: cappedHeader.counts},
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"fromHeader":{"failed":25,"counts":"0 running · 0 queued · 25 failed today"},"fromRows":{"failed":1,"counts":"0 running · 0 queued · 1 failed today"},"zeroHeader":{"failed":0,"counts":"0 running · 0 queued · 0 failed today"},"capped":{"failed":1,"counts":"0 running · 0 queued · 20+ failed today","truncated":true},"cappedHeader":{"failed":25,"counts":"0 running · 0 queued · 25 failed today"}}' ]
 }

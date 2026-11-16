@@ -176,6 +176,7 @@ teardown() {
   grep -Fq 'card(`queue-machine-${block.key || "local"}`)' "$view"
   grep -q 'sectionLabel(block.title)' "$view"
   grep -q 'caption(block.counts' "$view"
+  grep -q 'statusText("warn", block.hostNote)' "$view"
   grep -Fq 'children((opts.cards ?? []).map((block) => renderHomeCard(block, opts)))' "$view"
   run grep -nE 'homeModel|toggleCollapsed|slotGauge' "$view"
   [ "$status" -eq 1 ]
@@ -199,6 +200,9 @@ teardown() {
   grep -q 'opts.page == null ? renderHome(opts) : renderMachine(opts)' "$view"
   grep -q 'page.summary' "$view"
   grep -q 'page.lanes' "$view"
+  grep -q 'statusText("warn", summary.hostNote)' "$view"
+  run grep -nF 'heavy waits:' "$view"
+  [ "$status" -eq 1 ]
 }
 
 @test "queue machine page has a Machines back button" {

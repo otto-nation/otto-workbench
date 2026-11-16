@@ -71,8 +71,9 @@ def test_reference_shape_emits_the_cli_contract():
 def test_status_slots_is_on_the_contract():
     status = next(g for g in cli.otto_queue.CONTRACT.groups if g.title == "status")
     assert status.flags == ("--json", "--slots")
-    assert any(ex.command == "otto-queue status --json --slots"
-               for ex in cli.otto_queue.CONTRACT.examples)
+    example = next(ex for ex in cli.otto_queue.CONTRACT.examples
+                   if ex.command == "otto-queue status --json --slots")
+    assert "host" in example.does and "24 h" in example.does
     assert "--slots" in cli.otto_queue.build_parser().format_help()
 
 

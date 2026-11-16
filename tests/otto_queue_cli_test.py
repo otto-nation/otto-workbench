@@ -143,10 +143,12 @@ def test_status_json_slots_prints_one_leading_line(capsys):
         lines = capsys.readouterr().out.splitlines()
         header, rows = json.loads(lines[0]), [json.loads(line) for line in lines[1:]]
         policy = cli.otto_queue.machine_policy()
-        assert header == {"slots": {
+        assert header["slots"] == {
             "heavy": {"running": 1, "limit": policy.limit(EntryClass.HEAVY)},
             "light": {"running": 0, "limit": policy.limit(EntryClass.LIGHT)},
-        }}
+        }
+        assert header["schema"] == 1
+        assert "id" not in header
         assert all("id" in r for r in rows)
         assert {r["entry_class"] for r in rows} == {"heavy", "light"}
     finally:

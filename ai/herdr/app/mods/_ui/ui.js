@@ -1,6 +1,6 @@
 // Shared pieces for the mods, each one a DESIGN.md component: buttons (outline, solid, ghost,
 // icon), checkbox, checkRow, popover surface, tag, status glyph, section label, segmented control,
-// card, list row. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
+// card, list row, keyValue. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, TextView, Checkbox } from "gpui-base";
 import { theme, settings } from "herdr";
@@ -293,6 +293,16 @@ export function badge(b) {
   if (b.kind === "tag") return tag(b.text);
   return text("meta", b.text, theme().muted);
 }
+// Compact two-column facts. DESIGN.md has no key-value entry; keys use table-header
+// (section, muted) and values use meta, with the code role for paths.
+export function keyValue(rows) {
+  const t = theme();
+  return v_flex().gap(SP.xxs).children((rows ?? []).map((row) =>
+    h_flex().gap(SP.sm).items_center().min_w(0)
+      .child(text("section", row.key, t.muted).flex_none())
+      .child(text(row.mono ? "code" : "meta", row.value).min_w(0).flex_1().truncate())));
+}
+
 // A wrapping row of badges: a card's badge row, the detail's status row.
 export function badgeRow(list) {
   return h_flex().gap_x(SP.xs).gap_y(SP.xs).flex_wrap().items_center().children(list.map(badge));

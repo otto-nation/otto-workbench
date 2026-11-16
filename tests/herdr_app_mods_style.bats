@@ -122,3 +122,17 @@ teardown() {
     awk -v m="$m" '$0 ~ "^  "m"\\(" {on=1; next} on && /^  [A-Za-z]+\(/ {exit} on' "$MODS/prs/board_view.js" | grep -q 'this.statusRow'
   done
 }
+
+@test "queue row detail draws detailModel through keyValue" {
+  grep -q 'export function keyValue(' "$MODS/_ui/ui.js"
+  grep -q 'text("section", row.key, t.muted)' "$MODS/_ui/ui.js"
+  grep -q 'text(row.mono ? "code" : "meta", row.value)' "$MODS/_ui/ui.js"
+  local view="$MODS/queue/view.js"
+  grep -q 'const model = detailModel(row, opts.nowMs)' "$view"
+  grep -q 'keyValue(model.facts)' "$view"
+  grep -Fq 'selectableCode(`queue-cmd-${id}`, [model.command])' "$view"
+  grep -q 'caption(model.timing)' "$view"
+  grep -Fq 'model.logNote != null ? caption(model.logNote)' "$view"
+  run grep -nE 'commandText\(|caption\(`cwd' "$view"
+  [ "$status" -eq 1 ]
+}

@@ -249,11 +249,65 @@ _q() {
     const parsed = q.parseStatus(stdout);
     process.stdout.write(JSON.stringify({
       slots: parsed.slots,
+      host: parsed.host,
+      failed24h: parsed.failed24h,
+      schema: parsed.schema,
       ids: parsed.rows.map((r) => r.id),
     }));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"slots":{"heavy":{"running":2,"limit":3},"light":{"running":0,"limit":4}},"ids":[1]}' ]
+  [ "$output" = '{"slots":{"heavy":{"running":2,"limit":3},"light":{"running":0,"limit":4}},"host":null,"failed24h":null,"schema":null,"ids":[1]}' ]
+}
+
+@test "parseStatus exposes host, failed24h and schema next to slots" {
+  _q '
+    const stdout = [
+      "{\"slots\":{\"heavy\":{\"running\":1,\"limit\":3}},\"host\":{\"admit_heavy\":false,\"reason\":\"waiting for memory: 0.3 of 1.5 GB\"},\"failed_24h\":25,\"schema\":1}",
+      "{\"id\":1,\"state\":\"running\"}",
+    ].join("\n");
+    const parsed = q.parseStatus(stdout);
+    process.stdout.write(JSON.stringify({
+      slots: parsed.slots,
+      host: parsed.host,
+      failed24h: parsed.failed24h,
+      schema: parsed.schema,
+      ids: parsed.rows.map((r) => r.id),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"slots":{"heavy":{"running":1,"limit":3}},"host":{"admit_heavy":false,"reason":"waiting for memory: 0.3 of 1.5 GB"},"failed24h":25,"schema":1,"ids":[1]}' ]
+}
+
+@test "parseStatus treats a null host and failed_24h as null, never an error" {
+  _q '
+    const parsed = q.parseStatus("{\"slots\":{\"heavy\":{\"running\":0,\"limit\":3}},\"host\":null,\"failed_24h\":null,\"schema\":1}");
+    process.stdout.write(JSON.stringify({
+      slots: parsed.slots,
+      host: parsed.host,
+      failed24h: parsed.failed24h,
+      schema: parsed.schema,
+      error: parsed.error ?? null,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"slots":{"heavy":{"running":0,"limit":3}},"host":null,"failed24h":null,"schema":1,"error":null}' ]
+}
+
+@test "loadStatus passes host, failed24h and schema through on a --slots success" {
+  _q '
+    const exec = async () => ({
+      code: 0,
+      stdout: ["{\"slots\":{\"heavy\":{\"running\":0,\"limit\":2}},\"host\":{\"admit_heavy\":true,\"reason\":\"host has room\"},\"failed_24h\":0,\"schema\":1}", "{\"id\":4,\"state\":\"queued\"}"].join("\n"),
+      stderr: "",
+    });
+    const r = await q.loadStatus(exec, { on: null, cwd: null });
+    process.stdout.write(JSON.stringify({
+      ok: r.ok, busy: r.busy, slots: r.slots, host: r.host, failed24h: r.failed24h, schema: r.schema,
+      ids: r.rows.map((row) => row.id),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"ok":true,"busy":false,"slots":{"heavy":{"running":0,"limit":2}},"host":{"admit_heavy":true,"reason":"host has room"},"failed24h":0,"schema":1,"ids":[4]}' ]
 }
 
 @test "loadStatus retries once without --slots when the old CLI rejects the flag" {

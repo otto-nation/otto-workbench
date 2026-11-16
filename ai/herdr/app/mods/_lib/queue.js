@@ -4,9 +4,11 @@
  *
  * loadStatus shapes:
  *   {ok:true, busy:true, rows:[], slots:null}  otto-queue exited 75 (ledger busy; retry next poll)
- *   {ok:true, busy:false, rows, slots}         parsed NDJSON rows and optional slots object
+ *   {ok:true, busy:false, rows, slots, host, failed24h, schema}
+ *                                          parsed NDJSON rows and optional --slots header
  *   {ok:false, error}                          any other failure
  * An old otto-queue that rejects `--slots` is retried once without it; slots is then null.
+ * host, failed24h and schema are null when the CLI omitted them, never an error.
  */
 
 import { durationText } from './batch.js';
@@ -243,11 +245,29 @@ function slotsOf(value) {
   return value.slots;
 }
 
+function hostOf(value) {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (typeof value.admit_heavy !== 'boolean') return null;
+  return {
+    admit_heavy: value.admit_heavy,
+    reason: value.reason == null ? null : value.reason,
+  };
+}
+
+function finiteNumber(value) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return value;
+}
+
 // One JSON object per line, like readPages, but a bad line or non-integer id is skipped.
 // A leading slots object (no integer id) is returned separately, never as a row.
+// host, failed24h and schema sit next to slots; an older CLI omits them → null.
 export function parseStatus(stdout) {
   const rows = [];
   let slots = null;
+  let host = null;
+  let failed24h = null;
+  let schema = null;
   for (const line of String(stdout ?? '').split('\n')) {
     if (line.trim() === '') continue;
     const parsed = readJson(line);
@@ -257,9 +277,15 @@ export function parseStatus(stdout) {
       rows.push(row);
       continue;
     }
-    if (slots == null) slots = slotsOf(parsed.value);
+    if (slots != null) continue;
+    const extracted = slotsOf(parsed.value);
+    if (extracted == null) continue;
+    slots = extracted;
+    host = hostOf(parsed.value.host);
+    failed24h = finiteNumber(parsed.value.failed_24h);
+    schema = finiteNumber(parsed.value.schema);
   }
-  return { rows, slots };
+  return { rows, slots, host, failed24h, schema };
 }
 
 // invoke maps a 75 with empty stderr to kind failed, message "exit 75".
@@ -293,7 +319,15 @@ export async function loadStatus(exec, ctx) {
     return { ok: true, busy: false, rows: parsed.rows, slots: null };
   }
   const parsed = parseStatus(ran.stdout);
-  return { ok: true, busy: false, rows: parsed.rows, slots: parsed.slots };
+  return {
+    ok: true,
+    busy: false,
+    rows: parsed.rows,
+    slots: parsed.slots,
+    host: parsed.host,
+    failed24h: parsed.failed24h,
+    schema: parsed.schema,
+  };
 }
 
 export async function cancelEntry(exec, ctx, id) {

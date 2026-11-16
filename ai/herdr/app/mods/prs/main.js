@@ -405,6 +405,7 @@ export default class PrsBoard extends Board {
         : renderFileList(files, { onPick: (path) => this.pickFile(path) }),
       batchBody: item ? (this.tab === "batch" ? renderBatchTab(item, this.workflows.tabState()) : div()) : null,
       reviewState: openForReviewState(this.detail),
+      targetSession: this.workflows.targetSession(this.detail.on, this.detail),
       onReview: () => this.openForReview(),
       onClose: () => this.closeDetail(cx),
       // The browser is on this Mac even when the PR's repo is on a remote machine.

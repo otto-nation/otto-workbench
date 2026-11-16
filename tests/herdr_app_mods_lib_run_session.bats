@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # Tests for herdr-app's Open session decision tree (_lib/run_session.js): ask
-# `pr batch session --json`, focus the live labelled terminal, else start one through hc.
+# `pr batch session --json` / `pr --branch B target session --json`, focus the live
+# labelled terminal, else start one through hc.
 bats_require_minimum_version 1.5.0
 # select-on: ai/herdr/app/mods/_lib/*.js
 
@@ -42,18 +43,31 @@ const fake = (answer, { panes = [], spaces = [] } = {}) => ({
   spaces: () => spaces,
 });
 const RECIPE = JSON.stringify({ schema_version: 1, session_id: "batch-R1", name: "batch o/n R1", cwd: "/w/n", argv: ["pi"], env: {} });
+const TARGET_RECIPE = JSON.stringify({ schema_version: 1, session_id: "target-abc", name: "target o/n", cwd: "/w/x", argv: ["pi"], env: {} });
 '
 
 @test "sessionArgv and findArgv" {
-  _rs 'out([m.sessionArgv("R1"), m.findArgv("batch-R1")])'
+  _rs 'out([m.sessionArgv("batch", { runId: "R1" }), m.findArgv("batch-R1")])'
   [ "$status" -eq 0 ]
   [ "$output" = '[["batch","session","R1","--json"],["ls","--json","--label","otto.session=batch-R1"]]' ]
 }
 
+@test "sessionArgv for a target asks pr --branch B target session --json" {
+  _rs 'out(m.sessionArgv("target", { branch: "feat/x" }))'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["--branch","feat/x","target","session","--json"]' ]
+}
+
 @test "sessionGate: unknown without features, ready with batch-session, outdated without it" {
-  _rs 'out([m.sessionGate(null), m.sessionGate(undefined), m.sessionGate(["review-publish","batch-session"]), m.sessionGate(["review-publish"]), m.sessionGate([])])'
+  _rs 'out([m.sessionGate(null, "batch"), m.sessionGate(undefined, "batch"), m.sessionGate(["review-publish","batch-session"], "batch"), m.sessionGate(["review-publish"], "batch"), m.sessionGate([], "batch")])'
   [ "$status" -eq 0 ]
   [ "$output" = '["unknown","unknown","ready","outdated","outdated"]' ]
+}
+
+@test "sessionGate for a target is ready only with target-session" {
+  _rs 'out([m.sessionGate(["target-session"], "target"), m.sessionGate(["batch-session"], "target")])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["ready","outdated"]' ]
 }
 
 @test "machineFeatures reads the first PR from that machine, null when none is loaded" {
@@ -91,92 +105,141 @@ const RECIPE = JSON.stringify({ schema_version: 1, session_id: "batch-R1", name:
   [ "$output" = '[[["space.select",{"id":"sp1"}],["tab.select",{"id":"tb2"}],["pane.focus",{"pane":"p4"}]],[["terminal.keep",{"terminal":"t7"}]]]' ]
 }
 
-@test "openRunSession: nothing open locally starts pr batch session through hc and keeps it as a tab" {
+@test "openSession: nothing open locally starts pr batch session through hc and keeps it as a tab" {
   _rs "$FAKE"'
     const deps = fake((line) => {
       if (line === "pr batch session R1 --json") return { code: 0, stdout: RECIPE, stderr: "" };
       if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };
       if (line.startsWith("hc run ")) return { code: 0, stdout: "{\"address\":\"t9\"}", stderr: "" };
     });
-    const res = await m.openRunSession(deps, { on: null, cwd: "/w/box", runId: "R1", repo: "o/n", features: ["batch-session"] });
+    const res = await m.openSession(deps, "batch", { on: null, cwd: "/w/box", runId: "R1", repo: "o/n", features: ["batch-session"] });
     out({ res, seen, ran });'
   [ "$status" -eq 0 ]
   [ "$output" = '{"res":{"ok":true,"opened":"started"},"seen":[{"line":"pr batch session R1 --json","on":null},{"line":"hc ls --json --label otto.session=batch-R1","on":null},{"line":"hc run --bg --json --cwd /w/n --label otto.repo=o/n --label otto.action=session --label otto.app=pr --label otto.session=batch-R1 -- pr batch session R1","on":null}],"ran":[["terminal.keep",{"terminal":"t9"}]]}' ]
 }
 
-@test "openRunSession: a remote run asks pr on that machine and starts the terminal there" {
+@test "openSession: a remote run asks pr on that machine and starts the terminal there" {
   _rs "$FAKE"'
     const deps = fake((line) => {
       if (line === "pr batch session R1 --json") return { code: 0, stdout: RECIPE, stderr: "" };
       if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[{\"address\":\"t9\",\"state\":\"live\"}]}", stderr: "" };
       if (line.startsWith("hc run ")) return { code: 0, stdout: "{\"address\":\"homelab/t3\"}", stderr: "" };
     });
-    const res = await m.openRunSession(deps, { on: "homelab", cwd: null, runId: "R1", repo: "o/n", features: null });
+    const res = await m.openSession(deps, "batch", { on: "homelab", cwd: null, runId: "R1", repo: "o/n", features: null });
     out({ res, seen, ran });'
   [ "$status" -eq 0 ]
   [ "$output" = '{"res":{"ok":true,"opened":"started"},"seen":[{"line":"pr batch session R1 --json","on":"homelab"},{"line":"hc ls --json --label otto.session=batch-R1","on":null},{"line":"hc run --bg --json --cwd /w/n --on homelab --label otto.repo=o/n --label otto.action=session --label otto.app=pr --label otto.session=batch-R1 -- sh -c <P> sh pr batch session R1","on":null}],"ran":[["terminal.keep",{"terminal":"homelab/t3"}]]}' ]
 }
 
-@test "openRunSession: an open session is focused, never started twice" {
+@test "openSession: an open session is focused, never started twice" {
   _rs "$FAKE"'
     const deps = fake((line) => {
       if (line === "pr batch session R1 --json") return { code: 0, stdout: RECIPE, stderr: "" };
       if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[{\"address\":\"t9\",\"state\":\"live\"}]}", stderr: "" };
     }, { panes: [{ pane: "p4", tab: "tb2", terminal: "t9" }], spaces: [{ id: "sp1", tabs: [{ id: "tb2" }] }] });
-    const res = await m.openRunSession(deps, { on: null, runId: "R1", repo: "o/n", features: ["batch-session"] });
+    const res = await m.openSession(deps, "batch", { on: null, runId: "R1", repo: "o/n", features: ["batch-session"] });
     out({ res, hcRun: seen.filter((s) => s.line.startsWith("hc run")).length, ran });'
   [ "$status" -eq 0 ]
   [ "$output" = '{"res":{"ok":true,"opened":"focused"},"hcRun":0,"ran":[["space.select",{"id":"sp1"}],["tab.select",{"id":"tb2"}],["pane.focus",{"pane":"p4"}]]}' ]
 }
 
-@test "openRunSession: features without batch-session say to update pr and run nothing" {
+@test "openSession: features without batch-session say to update pr and run nothing" {
   _rs "$FAKE"'
     const deps = fake(() => ({ code: 0, stdout: RECIPE, stderr: "" }));
-    const res = await m.openRunSession(deps, { on: "homelab", runId: "R1", repo: "o/n", features: ["review-publish"] });
+    const res = await m.openSession(deps, "batch", { on: "homelab", runId: "R1", repo: "o/n", features: ["review-publish"] });
     out({ res, seen: seen.length, ran: ran.length });'
   [ "$status" -eq 0 ]
   [ "$output" = '{"res":{"ok":false,"outdated":true,"message":"Update pr on this machine to open sessions (otto-workbench sync)"},"seen":0,"ran":0}' ]
 }
 
-@test "openRunSession: a pr without the session subcommand reads as outdated" {
+@test "openSession: a pr without the session subcommand reads as outdated" {
   _rs "$FAKE"'
     const deps = fake(() => ({ code: 2, stdout: "", stderr: "pr batch: error: argument command: invalid choice: '"'"'session'"'"' (choose from plan, run)" }));
-    const res = await m.openRunSession(deps, { on: null, runId: "R1", repo: "o/n", features: null });
+    const res = await m.openSession(deps, "batch", { on: null, runId: "R1", repo: "o/n", features: null });
     out({ res, ran: ran.length });'
   [ "$status" -eq 0 ]
   [ "$output" = '{"res":{"ok":false,"outdated":true,"message":"Update pr on this machine to open sessions (otto-workbench sync)"},"ran":0}' ]
 }
 
-@test "openRunSession: pr's own refusal is shown verbatim and nothing starts" {
+@test "openSession: a pr without the target subcommand reads as outdated and does not exec further" {
+  _rs "$FAKE"'
+    const deps = fake(() => ({ code: 2, stdout: "", stderr: "pr: error: argument command: invalid choice: '"'"'target'"'"' (choose from board, batch)" }));
+    const res = await m.openSession(deps, "target", { on: null, branch: "feat/x", repo: "o/n", features: null });
+    out({ res, seen: seen.length, ran: ran.length });'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"res":{"ok":false,"outdated":true,"message":"Update pr on this machine to open sessions (otto-workbench sync)"},"seen":1,"ran":0}' ]
+}
+
+@test "openSession: pr's own refusal is shown verbatim and nothing starts" {
   _rs "$FAKE"'
     const deps = fake(() => ({ code: 1, stdout: "", stderr: "pr batch: run R1 covers 2 checkouts (/a, /b); a run session needs a run over one" }));
-    const res = await m.openRunSession(deps, { on: null, runId: "R1", repo: "o/n", features: ["batch-session"] });
+    const res = await m.openSession(deps, "batch", { on: null, runId: "R1", repo: "o/n", features: ["batch-session"] });
     out({ res, ran: ran.length, hc: seen.filter((s) => s.line.startsWith("hc")).length });'
   [ "$status" -eq 0 ]
   [ "$output" = '{"res":{"ok":false,"outdated":false,"message":"pr batch: run R1 covers 2 checkouts (/a, /b); a run session needs a run over one"},"ran":0,"hc":0}' ]
 }
 
-@test "openRunSession: a failed lookup refuses rather than start a second pi on the session" {
+@test "openSession: a failed lookup refuses rather than start a second pi on the session" {
   _rs "$FAKE"'
     const deps = fake((line) => {
       if (line === "pr batch session R1 --json") return { code: 0, stdout: RECIPE, stderr: "" };
       if (line.startsWith("hc ls ")) return { code: 1, stdout: "", stderr: "core unreachable" };
     });
-    const res = await m.openRunSession(deps, { on: null, runId: "R1", repo: "o/n", features: ["batch-session"] });
+    const res = await m.openSession(deps, "batch", { on: null, runId: "R1", repo: "o/n", features: ["batch-session"] });
     out({ res, hcRun: seen.filter((s) => s.line.startsWith("hc run")).length, ran: ran.length });'
   [ "$status" -eq 0 ]
   [ "$output" = '{"res":{"ok":false,"outdated":false,"message":"could not look for an open session: core unreachable"},"hcRun":0,"ran":0}' ]
 }
 
-@test "openRunSession: an hc run failure is reported and no tab is kept" {
+@test "openSession: an hc run failure is reported and no tab is kept" {
   _rs "$FAKE"'
     const deps = fake((line) => {
       if (line === "pr batch session R1 --json") return { code: 0, stdout: RECIPE, stderr: "" };
       if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };
       if (line.startsWith("hc run ")) return { code: 1, stdout: "", stderr: "no machine homelab" };
     });
-    const res = await m.openRunSession(deps, { on: null, runId: "R1", repo: "o/n", features: ["batch-session"] });
+    const res = await m.openSession(deps, "batch", { on: null, runId: "R1", repo: "o/n", features: ["batch-session"] });
     out({ res, ran });'
   [ "$status" -eq 0 ]
   [ "$output" = '{"res":{"ok":false,"outdated":false,"message":"no machine homelab"},"ran":[]}' ]
+}
+
+@test "openSession: a live target session is focused, never started twice" {
+  _rs "$FAKE"'
+    const deps = fake((line) => {
+      if (line === "pr --branch feat/x target session --json") return { code: 0, stdout: TARGET_RECIPE, stderr: "" };
+      if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[{\"address\":\"t9\",\"state\":\"live\"}]}", stderr: "" };
+    }, { panes: [{ pane: "p4", tab: "tb2", terminal: "t9" }], spaces: [{ id: "sp1", tabs: [{ id: "tb2" }] }] });
+    const res = await m.openSession(deps, "target", { on: null, branch: "feat/x", repo: "o/n", features: ["target-session"] });
+    out({ res, hcRun: seen.filter((s) => s.line.startsWith("hc run")).length, ran });'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"res":{"ok":true,"opened":"focused"},"hcRun":0,"ran":[["space.select",{"id":"sp1"}],["tab.select",{"id":"tb2"}],["pane.focus",{"pane":"p4"}]]}' ]
+}
+
+@test "openSession: nothing live starts pr target session in the recipe cwd" {
+  _rs "$FAKE"'
+    const deps = fake((line) => {
+      if (line === "pr --branch feat/x target session --json") return { code: 0, stdout: TARGET_RECIPE, stderr: "" };
+      if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };
+      if (line.startsWith("hc run ")) return { code: 0, stdout: "{\"address\":\"t9\"}", stderr: "" };
+    });
+    const res = await m.openSession(deps, "target", { on: null, cwd: "/w/box", branch: "feat/x", repo: "o/n", features: ["target-session"] });
+    out({ res, seen, ran });'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"res":{"ok":true,"opened":"started"},"seen":[{"line":"pr --branch feat/x target session --json","on":null},{"line":"hc ls --json --label otto.session=target-abc","on":null},{"line":"hc run --bg --json --cwd /w/x --label otto.repo=o/n --label otto.action=session --label otto.app=pr --label otto.session=target-abc -- pr target session","on":null}],"ran":[["terminal.keep",{"terminal":"t9"}]]}' ]
+}
+
+@test "run_session.js string literals name batch and target only inside SESSION_KINDS" {
+  _rs '
+    const fs = await import("node:fs");
+    let src = fs.readFileSync("'"$REPO_ROOT"'/ai/herdr/app/mods/_lib/run_session.js", "utf8");
+    src = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+    const start = src.indexOf("export const SESSION_KINDS");
+    const end = src.indexOf("};", start) + 2;
+    const rest = src.slice(0, start) + src.slice(end);
+    const hits = [...rest.matchAll(/["'\'']([^"'\'']*)["'\'']/g)].map((m) => m[1]).filter((s) => /\b(batch|target)\b/.test(s));
+    out(hits);
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[]' ]
 }

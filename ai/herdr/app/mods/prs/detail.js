@@ -5,6 +5,7 @@ import { historyRows } from "./_lib/history.js";
 import { outputModel } from "./_lib/run_output.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import { prPresentation } from "./_lib/pr_status.js";
+import { sessionControl } from "./workflows_view.js";
 import {
   segment, segmented, button, ghostButton, inset, card, placeholder, caption,
   paneBar, pinned, selectableCode, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
@@ -121,7 +122,7 @@ export function prUrl(d) {
   return d.url || `https://${d.host || "github.com"}/${d.repo}/pull/${d.number}`;
 }
 
-export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState }) {
+export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState, targetSession }) {
   const t = theme();
   const p = d.presentation;
   const marks = [p.ci, p.decision, ...p.detail_issues, p.review, p.busy].filter(Boolean);
@@ -130,7 +131,8 @@ export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewStat
       .child(button("detail-back", "← Back", () => onClose()))
       .child(h_flex().gap(SP.sm).flex_wrap()
         .child(button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled }))
-        .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))))
+        .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))
+        .when(Boolean(targetSession), (e) => e.child(sessionControl("open-session-target", targetSession)))))
     .when(!reviewState.enabled, (e) => e.child(caption(reviewState.reason)))
     .child(h_flex().gap(SP.sm).items_start().min_w(0)
       .child(text("body", p.ref, t.muted).flex_none())
@@ -161,7 +163,7 @@ function runCard(r, { openKey, bodyFor, onToggle }) {
 
 export function renderDetail(d, {
   onClose, onOpenUrl, onReview, reviewState, nowMs, openKey, bodyFor, onToggle, actionBar, outputPanel,
-  tab, onTab, filesBody, batchBody,
+  tab, onTab, filesBody, batchBody, targetSession,
 }) {
   const rows = historyRows(d.runs ?? [], nowMs);
   const segs = [
@@ -172,7 +174,7 @@ export function renderDetail(d, {
     segs.push(segment("tab-batch", "Batch", tab === "batch", () => onTab("batch")));
   }
   return pane("prs-detail")
-    .child(renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState }))
+    .child(renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState, targetSession }))
     .child(actionBar)
     .when(Boolean(outputPanel), (e) => e.child(outputPanel))
     .child(pinned(h_flex().px(SP.lg).py(SP.md).child(segmented(segs))))

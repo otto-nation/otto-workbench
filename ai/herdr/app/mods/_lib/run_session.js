@@ -1,33 +1,45 @@
 /**
- * Open a batch run's pi session from herdr.
+ * Open a batch run's or a PR target's pi session from herdr.
  *
- * `pr batch session RUN_ID --json`, asked on the run's machine, says which session it is
- * (`session_id`) and where it runs (`cwd`); `ai/lib/batch/run_session.py` owns that and the
- * argv and env, so nothing here builds a pi command line. A live hc terminal carrying the
- * `otto.session` label for that id is brought forward (its pane's space, tab and pane, or
- * `terminal.keep` when no pane shows it); otherwise `hc run --bg` starts
- * `pr batch session RUN_ID` (which execs pi) in the checkout and `terminal.keep` gives it a tab.
- * A machine whose `pr board` features lack `batch-session` gets OUTDATED_TEXT and no exec.
+ * `pr batch session RUN_ID --json` / `pr --branch B target session --json`, asked on the
+ * machine, says which session it is (`session_id`) and where it runs (`cwd`); the matching
+ * `pr` module owns that and the argv and env, so nothing here builds a pi command line.
+ * A live hc terminal carrying the `otto.session` label for that id is brought forward
+ * (its pane's space, tab and pane, or `terminal.keep` when no pane shows it); otherwise
+ * `hc run --bg` starts the kind's open argv (which execs pi) in the checkout and
+ * `terminal.keep` gives it a tab. A machine whose `pr board` features lack the kind's
+ * feature gets OUTDATED_TEXT and no exec.
  */
 
 import { invoke, readJson } from './board_data.js';
 import { LABEL_SESSION, hcSessionArgv, machineOf, parseRunReply } from './launch.js';
 
-export const SESSION_FEATURE = 'batch-session';
+export const SESSION_KINDS = {
+  batch: {
+    feature: 'batch-session',
+    outdatedRe: /invalid choice: 'session'/,
+    askArgv: (t) => ['batch', 'session', String(t.runId), '--json'],
+    openArgv: (t) => ['pr', 'batch', 'session', String(t.runId)],
+  },
+  target: {
+    feature: 'target-session',
+    outdatedRe: /invalid choice: 'target'/,
+    askArgv: (t) => ['--branch', String(t.branch), 'target', 'session', '--json'],
+    openArgv: () => ['pr', 'target', 'session'],
+  },
+};
+
 export const OUTDATED_TEXT = 'Update pr on this machine to open sessions (otto-workbench sync)';
 
-// What argparse prints for a `pr` that predates `pr batch session`.
-const OUTDATED_RE = /invalid choice: 'session'/;
-
-export function sessionArgv(runId) {
-  return ['batch', 'session', String(runId), '--json'];
+export function sessionArgv(kind, t) {
+  return SESSION_KINDS[kind].askArgv(t);
 }
 
 // 'ready' or 'outdated' from a machine's `pr board` features; 'unknown' when no board document
 // from that machine is loaded, in which case the click asks `pr` and reads its refusal.
-export function sessionGate(features) {
+export function sessionGate(features, kind) {
   if (!Array.isArray(features)) return 'unknown';
-  return features.includes(SESSION_FEATURE) ? 'ready' : 'outdated';
+  return features.includes(SESSION_KINDS[kind].feature) ? 'ready' : 'outdated';
 }
 
 // The features of the first board PR read from machine `on` (null: this computer), or null.
@@ -43,12 +55,12 @@ export function waitingText(n) {
   return n === 1 ? 'waiting on you: 1 PR' : `waiting on you: ${n} PRs`;
 }
 
-export function parseRecipe(doc) {
+export function parseRecipe(doc, kind) {
   const ok = doc != null && typeof doc === 'object'
     && typeof doc.session_id === 'string' && doc.session_id !== ''
     && typeof doc.cwd === 'string' && doc.cwd !== '';
   if (!ok) {
-    return { ok: false, error: { kind: 'bad-json', message: 'pr batch session --json gave no session_id and cwd' } };
+    return { ok: false, error: { kind: 'bad-json', message: `pr ${kind} session --json gave no session_id and cwd` } };
   }
   return { ok: true, recipe: { sessionId: doc.session_id, name: String(doc.name ?? ''), cwd: doc.cwd } };
 }
@@ -91,17 +103,19 @@ function failed(message) {
 const OUTDATED = Object.freeze({ ok: false, outdated: true, message: OUTDATED_TEXT });
 
 /**
- * deps: {exec, run, panes, spaces} (the herdr functions). target: {on, cwd, runId, repo, features}.
+ * deps: {exec, run, panes, spaces} (the herdr functions).
+ * target: batch {on, cwd, runId, repo, features}; target {on, cwd, branch, repo, features}.
  * Resolves {ok:true, opened:'focused'|'started'} or {ok:false, outdated, message}; never rejects.
  */
-export async function openRunSession(deps, target) {
+export async function openSession(deps, kind, target) {
+  const spec = SESSION_KINDS[kind];
   const { exec, run, panes, spaces } = deps;
-  const { on = null, cwd = null, runId, repo = null, features = null } = target;
-  if (sessionGate(features) === 'outdated') return OUTDATED;
-  const asked = await invoke(exec, { on, cwd }, 'pr', sessionArgv(runId));
-  if (!asked.ok) return OUTDATED_RE.test(asked.error.message ?? '') ? OUTDATED : failed(asked.error.message);
+  const { on = null, cwd = null, repo = null, features = null } = target;
+  if (sessionGate(features, kind) === 'outdated') return OUTDATED;
+  const asked = await invoke(exec, { on, cwd }, 'pr', spec.askArgv(target));
+  if (!asked.ok) return spec.outdatedRe.test(asked.error.message ?? '') ? OUTDATED : failed(asked.error.message);
   const body = readJson(asked.stdout);
-  const got = body.ok ? parseRecipe(body.value) : body;
+  const got = body.ok ? parseRecipe(body.value, kind) : body;
   if (!got.ok) return failed(got.error.message);
   const { sessionId, cwd: checkout } = got.recipe;
   let ls;
@@ -119,7 +133,9 @@ export async function openRunSession(deps, target) {
   }
   let res;
   try {
-    res = parseRunReply(await exec('hc', hcSessionArgv({ repo, runId, sessionId, cwd: checkout, on }), {}));
+    res = parseRunReply(await exec('hc', hcSessionArgv({
+      repo, argv: spec.openArgv(target), sessionId, cwd: checkout, on,
+    }), {}));
   } catch (err) {
     res = { ok: false, error: { message: String(err?.message ?? err) } };
   }

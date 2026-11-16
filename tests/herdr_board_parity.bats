@@ -10,11 +10,11 @@
 # constructed strings. The guard catches imports, aliases, namespace use, re-exports and
 # dynamic import() of banned symbols and files.
 #
-# Discovery is recursive over ai/herdr/web/** and ai/herdr/app/mods/prs/** (`*.js`).
+# Discovery is recursive over ai/herdr/web/** and ai/herdr/app/mods/{prs,space-prs}/** (`*.js`).
 # Roots default to those trees; PARITY_ROOTS (newline-separated) or extra argv override them
 # so a throwaway tree under BATS_TEST_TMPDIR can be scanned the same way.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/app/mods/prs/*.js ai/herdr/app/mods/_lib/*.js ai/herdr/web/* tests/herdr_board_parity_scan.mjs
+# select-on: ai/herdr/app/mods/prs/*.js ai/herdr/app/mods/space-prs/*.js ai/herdr/app/mods/_lib/*.js ai/herdr/web/* tests/herdr_board_parity_scan.mjs
 
 setup() {
   load 'test_helper'
@@ -44,7 +44,7 @@ assert_clean() {
 }
 
 views() {
-  find "$WEB" "$MODS/prs" -name '*.js' | LC_ALL=C sort
+  find "$WEB" "$MODS/prs" "$MODS/space-prs" -name '*.js' | LC_ALL=C sort
 }
 
 PULLS='pullTarget|pullOwed|loadBoard|docToState|mergeRows|withRunning|loadTerminals|runningFor|representatives|staleKeys|boardState|mergeStates|owedDue|OWED_TTL_MS|owedState|owedError|owedAt|assemble|loadOpenPrs|loadListing|loadLanded|loadRepo|loadUser|loadOwed|loadBatchDoc|loadBusy|board_pull|board_doc|board_data'

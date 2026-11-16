@@ -95,6 +95,21 @@ _js() {
   [ "$output" = '[["review-publish"],["review-publish"],[]]' ]
 }
 
+@test "docToState: cachedAt from cached_at; absent on a partial keeps prev; null and garbage are null" {
+  _js '
+    const iso = "2020-01-01T00:00:00.000Z";
+    const parsed = d.docToState({ ...doc, repos: [{ ...doc.repos[0], cached_at: iso }] }, { cwd: "/w", on: null });
+    const kept = d.docToState({ ...doc, complete: false, repos: [{ ...doc.repos[0] }] }, { cwd: "/w", on: null }, parsed);
+    const nulled = d.docToState({ ...doc, repos: [{ ...doc.repos[0], cached_at: null }] }, { cwd: "/w", on: null }, parsed);
+    const garbage = d.docToState({ ...doc, repos: [{ ...doc.repos[0], cached_at: "nope" }] }, { cwd: "/w", on: null }, parsed);
+    process.stdout.write(JSON.stringify([
+      parsed.cachedAt, kept.cachedAt, nulled.cachedAt, garbage.cachedAt, Date.parse(iso),
+    ]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[1577836800000,1577836800000,null,null,1577836800000]' ]
+}
+
 @test "withRunning marks the PRs a live review terminal is running for" {
   _js '
     const prs = d.withRunning(doc.rows.map(d.rowToPr), new Map([[7, { terminal: "t9" }]]));
@@ -345,6 +360,24 @@ _pull() {
   _js 'process.stdout.write(JSON.stringify([p.machineOf(null), p.machineOf(undefined), p.machineOf(""), p.machineOf("m1")]));'
   [ "$status" -eq 0 ]
   [ "$output" = '["","","","m1"]' ]
+}
+
+@test "wantsRefresh: null interval, no cache-age, missing cachedAt are false; old is true, fresh is false" {
+  _js '
+    const old = { features: ["cache-age"], cachedAt: 0 };
+    const fresh = { features: ["cache-age"], cachedAt: 900 };
+    const noFeat = { features: ["review-publish"], cachedAt: 0 };
+    const noAt = { features: ["cache-age"] };
+    process.stdout.write(JSON.stringify([
+      p.wantsRefresh(old, 1000, null),
+      p.wantsRefresh(noFeat, 1000, 100),
+      p.wantsRefresh(noAt, 1000, 100),
+      p.wantsRefresh(old, 1000, 100),
+      p.wantsRefresh(fresh, 1000, 100),
+    ]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[false,false,false,true,false]' ]
 }
 
 @test "board_store pull groups targets by machine instead of Promise.all" {

@@ -523,7 +523,8 @@
     "review-publish",
     "batch-session",
     "target-session",
-    "queue-lanes"
+    "queue-lanes",
+    "cache-age"
   ],
   "stamp": ""
 }

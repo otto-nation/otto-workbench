@@ -6,9 +6,10 @@
  * `pr` module owns that and the argv and env, so nothing here builds a pi command line.
  * A live hc terminal carrying the `otto.session` label for that id is brought forward
  * (its pane's space, tab and pane, or `terminal.keep` when no pane shows it); otherwise
- * `hc run --bg` starts the kind's open argv (which execs pi) in the checkout and
- * `terminal.keep` gives it a tab. A machine whose `pr board` features lack the kind's
- * feature gets OUTDATED_TEXT and no exec.
+ * a kind with `adoptPane` takes an unlabelled agent pane in the checkout the same way;
+ * otherwise `hc run --bg` starts the kind's open argv (which execs pi) in the checkout
+ * and `terminal.keep` gives it a tab. A machine whose `pr board` features lack the
+ * kind's feature gets OUTDATED_TEXT and no exec.
  */
 
 import { invoke, readJson } from './board_data.js';
@@ -26,6 +27,7 @@ export const SESSION_KINDS = {
     outdatedRe: /invalid choice: 'target'/,
     askArgv: (t) => ['--branch', String(t.branch), 'target', 'session', '--json'],
     openArgv: () => ['pr', 'target', 'session'],
+    adoptPane: true,
   },
 };
 
@@ -84,6 +86,37 @@ export function liveAddress(stdout, on) {
   return null;
 }
 
+// The pane to bring forward for a PR, or null. Candidates have a non-null agent
+// `status` on machine `on` (null/'' = local, same as liveAddress) whose cwd is the
+// checkout or under it (path boundary); with no cwd, whose branch equals `branch`.
+// Rank: blocked, then working, then the rest; ties: focused, then panes() order.
+export function agentPaneFor(panes, { on, cwd, branch } = {}) {
+  const want = on == null || on === '' ? null : on;
+  const raw = typeof cwd === 'string' && cwd !== '' ? cwd : null;
+  const c = raw != null && raw.length > 1 && raw.endsWith('/') ? raw.slice(0, -1) : raw;
+  let best = null;
+  let bestRank = 3;
+  let bestFocused = false;
+  for (const p of panes ?? []) {
+    if (p?.status == null) continue;
+    if (machineOf(p.terminal) !== want) continue;
+    if (c != null) {
+      const pc = p.cwd;
+      if (typeof pc !== 'string' || !(pc === c || pc.startsWith(`${c}/`))) continue;
+    } else if (p.branch !== branch) {
+      continue;
+    }
+    const rank = p.status === 'blocked' ? 0 : p.status === 'working' ? 1 : 2;
+    const focused = Boolean(p.focused);
+    if (best == null || rank < bestRank || (rank === bestRank && focused && !bestFocused)) {
+      best = p;
+      bestRank = rank;
+      bestFocused = focused;
+    }
+  }
+  return best;
+}
+
 // The herdr commands that bring `address` forward, as [name, args] pairs.
 export function focusSteps(address, panes, spaces) {
   const pane = (panes ?? []).find((p) => p?.terminal === address);
@@ -105,7 +138,7 @@ const OUTDATED = Object.freeze({ ok: false, outdated: true, message: OUTDATED_TE
 /**
  * deps: {exec, run, panes, spaces} (the herdr functions).
  * target: batch {on, cwd, runId, repo, features}; target {on, cwd, branch, repo, features}.
- * Resolves {ok:true, opened:'focused'|'started'} or {ok:false, outdated, message}; never rejects.
+ * Resolves {ok:true, opened:'focused'|'adopted'|'started'} or {ok:false, outdated, message}; never rejects.
  */
 export async function openSession(deps, kind, target) {
   const spec = SESSION_KINDS[kind];
@@ -130,6 +163,13 @@ export async function openSession(deps, kind, target) {
   if (address) {
     for (const [name, args] of focusSteps(address, panes(), spaces())) run(name, args);
     return { ok: true, opened: 'focused' };
+  }
+  if (spec.adoptPane) {
+    const pane = agentPaneFor(panes(), { on, cwd: checkout, branch: target.branch });
+    if (pane) {
+      for (const [name, args] of focusSteps(pane.terminal, panes(), spaces())) run(name, args);
+      return { ok: true, opened: 'adopted' };
+    }
   }
   let res;
   try {

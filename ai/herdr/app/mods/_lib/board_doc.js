@@ -53,6 +53,13 @@ export function withRunning(prs, running) {
   }));
 }
 
+// ISO-8601 `cached_at` as ms since epoch. Absent on a partial doc keeps prev; null/unparseable is null.
+function cachedAtOf(repo, prev) {
+  if (!Object.hasOwn(repo, 'cached_at')) return prev?.cachedAt ?? null;
+  const ms = Date.parse(repo.cached_at);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 // A document as the per-target state the board caches. `prev` is that target's last state, whose
 // rows a partial document patches. A failed repo clears `phase` so repoPhase reads stale or failed.
 export function docToState(doc, ctx, prev = null) {
@@ -65,6 +72,7 @@ export function docToState(doc, ctx, prev = null) {
     reviewsRoot: doc.reviews_root || prev?.reviewsRoot || '',
     partial: Boolean(repo.partial),
     features: Array.isArray(doc.features) ? doc.features : (prev?.features ?? []),
+    cachedAt: cachedAtOf(repo, prev),
   };
   if (repo.phase === 'failed' || repo.error) {
     state.error = { kind: repo.error?.kind ?? 'failed', message: repo.error?.message ?? '' };

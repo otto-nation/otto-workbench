@@ -5311,7 +5311,7 @@ Assemble the PR board document from listing, status and owed phases.
 `build` always returns a document. Per-checkout failures live on
 ``repos[].error``; ``--if-changed`` matching the current stamp returns the
 unchanged envelope. The stamp hashes canonical JSON of the document without
-``stamp`` and every ``fetched_at``.
+``stamp`` and every ``fetched_at`` and ``cached_at``.
 
 ### board/flight.py
 

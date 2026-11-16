@@ -299,3 +299,173 @@ _store() {
   [ "$status" -eq 0 ]
   [ "$output" = '["hc","pr:listing:offline","pr:listing","pr:status"]' ]
 }
+
+@test "store: repoStateOf of a second checkout follows the checkout that committed last" {
+  _store '
+    let changed = false;
+    const st = s.createBoardStore({ exec: fake((l, o) => (
+      changed && l.startsWith("pr:") && o.cwd === "/w/a"
+        ? docAs("acme/box", l.split(":")[1], { rows: doc.rows.slice(0, 1) })
+        : null
+    )) });
+    const a = { on: null, cwd: "/w/a" }, b = { on: null, cwd: "/w/b" };
+    await st.pull({ targets: [a, b] });
+    changed = true;
+    await st.pull({ targets: [a], keep: () => [a, b] });
+    process.stdout.write(JSON.stringify({
+      repoB: st.repoStateOf(b).rows.map((r) => r.number),
+      ownB: st.stateOf(b).rows.map((r) => r.number),
+      ownA: st.stateOf(a).rows.map((r) => r.number),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"repoB":[7],"ownB":[7,8,10,9],"ownA":[7]}' ]
+}
+
+@test "store: repoStateOf prefers the later commit over insertion order" {
+  _store '
+    const st = s.createBoardStore({ exec: fake((l, o) => (
+      o.cwd === "/w/a" && l.startsWith("pr:")
+        ? docAs("acme/box", l.split(":")[1], { rows: doc.rows.slice(0, 1) })
+        : null
+    )) });
+    const a = { on: null, cwd: "/w/a" }, b = { on: null, cwd: "/w/b" };
+    await st.pull({ targets: [b] });
+    await st.pull({ targets: [a], keep: () => [a, b] });
+    process.stdout.write(JSON.stringify({
+      repoB: st.repoStateOf(b).rows.map((r) => r.number),
+      ownB: st.stateOf(b).rows.map((r) => r.number),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"repoB":[7],"ownB":[7,8,10,9]}' ]
+}
+
+@test "store: repoStateOf equals stateOf when the repo is unknown" {
+  _store '
+    const st = s.createBoardStore({ exec: fake() });
+    const never = { on: null, cwd: "/w/never" };
+    const other = { on: null, cwd: "/w/other" };
+    const eq = (c) => JSON.stringify(st.repoStateOf(c)) === JSON.stringify(st.stateOf(c));
+    const before = [eq(never), st.repoStateOf(never)];
+    await st.pull({ targets: [{ on: null, cwd: "/w/a" }] });
+    process.stdout.write(JSON.stringify([before, eq(never), eq(other), st.repoStateOf(other)]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[true,{}],true,true,{}]' ]
+}
+
+@test "store: keep() dropping the latest checkout falls repoStateOf back to the ctx" {
+  _store '
+    let changed = false;
+    const st = s.createBoardStore({ exec: fake((l, o) => (
+      changed && l.startsWith("pr:") && o.cwd === "/w/a"
+        ? docAs("acme/box", l.split(":")[1], { rows: doc.rows.slice(0, 1) })
+        : null
+    )) });
+    const a = { on: null, cwd: "/w/a" }, b = { on: null, cwd: "/w/b" };
+    await st.pull({ targets: [a, b] });
+    changed = true;
+    await st.pull({ targets: [a], keep: () => [a, b] });
+    const before = st.repoStateOf(b).rows.map((r) => r.number);
+    await st.pull({ targets: [], keep: () => [b] });
+    process.stdout.write(JSON.stringify({
+      before,
+      after: st.repoStateOf(b).rows.map((r) => r.number),
+      own: st.stateOf(b).rows.map((r) => r.number),
+      dropped: st.stateOf(a),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"before":[7],"after":[7,8,10,9],"own":[7,8,10,9],"dropped":{}}' ]
+}
+
+@test "store: listing-only upgrades when the cache is older than refreshAfterMs" {
+  _store '
+    let t = Date.parse("2026-11-16T00:00:00.000Z");
+    const aged = (slug, phase) => docAs(slug, phase, {
+      repos: [{ ...doc.repos[0], slug, cached_at: "2020-01-01T00:00:00.000Z" }],
+    });
+    const st = s.createBoardStore({
+      exec: fake((l) => (l.startsWith("pr:") ? aged("acme/box", l.split(":")[1].replace(":offline", "")) : null)),
+      now: () => t,
+    });
+    const ctx = { on: null, cwd: "/w/a" };
+    await st.pull({ targets: [ctx], listingOnly: true });
+    calls.length = 0;
+    await st.pull({ targets: [ctx], listingOnly: true, refreshAfterMs: 180000 });
+    process.stdout.write(JSON.stringify(calls.map((c) => c.l)));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["hc","pr:listing","pr:status"]' ]
+}
+
+@test "store: a fresh cache-age listing-only pull stays offline" {
+  _store '
+    let t = Date.parse("2026-11-16T00:00:00.000Z");
+    const fresh = (slug, phase) => docAs(slug, phase, {
+      repos: [{ ...doc.repos[0], slug, cached_at: "2026-11-16T00:00:00.000Z" }],
+    });
+    const st = s.createBoardStore({
+      exec: fake((l) => (l.startsWith("pr:") ? fresh("acme/box", l.split(":")[1].replace(":offline", "")) : null)),
+      now: () => t,
+    });
+    const ctx = { on: null, cwd: "/w/a" };
+    await st.pull({ targets: [ctx], listingOnly: true });
+    calls.length = 0;
+    await st.pull({ targets: [ctx], listingOnly: true, refreshAfterMs: 180000 });
+    process.stdout.write(JSON.stringify(calls.map((c) => c.l)));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["hc","pr:listing:offline:stamp"]' ]
+}
+
+@test "store: a stale-cache upgrade is at most once per refreshAfterMs even when cachedAt stays old" {
+  _store '
+    let t = Date.parse("2026-11-16T00:00:00.000Z");
+    const aged = (slug, phase) => docAs(slug, phase, {
+      repos: [{ ...doc.repos[0], slug, cached_at: "2020-01-01T00:00:00.000Z" }],
+    });
+    const unchanged = (phase) => ({ code: 0, stdout: JSON.stringify({ schema_version: 1, phase, stamp: "x", unchanged: true }), stderr: "" });
+    const st = s.createBoardStore({
+      exec: fake((l) => {
+        if (l === "pr:listing" || l === "pr:status") return unchanged(l.split(":")[1]);
+        if (l.startsWith("pr:")) return aged("acme/box", l.split(":")[1].replace(":offline", ""));
+        return null;
+      }),
+      now: () => t,
+    });
+    const ctx = { on: null, cwd: "/w/a" };
+    await st.pull({ targets: [ctx], listingOnly: true });
+    calls.length = 0;
+    await st.pull({ targets: [ctx], listingOnly: true, refreshAfterMs: 180000 });
+    const upgraded = calls.map((c) => c.l); calls.length = 0;
+    await st.pull({ targets: [ctx], listingOnly: true, refreshAfterMs: 180000 });
+    const soon = calls.map((c) => c.l); calls.length = 0;
+    t += 180000;
+    await st.pull({ targets: [ctx], listingOnly: true, refreshAfterMs: 180000 });
+    process.stdout.write(JSON.stringify({ upgraded, soon, later: calls.map((c) => c.l) }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"upgraded":["hc","pr:listing","pr:status"],"soon":["hc","pr:listing:offline:stamp"],"later":["hc","pr:listing","pr:status"]}' ]
+}
+
+@test "store: without refreshAfterMs an old cache stays listing-only" {
+  _store '
+    let t = Date.parse("2026-11-16T00:00:00.000Z");
+    const aged = (slug, phase) => docAs(slug, phase, {
+      repos: [{ ...doc.repos[0], slug, cached_at: "2020-01-01T00:00:00.000Z" }],
+    });
+    const st = s.createBoardStore({
+      exec: fake((l) => (l.startsWith("pr:") ? aged("acme/box", l.split(":")[1].replace(":offline", "")) : null)),
+      now: () => t,
+    });
+    const ctx = { on: null, cwd: "/w/a" };
+    await st.pull({ targets: [ctx], listingOnly: true });
+    calls.length = 0;
+    await st.pull({ targets: [ctx], listingOnly: true });
+    process.stdout.write(JSON.stringify(calls.map((c) => c.l)));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["hc","pr:listing:offline:stamp"]' ]
+}

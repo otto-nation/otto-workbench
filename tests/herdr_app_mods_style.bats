@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Style guards for the herdr-app mods: the brand DESIGN.md rules a grep can see.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/*.js ai/herdr/app/mods/queue/*.js ai/herdr/app/mods/queue-button/*.js ai/herdr/app/mods/_lib/*.js
+# select-on: ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/*.js ai/herdr/app/mods/space-prs/*.js ai/herdr/app/mods/queue/*.js ai/herdr/app/mods/queue-button/*.js ai/herdr/app/mods/_lib/*.js
 
 setup() {
   load 'test_helper'
@@ -15,23 +15,23 @@ teardown() {
 
 @test "no hover callback changes a border colour (single-line match only)" {
   run grep -nE '\.hover\([^)]*\)[^;]*border_color|\.hover\(\(s\) => s[^;]*border_color' \
-    "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/queue/*.js "$MODS"/_lib/panel_button.js
+    "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/space-prs/*.js "$MODS"/queue/*.js "$MODS"/_lib/panel_button.js
   [ "$status" -eq 1 ]
 }
 
 @test "filter rows go through checkRow; Checkbox.new lives only in _ui" {
   grep -q 'export function checkRow(' "$MODS/_ui/ui.js"
-  run grep -n 'Checkbox.new(' "$MODS"/prs/*.js
+  run grep -n 'Checkbox.new(' "$MODS"/prs/*.js "$MODS"/space-prs/*.js
   [ "$status" -eq 1 ]
 }
 
 @test "the brand forbids pills: no pill( call or export remains" {
-  run grep -nE '\bpill\(' "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/queue/*.js
+  run grep -nE '\bpill\(' "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/space-prs/*.js "$MODS"/queue/*.js
   [ "$status" -eq 1 ]
 }
 
 @test "the fail status glyph is ×, never ✗, which no brand font draws" {
-  run grep -n '✗' "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/queue/*.js "$MODS"/_lib/*.js
+  run grep -n '✗' "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/space-prs/*.js "$MODS"/queue/*.js "$MODS"/_lib/*.js
   [ "$status" -eq 1 ]
   grep -q "fail: Object.freeze({ glyph: '×'" "$MODS/_lib/status.js"
 }
@@ -49,18 +49,18 @@ teardown() {
 
 @test "PR state is read from prPresentation, never re-derived" {
   run grep -nwE 'prIssues|stateTags|ciMark|cardStateLine|toneKind|postKind|healthKind|decisionText' \
-    "$MODS"/_ui/*.js "$MODS"/prs/*.js
+    "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/space-prs/*.js
   [ "$status" -eq 1 ]
 }
 
 @test "no inline decision lowercasing or CI/batch wording in views" {
   run grep -nE "toLowerCase\(\)\\.replace\(/_/g|[\"']CI (passing|failing|running|unknown|loading|pending)[\"']|Batch working" \
-    "$MODS"/_ui/*.js "$MODS"/prs/*.js
+    "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/space-prs/*.js
   [ "$status" -eq 1 ]
 }
 
 @test "status glyphs live only in _lib/status.js" {
-  run grep -n 'glyph:' "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/queue/*.js
+  run grep -n 'glyph:' "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/space-prs/*.js "$MODS"/queue/*.js
   [ "$status" -eq 1 ]
 }
 
@@ -77,16 +77,16 @@ teardown() {
 }
 
 @test "load-error status wording lives only in _lib/load_state.js" {
-  run grep -nE 'stale ·|\} failed`' "$MODS"/_ui/*.js "$MODS"/prs/*.js
+  run grep -nE 'stale ·|\} failed`' "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/space-prs/*.js
   [ "$status" -eq 1 ]
 }
 
 @test "batch run, step and item status and step labels have one owner in _lib" {
-  run grep -nwE 'runKind|stepKind|runWord|RUN_WORD|itemTone|stepTone|STEP_NAMES' "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/_lib/*.js
+  run grep -nwE 'runKind|stepKind|runWord|RUN_WORD|itemTone|stepTone|STEP_NAMES' "$MODS"/_ui/*.js "$MODS"/prs/*.js "$MODS"/space-prs/*.js "$MODS"/_lib/*.js
   [ "$status" -eq 1 ]
   run grep -lE '^export const (STEP_ORDER|STEP_LABEL|AI_STEPS|RUN_STATUS|STEP_STATUS)\b' "$MODS"/_lib/*.js
   [ "$output" = "$MODS/_lib/batch.js" ]
-  run bash -c "grep -nE \"\\[ *['\\\"]rebase['\\\"]\" '$MODS'/_ui/*.js '$MODS'/prs/*.js '$MODS'/_lib/*.js | grep -v '/_lib/batch.js:'"
+  run bash -c "grep -nE \"\\[ *['\\\"]rebase['\\\"]\" '$MODS'/_ui/*.js '$MODS'/prs/*.js '$MODS'/space-prs/*.js '$MODS'/_lib/*.js | grep -v '/_lib/batch.js:'"
   [ "$status" -eq 1 ]
 }
 
@@ -96,7 +96,7 @@ teardown() {
   grep -q 'pinned(v_flex().id("prs-header")' "$MODS/prs/board_view.js"
   grep -q 'pinned(v_flex().px(SP.md)' "$MODS/prs/board_view.js"
   grep -q 'pinned(h_flex().px(SP.lg).py(SP.md).child(segmented(segs)))' "$MODS/prs/detail.js"
-  run grep -ln 'TextView.markdown(`output-\|TextView.markdown(`step-log' "$MODS"/prs/*.js
+  run grep -ln 'TextView.markdown(`output-\|TextView.markdown(`step-log' "$MODS"/prs/*.js "$MODS"/space-prs/*.js
   [ "$status" -eq 1 ]
   grep -q 'selectableCode("output"' "$MODS/prs/detail.js"
   grep -q 'card(`run-${r.key}`)' "$MODS/prs/detail.js"
@@ -356,5 +356,13 @@ teardown() {
   grep -q 'export function textInput(' "$MODS/_ui/ui.js"
   grep -q 'type(Input.new(state), "body")' "$MODS/_ui/ui.js"
   run grep -rn 'Input\.new(' "$MODS" --include=*.js --exclude=ui.js
+  [ "$status" -eq 1 ]
+}
+
+@test "no literal colour in mod code: colours come only from theme()" {
+  # Quoted hex (#rgb, #rgba, #rrggbb, #rrggbbaa), rgb()/rgba()/hsl()/hsla() calls, 0xRRGGBB.
+  run grep -rnE --include='*.js' \
+    "[\"'\`]#([0-9a-fA-F]{3,4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})[\"'\`]|\\b(rgba?|hsla?)\\(|\\b0x[0-9a-fA-F]{6}\\b" \
+    "$MODS"
   [ "$status" -eq 1 ]
 }

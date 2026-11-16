@@ -8,67 +8,22 @@ import board.reviews
 import core.serde
 import review.listing
 from board.cache import path_for, read, write
-from board.document import Checkout, build, stamp
+from board.document import build, stamp
 from board.github import PullList, StatusFetch
-from board.model import FEATURES, CiStatus, Mergeable, Phase, PrState, PullFacts, StatusFacts
+from board.model import FEATURES, CiStatus, Mergeable, Phase, PrState, StatusFacts
 from batch.model import Step
 from batch.plan import Plan, PlanRow, StepNeed
 from conftest import init_repo
 from review_record_support import seed_record
+from board_document_support import board_env, fake_checkout, pull_facts
 
 DOCUMENT_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "board_document.json"
 
 
-def _co(tmp_path, key="k"):
-    return Checkout(str(tmp_path / "co"), "acme/box", "github.com", key)
-
-
-def _env(tmp_path, monkeypatch, *, checkout=None, pulls=None, status=None, owed_plan=None, listing=None, real_listing=False):
-    monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
-    found = checkout or _co(tmp_path)
-    listing_rows = list(listing or [])
-    monkeypatch.setattr("gh.client.login", lambda: "me")
-    if not real_listing:
-        monkeypatch.setattr(
-            "board.document.review.listing.rows",
-            lambda *a, **k: listing_rows,
-        )
-    monkeypatch.setattr("board.rows.batch.store.busy_prs", lambda ref: frozenset())
-    monkeypatch.setattr("board.document._resolve", lambda path: found)
-    monkeypatch.setattr(
-        "board.github.list_pulls",
-        lambda slug: PullList(pulls=list(pulls) if pulls is not None else []),
-    )
-
-    def fake_fetch(slug, numbers, *, executor=None):
-        if status is not None:
-            return status
-        return StatusFetch(by_number={}, partial=False)
-
-    monkeypatch.setattr("board.github.fetch_status", fake_fetch)
-    if owed_plan is not None:
-        monkeypatch.setattr(
-            "board.document.batch.plan.build_plan",
-            lambda checkouts, steps=None: owed_plan,
-        )
-    return found
-
-
-def _pull(number, head_sha, *, title="T", author="me", **kwargs):
-    return PullFacts(
-        repo="acme/box",
-        number=number,
-        title=title,
-        author=author,
-        head_sha=head_sha,
-        **kwargs,
-    )
-
-
 def test_listing_unhydrated_unless_cached_status_head_sha_matches(tmp_path, monkeypatch):
-    found = _env(tmp_path, monkeypatch, pulls=[
-        _pull(7, "aaa"),
-        _pull(8, "bbb", title="U", author="you"),
+    found = board_env(tmp_path, monkeypatch, pulls=[
+        pull_facts(7, "aaa"),
+        pull_facts(8, "bbb", title="U", author="you"),
     ])
     write(found.key, Phase.STATUS, {
         "rows": [
@@ -109,10 +64,10 @@ def test_status_writes_cache_and_sets_partial(tmp_path, monkeypatch):
         ci_unknown=False,
         mergeable=Mergeable.MERGEABLE,
     )
-    found = _env(
+    found = board_env(
         tmp_path,
         monkeypatch,
-        pulls=[_pull(7, "aaa"), _pull(8, "bbb", title="U", author="you")],
+        pulls=[pull_facts(7, "aaa"), pull_facts(8, "bbb", title="U", author="you")],
         status=StatusFetch(by_number={7: facts}, partial=True),
     )
     doc = build(Phase.STATUS, [found.path])
@@ -137,10 +92,10 @@ def test_status_prs_is_a_patch(tmp_path, monkeypatch):
         ci_unknown=False,
         mergeable=Mergeable.MERGEABLE,
     )
-    found = _env(
+    found = board_env(
         tmp_path,
         monkeypatch,
-        pulls=[_pull(7, "aaa"), _pull(8, "bbb", title="U", author="you")],
+        pulls=[pull_facts(7, "aaa"), pull_facts(8, "bbb", title="U", author="you")],
         status=StatusFetch(by_number={7: facts}, partial=False),
     )
     doc = build(Phase.STATUS, [found.path], prs=[7])
@@ -150,7 +105,7 @@ def test_status_prs_is_a_patch(tmp_path, monkeypatch):
 
 
 def test_owed_flips_mine_lane_to_has_comments(tmp_path, monkeypatch):
-    found = _co(tmp_path)
+    found = fake_checkout(tmp_path)
     plan = Plan(
         viewer="me",
         rows=[
@@ -166,7 +121,7 @@ def test_owed_flips_mine_lane_to_has_comments(tmp_path, monkeypatch):
             ),
         ],
     )
-    _env(tmp_path, monkeypatch, checkout=found, owed_plan=plan)
+    board_env(tmp_path, monkeypatch, checkout=found, owed_plan=plan)
     write(found.key, Phase.LISTING, {
         "rows": [{
             "number": 7,
@@ -192,7 +147,7 @@ def test_owed_flips_mine_lane_to_has_comments(tmp_path, monkeypatch):
 
 
 def test_stamp_stable_across_fetched_at(tmp_path, monkeypatch):
-    found = _env(tmp_path, monkeypatch, pulls=[_pull(7, "aaa")])
+    found = board_env(tmp_path, monkeypatch, pulls=[pull_facts(7, "aaa")])
     times = iter(["2026-01-01T00:00:00Z", "2026-06-15T12:00:00Z"])
     monkeypatch.setattr("board.document._now", lambda: next(times))
     first = build(Phase.LISTING, [found.path])
@@ -202,19 +157,39 @@ def test_stamp_stable_across_fetched_at(tmp_path, monkeypatch):
     assert stamp(first) == first["stamp"]
 
 
+def test_online_listing_cached_at_matches_fetched_at(tmp_path, monkeypatch):
+    found = board_env(tmp_path, monkeypatch, pulls=[pull_facts(7, "aaa")])
+    t = "2026-01-01T00:00:00Z"
+    monkeypatch.setattr("board.document._now", lambda: t)
+    doc = build(Phase.LISTING, [found.path])
+    assert doc["repos"][0]["cached_at"] == t
+    assert doc["repos"][0]["fetched_at"] == t
+
+
+def test_stamp_stable_across_cached_at(tmp_path, monkeypatch):
+    found = board_env(tmp_path, monkeypatch, pulls=[pull_facts(7, "aaa")])
+    monkeypatch.setattr("board.document._now", lambda: "2026-01-01T00:00:00Z")
+    doc = build(Phase.LISTING, [found.path])
+    other = {k: v for k, v in doc.items() if k != "stamp"}
+    other["repos"] = [
+        {**repo, "cached_at": "1999-01-01T00:00:00Z"} for repo in other["repos"]
+    ]
+    assert stamp(other) == doc["stamp"]
+
+
 def test_full_document_carries_its_features(tmp_path, monkeypatch):
-    found = _env(tmp_path, monkeypatch, pulls=[_pull(7, "aaa")])
+    found = board_env(tmp_path, monkeypatch, pulls=[pull_facts(7, "aaa")])
     doc = build(Phase.LISTING, [found.path])
     assert doc["features"] == [
-        "review-publish", "batch-session", "target-session", "queue-lanes",
+        "review-publish", "batch-session", "target-session", "queue-lanes", "cache-age",
     ]
     assert list(FEATURES) == [
-        "review-publish", "batch-session", "target-session", "queue-lanes",
+        "review-publish", "batch-session", "target-session", "queue-lanes", "cache-age",
     ]
 
 
 def test_stamp_differs_when_features_differ(tmp_path, monkeypatch):
-    found = _env(tmp_path, monkeypatch, pulls=[_pull(7, "aaa")])
+    found = board_env(tmp_path, monkeypatch, pulls=[pull_facts(7, "aaa")])
     doc = build(Phase.LISTING, [found.path])
     other = {k: v for k, v in doc.items() if k != "stamp"}
     other["features"] = []
@@ -222,7 +197,7 @@ def test_stamp_differs_when_features_differ(tmp_path, monkeypatch):
 
 
 def test_if_changed_unchanged_envelope(tmp_path, monkeypatch):
-    found = _env(tmp_path, monkeypatch, pulls=[_pull(7, "aaa")])
+    found = board_env(tmp_path, monkeypatch, pulls=[pull_facts(7, "aaa")])
     monkeypatch.setattr("board.document._now", lambda: "2026-01-01T00:00:00Z")
     doc = build(Phase.LISTING, [found.path])
     again = build(Phase.LISTING, [found.path], if_changed=doc["stamp"])
@@ -251,7 +226,7 @@ def test_missing_checkout_is_repo_error_and_still_a_document(tmp_path, monkeypat
 
 
 def test_failed_listing_fetch_keeps_cache_and_reports_error(tmp_path, monkeypatch):
-    found = _env(tmp_path, monkeypatch)
+    found = board_env(tmp_path, monkeypatch)
     write(found.key, Phase.LISTING, {"rows": [{"number": 7, "head_sha": "a"}]})
     monkeypatch.setattr(
         "board.github.list_pulls",
@@ -266,7 +241,7 @@ def test_failed_listing_fetch_keeps_cache_and_reports_error(tmp_path, monkeypatc
 
 
 def test_listing_auth_failure_is_auth_kind(tmp_path, monkeypatch):
-    found = _env(tmp_path, monkeypatch)
+    found = board_env(tmp_path, monkeypatch)
     monkeypatch.setattr(
         "board.github.list_pulls",
         lambda slug: PullList(pulls=None, error="HTTP 401: Bad credentials"),
@@ -290,8 +265,8 @@ def test_not_git_is_distinct_from_no_origin(tmp_path, monkeypatch):
 
 
 def test_status_reuses_listing_cache_within_60s(tmp_path, monkeypatch):
-    pull = _pull(7, "aaa")
-    found = _env(tmp_path, monkeypatch, pulls=[pull])
+    pull = pull_facts(7, "aaa")
+    found = board_env(tmp_path, monkeypatch, pulls=[pull])
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     write(found.key, Phase.LISTING, {
         "fetched_at": now,
@@ -307,8 +282,8 @@ def test_status_reuses_listing_cache_within_60s(tmp_path, monkeypatch):
 
 
 def test_status_refetches_listing_when_cache_is_stale(tmp_path, monkeypatch):
-    pull = _pull(7, "aaa")
-    found = _env(tmp_path, monkeypatch, pulls=[pull])
+    pull = pull_facts(7, "aaa")
+    found = board_env(tmp_path, monkeypatch, pulls=[pull])
     write(found.key, Phase.LISTING, {
         "fetched_at": "2020-01-01T00:00:00Z",
         "rows": [core.serde.to_dict(pull)],
@@ -325,8 +300,8 @@ def test_status_refetches_listing_when_cache_is_stale(tmp_path, monkeypatch):
 
 
 def test_status_prs_does_not_freshen_partial_listing(tmp_path, monkeypatch):
-    seven, eight = _pull(7, "aaa"), _pull(8, "bbb")
-    found = _env(tmp_path, monkeypatch, pulls=[seven, eight])
+    seven, eight = pull_facts(7, "aaa"), pull_facts(8, "bbb")
+    found = board_env(tmp_path, monkeypatch, pulls=[seven, eight])
     write(found.key, Phase.LISTING, {
         "fetched_at": "2020-01-01T00:00:00Z",
         "rows": [core.serde.to_dict(seven)],
@@ -339,65 +314,6 @@ def test_status_prs_does_not_freshen_partial_listing(tmp_path, monkeypatch):
     monkeypatch.setattr("board.github.list_pulls", boom)
     doc = build(Phase.STATUS, [found.path])
     assert {row["number"] for row in doc["rows"]} == {7, 8}
-
-
-def _offline_gh_raises(monkeypatch):
-    def boom(*_a, **_k):
-        raise AssertionError("gh call")
-
-    monkeypatch.setattr("board.github.list_pulls", boom)
-    monkeypatch.setattr("gh.client.login", boom)
-    monkeypatch.setattr("gh.client.graphql", boom)
-
-
-def test_offline_makes_no_gh_calls(tmp_path, monkeypatch):
-    found = _env(tmp_path, monkeypatch)
-    write(found.key, Phase.LISTING, {
-        "rows": [{
-            "number": 7,
-            "head_sha": "a",
-            "title": "T",
-            "author": "me",
-            "repo": "acme/box",
-        }],
-    })
-    _offline_gh_raises(monkeypatch)
-    doc = build(Phase.LISTING, [found.path], offline=True)
-    assert doc["repos"][0]["phase"] == "hydrating"
-    assert [row["number"] for row in doc["rows"]] == [7]
-
-
-def test_offline_repo_phases_from_cache(tmp_path, monkeypatch):
-    found = _env(tmp_path, monkeypatch)
-    _offline_gh_raises(monkeypatch)
-    queued = build(Phase.LISTING, [found.path], offline=True)
-    assert queued["repos"][0]["phase"] == "queued"
-    assert queued["rows"] == []
-
-    write(found.key, Phase.LISTING, {
-        "rows": [{
-            "number": 7,
-            "head_sha": "a",
-            "title": "T",
-            "author": "me",
-            "repo": "acme/box",
-        }],
-    })
-    hydrating = build(Phase.LISTING, [found.path], offline=True)
-    assert hydrating["repos"][0]["phase"] == "hydrating"
-    assert [row["number"] for row in hydrating["rows"]] == [7]
-
-    write(found.key, Phase.STATUS, {
-        "rows": [{
-            "number": 7,
-            "head_sha": "a",
-            "ci_status": "passing",
-            "ci_unknown": False,
-        }],
-    })
-    loaded = build(Phase.LISTING, [found.path], offline=True)
-    assert loaded["repos"][0]["phase"] == "loaded"
-    assert loaded["rows"][0]["hydrated"] is True
 
 
 _FIXTURE_NOW = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
@@ -418,13 +334,14 @@ def _scrub_document(value):
     for repo in doc.get("repos") or []:
         if isinstance(repo, dict):
             repo.pop("fetched_at", None)
+            repo.pop("cached_at", None)
             repo.pop("checkout", None)
     return doc
 
 
 def _fixture_pulls():
     return [
-        _pull(
+        pull_facts(
             7, "aaa",
             title="Fix comments",
             author="me",
@@ -433,7 +350,7 @@ def _fixture_pulls():
             url="https://github.com/acme/box/pull/7",
             labels=("comments",),
         ),
-        _pull(
+        pull_facts(
             8, "bbb",
             title="Unhydrated work",
             author="you",
@@ -441,7 +358,7 @@ def _fixture_pulls():
             base_branch="main",
             url="https://github.com/acme/box/pull/8",
         ),
-        _pull(
+        pull_facts(
             10, "ddd",
             title="WIP draft",
             author="pat",
@@ -530,7 +447,7 @@ def _fixture_status():
 
 
 def _build_status_document(tmp_path, monkeypatch):
-    found = _env(
+    found = board_env(
         tmp_path,
         monkeypatch,
         pulls=_fixture_pulls(),
@@ -590,8 +507,8 @@ def test_build_skips_row_for_unless_pr_matches_checkout(tmp_path, monkeypatch, r
     seed_record(
         reviews_dir, name="match-box", repo="acme/box", pr_number=7, mode="pr",
     )
-    found = _env(
-        tmp_path, monkeypatch, pulls=[_pull(7, "aaa")], real_listing=True,
+    found = board_env(
+        tmp_path, monkeypatch, pulls=[pull_facts(7, "aaa")], real_listing=True,
     )
     seen = _spy_row_for(monkeypatch)
     build(Phase.LISTING, [found.path])
@@ -628,8 +545,8 @@ def test_matching_review_still_joins_when_listing_is_filtered(
         reviews_dir, name="match-box", repo="acme/box", pr_number=7, mode="pr",
         head_sha="aaa",
     )
-    found = _env(
-        tmp_path, monkeypatch, pulls=[_pull(7, "aaa")], real_listing=True,
+    found = board_env(
+        tmp_path, monkeypatch, pulls=[pull_facts(7, "aaa")], real_listing=True,
     )
     doc = build(Phase.LISTING, [found.path])
     by_number = {row["number"]: row for row in doc["rows"]}

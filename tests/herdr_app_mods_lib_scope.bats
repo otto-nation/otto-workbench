@@ -10,7 +10,7 @@ teardown() { common_teardown; }
 _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/scope.js');
-    const { friendlyError, spaceTargets, mergeStates, skippable, boardState, repoId, representatives, staleKeys, cardId, REPO_PHASES, repoPhase } = m;
+    const { friendlyError, spaceTargets, spacePanes, spaceFolders, mergeStates, skippable, boardState, repoId, representatives, staleKeys, cardId, REPO_PHASES, repoPhase } = m;
     process.stdout.write(JSON.stringify(eval(process.argv[1])));
   " -- "$1"
 }
@@ -253,4 +253,16 @@ _js() {
   _js '[boardState([{cwd:"/a"}],[{repo:{slug:"o/a"},prs:[]}],"this").repoStates[0].owed, boardState([{cwd:"/a"}],[{repo:{slug:"o/a"},prs:[],owedState:"error",owedError:{kind:"failed",message:"m"}}],"this").repoStates[0].owed]'
   [ "$status" -eq 0 ]
   [ "$output" = '[{"state":"idle","error":null},{"state":"error","error":{"kind":"failed","message":"m"}}]' ]
+}
+
+@test "spacePanes: this space's panes in pane order; other tabs omitted" {
+  _js 'spacePanes({tabs:[{id:"t1"},{id:"t2"}]},[{tab:"t2",cwd:"/b"},{tab:"t1",cwd:"/a"},{tab:"t9",cwd:"/x"},{tab:"t1",cwd:"/a2"}])'
+  [ "$status" -eq 0 ]
+  jq -e 'length==3 and .[0].cwd=="/b" and .[1].cwd=="/a" and .[2].cwd=="/a2"' <<<"$output"
+}
+
+@test "spaceFolders: pane cwds in pane order, else space.folder; null cwd skipped" {
+  _js '({a:spaceFolders({folder:"/stale",tabs:[{id:"t1"}]},[{tab:"t1",cwd:"/live"},{tab:"t1",cwd:"/live"},{tab:"t1",cwd:null}]),b:spaceFolders({folder:"/space",tabs:[{id:"t1"}]},[{tab:"other",cwd:"/x"}]),c:spaceFolders({folder:""},null)})'
+  [ "$status" -eq 0 ]
+  jq -e '.a==["/live"] and .b==["/space"] and .c==[]' <<<"$output"
 }

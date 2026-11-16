@@ -3,7 +3,7 @@
 `build` always returns a document. Per-checkout failures live on
 ``repos[].error``; ``--if-changed`` matching the current stamp returns the
 unchanged envelope. The stamp hashes canonical JSON of the document without
-``stamp`` and every ``fetched_at``.
+``stamp`` and every ``fetched_at`` and ``cached_at``.
 """
 
 # doc-group: board
@@ -62,7 +62,7 @@ def _now() -> str:
 
 
 def stamp(doc: dict) -> str:
-    """First 16 hex of sha256 over canonical JSON, ignoring stamp and fetched_at."""
+    """First 16 hex of sha256 over canonical JSON, ignoring stamp, fetched_at and cached_at."""
     payload = json.dumps(_scrub(doc), sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
@@ -81,7 +81,7 @@ def _scrub(value: Any) -> Any:
         return {
             key: _scrub(item)
             for key, item in value.items()
-            if key not in {"stamp", "fetched_at"}
+            if key not in {"stamp", "fetched_at", "cached_at"}
         }
     if isinstance(value, list):
         return [_scrub(item) for item in value]
@@ -176,8 +176,7 @@ def _assemble(
     return _owed_phase(resolved, listing, viewer, now, queue)
 
 
-def _offline_repo_phase(repo_key: str) -> RepoPhase:
-    cached = board.cache.read_all(repo_key)
+def _offline_repo_phase(cached: dict) -> RepoPhase:
     if Phase.STATUS in cached:
         return RepoPhase.LOADED
     if Phase.LISTING in cached:
@@ -198,8 +197,9 @@ def _offline_phase(
         if isinstance(found, RepoError):
             repos.append(_failed(path, found))
             continue
-        repo_phase = _offline_repo_phase(found.key)
-        repos.append(_repo(found, repo_phase, now))
+        cached = board.cache.read_all(found.key)
+        repo_phase = _offline_repo_phase(cached)
+        repos.append(_repo(found, repo_phase, now, cached_at=_cached_at(cached)))
         if repo_phase is RepoPhase.QUEUED:
             continue
         rows.extend(_cached_rows(found, listing, viewer, queue=queue))
@@ -243,7 +243,7 @@ def _listing_phase(
             "fetched_at": now,
             "rows": [core.serde.to_dict(pull) for pull in listed.pulls],
         })
-        repos.append(_repo(found, RepoPhase.HYDRATING, now))
+        repos.append(_repo(found, RepoPhase.HYDRATING, now, cached_at=now))
         rows.extend(_cached_rows(found, listing, viewer, queue=queue))
     return repos, rows, True
 
@@ -320,7 +320,7 @@ def _status_repo(
     _write_status_cache(found.key, status_rows, now, replace=prs is None)
     kept_landed = _kept_landed(landed_nums, fetched.by_number, listing, found)
     _merge_landed_into_listing(found, kept_landed, now)
-    repo = _repo(found, RepoPhase.LOADED, now, partial=fetched.partial)
+    repo = _repo(found, RepoPhase.LOADED, now, partial=fetched.partial, cached_at=now)
     return repo, _cached_rows(found, listing, viewer, only=prs, queue=queue)
 
 
@@ -558,7 +558,7 @@ def _owed_phase(
                 for number, entry in mapped.items()
             ],
         })
-        repos.append(_repo(found, RepoPhase.LOADED, now))
+        repos.append(_repo(found, RepoPhase.LOADED, now, cached_at=now))
         rows.extend(_cached_rows(found, listing, viewer, mine_only=True, queue=queue))
     return repos, rows, False
 
@@ -584,6 +584,18 @@ def _cached_rows(
     )
 
 
+def _cached_at(cached: dict) -> str | None:
+    """The cache payloads' own fetch time (status, else listing), or None when nothing was cached."""
+    for phase in (Phase.STATUS, Phase.LISTING):
+        payload = cached.get(phase)
+        if payload is None:
+            continue
+        when = payload.get("fetched_at")
+        if isinstance(when, str) and when:
+            return when
+    return None
+
+
 def _repo(
     found: Checkout,
     phase: RepoPhase,
@@ -591,6 +603,7 @@ def _repo(
     *,
     partial: bool = False,
     error: RepoError | None = None,
+    cached_at: str | None = None,
 ) -> RepoStatus:
     return RepoStatus(
         slug=found.slug,
@@ -600,6 +613,7 @@ def _repo(
         error=error,
         partial=partial,
         fetched_at=now,
+        cached_at=cached_at,
     )
 
 

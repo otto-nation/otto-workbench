@@ -105,6 +105,72 @@ const TARGET_RECIPE = JSON.stringify({ schema_version: 1, session_id: "target-ab
   [ "$output" = '[[["space.select",{"id":"sp1"}],["tab.select",{"id":"tb2"}],["pane.focus",{"pane":"p4"}]],[["terminal.keep",{"terminal":"t7"}]]]' ]
 }
 
+@test "agentPaneFor: equal and nested cwd match; a sibling does not; a trailing slash is tolerated" {
+  _rs 'const eq = { pane: "eq", status: "idle", terminal: "t1", cwd: "/wt/foo" };
+    const nested = { pane: "nested", status: "idle", terminal: "t1", cwd: "/wt/foo/sub" };
+    const sibling = { pane: "sib", status: "idle", terminal: "t1", cwd: "/wt/foo-2" };
+    out([
+      m.agentPaneFor([eq], { on: null, cwd: "/wt/foo" })?.pane,
+      m.agentPaneFor([nested], { on: null, cwd: "/wt/foo" })?.pane,
+      m.agentPaneFor([sibling], { on: null, cwd: "/wt/foo" }),
+      m.agentPaneFor([eq], { on: null, cwd: "/wt/foo/" })?.pane,
+      m.agentPaneFor([nested], { on: null, cwd: "/wt/foo/" })?.pane,
+      m.agentPaneFor([sibling], { on: null, cwd: "/wt/foo/" }),
+    ]);'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["eq","nested",null,"eq","nested",null]' ]
+}
+
+@test "agentPaneFor: a pane with no agent or on another machine is ignored" {
+  _rs 'const local = { pane: "local", status: "idle", terminal: "t1", cwd: "/wt/foo" };
+    const none = { pane: "none", status: null, terminal: "t1", cwd: "/wt/foo" };
+    const remote = { pane: "remote", status: "idle", terminal: "homelab/t3", cwd: "/wt/foo" };
+    out([
+      m.agentPaneFor([none], { on: null, cwd: "/wt/foo" }),
+      m.agentPaneFor([none, local], { on: null, cwd: "/wt/foo" })?.pane,
+      m.agentPaneFor([remote], { on: null, cwd: "/wt/foo" }),
+      m.agentPaneFor([remote], { on: "homelab", cwd: "/wt/foo" })?.pane,
+      m.agentPaneFor([local], { on: "homelab", cwd: "/wt/foo" }),
+    ]);'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[null,"local",null,"remote",null]' ]
+}
+
+@test "agentPaneFor: blocked beats working beats idle; focused breaks a tie; else first in order" {
+  _rs 'const idle = { pane: "idle", status: "idle", terminal: "t1", cwd: "/wt/foo" };
+    const working = { pane: "work", status: "working", terminal: "t1", cwd: "/wt/foo" };
+    const blocked = { pane: "block", status: "blocked", terminal: "t1", cwd: "/wt/foo" };
+    const idleF = { pane: "idleF", status: "idle", terminal: "t1", cwd: "/wt/foo", focused: true };
+    const workF = { pane: "workF", status: "working", terminal: "t1", cwd: "/wt/foo", focused: true };
+    const idle2 = { pane: "idle2", status: "idle", terminal: "t1", cwd: "/wt/foo" };
+    out([
+      m.agentPaneFor([idle, working, blocked], { on: null, cwd: "/wt/foo" })?.pane,
+      m.agentPaneFor([blocked, working, idle], { on: null, cwd: "/wt/foo" })?.pane,
+      m.agentPaneFor([working, idle, blocked], { on: null, cwd: "/wt/foo" })?.pane,
+      m.agentPaneFor([working, idle], { on: null, cwd: "/wt/foo" })?.pane,
+      m.agentPaneFor([idle, idleF], { on: null, cwd: "/wt/foo" })?.pane,
+      m.agentPaneFor([idleF, working], { on: null, cwd: "/wt/foo" })?.pane,
+      m.agentPaneFor([working, workF], { on: null, cwd: "/wt/foo" })?.pane,
+      m.agentPaneFor([idle, idle2], { on: null, cwd: "/wt/foo" })?.pane,
+    ]);'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["block","block","block","work","idleF","work","workF","idle"]' ]
+}
+
+@test "agentPaneFor: branch matches only when cwd is empty" {
+  _rs 'const byBranch = { pane: "br", status: "idle", terminal: "t1", cwd: "/other", branch: "feat/x" };
+    const byCwd = { pane: "cw", status: "idle", terminal: "t1", cwd: "/wt/foo", branch: "other" };
+    out([
+      m.agentPaneFor([byBranch], { on: null, cwd: "/wt/foo", branch: "feat/x" }),
+      m.agentPaneFor([byCwd], { on: null, cwd: "/wt/foo", branch: "feat/x" })?.pane,
+      m.agentPaneFor([byBranch], { on: null, cwd: null, branch: "feat/x" })?.pane,
+      m.agentPaneFor([byBranch], { on: null, cwd: "", branch: "feat/x" })?.pane,
+      m.agentPaneFor([byCwd], { on: null, cwd: null, branch: "feat/x" }),
+    ]);'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[null,"cw","br","br",null]' ]
+}
+
 @test "openSession: nothing open locally starts pr batch session through hc and keeps it as a tab" {
   _rs "$FAKE"'
     const deps = fake((line) => {
@@ -227,6 +293,66 @@ const TARGET_RECIPE = JSON.stringify({ schema_version: 1, session_id: "target-ab
     out({ res, seen, ran });'
   [ "$status" -eq 0 ]
   [ "$output" = '{"res":{"ok":true,"opened":"started"},"seen":[{"line":"pr --branch feat/x target session --json","on":null},{"line":"hc ls --json --label otto.session=target-abc","on":null},{"line":"hc run --bg --json --cwd /w/x --label otto.repo=o/n --label otto.action=session --label otto.app=pr --label otto.session=target-abc -- pr target session","on":null}],"ran":[["terminal.keep",{"terminal":"t9"}]]}' ]
+}
+
+@test "openSession: a labelled live terminal wins over a matching agent pane" {
+  _rs "$FAKE"'
+    const deps = fake((line) => {
+      if (line === "pr --branch feat/x target session --json") return { code: 0, stdout: TARGET_RECIPE, stderr: "" };
+      if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[{\"address\":\"t9\",\"state\":\"live\"}]}", stderr: "" };
+    }, { panes: [
+      { pane: "pAgent", tab: "tbAgent", terminal: "tAgent", status: "working", cwd: "/w/x" },
+      { pane: "p4", tab: "tb2", terminal: "t9" },
+    ], spaces: [
+      { id: "spAgent", tabs: [{ id: "tbAgent" }] },
+      { id: "sp1", tabs: [{ id: "tb2" }] },
+    ] });
+    const res = await m.openSession(deps, "target", { on: null, branch: "feat/x", repo: "o/n", features: ["target-session"] });
+    out({ res, hcRun: seen.filter((s) => s.line.startsWith("hc run")).length, ran });'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"res":{"ok":true,"opened":"focused"},"hcRun":0,"ran":[["space.select",{"id":"sp1"}],["tab.select",{"id":"tb2"}],["pane.focus",{"pane":"p4"}]]}' ]
+}
+
+@test "openSession: a matching agent pane is adopted when no labelled terminal is live" {
+  _rs "$FAKE"'
+    const deps = fake((line) => {
+      if (line === "pr --branch feat/x target session --json") return { code: 0, stdout: TARGET_RECIPE, stderr: "" };
+      if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };
+      if (line.startsWith("hc run ")) return { code: 0, stdout: "{\"address\":\"t9\"}", stderr: "" };
+    }, { panes: [{ pane: "p4", tab: "tb2", terminal: "t8", status: "working", cwd: "/w/x" }], spaces: [{ id: "sp1", tabs: [{ id: "tb2" }] }] });
+    const res = await m.openSession(deps, "target", { on: null, branch: "feat/x", repo: "o/n", features: ["target-session"] });
+    out({ res, hcRun: seen.filter((s) => s.line.startsWith("hc run")).length, seen, ran });'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"res":{"ok":true,"opened":"adopted"},"hcRun":0,"seen":[{"line":"pr --branch feat/x target session --json","on":null},{"line":"hc ls --json --label otto.session=target-abc","on":null}],"ran":[["space.select",{"id":"sp1"}],["tab.select",{"id":"tb2"}],["pane.focus",{"pane":"p4"}]]}' ]
+}
+
+@test "openSession: with no label and no matching pane a target session is started" {
+  _rs "$FAKE"'
+    const deps = fake((line) => {
+      if (line === "pr --branch feat/x target session --json") return { code: 0, stdout: TARGET_RECIPE, stderr: "" };
+      if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };
+      if (line.startsWith("hc run ")) return { code: 0, stdout: "{\"address\":\"t9\"}", stderr: "" };
+    }, { panes: [
+      { pane: "none", tab: "tb0", terminal: "t0", status: null, cwd: "/w/x" },
+      { pane: "other", tab: "tb1", terminal: "t1", status: "working", cwd: "/w/other" },
+    ], spaces: [{ id: "sp1", tabs: [{ id: "tb0" }, { id: "tb1" }] }] });
+    const res = await m.openSession(deps, "target", { on: null, cwd: "/w/box", branch: "feat/x", repo: "o/n", features: ["target-session"] });
+    out({ res, seen, ran });'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"res":{"ok":true,"opened":"started"},"seen":[{"line":"pr --branch feat/x target session --json","on":null},{"line":"hc ls --json --label otto.session=target-abc","on":null},{"line":"hc run --bg --json --cwd /w/x --label otto.repo=o/n --label otto.action=session --label otto.app=pr --label otto.session=target-abc -- pr target session","on":null}],"ran":[["terminal.keep",{"terminal":"t9"}]]}' ]
+}
+
+@test "openSession: a batch session starts even when an agent pane matches" {
+  _rs "$FAKE"'
+    const deps = fake((line) => {
+      if (line === "pr batch session R1 --json") return { code: 0, stdout: RECIPE, stderr: "" };
+      if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };
+      if (line.startsWith("hc run ")) return { code: 0, stdout: "{\"address\":\"t9\"}", stderr: "" };
+    }, { panes: [{ pane: "p4", tab: "tb2", terminal: "t8", status: "working", cwd: "/w/n" }], spaces: [{ id: "sp1", tabs: [{ id: "tb2" }] }] });
+    const res = await m.openSession(deps, "batch", { on: null, cwd: "/w/box", runId: "R1", repo: "o/n", features: ["batch-session"] });
+    out({ res, hcRun: seen.filter((s) => s.line.startsWith("hc run")).length, ran });'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"res":{"ok":true,"opened":"started"},"hcRun":1,"ran":[["terminal.keep",{"terminal":"t9"}]]}' ]
 }
 
 @test "run_session.js string literals name batch and target only inside SESSION_KINDS" {

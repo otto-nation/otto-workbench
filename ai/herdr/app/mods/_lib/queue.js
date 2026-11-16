@@ -8,6 +8,7 @@
  *   {ok:false, error}              any other failure
  */
 
+import { durationText } from './batch.js';
 import { invoke, readJson } from './board_data.js';
 
 export function statusArgv() {
@@ -85,6 +86,68 @@ function toMs(t) {
   if (t == null || t === '') return null;
   const ms = typeof t === 'number' ? (t < 1e12 ? t * 1000 : t) : Date.parse(t);
   return Number.isFinite(ms) ? ms : null;
+}
+
+function isoOf(t) {
+  const ms = toMs(t);
+  return ms == null ? '' : new Date(ms).toISOString();
+}
+
+// Relative span via durationText. Ledger times are unix seconds; durationText parses ISO.
+function durationOf(start, end, nowMs) {
+  const from = isoOf(start);
+  if (!from) return '';
+  if (end == null || end === '') return durationText(from, '', nowMs);
+  const to = isoOf(end);
+  if (!to) return '';
+  return durationText(from, to, nowMs);
+}
+
+function timingText(row, nowMs) {
+  const parts = [];
+  const waited = durationOf(row?.created_at, row?.started_at, nowMs);
+  if (waited) parts.push(`waited ${waited}`);
+  if (row?.started_at != null && row.started_at !== '') {
+    const ran = durationOf(row.started_at, row.finished_at, nowMs);
+    if (ran) parts.push(`ran ${ran}`);
+  }
+  if (row?.finished_at != null && row.finished_at !== '') {
+    const ended = durationOf(row.finished_at, null, nowMs);
+    if (ended) parts.push(`ended ${ended} ago`);
+  }
+  return parts.join(' · ');
+}
+
+const KIND_TEXT = Object.freeze({
+  ticket: 'Ticket — runs in its terminal',
+  job: 'Job — run by the queue worker',
+});
+
+/**
+ * Expanded-row facts: command, key/value facts, relative timing, absolute tooltip, log note.
+ * canFocus stays false until a live ticket records its herdr terminal.
+ */
+export function detailModel(row, nowMs) {
+  const facts = [];
+  if (row?.cwd) facts.push({ key: 'Directory', value: row.cwd, mono: true });
+  const kind = KIND_TEXT[row?.kind];
+  if (kind) facts.push({ key: 'Kind', value: kind });
+  if (row?.entry_class) facts.push({ key: 'Class', value: row.entry_class });
+  if ((row?.attempts ?? 0) > 1) facts.push({ key: 'Attempts', value: String(row.attempts) });
+  if (!isLive(row?.state) && row?.exit_status != null) {
+    facts.push({ key: 'Exit', value: String(row.exit_status) });
+  }
+  if (isLive(row?.state) && row?.pid != null) {
+    facts.push({ key: 'PID', value: String(row.pid) });
+  }
+  return {
+    command: commandText(row?.argv),
+    facts,
+    timing: timingText(row, nowMs),
+    tooltip: timesText(row),
+    logNote: logNote(row),
+    canFocus: false,
+  };
 }
 
 /**

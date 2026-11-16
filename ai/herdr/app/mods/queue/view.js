@@ -1,18 +1,17 @@
 // Queue pane: one section per machine (this one first), live counts, two-line rows. A row expands
-// to its command, cwd, timings and log tail; Cancel on a live row asks before it acts.
+// to detailModel (command, facts, timing, log); Cancel on a live row asks before it acts.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import {
-  liveCounts, isLive, stateKind, ageText, rowTitle, rowMeta, commandText, timesText, LOG_TAIL_LINES,
-  logNote,
+  liveCounts, isLive, stateKind, ageText, rowTitle, rowMeta, timesText, detailModel, LOG_TAIL_LINES,
 } from "./_lib/queue.js";
 import { tailLines } from "./_lib/output.js";
 import { friendlyError } from "./_lib/scope.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import {
   pane, paneBar, scrollBody, sectionLabel, hoverRow, text, type, statusText, button, iconButton,
-  placeholder, errorLine, caption, scrollInset, selectableCode,
+  placeholder, errorLine, caption, scrollInset, selectableCode, keyValue,
 } from "./_ui/ui.js";
 
 const LOCAL_LABEL = "This computer";
@@ -39,8 +38,10 @@ function renderActions(on, row, opts) {
 function renderHead(on, row, opts) {
   const { t, nowMs } = opts;
   const open = opts.openKey === opts.rowKey(on, row.id);
+  const abs = timesText(row);
   return hoverRow(`queue-row-${domId(on, row.id)}`, { selected: open })
     .flex_1().min_w(0).px(SP.sm).py(SP.xs)
+    .when(Boolean(abs), (e) => e.tooltip(abs))
     .on_click(() => opts.onToggle(on, row.id))
     .child(v_flex().min_w(0).gap(SP.xxs)
       .child(h_flex().gap(SP.sm).items_center().min_w(0)
@@ -51,8 +52,6 @@ function renderHead(on, row, opts) {
 }
 
 function renderLog(row, log, id) {
-  const note = logNote(row);
-  if (note != null) return caption(note);
   if (log == null) return placeholder("Loading log…");
   if (log.error) return errorLine(log.error);
   const lines = tailLines(log.text ?? "", LOG_TAIL_LINES);
@@ -63,20 +62,15 @@ function renderLog(row, log, id) {
 
 function renderDetail(on, row, opts) {
   const id = domId(on, row.id);
-  const facts = [
-    row.kind && `kind ${row.kind}`,
-    row.pid != null && `pid ${row.pid}`,
-    `attempts ${row.attempts ?? 0}`,
-    row.exit_status != null && `exit ${row.exit_status}`,
-  ].filter(Boolean).join(" · ");
-  const times = timesText(row);
+  const model = detailModel(row, opts.nowMs);
+  const timing = caption(model.timing);
+  if (model.tooltip) timing.tooltip(model.tooltip);
   return v_flex().gap(SP.xs).pl(SP.md).pr(SP.sm).pb(SP.sm)
-    .child(type(scrollInset(`queue-cmd-box-${id}`, selectableCode(`queue-cmd-${id}`, [commandText(row.argv)]),
+    .child(type(scrollInset(`queue-cmd-box-${id}`, selectableCode(`queue-cmd-${id}`, [model.command]),
       { maxH: LAYOUT.titleMaxH * 3 }).text_color(theme().foreground), "code"))
-    .when(Boolean(row.cwd), (e) => e.child(caption(`cwd ${row.cwd}`)))
-    .child(caption(facts))
-    .when(Boolean(times), (e) => e.child(caption(times)))
-    .child(renderLog(row, opts.log, id));
+    .when(model.facts.length > 0, (e) => e.child(keyValue(model.facts)))
+    .when(Boolean(model.timing), (e) => e.child(timing))
+    .child(model.logNote != null ? caption(model.logNote) : renderLog(row, opts.log, id));
 }
 
 function renderRow(on, row, opts) {

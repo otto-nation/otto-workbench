@@ -121,6 +121,26 @@ _model() {
   [ "$output" = '{"idle":["loading","Loading comments…",null,true,true],"ready":["ready",null,{"steps":["comments"],"ai":true},true,true],"empty":["loading","Loading comments…",null,true,true],"awaiting":"ready"}' ]
 }
 
+@test "board model: queue-lanes puts queued Team PRs in In Queue and running in In Progress; Mine queued stays resting" {
+  _model '
+    const lanes = { team: "open", mine: "awaiting-review", team_reviewing: "in-progress", mine_reviewing: "in-review" };
+    const feat = ["queue-lanes"];
+    const base = { ...rows[0], isDraft: false, isMine: true, lanes, features: feat };
+    const queued = { ...base, number: 21, queue: { state: "queued" } };
+    const running = { ...base, number: 22, queue: { state: "running" } };
+    const rest = { ...base, number: 23, queue: null, features: feat };
+    const viewOf = (prs) => ({ prs, me: doc.viewer, repoSlugs: ["acme/box"], columns: doc.columns });
+    const pick = (model) => Object.fromEntries(model.columns.map((l) => [l.key, l.items.map((p) => p.number)]));
+    const team = m.boardModel(viewOf([queued, running, rest]), { tab: "team", filters: f.normalizeFilters({}), scope: "this" });
+    const mine = m.boardModel(viewOf([queued, running, rest]), { tab: "mine", filters: f.normalizeFilters({}), scope: "this" });
+    const old = m.boardModel(viewOf([{ ...queued, features: [] }]), { tab: "team", filters: f.normalizeFilters({}), scope: "this" });
+    const both = m.boardModel(viewOf([{ ...queued, reviewing: true }]), { tab: "team", filters: f.normalizeFilters({}), scope: "this" });
+    process.stdout.write(JSON.stringify({ team: pick(team), mine: pick(mine), old: pick(old), both: pick(both), spec: team.spec.map((s) => s.key) }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"team":{"open":[23],"in-queue":[21],"in-progress":[22]},"mine":{"in-review":[22],"awaiting-review":[21,23]},"old":{"open":[21]},"both":{"in-progress":[21]},"spec":["open","needs-my-review","in-queue","in-progress","review-ready","reviewed","landed"]}' ]
+}
+
 @test "board model: an owed failure is the lane's error in words; a repo with its own error is not counted" {
   _model '
     const at = (repoStates) => m.boardModel({ ...view, prs: rows, repoSlugs: ["acme/box", "acme/kit"], repoStates }, { tab: "mine", filters: f.normalizeFilters({}), scope: "all" }).lanes.find((l) => l.key === "has-comments");

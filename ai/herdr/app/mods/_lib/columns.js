@@ -9,6 +9,7 @@ export const TEAM_COLUMNS = [
   { key: 'open', label: 'Open' },
   { key: 'needs-my-review', label: 'Needs My Review' },
   { key: 'in-queue', label: 'In Queue' },
+  { key: 'in-progress', label: 'In Progress' },
   { key: 'review-ready', label: 'Review Ready' },
   { key: 'reviewed', label: 'Reviewed' },
   { key: 'landed', label: 'Landed' },
@@ -26,12 +27,27 @@ export const MINE_COLUMNS = [
   { key: 'merged', label: 'Merged' },
 ];
 
+// `pr board` features a board consumer drives; add one when a newer `pr` must be told from an older one.
+export const QUEUE_LANES = 'queue-lanes';
+
+export function hasQueueLanes(pr) {
+  return (pr?.features ?? []).includes(QUEUE_LANES);
+}
+
 // A document row always carries its lanes (Python owns them; `pr board` via rowToPr is the only producer),
-// so a row without them is malformed and groupColumns drops it.  `reviewing` picks the variant the live
-// review terminal changes. `board` is 'team' or 'mine'.
+// so a row without them is malformed and groupColumns drops it. `reviewing` (a live review terminal) and
+// a `queue` ticket (when the machine's features include queue-lanes) pick the variant: Team queued →
+// In Queue, running or a terminal → In Progress; Mine running → In Review, queued stays resting.
+// A terminal and a queue entry count once. `board` is 'team' or 'mine'. An older `pr` has no queue-lanes.
 export function laneOf(pr, board) {
   const l = pr.lanes ?? {};
-  return pr.reviewing ? l[`${board}_reviewing`] : l[board];
+  if (pr.reviewing) return l[`${board}_reviewing`];
+  if (hasQueueLanes(pr)) {
+    const state = pr.queue?.state;
+    if (state === 'running') return l[`${board}_reviewing`];
+    if (state === 'queued' && board === 'team') return 'in-queue';
+  }
+  return l[board];
 }
 
 // The document's column specs for one board, in order.

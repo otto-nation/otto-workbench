@@ -1,4 +1,4 @@
-// Shared pieces for the mods, each one a DESIGN.md component: buttons (outline, solid, ghost,
+// Shared pieces for the mods, each one a DESIGN.md component: buttons (outline, solid,
 // icon), checkbox, checkRow, popover surface, tag, status glyph, section label, segmented control,
 // card, list row, keyValue, gauge. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
 import { div, svg } from "gpui-kit";
@@ -65,17 +65,8 @@ export function solidButton(id, label, onClick, { disabled = false } = {}) {
     .child(label);
 }
 
-// Ghost: label type, control padding, no border. Hover fills on its own line.
-export function ghostButton(id, label, onClick) {
-  const t = theme();
-  return type(control(id, { onClick }), "label").px(CONTROL.px)
-    .text_color(t.foreground)
-    .hover((s) => s.bg(t.hover))
-    .child(label);
-}
-
 // ceiling: refresh keeps glyph.spin(900); once gpui-kit exposes reduce-motion, skip spin.
-// A square ghost button holding an svg (tinted with the text colour). `label` is its tooltip and
+// A square icon-only button holding an svg (tinted with the text colour). `label` is its tooltip and
 // accessible name; `spinning` turns the icon while work runs.
 export function iconButton(id, icon, label, onClick, { disabled = false, spinning = false } = {}) {
   const t = theme();
@@ -254,7 +245,7 @@ export function checkbox(on) {
 export function checkRow(id, { on, label, hint, count, muted, onToggle, trailing } = {}) {
   const t = theme();
   const ink = muted ? t.muted : t.foreground;
-  return h_flex().min_h(ROW_H.list).px(SP.xs).gap(SP.sm).items_center().rounded(RADIUS.control)
+  return h_flex().min_h(ROW_H.list).px(SP.xs).gap(SP.sm).flex_wrap().items_center().rounded(RADIUS.control)
     .hover((s) => s.bg(t.hover))
     .child(
       Checkbox.new(id)

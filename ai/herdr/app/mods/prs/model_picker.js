@@ -10,7 +10,7 @@ import { invoke, readJson } from "./_lib/board_data.js";
 import { overrideSummary, REVIEW_PHASES, copyRef } from "./_lib/model_overrides.js";
 import { choicesArgv, parseChoices, phaseOptions, defaultLabel, refBlocked } from "./_lib/model_choices.js";
 import { SP, RADIUS, CONTROL, LAYOUT } from "./_lib/tokens.js";
-import { ghostButton, textInput, popoverSurface, text, caption, hoverRow, sectionLabel } from "./_ui/ui.js";
+import { button, textInput, popoverSurface, text, caption, hoverRow, sectionLabel } from "./_ui/ui.js";
 
 // Below herdr's 30 s exec cap so a hung `pr models` still settles.
 const CHOICES_TIMEOUT_MS = 25_000;
@@ -185,29 +185,29 @@ export class ModelPicker {
       .children(this.phases.map((phase) => v_flex().gap(SP.xxs)
         .child(caption(phase))
         .child(textInput(this.fields.get(phase)))))
-      .child(div().flex_none().child(ghostButton(`${this.id}-clear`, "Clear", () => this.clear())));
+      .child(div().flex_none().child(button(`${this.id}-clear`, "Clear", () => this.clear())));
   }
 
   loadingContent() {
     return popoverSurface()
       .child(caption("Loading…"))
       .children(this.phases.map((phase) => this.phaseHeader(phase, false)))
-      .child(div().flex_none().child(ghostButton(`${this.id}-clear`, "Clear", () => this.clear())));
+      .child(div().flex_none().child(button(`${this.id}-clear`, "Clear", () => this.clear())));
   }
 
   listContent() {
     return popoverSurface()
       .child(caption("Model for the next run, per phase. Blank uses the configured one."))
       .children(this.phases.map((phase) => this.phaseBlock(phase)))
-      .child(div().flex_none().child(ghostButton(`${this.id}-clear`, "Clear", () => this.clear())));
+      .child(div().flex_none().child(button(`${this.id}-clear`, "Clear", () => this.clear())));
   }
 
   phaseHeader(phase, canChange) {
-    return h_flex().flex_none().gap(SP.sm).items_center()
+    return h_flex().flex_none().gap(SP.sm).flex_wrap().items_center()
       .child(text("label", phase).flex_1().min_w(0).truncate())
       .child(caption(this.choiceLabel(phase)))
       .when(canChange, (e) => e.child(
-        ghostButton(`${this.id}-change-${phase}`, "Change", () => this.toggle(phase)),
+        button(`${this.id}-change-${phase}`, "Change", () => this.toggle(phase)),
       ));
   }
 
@@ -218,7 +218,7 @@ export class ModelPicker {
       .when(open, (e) => e
         .child(this.phaseList(phase))
         .child(div().flex_none().child(
-          ghostButton(
+          button(
             `${this.id}-apply-review-${phase}`,
             "Use for all review phases",
             () => this.applyToReviewPhases(phase),

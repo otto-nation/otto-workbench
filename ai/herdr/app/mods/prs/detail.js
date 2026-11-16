@@ -7,7 +7,7 @@ import { SP, LAYOUT } from "./_lib/tokens.js";
 import { prPresentation } from "./_lib/pr_status.js";
 import { sessionControl } from "./workflows_view.js";
 import {
-  segment, segmented, button, ghostButton, scrollInset, card, placeholder, caption,
+  segment, segmented, button, scrollInset, card, placeholder, caption,
   paneBar, pinned, selectableCode, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
   badgeRow, statsRow, tag,
 } from "./_ui/ui.js";
@@ -63,7 +63,7 @@ export function detailOf(pr, { item = null } = {}) {
   };
 }
 
-// One paneBar: status row with the ghost cluster, one summary line, tail only while open.
+// One paneBar: status row with the outline cluster, one summary line, tail only while open.
 export function renderOutput(output, { onHide, onTab, onToggleTail, onViewReview, maxH }) {
   const rec = output.rec ?? {};
   const nowMs = output.nowMs ?? Date.now();
@@ -84,19 +84,19 @@ export function renderOutput(output, { onHide, onTab, onToggleTail, onViewReview
   const hasOutput = lines.length > 0;
   const lineColor = model.lineKind === "danger" ? dangerColor() : undefined;
   return paneBar()
-    .child(h_flex().gap(SP.sm).items_center().justify_between()
-      .child(h_flex().gap(SP.sm).items_center().min_w(0)
+    .child(h_flex().gap(SP.sm).flex_wrap().items_center().justify_between()
+      .child(h_flex().gap(SP.sm).flex_wrap().items_center().min_w(0)
         .child(statusText(model.status, model.title))
         .when(Boolean(model.elapsed), (e) => e.child(caption(model.elapsed)))
         .when(model.status === "fail" && rec.exitCode != null, (e) =>
           e.child(caption(`exit ${rec.exitCode}`, dangerColor()))))
-      .child(h_flex().gap(SP.sm)
+      .child(h_flex().gap(SP.sm).flex_wrap()
         .when(hasOutput, (e) => e.child(
-          ghostButton("out-tail", tailOpen ? "Hide output" : "Show output", onToggleTail)))
+          button("out-tail", tailOpen ? "Hide output" : "Show output", onToggleTail)))
         .when(Boolean(model.landed), (e) => e.child(
-          ghostButton("out-review", "View review", () => onViewReview(runKey(model.landed)))))
-        .child(ghostButton("out-tab", "Open as tab", onTab))
-        .child(ghostButton("out-hide", "Hide", onHide))))
+          button("out-review", "View review", () => onViewReview(runKey(model.landed)))))
+        .child(button("out-tab", "Open as tab", onTab))
+        .child(button("out-hide", "Hide", onHide))))
     .when(Boolean(model.line), (e) => e.child(
       text("body", model.line, lineColor).min_w(0).truncate()))
     .when(output.text == null, (e) => e.child(placeholder("Loading…")))

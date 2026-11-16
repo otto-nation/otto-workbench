@@ -130,7 +130,7 @@ RUNS_JS
   [ "$output" = "1" ]
   run grep -c 'sessionControl("open-session", state.runSession)' "$view"
   [ "$output" = "1" ]
-  run grep -c 'ghostButton(id, "Open session", () => s.onOpen())' "$view"
+  run grep -c 'button(id, "Open session", () => s.onOpen())' "$view"
   [ "$output" = "1" ]
 }
 

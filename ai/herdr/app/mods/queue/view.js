@@ -9,7 +9,7 @@ import { friendlyError } from "./_lib/scope.js";
 import { SP, RADIUS, FILL, LAYOUT } from "./_lib/tokens.js";
 import {
   pane, paneBar, scrollBody, sectionLabel, laneTitle, hoverRow, text, type, statusText, button,
-  iconButton, ghostButton, placeholder, errorLine, caption, gauge, scrollInset, selectableCode,
+  iconButton, placeholder, errorLine, caption, gauge, scrollInset, selectableCode,
   keyValue, segment, segmented,
 } from "./_ui/ui.js";
 
@@ -71,13 +71,13 @@ function renderLog(row, log, id) {
 function renderDetailActions(on, row, opts) {
   const id = domId(on, row.id);
   const pr = row.subject
-    ? ghostButton(`queue-open-pr-${id}`, "Open PR", () => opts.onOpenPr(row))
+    ? button(`queue-open-pr-${id}`, "Open PR", () => opts.onOpenPr(row))
     : null;
   const term = row.terminal
-    ? ghostButton(`queue-open-term-${id}`, "Open terminal", () => opts.onOpenTerminal(row.terminal))
+    ? button(`queue-open-term-${id}`, "Open terminal", () => opts.onOpenTerminal(row.terminal))
     : null;
   if (!pr && !term) return null;
-  return h_flex().gap(SP.xs).items_center()
+  return h_flex().gap(SP.xs).flex_wrap().items_center()
     .when(pr != null, (e) => e.child(pr))
     .when(term != null, (e) => e.child(term));
 }

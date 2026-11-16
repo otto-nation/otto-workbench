@@ -5,6 +5,7 @@
  */
 
 import { durationText } from './batch.js';
+import { historyRows } from './history.js';
 import { tailLines } from './output.js';
 
 const REVIEW_ACTIONS = new Set(['review', 'rerun', 'recover']);
@@ -72,16 +73,39 @@ export function summaryLine(text, max = 80) {
   return lastMeaningful(tailLines(text ?? '', max));
 }
 
+function landedLine(run, nowMs) {
+  const row = historyRows([run], nowMs)[0];
+  if (row == null) return '';
+  return [row.verdict, row.findingsText, row.when, row.shortSha, row.costText]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+function outputLine(status, summary, landed, nowMs) {
+  if (landed) return { line: landedLine(landed, nowMs), lineKind: '' };
+  if (status === 'fail') {
+    return { line: summary, lineKind: summary ? 'danger' : '' };
+  }
+  if (status === 'running') return { line: summary, lineKind: '' };
+  return { line: '', lineKind: '' };
+}
+
 export function outputModel(input = {}) {
   const { action, terminal, startedMs, endedMs, nowMs, text, runs } = input;
   const lines = tailLines(typeof text === 'string' ? text : '', 80);
   const endIso = Number.isFinite(endedMs) ? iso(endedMs) : '';
+  const summary = lastMeaningful(lines);
+  const status = statusOf(terminal);
+  const landed = landedRun(action, runs, startedMs);
+  const { line, lineKind } = outputLine(status, summary, landed, nowMs);
   return {
-    status: statusOf(terminal),
+    status,
     title: TITLE[action] ?? 'Action',
     elapsed: durationText(iso(startedMs), endIso, nowMs),
-    summary: lastMeaningful(lines),
+    summary,
+    line,
+    lineKind,
     lines,
-    landed: landedRun(action, runs, startedMs),
+    landed,
   };
 }

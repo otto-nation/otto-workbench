@@ -5021,8 +5021,9 @@ The per-machine ledger: one SQLite file holding every entry the queue has accept
 
 `state_dir()/queue/queue.db`, stdlib `sqlite3`, in WAL mode, so a reader
 (`otto-queue status`) never blocks a writer. A connection is opened per
-operation and closed after it, so no process holds the file between calls,
-and a read-modify-write runs under `BEGIN IMMEDIATE`: two processes deciding
+operation and closed after it, so no process holds the file between calls —
+an idle holder blocks WAL checkpoints, and each retry needs a fresh connection.
+A read-modify-write runs under `BEGIN IMMEDIATE`: two processes deciding
 about the same key are serialized by SQLite's own write lock. SQLITE_BUSY,
 SQLITE_LOCKED and SQLITE_PROTOCOL (including a `locking protocol` message
 with no code) are `LedgerBusy`; every operation retries them with jittered
@@ -5194,10 +5195,13 @@ the machine's budget, and runs once per idempotency key.
    cancelling it. `force` skips the match. A joined entry whose holder died is
    not a result: the ticket resolves again and, finding nothing live, runs the
    work itself.
-2. **Wait.** Every `POLL_S` (jittered so waiters do not poll in lockstep),
-   orphans are reaped, and only the oldest waiting entry of the class
-   (tickets, and while a worker is alive its ready jobs) asks
-   `otto_queue.slots.try_admit`. Each new reason for waiting is printed once.
+2. **Wait.** Polls start at `POLL_S` for `FAST_WAIT_S`, then back off
+   geometrically to `POLL_CAP_S` (jittered ±20% so waiters do not lockstep;
+   the interval resets when the wait reason or joined state changes). A sleep
+   never runs past `wait_s`. A waiter that is not first only reads the head of
+   the queue each poll and reaps orphans at most every `REAP_EVERY_S`; the first
+   waiter reaps, then asks `otto_queue.slots.try_admit`. Each new reason for
+   waiting is printed once.
    `LedgerBusy` after the ledger's own retries is printed once (`ledger busy;
    still waiting`) and is not a crash: the ticket keeps waiting until `wait_s`,
    then returns 75. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler

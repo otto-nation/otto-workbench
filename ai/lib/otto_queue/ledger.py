@@ -145,8 +145,9 @@ class LedgerBusy(LedgerError):
     SQLITE_BUSY, SQLITE_LOCKED or SQLITE_PROTOCOL past the deadline."""
 
 
-# sqlite3 busy-handler wait on each Ledger.open attempt. Zero so the overall
-# LOCAL deadline, not each attempt, bounds the wait.
+# sqlite3 busy-handler wait on each connection attempt. Zero so the retry
+# deadline (LOCAL on open, TRANSIENT_RETRY_S per operation), not each attempt,
+# bounds the wait.
 _OPEN_BUSY_TIMEOUT = 0.0
 
 # Pause between SQLITE_BUSY retries while opening.
@@ -217,7 +218,7 @@ def _call(conn: sqlite3.Connection, fn: Callable[[sqlite3.Connection], object], 
 
 def _attempt(root: Path, fn: Callable[[sqlite3.Connection], object], *,
              write: bool) -> object:
-    conn = _connect(root, timeout=0.0)
+    conn = _connect(root, timeout=_OPEN_BUSY_TIMEOUT)
     try:
         return _call(conn, fn, write=write)
     finally:

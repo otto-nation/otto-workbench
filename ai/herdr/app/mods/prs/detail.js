@@ -1,13 +1,13 @@
 import { div } from "gpui-kit";
 import { h_flex, TextView } from "gpui-base";
 import { theme } from "herdr";
-import { historyRows } from "./_lib/history.js";
+import { historyRows, runKey } from "./_lib/history.js";
 import { outputModel } from "./_lib/run_output.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import { prPresentation } from "./_lib/pr_status.js";
 import { sessionControl } from "./workflows_view.js";
 import {
-  segment, segmented, button, ghostButton, inset, scrollInset, card, placeholder, caption,
+  segment, segmented, button, ghostButton, scrollInset, card, placeholder, caption,
   paneBar, pinned, selectableCode, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
   badgeRow, statsRow, tag,
 } from "./_ui/ui.js";
@@ -63,23 +63,8 @@ export function detailOf(pr, { item = null } = {}) {
   };
 }
 
-function landedRow(r, onViewReview) {
-  return inset({ scroll: false }).gap(SP.xs)
-    .child(h_flex().gap(SP.sm).items_center()
-      .child(text("body", r.verdict || "review"))
-      .child(caption(r.when))
-      .child(type(div(), "code").child(r.shortSha))
-      .child(div().flex_1())
-      .child(ghostButton("out-review", "View review", () => onViewReview(r.key))))
-    .child(text("body", r.findingsText))
-    .child(h_flex().gap(SP.sm).items_center()
-      .child(statusText(r.post.status, r.post.label))
-      .when(Boolean(r.costText), (e) => e.child(caption(r.costText))));
-}
-
-// Status, elapsed and the last meaningful line; the raw tail stays behind Show output.
+// One paneBar: status row with the ghost cluster, one summary line, tail only while open.
 export function renderOutput(output, { onHide, onTab, onToggleTail, onViewReview, maxH }) {
-  const t = theme();
   const rec = output.rec ?? {};
   const nowMs = output.nowMs ?? Date.now();
   const model = outputModel({
@@ -96,25 +81,27 @@ export function renderOutput(output, { onHide, onTab, onToggleTail, onViewReview
   });
   const lines = model.lines;
   const tailOpen = Boolean(output.tailOpen);
-  const row = model.landed ? historyRows([model.landed], nowMs)[0] : null;
+  const hasOutput = lines.length > 0;
+  const lineColor = model.lineKind === "danger" ? dangerColor() : undefined;
   return paneBar()
     .child(h_flex().gap(SP.sm).items_center().justify_between()
       .child(h_flex().gap(SP.sm).items_center().min_w(0)
         .child(statusText(model.status, model.title))
         .when(Boolean(model.elapsed), (e) => e.child(caption(model.elapsed)))
         .when(model.status === "fail" && rec.exitCode != null, (e) =>
-          e.child(caption(`exit ${rec.exitCode}`, t.ansi1))))
+          e.child(caption(`exit ${rec.exitCode}`, dangerColor()))))
       .child(h_flex().gap(SP.sm)
+        .when(hasOutput, (e) => e.child(
+          ghostButton("out-tail", tailOpen ? "Hide output" : "Show output", onToggleTail)))
+        .when(Boolean(model.landed), (e) => e.child(
+          ghostButton("out-review", "View review", () => onViewReview(runKey(model.landed)))))
         .child(ghostButton("out-tab", "Open as tab", onTab))
         .child(ghostButton("out-hide", "Hide", onHide))))
-    .when(Boolean(row), (e) => e.child(landedRow(row, onViewReview)))
-    .when(output.live && Boolean(model.summary), (e) => e.child(text("body", model.summary)))
+    .when(Boolean(model.line), (e) => e.child(
+      text("body", model.line, lineColor).min_w(0).truncate()))
     .when(output.text == null, (e) => e.child(placeholder("Loading…")))
-    .when(output.text != null, (e) => e
-      .child(ghostButton("out-tail", tailOpen ? "Hide output" : "Show output", onToggleTail))
-      .when(tailOpen && !lines.length, (x) => x.child(placeholder(output.live ? "No output yet" : "No output")))
-      .when(tailOpen && lines.length > 0, (x) => x.child(
-        type(scrollInset("output-box", selectableCode("output", lines), { maxH }), "code"))));
+    .when(tailOpen && hasOutput, (e) => e.child(
+      type(scrollInset("output-box", selectableCode("output", lines), { maxH }), "code")));
 }
 
 export function prUrl(d) {
@@ -129,10 +116,10 @@ export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewStat
     .child(h_flex().gap(SP.sm).flex_wrap().items_center().justify_between()
       .child(button("detail-back", "← Back", () => onClose()))
       .child(h_flex().gap(SP.sm).flex_wrap()
-        .child(button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled }))
+        .child(button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled })
+          .when(!reviewState.enabled, (e) => e.tooltip(reviewState.reason)))
         .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))
         .when(Boolean(targetSession), (e) => e.child(sessionControl("open-session-target", targetSession)))))
-    .when(!reviewState.enabled, (e) => e.child(caption(reviewState.reason)))
     .child(h_flex().gap(SP.sm).items_start().min_w(0)
       .child(text("body", p.ref, t.muted).flex_none())
       .child(type(div().flex_1().min_w(0).max_h(LAYOUT.titleMaxH).overflow_hidden(), "title").child(p.title))

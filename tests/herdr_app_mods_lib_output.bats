@@ -148,3 +148,51 @@ _ro() {
   [ "$status" -eq 0 ]
   [ "$output" = '[null,null]' ]
 }
+
+@test "outputModel line is the live summary, not danger" {
+  _ro 'm.outputModel({
+    terminal: { state: "live" },
+    text: "reviewing files\n\n42%\n...\n",
+  })'
+  [ "$status" -eq 0 ]
+  jq -e '.line=="reviewing files" and .lineKind=="" and .summary=="reviewing files"' <<<"$output"
+}
+
+@test "outputModel line for a landed review is verdict findings when sha cost" {
+  _ro 'm.outputModel({
+    action: "review",
+    startedMs: Date.parse("2024-01-01T00:01:00.000Z"),
+    nowMs: Date.parse("2024-01-01T01:02:00.000Z"),
+    terminal: { state: "finished", exitCode: 0 },
+    runs: [{
+      stamp: "new",
+      reviewed_at: "2024-01-01T00:02:00.000Z",
+      verdict: "approve",
+      findings: { must_fix: 2, should_fix: 1, nit: 0, idiom: 0 },
+      head_sha: "abcdef1234567890",
+      cost_usd: 0.42,
+      input_tokens: 20000,
+      output_tokens: 11000,
+    }],
+  }).line'
+  [ "$status" -eq 0 ]
+  [ "$output" = '"approve · 2 must-fix · 1 should-fix · 1h ago · abcdef1 · $0.42 · 31k tok"' ]
+}
+
+@test "outputModel line for a failed run is the last meaningful line in danger" {
+  _ro 'm.outputModel({
+    terminal: { state: "finished", exitCode: 2 },
+    text: "ok\n\n99%\nboom\n",
+  })'
+  [ "$status" -eq 0 ]
+  jq -e '.line=="boom" and .lineKind=="danger" and .status=="fail"' <<<"$output"
+}
+
+@test "outputModel line is empty when there is nothing to say" {
+  _ro '[m.outputModel({}).line, m.outputModel({}).lineKind, m.outputModel({
+    terminal: { state: "finished", exitCode: 0 },
+    text: "done\n",
+  }).line]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["","",""]' ]
+}

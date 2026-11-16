@@ -1,5 +1,5 @@
 /**
- * The run session's Now block: `pr batch report --format json`'s `sessions`,
+ * The session's Now block: `pr batch report` or `pr target report`'s `sessions`,
  * each finding with its latest operator decision. Never rebuilt from the
  * history — the report is the only source of what a PR waits on. Imports only
  * ./events.ts, so node loads it in tests.
@@ -57,17 +57,17 @@ export function shellQuote(argv: string[]): string {
   return argv.map((arg) => (SHELL_SAFE.test(arg) ? arg : `'${arg.replaceAll("'", `'\\''`)}'`)).join(" ");
 }
 
-/** The Now block for run `runId`: each PR, its findings with their latest decision, its commands. */
+/** The Now block for `subject` (e.g. "run R1" / "target t"): each PR, its findings with their latest decision, its commands. */
 export function renderNow(
-  runId: string,
+  subject: string,
   sessions: ReportSession[],
   decisions: Map<string, RunEvent>,
 ): string {
   if (!sessions.length) {
-    return `## Now — run ${runId}\nNothing in the report: no PR has findings or commands.`;
+    return `## Now — ${subject}\nNothing in the report: no PR has findings or commands.`;
   }
   const waiting = sessions.filter((s) => s.state === "needs_session").length;
-  const out = [`## Now — run ${runId}: ${waiting} of ${sessions.length} PRs waiting on you`];
+  const out = [`## Now — ${subject}: ${waiting} of ${sessions.length} PRs waiting on you`];
   for (const s of sessions) {
     const base = s.base_ref ? ` → ${s.base_ref}` : "";
     const after = s.after?.length ? ` · after ${s.after.join(", ")}` : "";

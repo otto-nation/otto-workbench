@@ -159,7 +159,7 @@ _atext() {
 }
 
 @test "run-session: Now shows each finding, its latest decision, and the exact commands" {
-  _atext now.ts '(async () => { const e = await import(args[2]); const d = e.latestDecisions(JSON.parse(args[1])); return m.renderNow("R1", JSON.parse(args[0]), d); })()' \
+  _atext now.ts '(async () => { const e = await import(args[2]); const d = e.latestDecisions(JSON.parse(args[1])); return m.renderNow("run R1", JSON.parse(args[0]), d); })()' \
     '[{"pr":"o/r#1","state":"needs_session","severity":"block","branch":"b1","base_ref":"main","after":["o/r#2"],
        "findings":[{"reason":"ci_failing","step":"ci","detail":"red","files":["a.py"],"log":"/l/ci.log"},
                    {"reason":"ready_to_push","step":"publish","detail":"","files":[],"log":null}],
@@ -187,7 +187,7 @@ EOF
 }
 
 @test "run-session: Now says so when nothing waits" {
-  _text now.ts 'm.renderNow("R1", [], new Map())'
+  _text now.ts 'm.renderNow("run R1", [], new Map())'
   [ "$status" -eq 0 ]
   [ "$output" = $'## Now — run R1\nNothing in the report: no PR has findings or commands.' ]
 }
@@ -200,17 +200,17 @@ EOF
     {"type":"custom","customType":"workbench-run","data":{"runDir":"/a","runId":"a","cursor":9}},
     {"type":"custom","customType":"workbench-run","data":{"runDir":"/a","runId":"a","cursor":"12"}}]'
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"runDir":"/a","runId":"a","cursor":9,"nowDigest":""},null]' ]
+  [ "$output" = '[{"kind":"batch","runDir":"/a","runId":"a","cursor":9,"nowDigest":""},null]' ]
 }
 
 @test "run-session: the report argv reads the run offline as JSON" {
-  _eval session.ts 'm.reportArgv("R1")'
+  _eval session.ts 'm.reportArgv({kind:"batch",runDir:"/s",runId:"R1",cursor:0,nowDigest:""})'
   [ "$status" -eq 0 ]
   [ "$output" = '["batch","report","R1","--offline","--format","json"]' ]
 }
 
 @test "run-session: a decision becomes pr batch note with every flag value attached" {
-  _eval session.ts '[m.noteArgv("R1", { pr: "o/r#1", finding: "ci_failing:ci", verdict: "deferred", reason: "-flaky", commands: ["pr ci --fix", "--x"] }), m.noteArgv("R1", { pr: "2", finding: "a:b", verdict: "fixed", reason: "ok" })]'
+  _eval session.ts '[m.noteArgv({kind:"batch",runDir:"/s",runId:"R1",cursor:0,nowDigest:""}, { pr: "o/r#1", finding: "ci_failing:ci", verdict: "deferred", reason: "-flaky", commands: ["pr ci --fix", "--x"] }), m.noteArgv({kind:"batch",runDir:"/s",runId:"R1",cursor:0,nowDigest:""}, { pr: "2", finding: "a:b", verdict: "fixed", reason: "ok" })]'
   [ "$status" -eq 0 ]
   [ "$output" = '[["batch","note","R1","o/r#1","--finding=ci_failing:ci","--verdict=deferred","--reason=-flaky","--command=pr ci --fix","--command=--x"],["batch","note","R1","2","--finding=a:b","--verdict=fixed","--reason=ok"]]' ]
 }
@@ -222,7 +222,7 @@ EOF
 }
 
 @test "run-session: the system note names the run, the tool, the history file and the push rule" {
-  _eval session.ts '(() => { const n = m.systemNote({ runDir: "/s/batch/R1", runId: "R1", cursor: 0, nowDigest: "" }, "/checkout"); return ["R1", "/checkout", "record_decision", "/s/batch/R1/events.jsonl", "Never push", "without --offline"].map((s) => n.includes(s)); })()'
+  _eval session.ts '(() => { const n = m.systemNote({ kind: "batch", runDir: "/s/batch/R1", runId: "R1", cursor: 0, nowDigest: "" }, "/checkout"); return ["R1", "/checkout", "record_decision", "/s/batch/R1/events.jsonl", "Never push", "without --offline"].map((s) => n.includes(s)); })()'
   [ "$status" -eq 0 ]
   [ "$output" = '[true,true,true,true,true,true]' ]
 }
@@ -255,8 +255,8 @@ EOF
 }
 
 @test "run-session: the pure modules import nothing, and detect.ts no SDK" {
-  run grep -nE '^import ' "$EXT/session.ts" "$EXT/events.ts"
-  [ "$status" -ne 0 ]
+  run grep -hE '^import ' "$EXT/session.ts" "$EXT/events.ts"
+  [ "$output" = 'import { KINDS, LEGACY_KIND, type Kind } from "../_shared/run-dir.ts";' ]
   run grep -hE '^import ' "$EXT/now.ts"
   [ "$output" = 'import { decisionKey, type RunEvent } from "./events.ts";' ]
   run grep -E '@earendil-works' "$EXT/detect.ts"
@@ -490,4 +490,55 @@ _wired() {
   '
   [ "$status" -eq 0 ]
   [ "$output" = "0" ]
+}
+
+@test "run-session: a stored target entry resumes without env" {
+  _wired '
+    const entries = [{ type: "custom", customType: m.STATE_TYPE, data: { kind: "target", runDir: RUN, runId: ID, cursor: 0, nowDigest: "" } }];
+    const f = fakePi({ sessionId: "whatever", entries });
+    wire(f.pi, deps({}));
+    await f.calls.handlers.session_start({ reason: "resume" }, f.ctx);
+    console.log(JSON.stringify({
+      exec: f.calls.execs.map((x) => [x.command, ...x.args, x.options.cwd]),
+      now: f.calls.messages[0].message.content.split("\n")[0],
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"exec":[["pr","target","report","/checkout"]],"now":"## Now — target 20261114T120000-ab12"}' ]
+}
+
+@test "run-session: a fresh target session files Target history and target kind" {
+  _wired '
+    const f = fakePi({ sessionId: "target-abc" });
+    wire(f.pi, deps({ WORKBENCH_TARGET_DIR: RUN, WORKBENCH_SESSION_ID: "target-abc" }));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    const states = ofType(f.entries, m.STATE_TYPE);
+    console.log(JSON.stringify({
+      tools: f.calls.tools.map((t) => t.name),
+      history: ofType(f.entries, m.HISTORY_TYPE).map((e) => e.data.text)[0].slice(0, 7),
+      kind: states[0].data.kind,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"tools":["record_decision"],"history":"Target ","kind":"target"}' ]
+}
+
+@test "run-session: record_decision on a target runs pr target note" {
+  _wired '
+    const f = fakePi({ sessionId: "target-abc" });
+    wire(f.pi, deps({ WORKBENCH_TARGET_DIR: RUN, WORKBENCH_SESSION_ID: "target-abc" }));
+    await f.calls.handlers.session_start({ reason: "startup" }, f.ctx);
+    const res = await f.calls.tools[0].execute("t1", { pr: "o/r#1", finding: "ci_failing:ci", verdict: "deferred", reason: "x" }, undefined, undefined, f.ctx);
+    const note = f.calls.execs.find((x) => x.args[1] === "note");
+    console.log(JSON.stringify({ argv: note.args, text: res.content[0].text }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"argv":["target","note","o/r#1","--finding=ci_failing:ci","--verdict=deferred","--reason=x"],"text":"Recorded deferred on o/r#1 ci_failing:ci."}' ]
+}
+
+@test "run-session: a stored entry with an unknown kind is ignored" {
+  _eval session.ts 'm.latestState(JSON.parse(args[0]))' '[
+    {"type":"custom","customType":"workbench-run","data":{"kind":"zzz","runDir":"/a","runId":"a","cursor":0,"nowDigest":""}}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "null" ]
 }

@@ -88,13 +88,17 @@ both sets in one-shot sessions.
 
 ## run-session
 
-The pi session of one `pr batch` run, opened by `pr batch session RUN_ID`
-(`ai/lib/batch/run_session.py` owns how). It does nothing unless the session
-already holds a `workbench-run` entry (so `/resume` and `pi --session` keep
-working) or was started as the run's own session: `WORKBENCH_RUN_DIR` set *and*
-session id `batch-<run-id>`. The variable alone is not enough — every pi the
-session dispatches through `pr … --fix` inherits it. `_shared/run-dir.ts` is
-the one predicate.
+The pi session of one `pr batch` run (`pr batch session RUN_ID`,
+`ai/lib/batch/run_session.py`) or of one PR target (`pr target session`,
+`ai/lib/batch/target_session.py`). It does nothing unless the session already
+holds a `workbench-run` entry (so `/resume` and `pi --session` keep working; the
+entry's `kind` says which, and one without a `kind` is a batch run) or was
+started as an own session: the kind's directory variable set *and* its session
+id (`batch-<run-id>`; for a target, `WORKBENCH_SESSION_ID`). The variable alone
+is not enough — every pi the session dispatches through `pr … --fix` inherits
+it. The kind table in `_shared/run-dir.ts` is the one predicate and the one
+place the two differ (variables, ids, `pr` argv, wording); a test fails when a
+literal naming either kind appears elsewhere in `run-session/` or `session-lock/`.
 
 This is a deliberate exception to the `extensions-cli/` rule in AGENTS.md: it
 loads in every Pi session because `pr batch session` starts pi with no
@@ -111,20 +115,22 @@ to `extensions-cli/`; it stays inert unless the entry or env and session id matc
   when it changed. Opening a session never starts a turn.
 - **Cursor.** How far the history has been shown (a byte offset) and Now's
   digest are filed as `workbench-run` entries; the latest on the branch wins.
-- **`record_decision`** runs `pr batch note`, the only writer of a `decision`.
+- **`record_decision`** runs `pr batch note` (a target: `pr target note`), the only writer of a `decision`.
   A decision changes no item state.
 - **System note.** The `workbench_run` prompt section says what the session is
   for and that nothing is pushed unless the operator says so.
 
-`events.ts`, `now.ts` and `session.ts` import nothing; `detect.ts` adds node
+`events.ts` and `now.ts` import nothing, `session.ts` only the kind table; `detect.ts` adds node
 built-ins; `wire.ts` holds the handlers with SDK types only, so
 `tests/pi_extensions_run_session.bats` drives them with a stand-in `pi`.
 `index.ts` only adds pi-tui's `Text`. It is a feature, not a guard, so it has
 no Claude Code twin.
 
-session-lock records no claim in the run's own session (`claimsWorktree`): its
-cwd is the run's checkout, and a claim there would make that run's own `--fix`
-steps refuse the worktrees they reuse.
+session-lock records no claim in a run's or target's own session
+(`claimsWorktree`): its cwd is the run's checkout or the target's worktree, and
+a claim there would make `--fix` steps refuse the tree they edit. A target
+session's system note forbids direct file edits, since the exemption removes the
+guard against a fix pass committing over them.
 
 ## Overriding one
 

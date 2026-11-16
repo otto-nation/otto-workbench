@@ -10,6 +10,7 @@ import type { Component } from "@earendil-works/pi-tui";
 import {
   DECISION_SCHEMA,
   HISTORY_TYPE,
+  KINDS,
   NOW_TYPE,
   SECTION_NAME,
   STATE_TYPE,
@@ -26,9 +27,10 @@ import {
   renderNow,
   reportArgv,
   runIdOf,
-  runSessionDir,
+  sessionOf,
   systemNote,
   type DecisionInput,
+  type Kind,
   type RunEvent,
   type RunState,
 } from "./detect.ts";
@@ -54,6 +56,11 @@ interface Refreshed {
   now: string | null;
 }
 
+function capitalise(text: string): string {
+  if (!text) return text;
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
 export function wire(pi: ExtensionAPI, deps: Deps): void {
   const pr = deps.pr ?? prBinary();
   // The run this session belongs to; null while it is not a run session.
@@ -61,29 +68,39 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
   let toolRegistered = false;
 
   /** record_decision, registered once and only once this session is a run session. */
-  function registerTool(): void {
+  function registerTool(kind: Kind): void {
     if (toolRegistered) return;
     toolRegistered = true;
+    const noun = KINDS[kind].noun;
+    const group = KINDS[kind].noteArgv("x")[0];
     pi.registerTool({
       name: TOOL_NAME,
       label: "Record decision",
-      description:
-        "Record a verdict on one finding of this pr batch run in the run's history, through `pr batch note`. Changes no item state.",
-      promptSnippet: "Record a verdict on one finding of this batch run (pr batch note)",
+      description: `Record a verdict on one finding of this ${noun} in its history, through \`pr ${group} note\`. Changes no item state.`,
+      promptSnippet: `Record a verdict on one finding of this ${noun} (pr ${group} note)`,
       promptGuidelines: [
-        "Use record_decision for every verdict on a finding in this batch run, once the operator agrees; it records the verdict and changes no item state.",
+        `Use record_decision for every verdict on a finding in this ${noun}, once the operator agrees; it records the verdict and changes no item state.`,
       ],
       parameters: DECISION_SCHEMA,
       async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-        if (!state) throw new Error("record_decision: this session is not a batch run session");
+        if (!state) {
+          const nouns = Object.values(KINDS).map((spec) => spec.noun).join(" or ");
+          throw new Error(`record_decision: this session is not a ${nouns} session`);
+        }
         const input = params as DecisionInput;
-        const result = await pi.exec(pr, noteArgv(state.runId, input), {
+        const argv = noteArgv(state, input);
+        const groupNow = argv[0];
+        const result = await pi.exec(pr, argv, {
           cwd: ctx.cwd,
           timeout: NOTE_TIMEOUT_MS,
           signal,
         });
-        if (result.killed) throw new Error(`pr batch note was stopped after ${NOTE_TIMEOUT_MS / 1000}s`);
-        if (result.code !== 0) throw new Error(`pr batch note exited ${result.code}: ${result.stderr.trim()}`);
+        if (result.killed) {
+          throw new Error(`pr ${groupNow} note was stopped after ${NOTE_TIMEOUT_MS / 1000}s`);
+        }
+        if (result.code !== 0) {
+          throw new Error(`pr ${groupNow} note exited ${result.code}: ${result.stderr.trim()}`);
+        }
         return {
           content: [{ type: "text", text: `Recorded ${input.verdict} on ${input.pr} ${input.finding}.` }],
           details: { stdout: result.stdout.trim() },
@@ -110,10 +127,10 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
     cwd: string,
     all: RunEvent[],
   ): Promise<{ text: string; available: boolean }> {
-    const argv = reportArgv(s.runId);
+    const argv = reportArgv(s);
     const unavailable = (why: string) => ({
       available: false,
-      text: `## Now — run ${s.runId}\nThe report is unavailable: \`pr ${argv.join(" ")}\` ${why}. Run it yourself to see why.`,
+      text: `## Now — ${KINDS[s.kind].subject(s.runId)}\nThe report is unavailable: \`pr ${argv.join(" ")}\` ${why}. Run it yourself to see why.`,
     });
     let result;
     try {
@@ -128,7 +145,10 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
     }
     const parsed = parseReport(result.stdout);
     if (!parsed.ok) return unavailable(`printed no usable report (${parsed.error})`);
-    return { text: renderNow(s.runId, parsed.sessions, latestDecisions(all)), available: true };
+    return {
+      text: renderNow(KINDS[s.kind].subject(s.runId), parsed.sessions, latestDecisions(all)),
+      available: true,
+    };
   }
 
   /**
@@ -137,6 +157,7 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
    * Now's digest as a new workbench-run entry when either moved.
    */
   async function refresh(s: RunState, cwd: string, first: boolean): Promise<Refreshed> {
+    const subject = capitalise(KINDS[s.kind].subject(s.runId));
     let bytes: Uint8Array | null = null;
     let readError = "";
     try {
@@ -147,13 +168,13 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
     const chunk = bytes ? consume(bytes, s.cursor) : { events: [], skipped: 0, cursor: s.cursor };
     let history = "";
     if (readError) {
-      history = `Run ${s.runId}: could not read its history (${readError}).`;
+      history = `${subject}: could not read its history (${readError}).`;
     } else if (!bytes) {
-      history = first ? `Run ${s.runId}: no history recorded (the run predates events.jsonl).` : "";
+      history = first ? `${subject}: no history recorded (the run predates events.jsonl).` : "";
     } else {
-      const title = first ? `Run ${s.runId} history` : `Run ${s.runId}: new since last look`;
+      const title = first ? `${subject} history` : `${subject}: new since last look`;
       history = historyText(chunk.events, chunk.skipped, title);
-      if (!history && first) history = `Run ${s.runId}: no events recorded yet.`;
+      if (!history && first) history = `${subject}: no events recorded yet.`;
     }
     if (history) pi.appendEntry(HISTORY_TYPE, { text: history, runId: s.runId });
     const { text: now, available } = await nowText(s, cwd, bytes ? consume(bytes, 0).events : []);
@@ -169,12 +190,14 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
   pi.on("session_start", async (_event, ctx: ExtensionContext) => {
     state = null;
     const stored = latestState(ctx.sessionManager.getBranch());
-    const runDir = stored ? null : runSessionDir(deps.env, ctx.sessionManager.getSessionId());
-    if (!stored && !runDir) return;
-    registerTool();
+    const own = stored ? null : sessionOf(deps.env, ctx.sessionManager.getSessionId());
+    if (!stored && !own) return;
+    const kind = stored?.kind ?? own!.kind;
+    registerTool(kind);
     const base: RunState = stored ?? {
-      runDir: runDir as string,
-      runId: runIdOf(runDir as string),
+      kind: own!.kind,
+      runDir: own!.dir,
+      runId: runIdOf(own!.dir),
       cursor: 0,
       nowDigest: "",
     };

@@ -16,13 +16,17 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 BIN_DIR = REPO_ROOT / "ai" / "bin"
-EXT_DIR = REPO_ROOT / "ai" / "pi" / "extensions" / "run-session"
-NOW_TS = EXT_DIR / "now.ts"
-EVENTS_TS = EXT_DIR / "events.ts"
+EXT_DIR = REPO_ROOT / "ai" / "pi" / "extensions"
+RUN_SESSION = EXT_DIR / "run-session"
+RUN_DIR_TS = EXT_DIR / "_shared" / "run-dir.ts"
+NOW_TS = RUN_SESSION / "now.ts"
+EVENTS_TS = RUN_SESSION / "events.ts"
+SESSION_TS = RUN_SESSION / "session.ts"
 NODE_TIMEOUT = 60
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import batch.target_session  # noqa: E402
 import cli.pr  # noqa: E402
 import core.run_events  # noqa: E402
 import pr.target_events  # noqa: E402
@@ -61,7 +65,7 @@ def test_the_now_block_renders_the_real_target_report_with_its_latest_note(tmp_p
     parsed = _ts({"m": NOW_TS}, "m.parseReport(args[0])", report)
     assert parsed["ok"] is True and len(parsed["sessions"]) == 1
     text = _ts({"m": NOW_TS, "e": EVENTS_TS},
-               "m.renderNow('t', m.parseReport(args[0]).sessions,"
+               "m.renderNow('target t', m.parseReport(args[0]).sessions,"
                " e.latestDecisions(e.consume(new TextEncoder().encode(args[1]), 0).events))",
                report, history)
     assert "1 of 1 PRs waiting on you" in text
@@ -83,3 +87,49 @@ def test_target_step_events_fold_into_one_history_line(tmp_path):
     assert "o/r#7" in text.splitlines()
     assert any(line.endswith("comments done (exit 0)") for line in text.splitlines())
     assert not any("comments started" in line for line in text.splitlines())
+
+
+def test_kinds_target_matches_the_recipe_env(tmp_path, capsys):
+    t = make_target(tmp_path)
+    assert _main(["--repo-dir", str(t.repo), "target", "session", "--json"]) == 0
+    doc = json.loads(capsys.readouterr().out)
+    spec = _ts({"m": RUN_DIR_TS},
+               "{dirEnv: m.KINDS.target.dirEnv, idEnv: m.KINDS.target.idEnv,"
+               " idPrefix: m.KINDS.target.idPrefix}")
+    assert spec == {
+        "dirEnv": batch.target_session.TARGET_DIR_ENV,
+        "idEnv": batch.target_session.SESSION_ID_ENV,
+        "idPrefix": batch.target_session.SESSION_ID_PREFIX,
+    }
+    directory = doc["env"][spec["dirEnv"]]
+    sid = doc["session_id"]
+    got = _ts({"m": RUN_DIR_TS},
+              "m.sessionOf({ [m.KINDS.target.dirEnv]: args[0], [m.KINDS.target.idEnv]: args[1] }, args[1])",
+              directory, sid)
+    assert got == {"kind": "target", "dir": directory}
+
+
+def test_record_decision_argv_is_one_pr_target_note_accepts(tmp_path, capsys):
+    t = make_target(tmp_path, jobs=["lint"])
+    decision = {"pr": "o/r#7", "finding": "ci_failing:ci", "verdict": "handed_off",
+                "reason": "-flaky", "commands": ["pr ci --fix", "--weird"]}
+    argv = _ts({"m": SESSION_TS},
+               "m.noteArgv({kind:'target',runDir:'x',runId:'t',cursor:0,nowDigest:''}, args[0])",
+               decision)
+    assert _main(["--repo-dir", str(t.repo), *argv]) == 0
+    capsys.readouterr()
+    [event] = core.run_events.read(t.target_dir).events
+    assert {k: event[k] for k in ("kind", "item", "finding", "verdict", "reason", "commands")} == {
+        "kind": "decision", "item": "o/r#7", "finding": "ci_failing:ci",
+        "verdict": "handed_off", "reason": "-flaky", "commands": ["pr ci --fix", "--weird"]}
+
+
+def test_report_argv_is_one_pr_target_report_parseReport_accepts(tmp_path, capsys):
+    t = make_target(tmp_path, jobs=["lint"])
+    argv = _ts({"m": SESSION_TS},
+               "m.reportArgv({kind:'target',runDir:'x',runId:'t',cursor:0,nowDigest:''})")
+    assert argv == ["target", "report"]
+    assert _main(["--repo-dir", str(t.repo), *argv]) == 0
+    report = capsys.readouterr().out
+    parsed = _ts({"m": NOW_TS}, "m.parseReport(args[0])", report)
+    assert parsed["ok"] is True

@@ -40,7 +40,7 @@ export default function (pi: ExtensionAPI) {
     // has no `sessionId` of its own, and reading one would quietly record an
     // empty string, costing Pi the session-id half of self-exemption.
     const sessionId = ctx.sessionManager?.getSessionId() ?? "";
-    // A batch run's own session leaves its checkout unclaimed; see claimsWorktree.
+    // An orchestrator session (batch run or PR target) leaves its checkout unclaimed; see claimsWorktree.
     if (!claimsWorktree(process.env, sessionId)) return;
     if (acquireFor(cwd, process.pid, sessionId)) {
       held = cwd;

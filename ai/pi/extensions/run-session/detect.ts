@@ -11,13 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-export {
-  RUN_DIR_ENV,
-  SESSION_ID_PREFIX,
-  runDirFrom,
-  runIdOf,
-  runSessionDir,
-} from "../_shared/run-dir.ts";
+export { KINDS, runIdOf, sessionOf, type Kind } from "../_shared/run-dir.ts";
 export * from "./events.ts";
 export * from "./now.ts";
 export * from "./session.ts";

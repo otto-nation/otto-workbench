@@ -177,8 +177,8 @@ export default class Queue extends View {
     });
   }
 
-  toggleMachine(key) {
-    setShared("queue.collapsed", toggleCollapsed(shared("queue.collapsed"), key));
+  toggleMachine(key, open) {
+    setShared("queue.collapsed", toggleCollapsed(shared("queue.collapsed"), key, open));
     this.acx.notify();
   }
 
@@ -247,7 +247,7 @@ export default class Queue extends View {
       rowKey,
       onToggle: (on, id) => this.toggle(on, id),
       onToggleGroup: (on, id) => this.toggleGroup(on, id),
-      onToggleMachine: (key) => this.toggleMachine(key),
+      onToggleMachine: (key, open) => this.toggleMachine(key, open),
       onOpenPr: (row) => this.copyPr(row),
       onOpenTerminal: (id) => this.focusTerminal(id),
       onAskCancel: (on, id) => this.askCancel(on, id),

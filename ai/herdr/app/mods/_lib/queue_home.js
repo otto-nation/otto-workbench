@@ -130,8 +130,11 @@ export function homeModel(machines, nowMs, collapsed) {
   });
 }
 
-export function toggleCollapsed(map, key) {
+// toggleCollapsed flips what the reader sees: `open` is the block's visible state,
+// so the stored override (true = collapsed) is right even for a machine whose
+// default was decided by homeModel and has no entry in the map yet.
+export function toggleCollapsed(map, key, open) {
   const next = { ...(map ?? {}) };
-  next[key] = !next[key];
+  next[key] = Boolean(open);
   return next;
 }

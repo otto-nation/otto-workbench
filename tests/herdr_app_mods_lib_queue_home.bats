@@ -128,16 +128,28 @@ _js() {
   [ "$output" = '[{"key":"","open":false},{"key":"mini","open":true}]' ]
 }
 
-@test "toggleCollapsed is immutable and flips the stored bool" {
+@test "toggleCollapsed is immutable and flips what the reader sees, defaults included" {
   _js '
     const orig = {mini: true};
-    const once = h.toggleCollapsed(orig, "mini");
-    const twice = h.toggleCollapsed(once, "mini");
-    const missing = h.toggleCollapsed({}, "studio");
+    const once = h.toggleCollapsed(orig, "mini", false);
+    const twice = h.toggleCollapsed(once, "mini", true);
+    const closedByDefault = h.toggleCollapsed({}, "idle", false);
+    const openByDefault = h.toggleCollapsed({}, "busy", true);
     process.stdout.write(JSON.stringify({
-      orig, once, twice, missing, same: orig === once,
+      orig, once, twice, closedByDefault, openByDefault, same: orig === once,
     }));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"orig":{"mini":true},"once":{"mini":false},"twice":{"mini":true},"missing":{"studio":true},"same":false}' ]
+  [ "$output" = '{"orig":{"mini":true},"once":{"mini":false},"twice":{"mini":true},"closedByDefault":{"idle":false},"openByDefault":{"busy":true},"same":false}' ]
+}
+
+@test "a machine closed by default opens on its first toggle, and an open one closes" {
+  _js '
+    const idle = {key: "idle", at: 1, result: {ok: true, rows: []}};
+    const first = h.homeModel([idle], 1000, {})[0];
+    const after = h.homeModel([idle], 1000, h.toggleCollapsed({}, "idle", first.open))[0];
+    process.stdout.write(JSON.stringify({before: first.open, after: after.open}));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"before":false,"after":true}' ]
 }

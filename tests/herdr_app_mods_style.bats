@@ -175,6 +175,7 @@ teardown() {
   grep -q 'caption(summary.counts)' "$view"
   grep -q 'block.open ? "▾" : "▸"' "$view"
   grep -q 'onToggleMachine' "$view"
+  grep -q 'opts.onToggleMachine(block.key, block.open)' "$view"
   grep -q 'props.blocks' "$view"
   run grep -nE 'homeModel|toggleCollapsed|slotGauge' "$view"
   [ "$status" -eq 1 ]

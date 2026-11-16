@@ -161,7 +161,7 @@ function renderHomeBlock(block, opts) {
   });
   const header = hoverRow(`queue-machine-${block.key || "local"}`)
     .px(SP.sm).py(SP.xs)
-    .on_click(() => opts.onToggleMachine(block.key))
+    .on_click(() => opts.onToggleMachine(block.key, block.open))
     .child(v_flex().gap(SP.xxs).min_w(0)
       .child(h_flex().gap(SP.sm).items_center()
         .child(sectionLabel(summary.title))

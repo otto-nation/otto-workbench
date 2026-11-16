@@ -172,6 +172,12 @@ _throws() {
   [ "$output" = '[[1,2],[],[1]]' ]
 }
 
+@test "filterForm: a query narrows the PR list the same way as the board" {
+  _js '(() => { const prs = [{n:1,number:1,title:"Alpha",repoSlug:"a/one",author:"ann"},{n:2,number:2,title:"Beta",repoSlug:"b/two",author:"bob"}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({}), ids({query:"alpha"}), ids({query:"zzz"})]; })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[1,2],[1],[]]' ]
+}
+
 @test "filterForm: excludeRepos/excludeLabels drop matches; include+exclude same value is exclude" {
   _js '(() => { const prs = [{n:1,repoSlug:"a/one",labels:["bug"]},{n:2,repoSlug:"b/two",labels:["docs"]},{n:3,repoSlug:"a/one",labels:["docs"]}]; const ids = (f) => m.filterForm(prs, f).map((p) => p.n); return [ids({excludeRepos:["a/one"]}), ids({excludeLabels:["docs"]}), ids({repos:["a/one"],excludeRepos:["a/one"]}), ids({labels:["bug"],excludeLabels:["bug"]})]; })()'
   [ "$status" -eq 0 ]

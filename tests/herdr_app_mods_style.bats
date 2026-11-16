@@ -115,6 +115,12 @@ teardown() {
   [ "$status" -eq 1 ]
 }
 
+@test "PR search is a Search PRs input at the start of the filter bar" {
+  grep -q 'placeholder: "Search PRs"' "$MODS/prs/filter_bar.js"
+  grep -q 'id("prs-query")' "$MODS/prs/filter_bar.js"
+  awk '/return h_flex\(\)\.id\("prs-filters"\)/,/\.children\(\(model\.facets/' "$MODS/prs/filter_bar.js" | grep -q 'this.queryField'
+}
+
 @test "board load line is one statusRow used by both the wide and compact headers" {
   [ "$(grep -c 'renderLoadLine(' "$MODS/prs/board_view.js")" -eq 1 ]
   grep -A 6 '^  statusRow(' "$MODS/prs/board_view.js" | grep -q 'renderLoadLine('

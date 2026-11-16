@@ -91,7 +91,28 @@ export function normalizeFilters(raw) {
   lists.repos = minus(lists.repos, lists.excludeRepos);
   lists.labels = minus(lists.labels, lists.excludeLabels);
   lists.authors = minus(lists.authors, lists.excludeAuthors);
-  return { ...out, ...lists };
+  const query = typeof src.query === 'string' ? src.query : '';
+  return { ...out, ...lists, query };
+}
+
+/** Case-folded substring match across number, title, repo, author, and head branch. */
+export function matchesQuery(pr, query) {
+  const q = fold(query).trim();
+  if (!q) return true;
+  const terms = q.split(/\s+/).filter(Boolean);
+  const slug = String(pr?.repoSlug ?? '');
+  const name = slug.split('/').pop() ?? '';
+  const number = pr?.number == null ? '' : String(pr.number);
+  const fields = [
+    number,
+    number ? `#${number}` : '',
+    pr?.title,
+    slug,
+    name,
+    pr?.author,
+    pr?.branch,
+  ].map(fold);
+  return terms.every((term) => fields.some((f) => f.includes(term)));
 }
 
 function toggleList(list, value) {
@@ -109,6 +130,13 @@ export function filterAction(filters, action) {
   const colon = name.indexOf(':');
   if (colon < 0) return filters;
   const kind = name.slice(0, colon);
+  if (kind === 'query') {
+    const nextQ = name.slice(colon + 1);
+    if (filters && filters.query === nextQ) return filters;
+    const next = normalizeFilters(filters);
+    next.query = nextQ;
+    return next;
+  }
   const value = fold(name.slice(colon + 1));
   if (!value) return filters;
   if (kind === 'clear') {
@@ -118,6 +146,7 @@ export function filterAction(filters, action) {
     next.labels = [];
     next.excludeRepos = [];
     next.excludeLabels = [];
+    next.query = '';
     if (value === 'team') {
       next.authors = [];
       next.excludeAuthors = [];
@@ -181,6 +210,7 @@ export function facetView(base, filters, {
       list = list.filter((p) => !isBot(p.author));
     }
   }
+  list = list.filter((p) => matchesQuery(p, f.query));
   return { list, options: { labels: offered, authors, authorCounts } };
 }
 
@@ -346,9 +376,12 @@ export function barModel(filters, { tab = 'team', options = {} } = {}) {
     tags.push(...valueTags(authorOptsGrouped, 'not '));
     if (bots?.on) tags.push({ text: 'Bots hidden', action: 'hideBots', excluded: false });
   }
-  const clear = tags.length > 0 ? `clear:${tab}` : null;
-  const count = tags.length + rows.filter((r) => r.on).length;
-  return { facets, tags, clear, count };
+  const query = f.query;
+  const queryActive = fold(query).trim() !== '';
+  const clear = tags.length > 0 || queryActive ? `clear:${tab}` : null;
+  const count = tags.length + rows.filter((r) => r.on).length + (queryActive ? 1 : 0);
+  const emptyLabel = queryActive ? `No PRs match "${query.trim()}"` : 'No pull requests';
+  return { facets, tags, clear, count, query, queryActive, emptyLabel };
 }
 
 export function searchOptions(rows, query) {

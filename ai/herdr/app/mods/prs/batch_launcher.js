@@ -108,6 +108,7 @@ export class BatchLauncher {
       repos: f.repos, labels: f.labels,
       excludeRepos: f.excludeRepos, excludeLabels: f.excludeLabels,
       drafts: filterOn(f, "mineDrafts"),
+      query: f.query,
       loaded: this.loaded, knownLabels: this.knownLabels,
     });
   }

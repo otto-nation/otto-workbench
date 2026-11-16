@@ -8,27 +8,53 @@ import { SP, RADIUS, CONTROL, LAYOUT } from "./_lib/tokens.js";
 import { ghostButton, checkRow, popoverSurface, text, sectionLabel } from "./_ui/ui.js";
 
 export class FilterBar {
-  constructor(acx) {
+  constructor(acx, query = "") {
     this.acx = acx;
     this.open = null;
     this.query = "";
+    this._onAction = null;
     this.search = InputState.new({ placeholder: "Search" });
     this.search.on("change", () => {
       this.query = this.search.value();
+      acx.notify();
+    });
+    this.prSearch = InputState.new({ placeholder: "Search PRs", value: query });
+    this.prSearch.on("change", () => {
+      this._onAction?.(`query:${this.prSearch.value()}`);
       acx.notify();
     });
   }
 
   render(model, onAction, { trailing = null } = {}) {
     const t = theme();
+    this._onAction = onAction;
     return h_flex().id("prs-filters").flex_none().flex_wrap().items_center()
       .gap(SP.sm).px(SP.lg).py(SP.sm).bg(t.background)
+      .child(this.queryField(model, onAction))
       .children((model.facets ?? []).map((f) => this.facet(f, onAction)))
       .child(this.tagsRow(model.tags ?? [], onAction))
       .child(div().flex_1())
       .when(trailing != null, (e) => e.child(trailing))
       .when(Boolean(model.clear), (e) => e.child(
-        ghostButton("filters-clear", "Clear filters", () => onAction(model.clear)),
+        ghostButton("filters-clear", "Clear filters", () => {
+          this.prSearch.set_value("");
+          onAction(model.clear);
+        }),
+      ));
+  }
+
+  queryField(model, onAction) {
+    const t = theme();
+    return h_flex().id("prs-query").flex_none().h(CONTROL.h).gap(SP.xs).items_center()
+      .child(
+        Input.new(this.prSearch).h(CONTROL.h).px(SP.sm).rounded(RADIUS.control)
+          .border_1().border_color(t.input).bg(t.background),
+      )
+      .when(Boolean(model.queryActive), (e) => e.child(
+        ghostButton("filters-query-clear", "×", () => {
+          this.prSearch.set_value("");
+          onAction("query:");
+        }),
       ));
   }
 

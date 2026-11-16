@@ -86,7 +86,7 @@ export default class PrsBoard extends View {
       get: () => filtersOf(),
       toggle: (name) => this.toggleChip(name, this.acx),
     });
-    this.filterBar = new FilterBar(cx);
+    this.filterBar = new FilterBar(cx, filtersOf().query);
     this.batchOpen = false;
     // Every pull goes through the shared store (_lib/board_store.js); this view only schedules and draws.
     this.store = createBoardStore({ exec, now: () => Date.now() });
@@ -350,7 +350,7 @@ export default class PrsBoard extends View {
   compactView(state, t, cx, load) {
     const tab = tabOf(), mine = tab === "mine";
     const model = this.model(state, tab);
-    const empty = state.loading && !state.repos ? loadPlaceholder(load) : placeholder("No pull requests");
+    const empty = state.loading && !state.repos ? loadPlaceholder(load) : placeholder(model.bar.emptyLabel);
     return pane("prs")
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.compactHeader(state, tab, load))
@@ -386,6 +386,7 @@ export default class PrsBoard extends View {
         onBatch: tab === "mine" ? (items, preset) => this.batchFor(items, preset) : null,
         loading: Boolean(state.loading && !state.repos),
         workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
+        emptyLabel: model.bar.emptyLabel,
       }));
   }
 

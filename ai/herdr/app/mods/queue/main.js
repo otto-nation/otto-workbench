@@ -3,10 +3,10 @@
 // its command, timings and log tail; live rows cancel after a confirm.
 import { View } from "gpui-kit";
 import { exec, spaces, panes, run, shared, setShared } from "herdr";
-import * as herdr from "herdr";
 import { eachByMachine, machineOf } from "./_lib/board_pull.js";
 import { parsePrKey } from "./_lib/launch.js";
 import { LOAD_DELAY_MS } from "./_lib/load_state.js";
+import { remoteOns } from "./_lib/machines.js";
 import { cancelEntry, loadLog, loadStatus, logNote } from "./_lib/queue.js";
 import {
   clearMachine, homeModel, machinePage, pageOf, selectMachine,
@@ -14,33 +14,6 @@ import {
 import { refreshSpinning, staleness } from "./_lib/queue_lanes.js";
 import { focusSteps } from "./_lib/run_session.js";
 import { renderQueue } from "./view.js";
-
-function uniqueOns(values) {
-  const seen = new Set();
-  const out = [];
-  for (const on of values) {
-    if (on == null || on === "") continue;
-    const key = String(on);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(key);
-  }
-  out.sort();
-  return out;
-}
-
-function fromSpaces() {
-  return uniqueOns((spaces() ?? []).map((s) => s?.machine));
-}
-
-function remoteOns() {
-  if (typeof herdr.machines !== "function") return fromSpaces();
-  const list = herdr.machines();
-  if (!Array.isArray(list)) return fromSpaces();
-  return uniqueOns(list
-    .filter((m) => m != null && m.name != null && m.layout !== "unavailable")
-    .map((m) => m.name));
-}
 
 const rowKey = (on, id) => `${machineOf(on)}#${id}`;
 const groupKey = (on, row) => `${machineOf(on)}:${row.key}`;

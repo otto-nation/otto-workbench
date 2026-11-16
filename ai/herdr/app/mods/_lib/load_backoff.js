@@ -9,6 +9,7 @@
  */
 
 export const BUSY_PER_CORE = 1.5;
+export const STRAINED_PER_CORE = BUSY_PER_CORE * 2;
 export const MAX_FACTOR = 4;
 
 /** The 1-minute load average in `/proc/loadavg` text, or null when it does not parse. */
@@ -21,7 +22,7 @@ export function parseLoadavg(text) {
 /** How many ticks apart runs should be at `perCore` load: 1 when unknown or quiet. */
 export function factorFor(perCore) {
   if (!Number.isFinite(perCore)) return 1;
-  if (perCore >= BUSY_PER_CORE * 2) return MAX_FACTOR;
+  if (perCore >= STRAINED_PER_CORE) return MAX_FACTOR;
   if (perCore >= BUSY_PER_CORE) return 2;
   return 1;
 }

@@ -7,7 +7,7 @@ import { LOAD_DELAY_MS } from './load_state.js';
 const FINISHED = new Set(['done', 'failed', 'cancelled', 'tempfail']);
 const SUCCESS_STATES = new Set(['done', 'cancelled', 'tempfail']);
 const SUBJECT_RE = /([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#\d+)\s*$/;
-const STALE_MS = 60_000;
+export const STALE_MS = 60_000;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 export const COALESCE_MIN = 3;

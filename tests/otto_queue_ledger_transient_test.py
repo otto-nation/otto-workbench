@@ -1,5 +1,7 @@
 """Tests for otto_queue.ledger: classifying and retrying transient SQLite errors."""
 
+import contextlib
+import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -14,7 +16,7 @@ if str(LIB_DIR) not in sys.path:
 import otto_queue.ledger  # noqa: E402
 import otto_queue.paths  # noqa: E402
 from otto_queue.ledger import Ledger, LedgerBusy, LedgerError, _translate  # noqa: E402
-from otto_queue.model import EntryState  # noqa: E402
+from otto_queue.model import EntryState, NewEntry  # noqa: E402
 
 
 def _operr(msg, *, code=None, name=None):
@@ -120,3 +122,23 @@ def test_get_raises_ledger_busy_after_the_retry_bound(tmp_path, monkeypatch):
     _patch_connect(monkeypatch, [99])
     with pytest.raises(LedgerBusy):
         ledger.get(entry_id)
+
+
+def test_idle_reap_orphans_takes_no_write_transaction(tmp_path, monkeypatch):
+    ledger = Ledger.open(tmp_path)
+    held = ledger.resolve(NewEntry(argv=("true",), cwd="/"), force=False, pid=os.getpid())
+    writes = []
+    real = otto_queue.ledger._transaction
+
+    @contextlib.contextmanager
+    def spy(conn):
+        writes.append(1)
+        with real(conn) as inner:
+            yield inner
+
+    monkeypatch.setattr(otto_queue.ledger, "_transaction", spy)
+    try:
+        assert ledger.reap_orphans() == []
+        assert writes == []
+    finally:
+        held.lease.release()

@@ -566,14 +566,28 @@ class Ledger:
 
     def reap_orphans(self) -> list[int]:
         """End every live entry whose lease nothing holds, and return their ids."""
-        def tx(conn):
+        def holders(conn):
             rows = conn.execute(f"SELECT * FROM entries WHERE state IN {_LIVE_IN}", _LIVE).fetchall()
-            found = [e for e in map(_entry, rows) if e is not None and e.holds_lease
-                     and otto_queue.lease.orphaned(self.root, e.id)]
-            for entry in found:
-                _end_orphan(conn, entry)
+            return [e for e in map(_entry, rows) if e is not None and e.holds_lease]
+
+        maybe = [e for e in _run(self.root, holders)
+                 if otto_queue.lease.orphaned(self.root, e.id)]
+        if not maybe:
+            return []
+
+        def end(conn):
+            found = []
+            for entry in maybe:
+                row = _entry(_row(conn, entry.id))
+                if row is None or not row.state.live or not row.holds_lease:
+                    continue
+                if not otto_queue.lease.orphaned(self.root, entry.id):
+                    continue
+                _end_orphan(conn, row)
+                found.append(row)
             return found
-        orphans = _run(self.root, tx, write=True)
+
+        orphans = _run(self.root, end, write=True)
         # A job's lease file stays: the worker restarts that id and takes it again.
         for entry in orphans:
             if entry.kind is EntryKind.TICKET:

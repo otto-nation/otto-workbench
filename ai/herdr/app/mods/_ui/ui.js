@@ -228,6 +228,11 @@ export function pinned(el) {
   return el.flex_none().border_b_1().border_color(theme().border);
 }
 
+// Navigation to the parent view: outline "← <parent>", first in the header beside the title.
+export function backButton(id, onBack, label = "Back") {
+  return button(id, `← ${label}`, onBack);
+}
+
 // The top strip of a pane: hairline below, content stacked.
 export function paneBar() {
   return pinned(v_flex().gap(SP.sm).px(SP.lg).py(SP.md));

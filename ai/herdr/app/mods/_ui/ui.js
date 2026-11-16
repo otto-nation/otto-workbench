@@ -121,13 +121,20 @@ export function sectionHeading(label, count = null) {
     .when(count != null, (e) => e.child(text("meta", String(count), t.muted)));
 }
 
-// A bordered scrolling box for long text inside a pane: review bodies, run output.
-// `maxH` lets a caller scale the box with its window; the default is the fixed token.
-// `scroll: false` leaves scrolling to a child that scrolls itself (a scrollable TextView).
+// A bordered box for short static content (a landed-run summary). Long text that must
+// scroll goes through scrollInset, which keeps the border off the scroller.
 export function inset({ maxH = LAYOUT.bodyMaxH, scroll = true } = {}) {
   const t = theme();
   return div().p(SP.md).rounded(RADIUS.control).border_1().border_color(t.border)
     .max_h(maxH).when(scroll, (e) => e.overflow_y_scrollbar());
+}
+
+// Bordered outer that never scrolls, inner scroller with a definite max height.
+// A self-scrolling TextView lays out at zero in an auto-height parent; this is the scroller.
+export function scrollInset(id, child, { maxH = LAYOUT.bodyMaxH } = {}) {
+  const t = theme();
+  return div().flex_none().p(SP.md).rounded(RADIUS.control).border_1().border_color(t.border)
+    .child(div().id(id).max_h(maxH).overflow_y_scrollbar().child(child));
 }
 
 // list-row: hover fills; selected adds the selected fill, a 2px primary rule on the left and ink
@@ -182,14 +189,14 @@ export function paneBar() {
   return pinned(v_flex().gap(SP.sm).px(SP.lg).py(SP.md));
 }
 
-// Selectable, scrollable code: a fenced block in a TextView, so it can be highlighted and copied.
-// The fence is longer than any backtick run in the lines so the text cannot close it early. `id` is
-// stable per place, so the scroll position survives a refresh.
-export function selectableCode(id, lines, maxH) {
+// Selectable code: a fenced block in a TextView, so it can be highlighted and copied.
+// The fence is longer than any backtick run in the lines so the text cannot close it early.
+// Scrolling belongs on scrollInset: a self-scrolling TextView lays out at zero in an auto-height parent.
+export function selectableCode(id, lines) {
   const body = lines.join("\n");
   const longest = Math.max(0, ...(body.match(/`+/g) ?? []).map((r) => r.length));
   const fence = "`".repeat(Math.max(3, longest + 1));
-  return TextView.markdown(id, `${fence}\n${body}\n${fence}`).selectable().scrollable().max_h(maxH);
+  return TextView.markdown(id, `${fence}\n${body}\n${fence}`).selectable();
 }
 
 // The scrolling body of a pane or column.

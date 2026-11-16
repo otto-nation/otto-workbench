@@ -10,9 +10,9 @@ import { summaryLine } from "./_lib/run_output.js";
 import { relativeTime } from "./_lib/history.js";
 import { itemStatus } from "./_lib/pr_status.js";
 import { OUTDATED_TEXT } from "./_lib/run_session.js";
-import { SP, RADIUS, LAYOUT } from "./_lib/tokens.js";
+import { SP, RADIUS } from "./_lib/tokens.js";
 import {
-  hoverRow, card, inset, scrollBody, type, text, caption, placeholder, errorLine,
+  hoverRow, card, scrollInset, scrollBody, type, text, caption, placeholder, errorLine,
   badge, selectableCode, button, ghostButton, statusText,
 } from "./_ui/ui.js";
 
@@ -176,8 +176,8 @@ function renderLog(state, id, running) {
     return placeholder(running ? "No output yet" : "No output");
   }
   const lines = raw.split("\n");
-  return type(inset({ scroll: false }).text_color(theme().foreground), "code")
-    .child(selectableCode(`step-log-${id}`, lines, LAYOUT.bodyMaxH));
+  return type(scrollInset(`step-log-box-${id}`, selectableCode(`step-log-${id}`, lines))
+    .text_color(theme().foreground), "code");
 }
 
 function renderStepCard(item, name, state) {

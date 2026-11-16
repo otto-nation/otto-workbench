@@ -7,7 +7,7 @@ import { SP, LAYOUT } from "./_lib/tokens.js";
 import { prPresentation } from "./_lib/pr_status.js";
 import { sessionControl } from "./workflows_view.js";
 import {
-  segment, segmented, button, ghostButton, inset, card, placeholder, caption,
+  segment, segmented, button, ghostButton, inset, scrollInset, card, placeholder, caption,
   paneBar, pinned, selectableCode, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
   badgeRow, statsRow, tag,
 } from "./_ui/ui.js";
@@ -20,7 +20,7 @@ function reviewBody(id, body) {
 }
 
 function reviewInset(id, body) {
-  return inset().mt(SP.sm).child(reviewBody(id, body));
+  return scrollInset("review-box-" + id, reviewBody(id, body)).mt(SP.sm);
 }
 
 // Enabled actions as buttons; when none is enabled, the first reason says why. A post action
@@ -114,8 +114,7 @@ export function renderOutput(output, { onHide, onTab, onToggleTail, onViewReview
       .child(ghostButton("out-tail", tailOpen ? "Hide output" : "Show output", onToggleTail))
       .when(tailOpen && !lines.length, (x) => x.child(placeholder(output.live ? "No output yet" : "No output")))
       .when(tailOpen && lines.length > 0, (x) => x.child(
-        type(inset({ maxH, scroll: false }).flex().flex_col(), "code")
-          .child(selectableCode("output", lines, maxH)))));
+        type(scrollInset("output-box", selectableCode("output", lines), { maxH }), "code"))));
 }
 
 export function prUrl(d) {

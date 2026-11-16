@@ -343,13 +343,13 @@ export default class PrsBoard extends View {
 
   fullscreenButton() {
     const state = fullscreenState(layout());
-    return button("fullscreen", state === "on" ? "Exit full screen" : "Full screen", () => {
+    return iconButton("fullscreen", "mods/prs/fullscreen.svg", state === "off" ? "Full screen" : "Exit full screen", () => {
       if (state === "on" || state === "stranded") {
         exitFullscreen();
         return;
       }
       enterFullscreen();
-    });
+    }, { selected: state === "on" });
   }
 
   compactView(state, t, cx, load) {

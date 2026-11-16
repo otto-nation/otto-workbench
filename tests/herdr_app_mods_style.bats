@@ -291,6 +291,18 @@ teardown() {
   awk '/^export function iconButton/,/^}/' "$ui" | grep -qF 'border_color(t.input)'
 }
 
+@test "full screen is an iconButton toggle with a selected state" {
+  local ui="$MODS/_ui/ui.js"
+  local view="$MODS/prs/board_view.js"
+  awk '/^export function iconButton/,/^}/' "$ui" | grep -qF 'selected = false'
+  grep -qF 'iconButton("fullscreen", "mods/prs/fullscreen.svg"' "$view"
+  grep -qF 'selected: state === "on"' "$view"
+  grep -qF 'state === "off" ? "Full screen" : "Exit full screen"' "$view"
+  [[ -f "$MODS/prs/fullscreen.svg" ]]
+  run grep -nF 'button("fullscreen"' "$view"
+  [ "$status" -eq 1 ]
+}
+
 @test "queue row detail draws detailModel through keyValue" {
   grep -q 'export function keyValue(' "$MODS/_ui/ui.js"
   grep -q 'text("section", row.key, t.muted)' "$MODS/_ui/ui.js"

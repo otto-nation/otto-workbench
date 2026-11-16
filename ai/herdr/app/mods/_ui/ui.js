@@ -82,6 +82,7 @@ export function iconButton(id, icon, label, onClick, { disabled = false, spinnin
   const t = theme();
   const glyph = svg(icon).size(LAYOUT.iconSize);
   return control(id, { disabled, onClick }).w(CONTROL.h)
+    .border_1().border_color(t.input)
     .text_color(disabled ? t.muted : t.foreground)
     .tooltip(label).accessibility_label(label)
     .when(!disabled, (e) => e.hover((s) => s.bg(t.hover)))

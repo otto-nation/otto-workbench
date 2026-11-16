@@ -5200,8 +5200,10 @@ the machine's budget, and runs once per idempotency key.
    the interval resets when the wait reason or joined state changes). A sleep
    never runs past `wait_s`. A waiter that is not first only reads the head of
    the queue each poll and reaps orphans at most every `REAP_EVERY_S`; the first
-   waiter reaps, then asks `otto_queue.slots.try_admit`. Each new reason for
-   waiting is printed once.
+   waiter reaps, then asks `otto_queue.slots.try_admit`. The first wait prints
+   a short block naming the entry and how to check or cancel it; later waits
+   print only when the kind of reason changes, at most once per 30s, with no
+   changing numbers. Admission after a wait prints how long it took.
    `LedgerBusy` after the ledger's own retries is printed once (`ledger busy;
    still waiting`) and is not a crash: the ticket keeps waiting until `wait_s`,
    then returns 75. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler
@@ -5233,6 +5235,20 @@ ceiling: the ticket process, not its command, holds the lease and the slot, so
 a ticket killed with SIGKILL while its command runs leaves the command running
 untracked and its row `failed`. Upgrade trigger: if a command is seen outliving
 its killed ticket, have the child inherit the lease and slot descriptors.
+
+### otto_queue/wait_report.py
+
+Quiet wait notices for a ticket that has not yet been admitted.
+
+The first wait prints a short block naming the entry and how to check or
+cancel it. Later waits print only when the *kind* of reason changes, at most
+once per `REPEAT_S`, with digits stripped so a wobbling metric is not a new
+line. Admission after a wait prints how long it took. Output is append-only
+even on a TTY: an in-place `\r` status is skipped so the reporter stays a
+pure, testable clock-and-notify object.
+
+`reason_kind` classifies the wording `batch.admission` and the slot/queue
+gates produce; those strings remain the owner of why a wait happened.
 
 ### otto_queue/worker.py
 

@@ -150,7 +150,7 @@ def test_a_ticket_waits_behind_an_older_one_and_times_out_as_tempfail(tmp_path):
     older.lease.release()
     assert (result.exit_status, result.outcome) == (os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT)
     assert ledger.get(result.entry_id).state is EntryState.TEMPFAIL
-    assert any(f"behind entry {older.entry.id}" in m for m in messages)
+    assert any("behind an older entry" in m for m in messages)
     assert not (tmp_path / "ran").exists()
 
 
@@ -304,7 +304,7 @@ def test_a_ticket_waits_behind_an_older_job_while_a_worker_is_alive(tmp_path):
     finally:
         worker.release()
     assert result.outcome is TicketOutcome.TIMED_OUT
-    assert any(f"behind entry {job}" in m for m in messages)
+    assert any("behind an older entry" in m for m in messages)
     assert not (tmp_path / "ran").exists()
 
 

@@ -19,8 +19,10 @@ the machine's budget, and runs once per idempotency key.
    the interval resets when the wait reason or joined state changes). A sleep
    never runs past `wait_s`. A waiter that is not first only reads the head of
    the queue each poll and reaps orphans at most every `REAP_EVERY_S`; the first
-   waiter reaps, then asks `otto_queue.slots.try_admit`. Each new reason for
-   waiting is printed once.
+   waiter reaps, then asks `otto_queue.slots.try_admit`. The first wait prints
+   a short block naming the entry and how to check or cancel it; later waits
+   print only when the kind of reason changes, at most once per 30s, with no
+   changing numbers. Admission after a wait prints how long it took.
    `LedgerBusy` after the ledger's own retries is printed once (`ledger busy;
    still waiting`) and is not a crash: the ticket keeps waiting until `wait_s`,
    then returns 75. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler
@@ -74,6 +76,7 @@ import core.signal_relay
 import otto_queue.lease
 import otto_queue.ledger
 import otto_queue.slots
+import otto_queue.wait_report
 from otto_queue.model import (  # noqa: F401  LABEL_ENV and WAIT_ENV are re-exported
     LABEL_ENV, WAIT_ENV, Entry, EntryClass, EntryKind, EntryState, NewEntry)
 
@@ -186,7 +189,8 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
     here instead, so the wait cannot outlast every worker.
     """
     entry_id = entry.id
-    notify(f"otto-queue: joining entry {entry_id}, which is {entry.state.value}")
+    reporter = otto_queue.wait_report.WaitReporter(
+        entry_id, entry.entry_class.value, notify)
     deadline = time.monotonic() + request.wait_s
     origin = time.monotonic()
     last_state = entry.state
@@ -203,6 +207,7 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
         if time.monotonic() >= deadline:
             notify(f"otto-queue: entry {entry_id} did not finish in {request.wait_s:g}s")
             return TicketResult(os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT, entry_id)
+        reporter.waiting(f"behind entry {entry_id}, which queued first")
         state = None if entry is None else entry.state
         if state != last_state:
             origin = time.monotonic()
@@ -353,14 +358,14 @@ def _admit_and_run(ledger: otto_queue.ledger.Ledger, entry_id: int,
 
 def _slot_once(ledger: otto_queue.ledger.Ledger, entry_id: int,
                entry_class: EntryClass, policy: otto_queue.slots.Policy,
-               said: str, *, reap: bool) -> tuple[_Wait | None, str]:
+               *, reap: bool) -> tuple[_Wait | None, str]:
     jobs = otto_queue.lease.worker_alive(ledger.root)
     entry, first = ledger.wait_poll(entry_id, entry_class, jobs=jobs)
     if entry is None or entry.state is not EntryState.QUEUED:
-        return _Wait(_WaitEnd.CANCELLED), said
+        return _Wait(_WaitEnd.CANCELLED), ""
     admission = _try_once(ledger, entry_id, entry_class, policy, first, reap=reap)
     if admission.slot is not None:
-        return _Wait(_WaitEnd.ADMITTED, admission.slot), said
+        return _Wait(_WaitEnd.ADMITTED, admission.slot), ""
     return None, admission.reason
 
 
@@ -373,21 +378,25 @@ def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
     rng = random.Random()
     last_reap = time.monotonic()
     busy_said = False
+    reporter = otto_queue.wait_report.WaitReporter(
+        entry_id, request.entry_class.value, notify)
     while True:
         now = time.monotonic()
         reap = now - last_reap >= REAP_EVERY_S
         try:
             wait, reason = _slot_once(
-                ledger, entry_id, request.entry_class, policy, said, reap=reap)
+                ledger, entry_id, request.entry_class, policy, reap=reap)
         except otto_queue.ledger.LedgerBusy:
             wait, reason = None, said
             busy_said = _note_busy(notify, busy_said)
             reap = False
         last_reap = now if reap else last_reap
+        if wait is not None and wait.end is _WaitEnd.ADMITTED:
+            reporter.admitted()
         if wait is not None:
             return wait
         if reason != said:
-            notify(f"otto-queue: entry {entry_id} is waiting: {reason}")
+            reporter.waiting(reason)
             said = reason
             origin = time.monotonic()
         if time.monotonic() >= deadline:

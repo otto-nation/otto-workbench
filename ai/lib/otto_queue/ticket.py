@@ -307,7 +307,9 @@ def poll_delay(waited_s: float, rng, poll_s: float = POLL_S) -> float:
         base = poll_s
     else:
         steps = int((waited_s - FAST_WAIT_S) / poll_s)
-        base = min(poll_s * (2 ** steps), POLL_CAP_S)
+        # Bound the exponent: an unbounded one overflows float conversion after
+        # about a thousand doublings of a long wait. 2**64 is far past the cap.
+        base = min(poll_s * (2 ** min(steps, 64)), POLL_CAP_S)
     return min(base * rng.uniform(0.8, 1.2), POLL_CAP_S)
 
 

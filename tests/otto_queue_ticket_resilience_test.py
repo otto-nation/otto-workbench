@@ -133,6 +133,19 @@ def test_poll_delay_doubles_geometrically_then_caps():
     assert poll_delay(60.0, rng) == POLL_CAP_S
 
 
+def test_poll_delay_stays_capped_through_an_hours_long_wait():
+    rng = _NoJitter()
+    # Past ~517s the uncapped exponent no longer fits in a float.
+    for waited in (520.0, 3600.0, 86400.0):
+        assert poll_delay(waited, rng) == POLL_CAP_S
+
+
+def test_poll_delay_stays_capped_for_a_small_poll_s_on_a_long_wait():
+    rng = _NoJitter()
+    for waited in (59.0, 3600.0, 86400.0):
+        assert poll_delay(waited, rng, poll_s=0.05) == POLL_CAP_S
+
+
 def test_poll_delay_applies_jitter_without_exceeding_the_cap():
     high = SimpleNamespace(uniform=lambda a, b: 1.2)
     low = SimpleNamespace(uniform=lambda a, b: 0.8)

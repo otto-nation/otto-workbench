@@ -4,7 +4,9 @@ Every value here is persisted in the ledger, so the enums' string values are
 stable. A machine mid-sync runs old and new code against one file, so a value
 is added, never renamed or removed — the rule the schema follows too.
 A `label` is display-only: `status` shows it in place of the command; it is
-never used to match entries.
+never used to match entries. `subject` (`owner/repo#N`), `action` (the `pr`
+subcommand) and `terminal` (the herdr pane) are optional facts about the work;
+they are never used to match entries either.
 
 | State | Meaning |
 |---|---|
@@ -96,6 +98,9 @@ class NewEntry:
     idem_key: str | None = None
     env_allow: tuple[str, ...] = ()
     label: str | None = None
+    subject: str | None = None
+    action: str | None = None
+    terminal: str | None = None
 
 
 @dataclass(frozen=True)
@@ -120,6 +125,9 @@ class Entry:
     finished_at: float | None
     not_before: float | None = None
     label: str | None = None
+    subject: str | None = None
+    action: str | None = None
+    terminal: str | None = None
 
     @property
     def holds_lease(self) -> bool:

@@ -13,7 +13,7 @@ import { OUTDATED_TEXT } from "./_lib/run_session.js";
 import { SP, RADIUS } from "./_lib/tokens.js";
 import {
   hoverRow, card, scrollInset, scrollBody, type, text, caption, placeholder, errorLine,
-  badge, selectableCode, button, ghostButton, statusText,
+  badge, selectableCode, button, statusText,
 } from "./_ui/ui.js";
 
 function prCount(n) {
@@ -28,10 +28,10 @@ function cardShell(id) {
 // Open session (Workflows.runSession), with its state beside it as text. A machine whose pr
 // predates run sessions gets the reason in the button's place.
 export function sessionControl(id, s) {
-  const row = h_flex().gap(SP.sm).items_center();
+  const row = h_flex().gap(SP.sm).flex_wrap().items_center();
   if (s.gate === "outdated") return row.child(caption(OUTDATED_TEXT));
   return row
-    .child(ghostButton(id, "Open session", () => s.onOpen()))
+    .child(button(id, "Open session", () => s.onOpen()))
     .when(s.opening, (e) => e.child(statusText("running", "Opening")))
     .when(Boolean(s.waiting), (e) => e.child(caption(s.waiting)))
     .when(Boolean(s.error) && !s.opening, (e) => e.child(errorLine(s.error)));
@@ -69,9 +69,9 @@ export function renderRunPanel(state, expanded) {
       });
       const session = state.session ?? null;
       const actions = trail == null && session == null ? null
-        : h_flex().pl(SP.xl).py(SP.xxs).gap(SP.sm).items_center()
+        : h_flex().pl(SP.xl).py(SP.xxs).gap(SP.sm).flex_wrap().items_center()
           .when(trail != null, (e) => e
-            .child(ghostButton("open-trail", "Open trail", () => state.onOpenTrail?.(r)))
+            .child(button("open-trail", "Open trail", () => state.onOpenTrail?.(r)))
             .when(Boolean(state.trailError), (x) => x.child(errorLine(state.trailError))))
           .when(session != null, (e) => e.child(sessionControl("open-session-run", session)));
       return actions && expanded ? [row, actions, expanded(r)]
@@ -142,11 +142,11 @@ function renderNeedsYou(item, state) {
       .children(runCmds.map((cmd, i) => h_flex().gap(SP.sm).items_center()
         .child(button(`run-${i}`, actionLabel(cmd), () => state.onRun?.(cmd)))
         .when(Boolean(cmd.why), (row) => row.child(caption(cmd.why)))))
-      .children(fileCmds.map((cmd, i) => ghostButton(`file-${i}`, actionLabel(cmd), () => state.onRun?.(cmd))))
+      .children(fileCmds.map((cmd, i) => button(`file-${i}`, actionLabel(cmd), () => state.onRun?.(cmd))))
       .children(notes.map((n) => text("body", n, t.muted))))
     .when(Boolean(state.runSession), (e) => e.child(sessionControl("open-session", state.runSession)))
     .when(Boolean(state.onTerminal), (e) => e.child(
-      ghostButton("open-terminal", "Open terminal", () => state.onTerminal())));
+      button("open-terminal", "Open terminal", () => state.onTerminal())));
 }
 
 function renderNotes(item, state) {

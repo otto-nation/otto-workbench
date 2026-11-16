@@ -184,8 +184,8 @@ teardown() {
 @test "queue expanded row offers Open PR and Open terminal from model data" {
   local view="$MODS/queue/view.js"
   local main="$MODS/queue/main.js"
-  grep -q 'ghostButton(`queue-open-pr-${id}`, "Open PR"' "$view"
-  grep -q 'ghostButton(`queue-open-term-${id}`, "Open terminal"' "$view"
+  grep -q 'button(`queue-open-pr-${id}`, "Open PR"' "$view"
+  grep -q 'button(`queue-open-term-${id}`, "Open terminal"' "$view"
   grep -q 'row.subject' "$view"
   grep -q 'row.terminal' "$view"
   grep -q 'write_to_clipboard' "$main"
@@ -223,16 +223,21 @@ teardown() {
   [ "$status" -eq 1 ]
 }
 
-@test "run output: Show/Hide output is a status-row ghost, not a full-width toggle" {
+@test "run output: Show/Hide output is a status-row outline button, not a full-width toggle" {
   local detail="$MODS/prs/detail.js"
-  grep -q 'ghostButton("out-tail", tailOpen ? "Hide output" : "Show output", onToggleTail)' "$detail"
-  grep -q 'ghostButton("out-tab", "Open as tab", onTab)' "$detail"
-  grep -q 'ghostButton("out-review", "View review"' "$detail"
+  grep -q 'button("out-tail", tailOpen ? "Hide output" : "Show output", onToggleTail)' "$detail"
+  grep -q 'button("out-tab", "Open as tab", onTab)' "$detail"
+  grep -q 'button("out-review", "View review"' "$detail"
   grep -q 'selectableCode("output"' "$detail"
   grep -q 'text("body", model.line, lineColor)' "$detail"
-  run grep -nF '.child(ghostButton("out-tail"' "$detail"
+  run grep -nF '.child(button("out-tail"' "$detail"
   [ "$status" -eq 1 ]
   run grep -nF 'function landedRow' "$detail"
+  [ "$status" -eq 1 ]
+}
+
+@test "mods never use ghostButton: a labelled action is an outline button" {
+  run grep -rn 'ghostButton' "$MODS"
   [ "$status" -eq 1 ]
 }
 

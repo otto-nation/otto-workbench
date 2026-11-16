@@ -5,7 +5,7 @@ import { h_flex, v_flex, Popover, InputState } from "gpui-base";
 import { theme } from "herdr";
 import { searchOptions } from "./_lib/filters.js";
 import { SP, RADIUS, CONTROL, LAYOUT } from "./_lib/tokens.js";
-import { ghostButton, textInput, checkRow, popoverSurface, text, sectionLabel } from "./_ui/ui.js";
+import { button, iconButton, textInput, checkRow, popoverSurface, text, sectionLabel } from "./_ui/ui.js";
 
 export class FilterBar {
   constructor(acx, query = "") {
@@ -36,7 +36,7 @@ export class FilterBar {
       .child(div().flex_1())
       .when(trailing != null, (e) => e.child(trailing))
       .when(Boolean(model.clear), (e) => e.child(
-        ghostButton("filters-clear", "Clear filters", () => {
+        button("filters-clear", "Clear filters", () => {
           this.prSearch.set_value("");
           onAction(model.clear);
         }),
@@ -50,7 +50,7 @@ export class FilterBar {
         textInput(this.prSearch, { width: LAYOUT.searchW }),
       )
       .when(Boolean(model.queryActive), (e) => e.child(
-        ghostButton("filters-query-clear", "×", () => {
+        iconButton("filters-query-clear", "mods/prs/close.svg", "Clear search", () => {
           this.prSearch.set_value("");
           onAction("query:");
         }),
@@ -140,7 +140,7 @@ export class FilterBar {
       count: o.count,
       muted: excluded,
       onToggle: () => onAction(o.include),
-      trailing: ghostButton(
+      trailing: button(
         `fhide-${f.key}-${o.value}`,
         excluded ? "Unhide" : "Hide",
         () => onAction(o.exclude),

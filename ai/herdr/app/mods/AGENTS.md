@@ -4,7 +4,7 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `queue`, `qu
 
 ## Where things live
 
-- Shared UI components: `_ui/ui.js` (installed into every mod as `./_ui/ui.js`, like `_lib/`). Reuse `button` (outline), `solidButton` (the one primary action), `iconButton`, `ghostButton`, `checkbox`, `checkRow`, `popoverSurface`, `inset` (static bordered box), `scrollInset` (bordered outer, inner scroller — never a self-scrolling TextView), `segment`/`segmented`, `laneTitle`, `card`, `hoverRow`, `pane`, `paneBar`, `emptyPane`, `scrollBody`, `placeholder`, `caption`, `gauge` (static █░ slot glyphs, colour from `theme()`), `type`/`text`, `tag`, `statusText`, `sectionLabel`, `badge`/`badgeRow`/`statsRow`, `addStat`/`delStat`, `textInput` (the one text field: body type, outline border, control height; never a bare `Input.new`), `keyValue` (compact two-column facts: section-muted keys, meta values, code for paths), `mono` before hand-building a chain; add a component there when a pattern appears a second time
+- Shared UI components: `_ui/ui.js` (installed into every mod as `./_ui/ui.js`, like `_lib/`). Reuse `button` (outline), `solidButton` (the one primary action), `iconButton`, `checkbox`, `checkRow`, `popoverSurface`, `inset` (static bordered box), `scrollInset` (bordered outer, inner scroller — never a self-scrolling TextView), `segment`/`segmented`, `laneTitle`, `card`, `hoverRow`, `pane`, `paneBar`, `emptyPane`, `scrollBody`, `placeholder`, `caption`, `gauge` (static █░ slot glyphs, colour from `theme()`), `type`/`text`, `tag`, `statusText`, `sectionLabel`, `badge`/`badgeRow`/`statsRow`, `addStat`/`delStat`, `textInput` (the one text field: body type, outline border, control height; never a bare `Input.new`), `keyValue` (compact two-column facts: section-muted keys, meta values, code for paths), `mono` before hand-building a chain; add a component there when a pattern appears a second time
 - Every top-level `_*/` directory under `mods/` is a shared tree installed into every mod, so only put real libraries there (no scratch dirs like `_tmp/`)
 - Sizes, spacing, fills and breakpoints: `_lib/tokens.js`. Colours come only from `theme()`. No literal pixel or colour values in views
 - Pure logic: `_lib/*.js`, covered by `tests/herdr_app_mods_lib_*.bats`
@@ -71,6 +71,7 @@ restates none of their contents:
   applied with `_ui/ui.js` `type()` or `text()`, never a bare size.
 - Shape of a control, card, tag, status or label: `_ui/ui.js`, one function per
   `DESIGN.md` component.
+- There is no ghost button: a labelled action is an outline `button`, the primary one a `solidButton`, an icon-only one an `iconButton`; a borderless clickable reads as text.
 - `tests/herdr_app_mods_style.bats` holds the views to the brand rules a grep
   can see: no hover that changes a border, no `pill`, no ✗ glyph.
 
@@ -87,7 +88,7 @@ and record the gap in otto-nation/otto-nation.github.io's issue tracker.
 
 ## Run output
 
-- Owner: `_lib/run_output.js` `outputModel` (status kinds from `_lib/status.js`, elapsed via `durationText`, last meaningful line, landed run). The panel auto-opens on a successful launch. Glyphs are static (no spinners). `prs/detail.js` draws one `paneBar`: a status row with the ghost cluster (Show/Hide output only when there is output, Open as tab, Hide, View review for a finished review/rerun/recover), one summary line from `line`/`lineKind`, and the tail in `scrollInset` only while open. A finished review/rerun/recover swaps to the landed run (`reviewed_at >= startedMs`); the raw tail stays behind Show output. The running batch step shows the same one-line summary, from a 20-line preview on the existing 3 s timer.
+- Owner: `_lib/run_output.js` `outputModel` (status kinds from `_lib/status.js`, elapsed via `durationText`, last meaningful line, landed run). The panel auto-opens on a successful launch. Glyphs are static (no spinners). `prs/detail.js` draws one `paneBar`: a status row with the outline cluster (Show/Hide output only when there is output, Open as tab, Hide, View review for a finished review/rerun/recover), one summary line from `line`/`lineKind`, and the tail in `scrollInset` only while open. A finished review/rerun/recover swaps to the landed run (`reviewed_at >= startedMs`); the raw tail stays behind Show output. The running batch step shows the same one-line summary, from a 20-line preview on the existing 3 s timer.
 
 ## Checking and installing
 

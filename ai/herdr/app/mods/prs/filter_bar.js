@@ -5,7 +5,7 @@ import { h_flex, v_flex, Popover, InputState } from "gpui-base";
 import { theme } from "herdr";
 import { searchOptions } from "./_lib/filters.js";
 import { SP, RADIUS, CONTROL, LAYOUT } from "./_lib/tokens.js";
-import { button, iconButton, textInput, checkRow, popoverSurface, text, sectionLabel } from "./_ui/ui.js";
+import { button, iconButton, textInput, checkRow, popoverSurface, menuButton, text, sectionLabel } from "./_ui/ui.js";
 
 export class FilterBar {
   constructor(acx, query = "") {
@@ -58,13 +58,7 @@ export class FilterBar {
   }
 
   facet(f, onAction) {
-    const t = theme();
-    const trigger = h_flex().flex_none().h(CONTROL.h).px(CONTROL.px).gap(SP.xs).items_center()
-      .rounded(RADIUS.control).border_1().border_color(t.border)
-      .hover((s) => s.bg(t.hover))
-      .child(text("label", f.label))
-      .when(f.active, (e) => e.child(text("label", "•", t.foreground)))
-      .child(text("label", "▾", t.muted));
+    const trigger = menuButton(f.label, { active: f.active });
     const content = f.key === "show" ? this.showContent(f, onAction) : this.valueContent(f, onAction);
     return Popover.new(`facet-${f.key}`)
       .open(this.open === f.key)

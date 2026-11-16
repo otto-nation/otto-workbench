@@ -9,8 +9,8 @@ import { theme } from "herdr";
 import { invoke, readJson } from "./_lib/board_data.js";
 import { overrideSummary, REVIEW_PHASES, copyRef } from "./_lib/model_overrides.js";
 import { choicesArgv, parseChoices, phaseOptions, defaultLabel, refBlocked } from "./_lib/model_choices.js";
-import { SP, RADIUS, CONTROL, LAYOUT } from "./_lib/tokens.js";
-import { button, textInput, popoverSurface, text, caption, hoverRow, sectionLabel } from "./_ui/ui.js";
+import { SP, LAYOUT } from "./_lib/tokens.js";
+import { button, textInput, popoverSurface, menuButton, text, caption, hoverRow, sectionLabel } from "./_ui/ui.js";
 
 // Below herdr's 30 s exec cap so a hung `pr models` still settles.
 const CHOICES_TIMEOUT_MS = 25_000;
@@ -148,14 +148,10 @@ export class ModelPicker {
     });
   }
 
-  // The trigger plus, beside it, what is set: a button label is the action and nothing else.
+  // The trigger plus, beside it, the value as text. Configured defaults when nothing is set.
   render() {
-    const t = theme();
-    const trigger = h_flex().flex_none().h(CONTROL.h).px(CONTROL.px).gap(SP.xs).items_center()
-      .rounded(RADIUS.control).border_1().border_color(t.border)
-      .hover((s) => s.bg(t.hover))
-      .child(text("label", "Models"))
-      .child(text("label", "▾", t.muted));
+    const summary = this.summary();
+    const trigger = menuButton("Models", { active: Boolean(summary) });
     const popover = Popover.new(`${this.id}-popover`)
       .open(this.open)
       .on_open_change((open) => {
@@ -165,10 +161,9 @@ export class ModelPicker {
       })
       .trigger(trigger)
       .content(this.content());
-    const summary = this.summary();
     return h_flex().flex_none().gap(SP.sm).items_center()
       .child(popover)
-      .when(Boolean(summary), (e) => e.child(caption(summary)));
+      .child(caption(summary || "Configured defaults"));
   }
 
   content() {

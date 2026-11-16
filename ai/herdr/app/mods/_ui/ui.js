@@ -271,6 +271,18 @@ export function popoverSurface() {
     .min_w(LAYOUT.colMin);
 }
 
+// menu-button: outline trigger that opens a popover. No id and no mouse-down
+// stop_propagation — Popover needs the click. Active shows •; ▾ is muted.
+export function menuButton(label, { active = false } = {}) {
+  const t = theme();
+  return h_flex().flex_none().h(CONTROL.h).px(CONTROL.px).gap(SP.xs).items_center()
+    .rounded(RADIUS.control).border_1().border_color(t.border)
+    .hover((s) => s.bg(t.hover))
+    .child(text("label", label))
+    .when(active, (e) => e.child(text("label", "•", t.foreground)))
+    .child(text("label", "▾", t.muted));
+}
+
 // A board lane's heading: title in ink with its count in meta beside it, and an optional
 // control at the far end.
 export function laneTitle(label, count = null, action = null, state = {}) {

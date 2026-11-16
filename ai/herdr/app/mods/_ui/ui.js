@@ -67,6 +67,14 @@ export function solidButton(id, label, onClick, { disabled = false, reason = nul
     .child(label);
 }
 
+// button-danger: destructive confirm only. Danger fill, canvas label. No hover, no pressed.
+export function dangerButton(id, label, onClick) {
+  const t = theme();
+  return type(control(id, { onClick }), "label").px(CONTROL.px)
+    .bg(dangerColor()).text_color(t.background)
+    .child(label);
+}
+
 // ceiling: refresh keeps glyph.spin(900); once gpui-kit exposes reduce-motion, skip spin.
 // A square icon-only button holding an svg (tinted with the text colour). `label` is its tooltip and
 // accessible name; `spinning` turns the icon while work runs.

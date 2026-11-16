@@ -194,6 +194,30 @@ teardown() {
   [ "$status" -eq 1 ]
 }
 
+@test "destructive confirm uses dangerButton and Keep, and Batch Cancel asks first" {
+  local ui="$MODS/_ui/ui.js"
+  local queue="$MODS/queue/view.js"
+  local page="$MODS/prs/batch_page.js"
+  local launcher="$MODS/prs/batch_launcher.js"
+  grep -qF 'export function dangerButton(' "$ui"
+  grep -qF 'dangerButton(`queue-confirm-${id}`, "Confirm cancel"' "$queue"
+  grep -qF 'caption("Stops this job")' "$queue"
+  grep -qF 'dangerButton(`confirm-${killKey}`' "$page"
+  grep -qF 'button(`keep-${killKey}`, "Keep", () => L.dismissCancel())' "$page"
+  grep -qF 'L.askCancel(on, id, false)' "$page"
+  grep -qF 'L.askCancel(on, id, true)' "$page"
+  grep -qF 'askCancel(on, id, kill) {' "$launcher"
+  grep -qF 'dismissCancel() {' "$launcher"
+  run grep -nF 'button(`queue-confirm-' "$queue"
+  [ "$status" -eq 1 ]
+  run grep -nF 'confirm ? "Confirm kill" : "Kill"' "$page"
+  [ "$status" -eq 1 ]
+  run grep -nF 'L.cancel(on, id, false)' "$page"
+  [ "$status" -eq 1 ]
+  run grep -rn confirmKill "$MODS/prs"
+  [ "$status" -eq 1 ]
+}
+
 @test "gauge is a static text glyph in ui.js, not a pill" {
   grep -q 'export function gauge(content, color)' "$MODS/_ui/ui.js"
   grep -q 'text("code", content, color ?? theme().muted)' "$MODS/_ui/ui.js"

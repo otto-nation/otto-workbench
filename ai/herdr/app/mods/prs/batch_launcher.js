@@ -50,7 +50,7 @@ export class BatchLauncher {
     // A launched terminal whose run has not said it started yet, per machine+repo. Its PRs stay
     // selected until it does, and come back with the reason when the terminal ends first.
     this.pending = new Map();
-    this.confirmKill = null;
+    this.confirm = null;
   }
 
   toggle(key) {
@@ -220,18 +220,19 @@ export class BatchLauncher {
     });
   }
 
-  async cancel(on, id, kill) {
-    const key = runKey(on, id);
-    if (kill) {
-      if (this.confirmKill !== key) {
-        this.confirmKill = key;
-        this.acx.notify();
-        return;
-      }
-      this.confirmKill = null;
-    } else {
-      this.confirmKill = null;
-    }
+  askCancel(on, id, kill) {
+    this.confirm = { key: runKey(on, id), kill };
+    this.acx.notify();
+  }
+
+  dismissCancel() {
+    this.confirm = null;
+    this.acx.notify();
+  }
+
+  async cancel(on, id) {
+    const kill = this.confirm?.kill;
+    this.confirm = null;
     const result = await this.workflows.cancel(on, id, { kill });
     if (!result.ok) this.note = result.message;
     this.acx.notify();

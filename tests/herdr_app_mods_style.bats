@@ -157,5 +157,3 @@ teardown() {
   run grep -nF 'function landedRow' "$detail"
   [ "$status" -eq 1 ]
 }
-  [ "$status" -eq 1 ]
-}

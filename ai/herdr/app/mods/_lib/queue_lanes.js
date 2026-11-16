@@ -4,11 +4,19 @@
  */
 import { LOAD_DELAY_MS } from './load_state.js';
 import { isLive } from './queue.js';
-import { GLYPH } from './status.js';
 
 const FINISHED = new Set(['done', 'failed', 'cancelled', 'tempfail']);
+const SUCCESS_STATES = new Set(['done', 'cancelled', 'tempfail']);
 const SUBJECT_RE = /([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+#\d+)\s*$/;
 const STALE_MS = 60_000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+export const COALESCE_MIN = 3;
+export const FAIL_COLLAPSE_MIN = 2;
+export const WAITING_CAP = 8;
+export const FINISHED_CAP = 10;
+export const FAIL_KEEP_MS = DAY_MS;
+export const RECENT_TERMINAL = 20;
 
 function toMs(t) {
   if (t == null || t === '') return null;
@@ -62,6 +70,17 @@ function retryText(row, nowMs) {
   const at = toMs(row?.not_before);
   if (row?.state !== 'queued' || at == null || at <= nowMs) return '';
   return `retry in ${spanText(Math.round((at - nowMs) / 1000))}`;
+}
+
+function hasRetry(row, nowMs) {
+  const at = toMs(row?.not_before);
+  return row?.state === 'queued' && at != null && at > nowMs;
+}
+
+function waitReason(row) {
+  if (typeof row?.reason === 'string' && row.reason !== '') return row.reason;
+  if (typeof row?.wait_reason === 'string' && row.wait_reason !== '') return row.wait_reason;
+  return '';
 }
 
 function positionText(row, eligibleByClass) {
@@ -128,8 +147,6 @@ function failKey(row) {
   return `id:${row.id}`;
 }
 
-export const COALESCE_MIN = 3;
-
 function actionOf(row) {
   if (typeof row?.action === 'string' && row.action.trim() !== '') return row.action.trim();
   const argv = Array.isArray(row?.argv) ? row.argv : [];
@@ -148,14 +165,7 @@ function newerMember(a, b, field) {
   return (b?.id ?? 0) >= (a?.id ?? 0) ? b : a;
 }
 
-function leadField(laneKey) {
-  if (laneKey === 'running') return 'started_at';
-  if (laneKey === 'waiting') return 'created_at';
-  return 'finished_at';
-}
-
-function leadOf(members, laneKey) {
-  const field = leadField(laneKey);
+function leadOf(members, field) {
   let lead = members[0];
   for (let i = 1; i < members.length; i += 1) {
     lead = newerMember(lead, members[i], field);
@@ -191,81 +201,100 @@ function longestSpan(members, field, nowMs) {
 }
 
 function groupTiming(members, laneKey, nowMs) {
-  if (laneKey === 'running') {
-    const sec = longestSpan(members, 'started_at', nowMs);
-    return sec == null ? '' : `ran ${spanText(sec)}`;
-  }
   if (laneKey === 'waiting') {
     const sec = longestSpan(members, 'created_at', nowMs);
     return sec == null ? '' : `waited ${spanText(sec)}`;
   }
-  const lead = leadOf(members, 'finished');
+  const lead = leadOf(members, 'finished_at');
   const finished = toMs(lead?.finished_at);
   if (finished == null) return '';
-  return `${spanText(Math.max(0, Math.round((nowMs - finished) / 1000)))} ago`;
+  return `newest ${spanText(Math.max(0, Math.round((nowMs - finished) / 1000)))} ago`;
 }
 
-const OUTCOME_ORDER = Object.freeze(['failed', 'done', 'cancelled', 'tempfail']);
-
-function groupFailure(members, laneKey) {
-  if (laneKey !== 'finished') return '';
-  const counts = Object.create(null);
-  for (const row of members) {
-    const state = row.state;
-    if (state == null || state === '') continue;
-    counts[state] = (counts[state] ?? 0) + 1;
-  }
-  const parts = [];
-  const seen = new Set();
-  for (const state of OUTCOME_ORDER) {
-    if (!counts[state]) continue;
-    parts.push(`${counts[state]} ${state}`);
-    seen.add(state);
-  }
-  for (const state of Object.keys(counts)) {
-    if (seen.has(state)) continue;
-    parts.push(`${counts[state]} ${state}`);
-  }
-  return parts.join(' · ');
+function ordinal(n) {
+  const mod10 = n % 10;
+  const mod100 = n % 100;
+  if (mod10 === 1 && mod100 !== 11) return `${n}st`;
+  if (mod10 === 2 && mod100 !== 12) return `${n}nd`;
+  if (mod10 === 3 && mod100 !== 13) return `${n}rd`;
+  return `${n}th`;
 }
 
-// Repeat-failure grouping (same subject+action, failed ≥2) runs first and
-// produces one `failed Nx` row. Coalesce then groups remaining rows by action
-// (COALESCE_MIN). That order is the contract: coalescing first would hide the
-// Nx row inside an action group of the same failures.
-function coalesceRows(rows, laneKey, nowMs) {
-  const groups = new Map();
-  const order = [];
-  for (const row of rows) {
-    const action = actionOf(row);
-    if (!groups.has(action)) {
-      groups.set(action, []);
-      order.push(action);
-    }
-    groups.get(action).push(row);
+function lineRange(members, eligibleByClass) {
+  const list = eligibleByClass.get(members[0]?.entry_class) ?? [];
+  const idxs = [];
+  for (const member of members) {
+    const idx = list.findIndex((r) => r.id === member.id);
+    if (idx >= 0) idxs.push(idx);
   }
+  if (!idxs.length) return '';
+  const from = Math.min(...idxs) + 1;
+  const to = Math.max(...idxs) + 1;
+  if (from === to) return `${ordinal(from)} in line`;
+  return `${ordinal(from)}–${ordinal(to)} in line`;
+}
+
+function waitingGroup(members, nowMs, eligibleByClass) {
+  const action = actionOf(members[0]);
+  const cls = members[0].entry_class ?? '';
+  return {
+    key: `waiting:${action}:${cls}`,
+    action,
+    count: members.length,
+    members,
+    lead: members[0],
+    subjects: subjectsOf(members),
+    timing: groupTiming(members, 'waiting', nowMs),
+    line: lineRange(members, eligibleByClass),
+    failure: '',
+  };
+}
+
+function successGroup(action, state, members, nowMs) {
+  return {
+    key: `finished:${state}:${action}`,
+    action,
+    state,
+    count: members.length,
+    members,
+    lead: members[0],
+    subjects: subjectsOf(members),
+    timing: groupTiming(members, 'finished', nowMs),
+    failure: `${members.length} ${state}`,
+  };
+}
+
+function groupWaiting(rows, nowMs, eligibleByClass) {
   const out = [];
-  for (const action of order) {
-    const members = groups.get(action);
-    if (members.length < COALESCE_MIN) {
-      out.push(...members);
+  let i = 0;
+  while (i < rows.length) {
+    const row = rows[i];
+    if (hasRetry(row, nowMs) || actionOf(row) === '') {
+      out.push(row);
+      i += 1;
       continue;
     }
-    out.push({
-      key: `${laneKey}:${action}`,
-      action,
-      count: members.length,
-      members,
-      lead: leadOf(members, laneKey),
-      subjects: subjectsOf(members),
-      timing: groupTiming(members, laneKey, nowMs),
-      failure: groupFailure(members, laneKey),
-    });
+    const action = actionOf(row);
+    const cls = row.entry_class;
+    const reason = waitReason(row);
+    let j = i + 1;
+    while (j < rows.length) {
+      const next = rows[j];
+      if (hasRetry(next, nowMs)) break;
+      if (actionOf(next) !== action) break;
+      if (next.entry_class !== cls) break;
+      if (waitReason(next) !== reason) break;
+      j += 1;
+    }
+    const run = rows.slice(i, j);
+    if (run.length >= COALESCE_MIN) out.push(waitingGroup(run, nowMs, eligibleByClass));
+    else out.push(...run);
+    i = j;
   }
   return out;
 }
 
-function collapseFailed(rows) {
+function collapseFailed(rows, nowMs) {
   const groups = new Map();
   const order = [];
   for (const row of rows) {
@@ -287,15 +316,57 @@ function collapseFailed(rows) {
       continue;
     }
     const members = groups.get(item.key);
-    if (members.length < 2) {
+    if (members.length < FAIL_COLLAPSE_MIN) {
       out.push(members[0]);
       continue;
     }
+    const lead = members[0];
+    const finished = toMs(lead.finished_at);
+    const age = finished == null
+      ? ''
+      : ` · last ${spanText(Math.max(0, Math.round((nowMs - finished) / 1000)))} ago`;
     out.push({
-      ...members[0],
-      failure: `failed ${members.length}${GLYPH.fail} today`,
+      ...lead,
+      key: `finished:failed:${item.key}`,
+      failure: `failed ${members.length}×${age}`,
       members,
     });
+  }
+  return out;
+}
+
+function groupFinished(rows, nowMs) {
+  const collapsed = collapseFailed(rows, nowMs);
+  const buckets = new Map();
+  for (const row of collapsed) {
+    if (row.state === 'failed' || row.members) continue;
+    const action = actionOf(row);
+    if (!action || !SUCCESS_STATES.has(row.state)) continue;
+    const key = `finished:${row.state}:${action}`;
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(row);
+  }
+  const groupedKeys = new Set();
+  for (const [key, members] of buckets) {
+    if (members.length >= COALESCE_MIN) groupedKeys.add(key);
+  }
+  const used = new Set();
+  const out = [];
+  for (const row of collapsed) {
+    if (used.has(row.id)) continue;
+    if (row.state === 'failed' || row.members) {
+      out.push(row);
+      continue;
+    }
+    const action = actionOf(row);
+    const key = `finished:${row.state}:${action}`;
+    if (action && groupedKeys.has(key)) {
+      const members = buckets.get(key);
+      out.push(successGroup(action, row.state, members, nowMs));
+      for (const member of members) used.add(member.id);
+      continue;
+    }
+    out.push(row);
   }
   return out;
 }
@@ -309,8 +380,31 @@ function compareFinished(a, b) {
   return fb - fa || b.id - a.id;
 }
 
-function lane(key, label, rows, count = rows.length) {
-  return { key, label, count, rows };
+function isKeptFailure(row, nowMs) {
+  const newest = row.members?.[0] ?? row;
+  if (newest.state !== 'failed' && row.state !== 'failed') return false;
+  const at = toMs(newest.finished_at ?? row.finished_at);
+  if (at == null) return false;
+  const age = nowMs - at;
+  return age >= 0 && age <= FAIL_KEEP_MS;
+}
+
+function capWaiting(rows) {
+  if (rows.length <= WAITING_CAP) return { rows, more: 0 };
+  return { rows: rows.slice(0, WAITING_CAP), more: rows.length - WAITING_CAP };
+}
+
+function capFinished(rows, nowMs) {
+  if (rows.length <= FINISHED_CAP) return { rows, more: 0 };
+  let cut = FINISHED_CAP;
+  for (let i = FINISHED_CAP; i < rows.length; i += 1) {
+    if (isKeptFailure(rows[i], nowMs)) cut = i + 1;
+  }
+  return { rows: rows.slice(0, cut), more: rows.length - cut };
+}
+
+function lane(key, label, rows, count, more = 0) {
+  return { key, label, count, rows, card: count > 0, more };
 }
 
 export function lanesModel(rows, nowMs) {
@@ -337,12 +431,14 @@ export function lanesModel(rows, nowMs) {
 
   const present = (row) => presentRow(row, nowMs, eligibleByClass);
   const runningRows = running.map(present);
-  const waitingRows = waiting.map(present);
-  const finishedRows = collapseFailed(finished.map(present));
+  const waitingRows = groupWaiting(waiting.map(present), nowMs, eligibleByClass);
+  const finishedRows = groupFinished(finished.map(present), nowMs);
+  const waitingShown = capWaiting(waitingRows);
+  const finishedShown = capFinished(finishedRows, nowMs);
   return [
-    lane('running', 'Running', coalesceRows(runningRows, 'running', nowMs), runningRows.length),
-    lane('waiting', 'Waiting', coalesceRows(waitingRows, 'waiting', nowMs), waitingRows.length),
-    lane('finished', 'Finished', coalesceRows(finishedRows, 'finished', nowMs), finishedRows.length),
+    lane('running', 'Running', runningRows, runningRows.length),
+    lane('waiting', 'Waiting', waitingShown.rows, waiting.length, waitingShown.more),
+    lane('finished', 'Finished', finishedShown.rows, finished.length, finishedShown.more),
   ];
 }
 

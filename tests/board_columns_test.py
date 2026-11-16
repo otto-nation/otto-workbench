@@ -18,11 +18,13 @@ from board.model import (
     Mergeable,
     MineLane,
     PrState,
+    QueueWork,
     ReviewRunRef,
     Row,
     StatusKind,
     TeamLane,
 )
+from otto_queue.model import EntryState
 import pytest
 
 
@@ -278,19 +280,19 @@ def test_issues(name, kwargs, expected):
 def test_reviewing_lanes():
     merged = lanes(_row(state=PrState.MERGED))
     assert merged.team is TeamLane.LANDED
-    assert merged.team_reviewing is TeamLane.IN_QUEUE
+    assert merged.team_reviewing is TeamLane.IN_PROGRESS
     assert merged.mine is MineLane.MERGED
     assert merged.mine_reviewing is MineLane.MERGED
 
     queued = lanes(_row(in_merge_queue=True))
     assert queued.team is TeamLane.LANDED
-    assert queued.team_reviewing is TeamLane.IN_QUEUE
+    assert queued.team_reviewing is TeamLane.IN_PROGRESS
     assert queued.mine is MineLane.IN_QUEUE
     assert queued.mine_reviewing is MineLane.IN_QUEUE
 
     resting = lanes(_row())
     assert resting.team is TeamLane.OPEN
-    assert resting.team_reviewing is TeamLane.IN_QUEUE
+    assert resting.team_reviewing is TeamLane.IN_PROGRESS
     assert resting.mine is MineLane.AWAITING_REVIEW
     assert resting.mine_reviewing is MineLane.IN_REVIEW
 
@@ -300,7 +302,7 @@ def test_reviewing_lanes():
     ))
     assert blocked.mine is MineLane.HAS_CONFLICTS
     assert blocked.mine_reviewing is MineLane.IN_REVIEW
-    assert blocked.team_reviewing is TeamLane.IN_QUEUE
+    assert blocked.team_reviewing is TeamLane.IN_PROGRESS
 
 
 def test_draft_has_no_special_case():
@@ -327,9 +329,10 @@ def test_columns_golden():
         Column(Board.TEAM, "open", "Open", 0),
         Column(Board.TEAM, "needs-my-review", "Needs My Review", 1),
         Column(Board.TEAM, "in-queue", "In Queue", 2),
-        Column(Board.TEAM, "review-ready", "Review Ready", 3),
-        Column(Board.TEAM, "reviewed", "Reviewed", 4),
-        Column(Board.TEAM, "landed", "Landed", 5),
+        Column(Board.TEAM, "in-progress", "In Progress", 3),
+        Column(Board.TEAM, "review-ready", "Review Ready", 4),
+        Column(Board.TEAM, "reviewed", "Reviewed", 5),
+        Column(Board.TEAM, "landed", "Landed", 6),
     )
     assert MINE_COLUMNS == (
         Column(Board.MINE, "has-conflicts", "Has Conflicts", 0),
@@ -361,3 +364,46 @@ def test_unhydrated_issues_are_ci_pending_plus_owed():
     )) == (
         _issue(IssueKind.CI_PENDING, StatusKind.NONE, "CI loading"),
     )
+
+
+def _queued(**kwargs) -> QueueWork:
+    return QueueWork(state=EntryState.QUEUED, entry=1, **kwargs)
+
+
+def _running(**kwargs) -> QueueWork:
+    return QueueWork(state=EntryState.RUNNING, entry=2, **kwargs)
+
+
+def test_team_queued_review_is_in_queue():
+    assert team_lane(_row(queue=_queued())) is TeamLane.IN_QUEUE
+    assert lanes(_row(queue=_queued())).team_reviewing is TeamLane.IN_PROGRESS
+
+
+def test_team_running_review_is_in_progress():
+    assert team_lane(_row(queue=_running(terminal="t"))) is TeamLane.IN_PROGRESS
+
+
+def test_team_needs_my_review_beats_a_queued_review():
+    assert team_lane(_row(is_requested_reviewer=True, queue=_queued())) is (
+        TeamLane.NEEDS_MY_REVIEW
+    )
+
+
+def test_mine_running_review_is_in_review():
+    assert mine_lane(_row(queue=_running())) is MineLane.IN_REVIEW
+    assert mine_lane(_row(
+        mergeable=Mergeable.CONFLICTING, queue=_running(),
+    )) is MineLane.IN_REVIEW
+
+
+def test_mine_queued_review_stays_in_its_resting_lane():
+    assert mine_lane(_row(queue=_queued())) is MineLane.AWAITING_REVIEW
+    assert mine_lane(_row(
+        mergeable=Mergeable.CONFLICTING, queue=_queued(),
+    )) is MineLane.HAS_CONFLICTS
+
+
+def test_merged_and_merge_queue_beat_a_live_review():
+    assert team_lane(_row(state=PrState.MERGED, queue=_running())) is TeamLane.LANDED
+    assert mine_lane(_row(state=PrState.MERGED, queue=_running())) is MineLane.MERGED
+    assert mine_lane(_row(in_merge_queue=True, queue=_running())) is MineLane.IN_QUEUE

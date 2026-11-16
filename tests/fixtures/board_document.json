@@ -25,21 +25,27 @@
     },
     {
       "board": "team",
+      "key": "in-progress",
+      "label": "In Progress",
+      "order": 3
+    },
+    {
+      "board": "team",
       "key": "review-ready",
       "label": "Review Ready",
-      "order": 3
+      "order": 4
     },
     {
       "board": "team",
       "key": "reviewed",
       "label": "Reviewed",
-      "order": 4
+      "order": 5
     },
     {
       "board": "team",
       "key": "landed",
       "label": "Landed",
-      "order": 5
+      "order": 6
     },
     {
       "board": "mine",
@@ -191,7 +197,7 @@
       "lanes": {
         "team": "reviewed",
         "mine": "has-comments",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "issues": [
@@ -299,7 +305,7 @@
       "lanes": {
         "team": "open",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "issues": [
@@ -391,7 +397,7 @@
       "lanes": {
         "team": "open",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "issues": [],
@@ -474,7 +480,7 @@
       "lanes": {
         "team": "landed",
         "mine": "merged",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "merged"
       },
       "issues": [],
@@ -516,7 +522,8 @@
   "features": [
     "review-publish",
     "batch-session",
-    "target-session"
+    "target-session",
+    "queue-lanes"
   ],
   "stamp": ""
 }

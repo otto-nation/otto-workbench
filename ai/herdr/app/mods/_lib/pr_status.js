@@ -6,6 +6,7 @@
  * `presentationOf` re-splices the live review and batch slots onto the document presentation.
  */
 import { cardState, words } from './batch.js';
+import { hasQueueLanes } from './columns.js';
 
 // _lib/batch.js cardState tones as status kinds (board.presentation.TONE_STATUS).
 export const TONE_STATUS = Object.freeze({ failed: 'fail', attention: 'warn', busy: 'running', done: 'pass' });
@@ -29,13 +30,25 @@ export function itemStatus(item) {
   return batchStatus(item) ?? { kind: 'status', status: 'none', text: words(item?.status) };
 }
 
+// Live review slot: a terminal, or a queue ticket when the machine's `pr board` features
+// include queue-lanes. Status kinds are _lib/status.js. Queue position (`queued · behind #N`)
+// is not a board fact; the line is `queued` or `reviewing`. An older `pr` keeps "Review running".
+function reviewStatus(pr) {
+  const gated = hasQueueLanes(pr);
+  if (pr.reviewing || (gated && pr.queue?.state === 'running')) {
+    return status('running', gated ? 'reviewing' : 'Review running');
+  }
+  if (gated && pr.queue?.state === 'queued') return status('none', 'queued');
+  return null;
+}
+
 // A document row's presentation with the two client-only slots laid over it: a live review
 // terminal and the PR's batch run item. Python's layout is badges = issues + live + reviews +
 // labels and row_badges = issues + live, and the document's `review` is always null, so the
 // overlay only re-splices the live slot. `item` is prs/workflows.js itemFor, or null.
 export function presentationOf(pr, { item = null } = {}) {
   const p = pr.presentation;
-  const review = pr.reviewing ? status('running', 'Review running') : null;
+  const review = reviewStatus(pr);
   const fromItem = batchStatus(item);
   const busy = fromItem ? { ...fromItem, text: `Batch · ${fromItem.text}` } : p.busy;
   if (review === p.review && busy === p.busy) return p;

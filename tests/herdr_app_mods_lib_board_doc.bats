@@ -46,10 +46,20 @@ _js() {
       repoSlug: pr.repoSlug, base: pr.baseBranch, sha: pr.headSha, mine: pr.isMine,
       lanes: pr.lanes === doc.rows[0].lanes, pres: pr.presentation === doc.rows[0].presentation,
       run: pr.reviewRuns[0].run.stamp, posted: pr.reviewRuns[0].postedEvent,
+      queue: pr.queue,
     }));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"repoSlug":"acme/box","base":"main","sha":"aaa","mine":true,"lanes":true,"pres":true,"run":"20260102T000000","posted":"comment"}' ]
+  [ "$output" = '{"repoSlug":"acme/box","base":"main","sha":"aaa","mine":true,"lanes":true,"pres":true,"run":"20260102T000000","posted":"comment","queue":null}' ]
+}
+
+@test "rowToPr passes a queue ticket through" {
+  _js '
+    const q = { state: "queued", entry: 9, terminal: "t1" };
+    process.stdout.write(JSON.stringify(d.rowToPr({ ...doc.rows[0], queue: q }).queue));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"state":"queued","entry":9,"terminal":"t1"}' ]
 }
 
 @test "mergeRows: complete replaces; a patch updates by repo and number and appends new rows" {

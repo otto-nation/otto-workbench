@@ -188,3 +188,35 @@ _filter() {
   [ "$status" -eq 0 ]
   [ "$output" = '[[1,2,3,4],[1,2,3,4],[1],[1,2],[1,2,3,4],[2]]' ]
 }
+
+@test "TEAM_COLUMNS and MINE_COLUMNS are board.columns' keys, labels and order" {
+  _cols "[...m.TEAM_COLUMNS.map((x, i) => ['team', x.key, x.label, i]), ...m.MINE_COLUMNS.map((x, i) => ['mine', x.key, x.label, i])]"
+  [ "$status" -eq 0 ]
+  js="$output"
+  run python3 -c "
+import json, sys
+sys.path.insert(0, '$REPO_ROOT/ai/lib')
+import board.columns
+print(json.dumps([[col.board.value, col.key, col.label, col.order] for col in board.columns.columns()]))
+"
+  [ "$status" -eq 0 ]
+  [ "$(jq -c . <<<"$js")" = "$(jq -c . <<<"$output")" ]
+}
+
+@test "laneOf: queue-lanes sends queued to In Queue and running to In Progress; Mine queued stays resting" {
+  _cols '(() => {
+    const lanes = { team: "open", mine: "awaiting-review", team_reviewing: "in-progress", mine_reviewing: "in-review" };
+    const feat = ["queue-lanes"];
+    const queued = { lanes, features: feat, queue: { state: "queued" } };
+    const running = { lanes, features: feat, queue: { state: "running" } };
+    const old = { lanes, queue: { state: "queued" } };
+    const both = { lanes, features: feat, queue: { state: "queued" }, reviewing: true };
+    return {
+      queuedTeam: m.laneOf(queued, "team"), queuedMine: m.laneOf(queued, "mine"),
+      runningTeam: m.laneOf(running, "team"), runningMine: m.laneOf(running, "mine"),
+      oldTeam: m.laneOf(old, "team"), bothTeam: m.laneOf(both, "team"),
+    };
+  })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"queuedTeam":"in-queue","queuedMine":"awaiting-review","runningTeam":"in-progress","runningMine":"in-review","oldTeam":"open","bothTeam":"in-progress"}' ]
+}

@@ -5299,8 +5299,10 @@ Per-repo board cache: listing, status and owed JSON under cache_dir("board").
 Classify a PR row into team / mine lanes and issue badges.
 
 Python emits both the resting lanes and the reviewing overrides; a client
-picks ``lanes.*_reviewing`` when its terminals show a review running. A draft
-is not a lane.
+picks ``lanes.*_reviewing`` when its terminals show a review running (Team:
+In Progress). A queued review is Team In Queue; Mine shows a running review
+under In Review and leaves a queued one in its resting lane. A draft is not
+a lane.
 
 ### board/document.py
 
@@ -5370,6 +5372,13 @@ finished batch) is for the detail's ``ci``, ``decision`` and ``busy`` slots.
 the board document passes neither. Clients draw it as is
 (``_lib/pr_status.js`` ``presentationOf``, which only re-splices the live
 review and batch slots).
+
+### board/queue.py
+
+Read live review entries from the otto-queue ledger for the PR board.
+
+A missing, locked, corrupt, or old-schema ledger is no queue info, not an
+error. The board never writes the ledger and never waits out SQLITE_BUSY.
 
 ### board/reviews.py
 

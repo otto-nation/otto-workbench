@@ -178,7 +178,7 @@
       "document_lanes": {
         "team": "reviewed",
         "mine": "has-conflicts",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -346,7 +346,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "approved",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -459,7 +459,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "has-comments",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -584,7 +584,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -688,7 +688,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -779,7 +779,7 @@
       "document_lanes": {
         "team": "landed",
         "mine": "merged",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "merged"
       },
       "document_presentation": {
@@ -875,7 +875,7 @@
       "document_lanes": {
         "team": "landed",
         "mine": "in-queue",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-queue"
       },
       "document_presentation": {
@@ -994,7 +994,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -1119,7 +1119,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "ci-failing",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -1217,7 +1217,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -1326,7 +1326,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -1419,7 +1419,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -1457,7 +1457,7 @@
       "item": null,
       "batch_state": null,
       "lanes": {
-        "team": "in-queue",
+        "team": "in-progress",
         "mine": "in-review"
       },
       "presentation": {
@@ -1505,7 +1505,7 @@
       "document_lanes": {
         "team": "review-ready",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -1580,7 +1580,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -1652,7 +1652,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -1714,7 +1714,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {
@@ -1786,7 +1786,7 @@
       "document_lanes": {
         "team": "open",
         "mine": "awaiting-review",
-        "team_reviewing": "in-queue",
+        "team_reviewing": "in-progress",
         "mine_reviewing": "in-review"
       },
       "document_presentation": {

@@ -113,3 +113,17 @@ print(json.dumps($1))
   [ "$status" -eq 0 ]
   [ "$output" = '[{"kind":"status","status":"running","text":"queued"},{"kind":"status","status":"none","text":"skipped closed"}]' ]
 }
+
+@test "presentationOf: queue-lanes shows queued or reviewing; a terminal and a queue entry count once" {
+  _js "(() => {
+    const p = { issues: [], badges: [], row_badges: [], review: null, busy: null };
+    const feat = ['queue-lanes'];
+    const queued = m.presentationOf({ presentation: p, features: feat, queue: { state: 'queued' } });
+    const running = m.presentationOf({ presentation: p, features: feat, queue: { state: 'running' } });
+    const both = m.presentationOf({ presentation: p, features: feat, queue: { state: 'queued' }, reviewing: true });
+    const old = m.presentationOf({ presentation: p, reviewing: true });
+    return [queued.review, running.review, both.review, old.review, both.row_badges.length, s.STATUS_KINDS.includes(queued.review.status), s.STATUS_KINDS.includes(running.review.status)];
+  })()"
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"kind":"status","status":"none","text":"queued"},{"kind":"status","status":"running","text":"reviewing"},{"kind":"status","status":"running","text":"reviewing"},{"kind":"status","status":"running","text":"Review running"},1,true,true]' ]
+}

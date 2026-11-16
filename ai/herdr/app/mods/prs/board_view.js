@@ -264,11 +264,16 @@ export default class PrsBoard extends View {
   // The detail replaces the board in this same pane; Back returns. The card is looked up in the
   // live state on every render, so its runs and busy state follow refreshes; the clicked copy only
   // stands in if the PR drops out of the list.
-  // `tab` names the detail tab to open on (main.js reads pendingTab); omitted, the detail chooses.
+  // `tab` names the detail tab to open on; omitted, the detail keeps its current tab.
   openDetail(pr, cx, tab = null) {
-    this.pendingTab = tab;
+    this.onDetailSwitch?.(pr);
     this.selectedId = cardId(pr);
     this.selectedPr = pr;
+    if (tab) this.tab = tab;
+    if (tab === "batch") {
+      const item = this.workflows.itemFor(pr.repoSlug, pr.number);
+      if (item) this.workflows.openItem(item.key);
+    }
     this.acx.notify();
   }
 

@@ -44,8 +44,29 @@ export default class PrsBoard extends Board {
     this.models = new ModelPicker(this.acx, REVIEW_PHASES, "review-models", () => (
       fetchChoices(exec, { on: this.detail?.on ?? null, cwd: this.detail?.cwd })
     ));
+    this.onDetailSwitch = (pr) => {
+      const prev = this.detail;
+      if (prev && (prev.repo !== pr.repoSlug || prev.number !== pr.number)) {
+        this.resetDetailState();
+      }
+    };
     this.workflows.onRun = (cmd) => this.runBatchCommand(cmd);
     this.workflows.onTerminal = () => this.openTerminal();
+  }
+
+  // Handler-time only: InputState.set_value and notify are illegal during render.
+  resetDetailState() {
+    this.openKey = null;
+    this.confirm = null;
+    this.note = null;
+    this.live = null;
+    this.finishedId = null;
+    this.output = null;
+    this.tab = "history";
+    this.openFile = null;
+    this.diff = null;
+    this.opening = false;
+    this.models.reset();
   }
 
   runOf(key) {
@@ -334,20 +355,10 @@ export default class PrsBoard extends Board {
     this.acx.notify();
   }
 
-  // Switching PRs starts a clean slate for the transient action state.
+  // Assigns this.detail (pure data). PR switches reset in openDetail, not here.
   detailView(pr, cx) {
-    const prev = this.detail;
     const item = this.workflows.itemFor(pr.repoSlug, pr.number);
     this.detail = detailOf(pr, { item });
-    if (prev && (prev.repo !== this.detail.repo || prev.number !== this.detail.number)) {
-      this.openKey = null; this.confirm = null; this.note = null; this.live = null; this.finishedId = null;
-      this.output = null; this.tab = "history"; this.openFile = null; this.diff = null; this.opening = false;
-      this.models.clear();
-    }
-    if (this.pendingTab) {
-      this.tab = this.pendingTab;
-      this.pendingTab = null;
-    }
     const files = this.ensureFiles(this.detail);
     // The header counts what people wrote: once the files are known, generated ones drop out.
     if (files?.ok) {
@@ -360,7 +371,10 @@ export default class PrsBoard extends Board {
     }
     const file = this.openFile && files?.files?.find((f) => f.path === this.openFile);
     if (!item && this.tab === "batch") this.tab = "history";
-    if (item && this.tab === "batch") this.workflows.openItem(item.key);
+    if (item && this.tab === "batch" && this.workflows.openKey !== item.key) {
+      const key = item.key;
+      this.acx.spawn(async () => { this.workflows.openItem(key); });
+    }
     return renderDetail(this.detail, {
       nowMs: Date.now(),
       openKey: this.openKey,
@@ -399,7 +413,13 @@ export default class PrsBoard extends Board {
         maxH: Math.max(LAYOUT.bodyMaxH, Math.round((this.size?.height ?? 0) * 0.4)),
       }),
       tab: this.tab,
-      onTab: (tab) => { this.tab = tab; this.openFile = null; this.diff = null; this.acx.notify(); },
+      onTab: (tab) => {
+        this.tab = tab;
+        this.openFile = null;
+        this.diff = null;
+        if (tab === "batch" && item) this.workflows.openItem(item.key);
+        this.acx.notify();
+      },
       filesBody: file && (this.diff || file.loadingPatch)
         ? renderDiff(file, this.diff, { onBack: () => { this.openFile = null; this.diff = null; this.acx.notify(); } })
         : renderFileList(files, { onPick: (path) => this.pickFile(path) }),

@@ -1,11 +1,11 @@
 // Compact filter bar: Show / Repo / Label / Author popovers, tags, Clear.
 // State transitions live in _lib/filters.js; this module only draws barModel().
 import { div } from "gpui-kit";
-import { h_flex, v_flex, Popover, Input, InputState } from "gpui-base";
+import { h_flex, v_flex, Popover, InputState } from "gpui-base";
 import { theme } from "herdr";
 import { searchOptions } from "./_lib/filters.js";
 import { SP, RADIUS, CONTROL, LAYOUT } from "./_lib/tokens.js";
-import { ghostButton, checkRow, popoverSurface, text, sectionLabel } from "./_ui/ui.js";
+import { ghostButton, textInput, checkRow, popoverSurface, text, sectionLabel } from "./_ui/ui.js";
 
 export class FilterBar {
   constructor(acx, query = "") {
@@ -47,8 +47,7 @@ export class FilterBar {
     const t = theme();
     return h_flex().id("prs-query").flex_none().h(CONTROL.h).gap(SP.xs).items_center()
       .child(
-        Input.new(this.prSearch).w(LAYOUT.searchW).h(CONTROL.h).px(SP.sm).rounded(RADIUS.control)
-          .border_1().border_color(t.input).bg(t.background),
+        textInput(this.prSearch, { width: LAYOUT.searchW }),
       )
       .when(Boolean(model.queryActive), (e) => e.child(
         ghostButton("filters-query-clear", "×", () => {
@@ -117,8 +116,7 @@ export class FilterBar {
     }
     return popoverSurface()
       .when(Boolean(f.search), (e) => e.child(
-        Input.new(this.search).h(CONTROL.h).px(SP.sm).rounded(RADIUS.control)
-          .border_1().border_color(t.input).bg(t.background),
+        textInput(this.search),
       ))
       .child(v_flex().id(`facet-${f.key}-list`).max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar()
         .children(kids));

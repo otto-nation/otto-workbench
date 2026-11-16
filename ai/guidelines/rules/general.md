@@ -40,6 +40,18 @@ The recommendation is the option you would still defend a year from now, not the
 - When the easiest option genuinely is the best long-term one, say why it is — that it is easy is not the argument
 - If the long-term fix is larger than the task, present it anyway as the recommendation, with its size and what it would touch, and offer the smaller fix as the alternative. Scoping it down is the user's call, not a filter applied before they see it
 - The reuse ladder below and `reuse.level` govern how a chosen design is *built* — reuse before writing, shortest diff that implements it. They never choose *which* design to recommend
+- "Long-term" means removing the cause of a defect that exists, not preparing for ones that might. A design that defends against an unobserved scenario is not the long-term option, it is the speculative one (see § Solve the Confirmed Problem below)
+
+## Solve the Confirmed Problem
+
+Design for what is true now: the failure that was reproduced, the requirement that was stated, the caller that exists. A scenario nobody has observed is not a requirement, and handling it is cost with no benefit you can show.
+
+- Every addition must trace back to evidence: a reproduced failure, a stated requirement, or a line of code that exercises it. "What if X happens", "in case we later need Y", "to be safe" are not evidence. If you cannot point to it, leave it out
+- No abstraction without a second real consumer. No config knob, flag, plugin point, retry, cache, fallback, or extension hook for a case nobody has asked for
+- Diagnose the failure in front of you. Name the hypotheses you have evidence for, test them, and stop at the one that explains the symptom. Do not list every conceivable cause, and do not ship a fix for one you never confirmed
+- Leave unconfirmed risks out of the plan. If one is real enough to mention, give it one line with what would confirm it, and let the user decide
+- When something is deliberately left simple, a `ceiling:` marker with its trigger is the whole answer. Do not build the upgrade ahead of the trigger
+- A finding that turns on a hypothetical input or environment is a question, not a must-fix
 
 ## Planning
 

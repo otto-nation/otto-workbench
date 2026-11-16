@@ -9,7 +9,7 @@ import { sessionControl } from "./workflows_view.js";
 import {
   segment, segmented, button, scrollInset, card, placeholder, caption,
   paneBar, pinned, selectableCode, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
-  badgeRow, statsRow, tag,
+  badgeRow, statsRow, tag, backButton,
 } from "./_ui/ui.js";
 
 function reviewBody(id, body) {
@@ -113,13 +113,12 @@ export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewStat
   const p = d.presentation;
   const marks = [p.ci, p.decision, ...p.detail_issues, p.review, p.busy].filter(Boolean);
   return paneBar().p(SP.lg)
-    .child(h_flex().gap(SP.sm).flex_wrap().items_center().justify_between()
-      .child(button("detail-back", "← Back", () => onClose()))
-      .child(h_flex().gap(SP.sm).flex_wrap()
-        .child(button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled, reason: reviewState.reason }))
-        .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))
-        .when(Boolean(targetSession), (e) => e.child(sessionControl("open-session-target", targetSession)))))
-    .child(h_flex().gap(SP.sm).items_start().min_w(0)
+    .child(h_flex().gap(SP.sm).flex_wrap().items_center()
+      .child(button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled, reason: reviewState.reason }))
+      .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))
+      .when(Boolean(targetSession), (e) => e.child(sessionControl("open-session-target", targetSession))))
+    .child(h_flex().gap(SP.xs).items_start().min_w(0)
+      .child(backButton("detail-back", () => onClose()))
       .child(text("body", p.ref, t.muted).flex_none())
       .child(type(div().flex_1().min_w(0).max_h(LAYOUT.titleMaxH).overflow_hidden(), "title").child(p.title))
       .children(p.tags.map(tag)))

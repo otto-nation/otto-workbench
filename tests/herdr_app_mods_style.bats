@@ -105,6 +105,19 @@ teardown() {
   grep -q 'selectableCode(`step-log-' "$MODS/prs/workflows_view.js"
 }
 
+@test "back is one backButton, first in the header beside the title" {
+  grep -qF 'export function backButton(' "$MODS/_ui/ui.js"
+  grep -qF 'backButton("batch-back", onBack)' "$MODS/prs/batch_page.js"
+  grep -qF 'backButton("detail-back"' "$MODS/prs/detail.js"
+  grep -qF 'backButton("diff-back", onBack, "Files")' "$MODS/prs/files_view.js"
+  run grep -nF 'button("batch-back"' "$MODS/prs/batch_page.js"
+  [ "$status" -eq 1 ]
+  run grep -nF 'button("detail-back"' "$MODS/prs/detail.js"
+  [ "$status" -eq 1 ]
+  run grep -nF 'button("diff-back"' "$MODS/prs/files_view.js"
+  [ "$status" -eq 1 ]
+}
+
 @test "mods never use TextView.scrollable: a self-scrolling TextView lays out at zero in an auto-height parent" {
   run grep -rnF --include='*.js' '.scrollable(' "$MODS"
   [ "$status" -eq 1 ]

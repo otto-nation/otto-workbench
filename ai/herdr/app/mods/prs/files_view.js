@@ -6,7 +6,7 @@ import { theme } from "herdr";
 import { MAX_LINES } from "./_lib/diff.js";
 import { DIFF, fileMarkKind } from "./_lib/status.js";
 import { SP, ROW_H, LAYOUT, CONTROL, FILL, MONO } from "./_lib/tokens.js";
-import { button, addStat, delStat, hoverRow, placeholder, caption, scrollBody, type, text, errorLine } from "./_ui/ui.js";
+import { backButton, addStat, delStat, hoverRow, placeholder, caption, scrollBody, type, text, errorLine } from "./_ui/ui.js";
 
 function fileMarkColor(t, s) {
   return t[DIFF[fileMarkKind(s)]];
@@ -67,9 +67,10 @@ export function renderDiff(file, diff, { onBack }) {
     : file.patchError ? file.patchError
     : file.patch == null ? "No text diff for this file (binary or too large)" : null;
   return v_flex().id("prs-diff").flex_1().min_h(0)
-    .child(h_flex().flex_none().gap(SP.sm).items_center().px(SP.lg).py(SP.sm).border_b_1().border_color(t.border)
-      .child(button("diff-back", "← Files", onBack))
-      .child(type(div().flex_1().min_w(0).truncate(), "code").child(file.path)))
+    .child(h_flex().flex_none().items_center().px(SP.lg).py(SP.sm).border_b_1().border_color(t.border)
+      .child(h_flex().gap(SP.xs).flex_1().min_w(0).items_center()
+        .child(backButton("diff-back", onBack, "Files"))
+        .child(type(div().flex_1().min_w(0).truncate(), "code").child(file.path))))
     .when(Boolean(note), (e) => e.child(placeholder(note).p(SP.lg)))
     .when(!note, (e) => e.child(type(div().flex_1().min_h(0).relative(), "code")
       .child(div().id("diff-x").size_full().overflow_x_scrollbar()

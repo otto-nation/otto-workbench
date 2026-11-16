@@ -10,7 +10,7 @@ import { SP } from "./_lib/tokens.js";
 import {
   scrollBody, button, solidButton, dangerButton, pane, pinned, checkbox,
   sectionHeading, text, type, statusText, badge, dangerColor,
-  actionBar, caption, errorLine,
+  actionBar, backButton, caption, errorLine,
 } from "./_ui/ui.js";
 import { renderRunPanel, renderRunItems } from "./workflows_view.js";
 import { loadPlaceholder, renderLoadLine } from "./load_status.js";
@@ -200,8 +200,9 @@ export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOp
   const running = renderRunning({ launcher, workflows, run });
   return pane("prs-batch")
     .child(pinned(h_flex().gap(SP.md).items_center().px(SP.lg).py(SP.md)
-      .child(button("batch-back", "← Back", onBack))
-      .child(text("heading", "Batch"))
+      .child(h_flex().gap(SP.xs).items_center()
+        .child(backButton("batch-back", onBack))
+        .child(text("heading", "Batch")))
       .when(Boolean(load?.shown), (e) => e.child(renderLoadLine(load)))))
     .child(scrollBody().id("batch-body").px(SP.lg).py(SP.lg).gap(SP.xl)
       .when(Boolean(running), (e) => e.child(running))

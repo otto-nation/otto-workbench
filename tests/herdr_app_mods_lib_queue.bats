@@ -63,7 +63,7 @@ _q() {
     process.stdout.write(JSON.stringify(q.parseStatus(stdout)));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"id":1,"kind":"job","entry_class":"light","idem_key":null,"label":null,"argv":["pr"],"cwd":null,"env_allow":[],"state":"queued","attempts":0,"exit_status":null,"log_path":null,"result":null,"pid":null,"created_at":null,"started_at":null,"finished_at":null,"not_before":null},{"id":2,"kind":"weird","entry_class":null,"idem_key":null,"label":null,"argv":["echo"],"cwd":null,"env_allow":[],"state":"mystery","attempts":0,"exit_status":null,"log_path":null,"result":null,"pid":null,"created_at":null,"started_at":null,"finished_at":null,"not_before":null}]' ]
+  [ "$output" = '[{"id":1,"kind":"job","entry_class":"light","idem_key":null,"label":null,"subject":null,"action":null,"terminal":null,"argv":["pr"],"cwd":null,"env_allow":[],"state":"queued","attempts":0,"exit_status":null,"log_path":null,"result":null,"pid":null,"created_at":null,"started_at":null,"finished_at":null,"not_before":null},{"id":2,"kind":"weird","entry_class":null,"idem_key":null,"label":null,"subject":null,"action":null,"terminal":null,"argv":["echo"],"cwd":null,"env_allow":[],"state":"mystery","attempts":0,"exit_status":null,"log_path":null,"result":null,"pid":null,"created_at":null,"started_at":null,"finished_at":null,"not_before":null}]' ]
 }
 
 @test "busy (exit 75) returns the soft shape" {
@@ -136,6 +136,15 @@ _q() {
   '
   [ "$status" -eq 0 ]
   [ "$output" = '["pr batch",null]' ]
+}
+
+@test "parseStatus keeps subject, action and terminal when the ledger carries them" {
+  _q '
+    const rows = q.parseStatus("{\"id\":1,\"state\":\"queued\",\"subject\":\"acme/box#7\",\"action\":\"review\",\"terminal\":\"pane-1\"}\n{\"id\":2,\"state\":\"queued\"}");
+    process.stdout.write(JSON.stringify(rows.map((r) => [r.subject, r.action, r.terminal])));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["acme/box#7","review","pane-1"],[null,null,null]]' ]
 }
 
 @test "this machine runs otto-queue and the log tail directly, with no remote preamble" {

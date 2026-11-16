@@ -64,7 +64,6 @@ its killed ticket, have the child inherit the lease and slot descriptors.
 from __future__ import annotations
 
 import contextlib
-import math
 import os
 import random
 import signal
@@ -308,10 +307,9 @@ def poll_delay(waited_s: float, rng, poll_s: float = POLL_S) -> float:
         base = poll_s
     else:
         steps = int((waited_s - FAST_WAIT_S) / poll_s)
-        # Stop doubling once the cap is reached: an unbounded exponent overflows
-        # float conversion after about a thousand doublings of a long wait.
-        doublings_to_cap = max(0, math.ceil(math.log2(POLL_CAP_S / poll_s)))
-        base = min(poll_s * (2 ** min(steps, doublings_to_cap)), POLL_CAP_S)
+        # Bound the exponent: an unbounded one overflows float conversion after
+        # about a thousand doublings of a long wait. 2**64 is far past the cap.
+        base = min(poll_s * (2 ** min(steps, 64)), POLL_CAP_S)
     return min(base * rng.uniform(0.8, 1.2), POLL_CAP_S)
 
 

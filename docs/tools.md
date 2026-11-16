@@ -44,6 +44,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `workbench-export` | Export workbench Claude configs as a self-contained tarball, filtered by profile |
 | `otto-workbench` | Manage your workbench developer environment |
 | `mem-analyze` | macOS memory analysis report — pressure, swap usage, top processes, per-user totals |
+| `host-health` | One machine's health as JSON or text — load, memory, disk, processes, heavy commands, queue |
 | `wt-cleanup` | Remove stale git worktrees — merged branches and optionally age-based cleanup |
 | `resolve-branch` | Resolve a fuzzy branch name to an exact git branch — tries exact, worktree, separator, fuzzy |
 | `resolve-workspace` | Print the workspace directory holding a repository's plans and specs — <container>/workspace, outside every checkout |
@@ -179,6 +180,44 @@ get-secret
 |---------------------|-------------|---------|
 | `AWS_REGION` | Target region | `us-east-1` |
 | `AWS_PROFILE` | Credential profile | ambient credential chain |
+
+### `host-health`
+
+Report one machine's health: load, memory, disk, processes, heavy commands and the queue.
+
+```
+host-health [--json] [--reaper]
+```
+
+Prints a short summary, or one JSON object with `--json`. It is meant to be
+cheap enough to poll every few seconds on a machine that is already struggling:
+no Python, one `ps`, one `df` per filesystem, and `otto-queue status` only
+when it is installed. A section that cannot be read is `null`, never an
+error, so a host missing a tool still answers and the reader decides.
+
+| Flag | Description |
+|------|-------------|
+| `--json` | One JSON object instead of text |
+| `--reaper` | Also read the reaper's activity from the trail (starts Python; leave it out of a poll) |
+| `-h`, `--help` | Show help |
+
+JSON fields: `host`, `at` (UTC), `cores`, `load` (`m1`, `m5`, `m15`), `mem`
+(`total_mb`, `available_mb`, `swap_used_mb`), `disk` (`home` and `docker`, each
+`{fs, mount, size_mb, used_mb}`), `procs` (`count`, `zombies`, `top_cpu`,
+`top_mem`: `{pid, user, age_s, cpu, mem, command}`), `heavy` (live counts of
+`golangci-lint`, `go`, `gh`, `tasks` — the commands `maintenance/bin/reap-hung`
+reaps), `queue` (`{running, queued}`, `{busy: true}` while the ledger is
+locked, null without otto-queue) and, with `--reaper`, `reaper` (`{last_at,
+signals_24h}`).
+
+Env:
+  HOST_HEALTH_PROC    directory standing in for /proc (tests)
+  HOST_HEALTH_OS      Linux or Darwin, instead of uname -s (tests)
+  HOST_HEALTH_DOCKER  Docker data root to measure; default ~/.local/share/docker
+
+Exit codes:
+  0  The report was printed, however many sections were null.
+  2  Usage error, or jq is missing.
 
 ### `lint-sweep`
 

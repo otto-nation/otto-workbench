@@ -105,11 +105,12 @@ mem_linux() {
 }
 
 mem_darwin() {
-  local bytes page free swap
+  local bytes page free swap vm
   bytes="$(sysctl -n hw.memsize 2> /dev/null || true)"
   if [[ ! "$bytes" =~ ^[0-9]+$ ]]; then echo null; return 0; fi
-  page="$(vm_stat 2> /dev/null | sed -n 's/.*page size of \([0-9]*\) bytes.*/\1/p')"
-  free="$(vm_stat 2> /dev/null | awk '/^Pages (free|inactive|speculative):/ { gsub("\\.", "", $NF); s += $NF } END { print s + 0 }')"
+  vm="$(vm_stat 2> /dev/null || true)"
+  page="$(sed -n 's/.*page size of \([0-9]*\) bytes.*/\1/p' <<< "$vm")"
+  free="$(awk '/^Pages (free|inactive|speculative):/ { gsub("\\.", "", $NF); s += $NF } END { print s + 0 }' <<< "$vm")"
   swap="$(sysctl -n vm.swapusage 2> /dev/null | sed -n 's/.*used = \([0-9]*\).*/\1/p')"
   printf '{"total_mb":%d,"available_mb":%d,"swap_used_mb":%d}' \
     $((bytes / 1048576)) $((free * ${page:-16384} / 1048576)) "${swap:-0}"
@@ -158,7 +159,7 @@ procs() {
        top_cpu: ($p | sort_by(-.cpu) | .[:$n] | map(del(.stat))),
        top_mem: ($p | sort_by(-.mem) | .[:$n] | map(del(.stat))),
        heavy: ($p | reduce .[] as $x ({"golangci-lint": 0, go: 0, gh: 0, tasks: 0};
-         if has($x.command) then .[$x.command] += 1 else . end))}'
+         if has($x.command) then .[$x.command] += 1 else . end))}' 2> /dev/null || echo null
 }
 
 queue() {

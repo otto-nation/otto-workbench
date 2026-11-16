@@ -182,9 +182,11 @@ def test_full_document_carries_its_features(tmp_path, monkeypatch):
     doc = build(Phase.LISTING, [found.path])
     assert doc["features"] == [
         "review-publish", "batch-session", "target-session", "queue-lanes", "cache-age",
+        "worktrees",
     ]
     assert list(FEATURES) == [
         "review-publish", "batch-session", "target-session", "queue-lanes", "cache-age",
+        "worktrees",
     ]
 
 

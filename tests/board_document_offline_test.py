@@ -3,7 +3,15 @@
 from board.cache import write
 from board.document import build
 from board.model import Phase
-from board_document_support import board_env, pull_facts
+from board_document_support import (
+    OTHER_BRANCH,
+    ON_BRANCH,
+    add_on_branch_worktree,
+    assert_worktree_rows,
+    board_env,
+    pull_facts,
+    seed_checkout,
+)
 
 
 def _offline_gh_raises(monkeypatch):
@@ -110,3 +118,38 @@ def test_offline_queued_has_no_cached_at(tmp_path, monkeypatch):
     doc = build(Phase.LISTING, [found.path], offline=True)
     assert doc["repos"][0]["phase"] == "queued"
     assert doc["repos"][0]["cached_at"] is None
+
+
+def test_offline_worktree_is_read_time_not_cache(tmp_path, monkeypatch):
+    repo, checkout = seed_checkout(tmp_path)
+    found = board_env(tmp_path, monkeypatch, checkout=checkout)
+    write(found.key, Phase.LISTING, {
+        "rows": [
+            {
+                "number": 7,
+                "head_sha": "a",
+                "title": "T",
+                "author": "me",
+                "repo": "acme/box",
+                "branch": ON_BRANCH,
+            },
+            {
+                "number": 8,
+                "head_sha": "b",
+                "title": "U",
+                "author": "you",
+                "repo": "acme/box",
+                "branch": OTHER_BRANCH,
+            },
+        ],
+    })
+    _offline_gh_raises(monkeypatch)
+    before = build(Phase.LISTING, [found.path], offline=True)
+    assert {row["number"]: row["worktree"] for row in before["rows"]} == {
+        7: None,
+        8: None,
+    }
+
+    add_on_branch_worktree(repo, tmp_path)
+    after = build(Phase.LISTING, [found.path], offline=True)
+    assert_worktree_rows(after, repo)

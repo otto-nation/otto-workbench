@@ -12,6 +12,8 @@ export const LABEL_APP = 'otto.app';
 export const APP_NAME = 'pr';
 // A batch run's pi session terminal: the session id `pr batch session --json` named.
 export const LABEL_SESSION = 'otto.session';
+// Worktree a session claims. Written by ai/lib/pr/agent_worktree.py; overrides the pane cwd.
+export const LABEL_WORKTREE = 'otto.worktree';
 
 export function prKey(repo, n) {
   return `${repo}#${n}`;

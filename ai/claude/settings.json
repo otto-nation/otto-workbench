@@ -54,6 +54,10 @@
           {
             "type": "command",
             "command": "bash $HOME/.local/bin/record-filed-issue"
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.local/bin/report-agent-worktree"
           }
         ]
       },
@@ -63,6 +67,10 @@
           {
             "type": "command",
             "command": "file_path=$(jq -r '.tool_input.file_path // empty'); if [[ \"$file_path\" == *.sh ]]; then shellcheck \"$file_path\" 2>&1 | head -20 || true; fi"
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.local/bin/report-agent-worktree"
           }
         ]
       }
@@ -78,6 +86,10 @@
           {
             "type": "command",
             "command": "bash $HOME/.local/bin/claude-session-lock --acquire"
+          },
+          {
+            "type": "command",
+            "command": "bash $HOME/.local/bin/report-agent-worktree --clear"
           }
         ]
       }

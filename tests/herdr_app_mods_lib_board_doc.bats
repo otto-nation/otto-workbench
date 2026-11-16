@@ -62,6 +62,18 @@ _js() {
   [ "$output" = '{"state":"queued","entry":9,"terminal":"t1"}' ]
 }
 
+@test "rowToPr maps worktree; absent is null" {
+  _js '
+    process.stdout.write(JSON.stringify([
+      d.rowToPr({ ...doc.rows[0], worktree: "/wt/a" }).worktree,
+      d.rowToPr(doc.rows[0]).worktree,
+      d.rowToPr({ ...doc.rows[0], worktree: undefined }).worktree,
+    ]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["/wt/a",null,null]' ]
+}
+
 @test "mergeRows: complete replaces; a patch updates by repo and number and appends new rows" {
   _js '
     const a = [{ repoSlug: "o/n", number: 1, v: "old" }, { repoSlug: "o/n", number: 2, v: "keep" }];

@@ -3593,6 +3593,50 @@ Like `pr.fix`, this sits below the domains: it imports the standard library and
 nothing else from ``ai/lib``, so the shared fix machinery can depend on it
 without pulling a review or comments layer in behind it.
 
+### pr/agent_worktree.py
+
+Which worktree, other than its own, an agent's tool call worked in.
+
+`ToolCall.from_payload(obj, env)` reads one post-tool hook payload — Claude's
+shape, which the Pi extension writes too. Home is `$CLAUDE_PROJECT_DIR`, else
+the payload `cwd`; `subagent` is true when the payload carries `agent_id`.
+`candidates(call)` is pure: the paths and branches the call names, in command
+order. `resolve(path, cwd)` maps a path to the worktree holding it, spelled the
+way `git worktree list` spells it, or None. `target_worktree(call)` is the last
+candidate that resolves to a worktree other than home's, or None. `LABEL` is the
+herdr label key the answer is published under.
+
+A candidate is one of: `git -C <p>`; `--repo-dir <p>` / `--repo-dir=<p>` and
+`--worktree <p>` / `=` on any command; `cd <p>`; `wt switch [-c] <branch|path>`;
+an Edit/Write `file_path`; and the payload `cwd` when it differs from home,
+because Claude keeps a `cd` across calls. Relative paths resolve against the
+payload `cwd`. The command is split by `gh.shell_lex`, so quoted text and
+heredoc bodies are content, never candidates; a command with an unbalanced
+quote yields none.
+
+For `wt switch`, the `path` in `--format json` stdout wins when present (the
+only way to place `pr:N`); then `--path <p>`; then the branch argument, which
+is looked up with `git.topology.find_worktree_for_branch` after the command
+ran, from `wt -C <p>` when given. worktrunk shortcuts (`^`, `-`, `@`, `pr:N`,
+`mr:N`, a URL) name no branch and yield nothing without that stdout.
+
+Resolution takes the nearest existing directory (a file an Edit is about to
+create has none yet), asks `git rev-parse --show-toplevel`, and matches the
+toplevel against `worktree_entries` by realpath, so a symlinked spelling of a
+worktree resolves to the one the board document uses. A path outside any
+checkout, or in a bare container, resolves to None.
+
+`report(call, env)` publishes the target on the agent's own herdr terminal and
+returns a `ReportOutcome`. It is SKIPPED when `HC_TERMINAL_ID` is unset or
+empty, when the call is a subagent's, or when there is no target. A state file
+per (`HC_TERMINAL_SOCKET`, `HC_SCOPE`, terminal) under the workbench state dir
+debounces it: an unchanged target is UNCHANGED and runs nothing. A changed one
+runs `hc label <terminal> otto.worktree=<path>` and is LABELLED, and the state
+is written only when hc exits 0, so a FAILED label is retried on the next call.
+`clear(env)` empties the label and removes the state file. Neither raises for a
+missing hc, a timeout or an unwritable state dir. The label is sticky by design:
+returning to the home checkout leaves it, so read-only peeks do not flap it.
+
 ### pr/ci_check.py
 
 Report a branch's CI: the run's failures, classified, as a dashboard and a structured report.
@@ -9136,6 +9180,24 @@ What a knowledge base reports about itself: status, findings, index.
 ## Command entry points
 
 The top of the stack. A binary under `ai/bin/` is a shim over one module here: the argument parser, the `main(argv) -> int`, and the flow that calls everything above. Nothing imports these, so a helper parked here would never have its dependencies checked — which is why the bodies live in the packages that own their subject and only the entry point lives at layer 9.
+
+### cli/agent_worktree.py
+
+``agent-worktree`` — publish which worktree an agent works in on its herdr terminal.
+
+Usage:
+  agent-worktree report   (stdin: one post-tool hook payload, Claude's shape)
+  agent-worktree clear
+
+``report`` reads the payload from stdin and labels ``$HC_TERMINAL_ID`` with
+``otto.worktree=<path>`` when the call targeted a worktree other than the
+agent's own and that differs from the last one published; ``clear`` empties
+the label. Both are ``pr.agent_worktree``'s; this module only parses and maps.
+
+Always exits 0, prints nothing, and never raises: it runs from both harnesses'
+post-tool hooks (``ai/bin/report-agent-worktree``), and a hook that fails would
+report a failure for a tool call that already succeeded. Malformed JSON, an
+unknown action, a missing ``hc`` and any exception are all a silent 0.
 
 ### cli/ai_usage_log.py
 

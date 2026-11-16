@@ -86,6 +86,20 @@ The Linear write tools' text fields (`LINEAR_TEXT_TOOLS`) go to `owners-check --
 judged against the group of the session's checkout. oneshot-publish-guard refuses
 both sets in one-shot sessions.
 
+## agent-worktree
+
+Publishes the worktree an interactive session works in on its herdr terminal
+(`hc label $HC_TERMINAL_ID otto.worktree=<path>`), so the Space PRs sidebar can
+name the agent on each PR. `tool_result` for bash, edit and write sends a
+Claude-shaped payload (`detect.ts` `payloadFor`) to `ai/bin/report-agent-worktree`
+unawaited; `session_start` sends `--clear`. Only in `tui` with `HC_TERMINAL_ID`
+set (`shouldReport`), so subagents and `pr` pipeline sessions never label. The
+hook is the one writer shared with Claude Code's `PostToolUse`/`SessionStart`
+entries in `ai/claude/settings.json`; which worktree a call targeted is
+`ai/lib/pr/agent_worktree.py`'s answer, and `tests/pi_extensions_agent_worktree.bats`
+feeds both payload shapes through it. A feature, not a guard: its Claude Code twin
+is those settings entries.
+
 ## run-session
 
 The pi session of one `pr batch` run (`pr batch session RUN_ID`,

@@ -123,25 +123,44 @@ def worktree_entries(cwd: str | None = None) -> list[WorktreeEntry]:
     return [entry for entry in parsed if entry]
 
 
-def find_worktree_for_branch(
-    branch: str, cwd: str | None = None,
-) -> Path | None:
-    """Find the worktree git reports as checked out on *branch*.
+@dataclass(frozen=True)
+class WorktreeIndex:
+    """Every worktree a branch resolves to, from one ``git worktree list``.
 
-    A detached worktree mid-rebase of *branch* counts as on it. Then falls
-    back to a worktree whose directory name matches the sanitized branch
-    (slashes to dashes) so detached-HEAD worktrees are still found — but only
-    when git reports no branch for it, and not when it is mid-rebase of some
-    other branch. A worktree named ``main/`` with someone else's branch
-    checked out is not the main worktree, and callers that reset or check out
-    what they get back would clobber that branch.
+    ``branches`` maps a branch to the worktree git reports on it, or that is
+    mid-rebase of it. ``detached_names`` maps a detached, not-rebasing
+    worktree's directory name to its path — the fallback for a worktree whose
+    HEAD was detached but whose directory is named after the branch.
+    """
+
+    branches: dict[str, Path]
+    detached_names: dict[str, Path]
+
+    def for_branch(self, branch: str) -> Path | None:
+        """The worktree on *branch*, else a detached one named after it, else None."""
+        hit = self.branches.get(branch)
+        if hit is not None:
+            return hit
+        return self.detached_names.get(branch.replace("/", "-"))
+
+
+def worktrees_by_branch(cwd: str | None = None) -> WorktreeIndex:
+    """Index the worktrees by the branch each is on (see ``WorktreeIndex``).
+
+    A detached worktree mid-rebase of a branch counts as on it. A detached
+    worktree's directory name is only a fallback, and only when git reports no
+    branch for it and it is not mid-rebase of some other branch. A worktree
+    named ``main/`` with someone else's branch checked out is not the main
+    worktree, and callers that reset or check out what they get back would
+    clobber that branch.
 
     Use find_worktree_dir_named when you only need a working directory.
     """
     entries = worktree_entries(cwd)
+    branches: dict[str, Path] = {}
     for entry in entries:
-        if entry.branch == branch:
-            return entry.path
+        if entry.branch is not None:
+            branches.setdefault(entry.branch, entry.path)
     # One `rev-parse --git-dir` per detached entry, kept for the name pass below.
     rebasing = {
         entry.path: rebasing_branch(str(entry.path))
@@ -149,13 +168,20 @@ def find_worktree_for_branch(
         if entry.branch is None
     }
     for path, rebasing_onto in rebasing.items():
-        if rebasing_onto == branch:
-            return path
-    sanitized = branch.replace("/", "-")
+        if rebasing_onto is not None:
+            branches.setdefault(rebasing_onto, path)
+    detached_names: dict[str, Path] = {}
     for path, rebasing_onto in rebasing.items():
-        if path.name == sanitized and rebasing_onto is None:
-            return path
-    return None
+        if rebasing_onto is None:
+            detached_names.setdefault(path.name, path)
+    return WorktreeIndex(branches=branches, detached_names=detached_names)
+
+
+def find_worktree_for_branch(
+    branch: str, cwd: str | None = None,
+) -> Path | None:
+    """The worktree on *branch* (see ``worktrees_by_branch``), or None."""
+    return worktrees_by_branch(cwd).for_branch(branch)
 
 
 def find_worktree_dir_named(

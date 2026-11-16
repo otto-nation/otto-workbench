@@ -89,6 +89,9 @@ _launchd_status() {
 # ── Linux (systemd user timer) ───────────────────────────────────────────────
 
 _SYSTEMD_UNIT="otto-workbench-maintenance"
+# The reaper rides the maintenance schedule: installed, started, stopped and
+# refreshed with it, on a fixed five-minute calendar of its own.
+_SYSTEMD_REAPER_UNIT="otto-workbench-reaper"
 _SYSTEMD_USER_DIR="$HOME/.config/systemd/user"
 
 _systemd_is_active() {
@@ -152,8 +155,16 @@ _systemd_install() {
   sed -e "s|__WORKBENCH_DIR__|$(_maintenance_run_dir)|g" \
     "$svc_template" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.service"
   printf '%s\n' "$rendered" > "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer"
+  _systemd_reaper_render service > "$_SYSTEMD_USER_DIR/${_SYSTEMD_REAPER_UNIT}.service"
+  _systemd_reaper_render timer > "$_SYSTEMD_USER_DIR/${_SYSTEMD_REAPER_UNIT}.timer"
 
   systemctl --user daemon-reload
+}
+
+# _systemd_reaper_render service|timer — prints one reaper unit as installed.
+_systemd_reaper_render() {
+  sed -e "s|__WORKBENCH_DIR__|$(_maintenance_run_dir)|g" \
+    "$MAINTENANCE_SRC_DIR/systemd/${_SYSTEMD_REAPER_UNIT}.$1.template"
 }
 
 _systemd_start() {
@@ -164,12 +175,16 @@ _systemd_start() {
   # schedule left elapsed. With a calendar schedule a restart fires at once only
   # when Persistent finds a slot missed since the last trigger.
   systemctl --user restart "${_SYSTEMD_UNIT}.timer"
+  systemctl --user enable "${_SYSTEMD_REAPER_UNIT}.timer"
+  systemctl --user restart "${_SYSTEMD_REAPER_UNIT}.timer"
 }
 
 _systemd_stop() {
   if _systemd_is_active; then
     systemctl --user disable --now "${_SYSTEMD_UNIT}.timer"
-    rm -f "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}".{service,timer}
+    systemctl --user disable --now "${_SYSTEMD_REAPER_UNIT}.timer" 2>/dev/null || true
+    rm -f "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}".{service,timer} \
+      "$_SYSTEMD_USER_DIR/${_SYSTEMD_REAPER_UNIT}".{service,timer}
     systemctl --user daemon-reload
     return 0
   fi
@@ -224,7 +239,11 @@ _systemd_schedule_current() {
     "$MAINTENANCE_SRC_DIR/systemd/${_SYSTEMD_UNIT}.service.template" \
     | cmp -s - "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.service" || return 1
   _systemd_render_timer "$interval" \
-    | cmp -s - "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer"
+    | cmp -s - "$_SYSTEMD_USER_DIR/${_SYSTEMD_UNIT}.timer" || return 1
+  _systemd_reaper_render service \
+    | cmp -s - "$_SYSTEMD_USER_DIR/${_SYSTEMD_REAPER_UNIT}.service" || return 1
+  _systemd_reaper_render timer \
+    | cmp -s - "$_SYSTEMD_USER_DIR/${_SYSTEMD_REAPER_UNIT}.timer"
 }
 
 # maintenance_refresh_schedule — re-installs an installed maintenance schedule

@@ -155,9 +155,38 @@ _plist() {
   _lib _systemd_render_timer 43200
   [ "$status" -eq 0 ]
   printf '%s\n' "$output" > "$TIMER"
+  _install_reaper_units
   _refresh linux-gnu
   [ "$status" -eq 0 ]
   [ ! -e "$CALLS" ]
+}
+
+# _install_reaper_units — the reaper pair as the templates render it for STABLE.
+_install_reaper_units() {
+  local unit="$HOME/.config/systemd/user/otto-workbench-reaper"
+  sed -e "s|__WORKBENCH_DIR__|$STABLE|g" \
+    "$REPO_ROOT/maintenance/systemd/otto-workbench-reaper.service.template" > "$unit.service"
+  cp "$REPO_ROOT/maintenance/systemd/otto-workbench-reaper.timer.template" "$unit.timer"
+}
+
+@test "a maintenance schedule without the reaper units is re-installed with them" {
+  sed -e "s|__WORKBENCH_DIR__|$STABLE|g" \
+    "$REPO_ROOT/maintenance/systemd/otto-workbench-maintenance.service.template" > "$SERVICE"
+  _lib _systemd_render_timer 43200
+  printf '%s\n' "$output" > "$TIMER"
+  _refresh linux-gnu
+  [ "$status" -eq 0 ]
+  grep -q "$STABLE/maintenance/bin/reap-hung" "$HOME/.config/systemd/user/otto-workbench-reaper.service"
+  grep -Fqx 'OnCalendar=*:0/5' "$HOME/.config/systemd/user/otto-workbench-reaper.timer"
+  grep -qx "systemctl --user enable otto-workbench-reaper.timer" "$CALLS"
+  grep -qx "systemctl --user restart otto-workbench-reaper.timer" "$CALLS"
+}
+
+@test "the reaper timer is a wall-clock schedule that does not catch up" {
+  local template="$REPO_ROOT/maintenance/systemd/otto-workbench-reaper.timer.template"
+  grep -Fqx 'OnCalendar=*:0/5' "$template"
+  run ! grep -q '^Persistent=' "$template"
+  run ! grep -q '^On\(Active\|UnitActive\|Boot\|Startup\)Sec=' "$template"
 }
 
 @test "_systemd_calendar maps hour and minute intervals" {

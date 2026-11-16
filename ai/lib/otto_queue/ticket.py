@@ -219,13 +219,18 @@ def _run_unstarted(ledger: otto_queue.ledger.Ledger, entry: Entry, request: Tick
 def _record_crash(ledger: otto_queue.ledger.Ledger, entry_id: int, exc: BaseException) -> None:
     # Terminal before the lease (and any slot) is released: a live row
     # whose lease is gone is an orphan, and reap_orphans marks it failed.
-    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-        ledger.cancel(entry_id)
-        code = exc.code if isinstance(getattr(exc, "code", None), int) and exc.code else (
-            core.proc.INTERRUPT_RETURNCODE)
-        ledger.finish(entry_id, code)
-        return
-    ledger.fail(entry_id)
+    # A LedgerError here must not replace *exc*: the original traceback is
+    # the one the caller re-raises.
+    try:
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            ledger.cancel(entry_id)
+            code = exc.code if isinstance(getattr(exc, "code", None), int) and exc.code else (
+                core.proc.INTERRUPT_RETURNCODE)
+            ledger.finish(entry_id, code)
+            return
+        ledger.fail(entry_id)
+    except otto_queue.ledger.LedgerError:
+        core.log.warn(f"otto-queue: could not record crash for entry {entry_id}")
 
 
 def run_claimed(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolution,
@@ -246,6 +251,16 @@ def run_claimed(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolut
         raise
     finally:
         res.lease.release()
+
+
+def _record_status(ledger: otto_queue.ledger.Ledger, entry_id: int,
+                   code: int) -> EntryState | None:
+    """Record *code*; on LedgerError keep the command's status rather than raising."""
+    try:
+        return ledger.finish(entry_id, code)
+    except otto_queue.ledger.LedgerError:
+        core.log.warn(f"otto-queue: could not record exit {code} for entry {entry_id}")
+        return None
 
 
 def _poll_sleep(poll_s: float) -> None:
@@ -269,14 +284,18 @@ def _run_after_wait(ledger: otto_queue.ledger.Ledger, entry_id: int,
     if wait.end is _WaitEnd.CANCELLED:
         return TicketResult(core.proc.INTERRUPT_RETURNCODE, TicketOutcome.CANCELLED, entry_id)
     if wait.end is _WaitEnd.TIMED_OUT:
-        ledger.finish(entry_id, os.EX_TEMPFAIL)
+        _record_status(ledger, entry_id, os.EX_TEMPFAIL)
         notify(f"otto-queue: entry {entry_id} found no room in {request.wait_s:g}s")
         return TicketResult(os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT, entry_id)
-    started = ledger.mark_running(entry_id, os.getpid())
+    try:
+        started = ledger.mark_running(entry_id, os.getpid())
+    except otto_queue.ledger.LedgerBusy:
+        notify(f"otto-queue: entry {entry_id} found no room in {request.wait_s:g}s")
+        return TicketResult(os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT, entry_id)
     code = _run(request, entry_id) if started else core.proc.INTERRUPT_RETURNCODE
     if not started:
         return TicketResult(code, TicketOutcome.CANCELLED, entry_id)
-    state = ledger.finish(entry_id, code)
+    state = _record_status(ledger, entry_id, code)
     outcome = TicketOutcome.CANCELLED if state is EntryState.CANCELLED else TicketOutcome.RAN
     return TicketResult(code, outcome, entry_id)
 

@@ -2,7 +2,7 @@
 // icon), checkbox, checkRow, popover surface, tag, status glyph, section label, segmented control,
 // card, list row, keyValue, gauge. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
 import { div, svg } from "gpui-kit";
-import { h_flex, v_flex, TextView, Checkbox } from "gpui-base";
+import { h_flex, v_flex, TextView, Checkbox, Input } from "gpui-base";
 import { theme, settings } from "herdr";
 import { SP, TYPE, RADIUS, CONTROL, LAYOUT, ROW_H } from "../_lib/tokens.js";
 import { STATUS, DIFF, statusOf } from "../_lib/status.js";
@@ -23,6 +23,16 @@ export function type(el, role) {
 // A line of text in a role and colour; ink unless a colour is given.
 export function text(role, content, color) {
   return type(div(), role).text_color(color ?? theme().foreground).child(content);
+}
+
+// The brand's input: outline border, rounded-md, body type, control height. `Input.new` alone
+// draws in the framework's default size, which does not match the labels around it, so every
+// field goes through here. `width` is for a field in a flex_none row, which has none of its own.
+export function textInput(state, { width = null } = {}) {
+  const t = theme();
+  const el = type(Input.new(state), "body").h(CONTROL.h).px(SP.sm).rounded(RADIUS.control)
+    .border_1().border_color(t.input).bg(t.background);
+  return width == null ? el : el.w(width);
 }
 
 // Controls stop the press so only the bare header drags the window.

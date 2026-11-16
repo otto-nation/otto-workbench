@@ -4,13 +4,13 @@
 // Choices come from `pr models --json`; an older pr, a timeout or bad JSON
 // fail open to free text.
 import { div } from "gpui-kit";
-import { h_flex, v_flex, Popover, Input, InputState } from "gpui-base";
+import { h_flex, v_flex, Popover, InputState } from "gpui-base";
 import { theme } from "herdr";
 import { invoke, readJson } from "./_lib/board_data.js";
 import { overrideSummary, REVIEW_PHASES, copyRef } from "./_lib/model_overrides.js";
 import { choicesArgv, parseChoices, phaseOptions, defaultLabel, refBlocked } from "./_lib/model_choices.js";
 import { SP, RADIUS, CONTROL, LAYOUT } from "./_lib/tokens.js";
-import { ghostButton, popoverSurface, text, caption, hoverRow, sectionLabel } from "./_ui/ui.js";
+import { ghostButton, textInput, popoverSurface, text, caption, hoverRow, sectionLabel } from "./_ui/ui.js";
 
 // Below herdr's 30 s exec cap so a hung `pr models` still settles.
 const CHOICES_TIMEOUT_MS = 25_000;
@@ -184,8 +184,7 @@ export class ModelPicker {
       .child(caption("Model for the next run, per phase. Blank uses the configured one. Review phases refuse light and Haiku models."))
       .children(this.phases.map((phase) => v_flex().gap(SP.xxs)
         .child(caption(phase))
-        .child(Input.new(this.fields.get(phase)).h(CONTROL.h).px(SP.sm)
-          .rounded(RADIUS.control).border_1().border_color(t.input).bg(t.background))))
+        .child(textInput(this.fields.get(phase)))))
       .child(div().flex_none().child(ghostButton(`${this.id}-clear`, "Clear", () => this.clear())));
   }
 
@@ -236,8 +235,7 @@ export class ModelPicker {
       for (const [i, row] of section.rows.entries()) kids.push(this.optionRow(phase, row, i));
     }
     return v_flex().gap(SP.xxs)
-      .child(Input.new(this.search).h(CONTROL.h).px(SP.sm).rounded(RADIUS.control)
-        .border_1().border_color(t.input).bg(t.background))
+      .child(textInput(this.search))
       .child(v_flex().id(`${this.id}-${phase}-list`).max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar()
         .children(kids))
       .child(this.customRow(phase));
@@ -268,7 +266,6 @@ export class ModelPicker {
     if (!this.custom && !this.isCustom(phase)) return row;
     return v_flex().gap(SP.xxs)
       .child(row)
-      .child(Input.new(this.fields.get(phase)).h(CONTROL.h).px(SP.sm)
-        .rounded(RADIUS.control).border_1().border_color(t.input).bg(t.background));
+      .child(textInput(this.fields.get(phase)));
   }
 }

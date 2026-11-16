@@ -237,6 +237,14 @@ teardown() {
 }
 
 @test "PR search input has an explicit width: an Input in a flex_none row has none of its own" {
-  grep -q 'Input.new(this.prSearch).w(LAYOUT.searchW)' "$MODS/prs/filter_bar.js"
+  grep -q 'textInput(this.prSearch, { width: LAYOUT.searchW })' "$MODS/prs/filter_bar.js"
+  grep -q 'width == null ? el : el.w(width)' "$MODS/_ui/ui.js"
   grep -q 'searchW:' "$MODS/_lib/tokens.js"
+}
+
+@test "every text field goes through textInput, which sets the body type role" {
+  grep -q 'export function textInput(' "$MODS/_ui/ui.js"
+  grep -q 'type(Input.new(state), "body")' "$MODS/_ui/ui.js"
+  run grep -rn 'Input\.new(' "$MODS" --include=*.js --exclude=ui.js
+  [ "$status" -eq 1 ]
 }

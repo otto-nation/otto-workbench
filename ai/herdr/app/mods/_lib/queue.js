@@ -3,16 +3,17 @@
  * A null `on` is this machine. Remote calls go through `invoke` with no isolate so PATH gets ~/.local/bin.
  *
  * loadStatus shapes:
- *   {ok:true, busy:true, rows:[]}  otto-queue exited 75 (ledger busy; retry next poll)
- *   {ok:true, busy:false, rows}    parsed NDJSON rows
- *   {ok:false, error}              any other failure
+ *   {ok:true, busy:true, rows:[], slots:null}  otto-queue exited 75 (ledger busy; retry next poll)
+ *   {ok:true, busy:false, rows, slots}         parsed NDJSON rows and optional slots object
+ *   {ok:false, error}                          any other failure
+ * An old otto-queue that rejects `--slots` is retried once without it; slots is then null.
  */
 
 import { durationText } from './batch.js';
 import { invoke, readJson } from './board_data.js';
 
-export function statusArgv() {
-  return ['status', '--json'];
+export function statusArgv({ slots = true } = {}) {
+  return slots ? ['status', '--json', '--slots'] : ['status', '--json'];
 }
 
 export function cancelArgv(id) {
@@ -236,18 +237,29 @@ function rowOf(raw) {
   };
 }
 
+function slotsOf(value) {
+  if (value == null || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (value.slots == null || typeof value.slots !== 'object' || Array.isArray(value.slots)) return null;
+  return value.slots;
+}
+
 // One JSON object per line, like readPages, but a bad line or non-integer id is skipped.
+// A leading slots object (no integer id) is returned separately, never as a row.
 export function parseStatus(stdout) {
   const rows = [];
+  let slots = null;
   for (const line of String(stdout ?? '').split('\n')) {
     if (line.trim() === '') continue;
     const parsed = readJson(line);
     if (!parsed.ok) continue;
     const row = rowOf(parsed.value);
-    if (row == null) continue;
-    rows.push(row);
+    if (row != null) {
+      rows.push(row);
+      continue;
+    }
+    if (slots == null) slots = slotsOf(parsed.value);
   }
-  return rows;
+  return { rows, slots };
 }
 
 // invoke maps a 75 with empty stderr to kind failed, message "exit 75".
@@ -257,13 +269,31 @@ function isBusyError(error) {
   return msg === 'exit 75' || /(^|\s)exit 75(\s|$)/.test(msg);
 }
 
+function rejectsSlotsFlag(error) {
+  if (error == null || error.kind !== 'failed') return false;
+  const msg = String(error.message ?? '');
+  return /unrecognized arguments|unrecognized option|unknown (flag|option)/i.test(msg);
+}
+
+function busyResult() {
+  return { ok: true, busy: true, rows: [], slots: null };
+}
+
 export async function loadStatus(exec, ctx) {
   const ran = await invoke(exec, ctx, 'otto-queue', statusArgv());
   if (!ran.ok) {
-    if (isBusyError(ran.error)) return { ok: true, busy: true, rows: [] };
-    return ran;
+    if (isBusyError(ran.error)) return busyResult();
+    if (!rejectsSlotsFlag(ran.error)) return ran;
+    const retry = await invoke(exec, ctx, 'otto-queue', statusArgv({ slots: false }));
+    if (!retry.ok) {
+      if (isBusyError(retry.error)) return busyResult();
+      return retry;
+    }
+    const parsed = parseStatus(retry.stdout);
+    return { ok: true, busy: false, rows: parsed.rows, slots: null };
   }
-  return { ok: true, busy: false, rows: parseStatus(ran.stdout) };
+  const parsed = parseStatus(ran.stdout);
+  return { ok: true, busy: false, rows: parsed.rows, slots: parsed.slots };
 }
 
 export async function cancelEntry(exec, ctx, id) {

@@ -22,9 +22,9 @@ _q() {
 }
 
 @test "statusArgv and cancelArgv" {
-  _q 'process.stdout.write(JSON.stringify([q.statusArgv(), q.cancelArgv(12), q.cancelArgv("7")]))'
+  _q 'process.stdout.write(JSON.stringify([q.statusArgv(), q.statusArgv({slots:false}), q.cancelArgv(12), q.cancelArgv("7")]))'
   [ "$status" -eq 0 ]
-  [ "$output" = '[["status","--json"],["cancel","12"],["cancel","7"]]' ]
+  [ "$output" = '[["status","--json","--slots"],["status","--json"],["cancel","12"],["cancel","7"]]' ]
 }
 
 @test "remote toolCall wraps otto-queue with the preamble and is not isolated" {
@@ -47,7 +47,7 @@ _q() {
     }))));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"cmd":"sh","dashc":"-c","preamble":true,"isolate":false,"inner":["sh","otto-queue","status","--json"],"cwd":null,"on":"homelab"},{"cmd":"sh","dashc":"-c","preamble":true,"isolate":false,"inner":["sh","otto-queue","cancel","3"],"cwd":null,"on":"homelab"}]' ]
+  [ "$output" = '[{"cmd":"sh","dashc":"-c","preamble":true,"isolate":false,"inner":["sh","otto-queue","status","--json","--slots"],"cwd":null,"on":"homelab"},{"cmd":"sh","dashc":"-c","preamble":true,"isolate":false,"inner":["sh","otto-queue","cancel","3"],"cwd":null,"on":"homelab"}]' ]
 }
 
 @test "parseStatus skips a malformed line and a non-integer id; keeps an unknown state" {
@@ -60,10 +60,11 @@ _q() {
       "{\"id\":2,\"state\":\"mystery\",\"kind\":\"weird\",\"argv\":[\"echo\"]}",
       "",
     ].join("\n");
-    process.stdout.write(JSON.stringify(q.parseStatus(stdout)));
+    const parsed = q.parseStatus(stdout);
+    process.stdout.write(JSON.stringify({slots: parsed.slots, rows: parsed.rows}));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"id":1,"kind":"job","entry_class":"light","idem_key":null,"label":null,"subject":null,"action":null,"terminal":null,"argv":["pr"],"cwd":null,"env_allow":[],"state":"queued","attempts":0,"exit_status":null,"log_path":null,"result":null,"pid":null,"created_at":null,"started_at":null,"finished_at":null,"not_before":null},{"id":2,"kind":"weird","entry_class":null,"idem_key":null,"label":null,"subject":null,"action":null,"terminal":null,"argv":["echo"],"cwd":null,"env_allow":[],"state":"mystery","attempts":0,"exit_status":null,"log_path":null,"result":null,"pid":null,"created_at":null,"started_at":null,"finished_at":null,"not_before":null}]' ]
+  [ "$output" = '{"slots":null,"rows":[{"id":1,"kind":"job","entry_class":"light","idem_key":null,"label":null,"subject":null,"action":null,"terminal":null,"argv":["pr"],"cwd":null,"env_allow":[],"state":"queued","attempts":0,"exit_status":null,"log_path":null,"result":null,"pid":null,"created_at":null,"started_at":null,"finished_at":null,"not_before":null},{"id":2,"kind":"weird","entry_class":null,"idem_key":null,"label":null,"subject":null,"action":null,"terminal":null,"argv":["echo"],"cwd":null,"env_allow":[],"state":"mystery","attempts":0,"exit_status":null,"log_path":null,"result":null,"pid":null,"created_at":null,"started_at":null,"finished_at":null,"not_before":null}]}' ]
 }
 
 @test "busy (exit 75) returns the soft shape" {
@@ -73,7 +74,7 @@ _q() {
     process.stdout.write(JSON.stringify(r));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"ok":true,"busy":true,"rows":[]}' ]
+  [ "$output" = '{"ok":true,"busy":true,"rows":[],"slots":null}' ]
 }
 
 @test "cancel failure surfaces the stderr" {
@@ -131,7 +132,7 @@ _q() {
 
 @test "parseStatus keeps a label when the ledger carries one" {
   _q '
-    const rows = q.parseStatus("{\"id\":1,\"state\":\"done\",\"label\":\"pr batch\"}\n{\"id\":2,\"state\":\"done\"}");
+    const rows = q.parseStatus("{\"id\":1,\"state\":\"done\",\"label\":\"pr batch\"}\n{\"id\":2,\"state\":\"done\"}").rows;
     process.stdout.write(JSON.stringify(rows.map((r) => r.label)));
   '
   [ "$status" -eq 0 ]
@@ -140,7 +141,7 @@ _q() {
 
 @test "parseStatus keeps subject, action and terminal when the ledger carries them" {
   _q '
-    const rows = q.parseStatus("{\"id\":1,\"state\":\"queued\",\"subject\":\"acme/box#7\",\"action\":\"review\",\"terminal\":\"pane-1\"}\n{\"id\":2,\"state\":\"queued\"}");
+    const rows = q.parseStatus("{\"id\":1,\"state\":\"queued\",\"subject\":\"acme/box#7\",\"action\":\"review\",\"terminal\":\"pane-1\"}\n{\"id\":2,\"state\":\"queued\"}").rows;
     process.stdout.write(JSON.stringify(rows.map((r) => [r.subject, r.action, r.terminal])));
   '
   [ "$status" -eq 0 ]
@@ -159,7 +160,7 @@ _q() {
     process.stdout.write(JSON.stringify({ calls, log }));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"calls":[{"cmd":"otto-queue","args":["status","--json"],"on":null},{"cmd":"tail","args":["-n","80","/s/queue/logs/4.log"],"on":null}],"log":{"ok":true,"text":"line\n"}}' ]
+  [ "$output" = '{"calls":[{"cmd":"otto-queue","args":["status","--json","--slots"],"on":null},{"cmd":"tail","args":["-n","80","/s/queue/logs/4.log"],"on":null}],"log":{"ok":true,"text":"line\n"}}' ]
 }
 
 @test "logNote: ticket, queued job, finished job without a log" {
@@ -236,4 +237,59 @@ _q() {
   '
   [ "$status" -eq 0 ]
   [ "$output" = '{"calls":[{"cmd":"sh","inner":["sh","tail","-n","80","/s/queue/logs/9.log"],"on":"homelab"}],"ok":false,"has":true}' ]
+}
+
+@test "parseStatus exposes a slots object separately and does not make it a row" {
+  _q '
+    const stdout = [
+      "{\"slots\":{\"heavy\":{\"running\":2,\"limit\":3},\"light\":{\"running\":0,\"limit\":4}}}",
+      "{\"id\":1,\"state\":\"running\",\"entry_class\":\"heavy\"}",
+      "{\"id\":\"x\"}",
+    ].join("\n");
+    const parsed = q.parseStatus(stdout);
+    process.stdout.write(JSON.stringify({
+      slots: parsed.slots,
+      ids: parsed.rows.map((r) => r.id),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"slots":{"heavy":{"running":2,"limit":3},"light":{"running":0,"limit":4}},"ids":[1]}' ]
+}
+
+@test "loadStatus retries once without --slots when the old CLI rejects the flag" {
+  _q '
+    const calls = [];
+    const exec = async (cmd, args) => {
+      calls.push({ cmd, args: [...args] });
+      if (args.includes("--slots")) {
+        return {
+          code: 2, stdout: "",
+          stderr: "otto-queue status: error: unrecognized arguments: --slots",
+        };
+      }
+      return { code: 0, stdout: "{\"id\":1,\"state\":\"queued\"}", stderr: "" };
+    };
+    const r = await q.loadStatus(exec, { on: null, cwd: null });
+    process.stdout.write(JSON.stringify({
+      ok: r.ok, busy: r.busy, slots: r.slots, ids: r.rows.map((row) => row.id), calls,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"ok":true,"busy":false,"slots":null,"ids":[1],"calls":[{"cmd":"otto-queue","args":["status","--json","--slots"]},{"cmd":"otto-queue","args":["status","--json"]}]}' ]
+}
+
+@test "loadStatus does not retry a non-flag failure" {
+  _q '
+    const calls = [];
+    const exec = async (cmd, args) => {
+      calls.push([...args]);
+      return { code: 1, stdout: "", stderr: "otto-queue: ledger locked" };
+    };
+    const r = await q.loadStatus(exec, { on: null, cwd: null });
+    process.stdout.write(JSON.stringify({
+      ok: r.ok, kind: r.error && r.error.kind, n: calls.length, args: calls[0],
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"ok":false,"kind":"failed","n":1,"args":["status","--json","--slots"]}' ]
 }

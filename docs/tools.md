@@ -900,7 +900,7 @@ Exit codes: `0` ok · `1` failure · `2` usage · `69` unavailable · `75` tempf
 | Flag | Description |
 |------|-------------|
 | `--json` | One JSON object per entry. |
-| `--slots` | With --json, a leading line of running counts and class limits. |
+| `--slots` | With --json, a leading line of slot counts, the host verdict, and the 24 h failure count. |
 
 **`otto-queue cancel`** — Cancel a waiting or running entry
 

@@ -235,13 +235,33 @@ const withPr = (rows, slugOf = () => "acme/box", extra = {}, answer = () => null
   [ "$output" = 'true' ]
 }
 
+@test "poller: a busy machine skips timer ticks but never a wake" {
+  _web "const { createPoller } = await import(W + '/server/board.js');
+        const asked = []; const ticks = [];
+        const board = { refresh: (o = {}) => { asked.push(o.listingOnly ? 'listing' : 'full'); return Promise.resolve(); }, pulledAt: () => null };
+        let busy = true;
+        const gate = { pass: () => !busy };
+        const p = createPoller({ board, hub: { count: () => 1 }, fullMs: 180000, listingMs: 15000, now: () => 0,
+          every: (fn) => { ticks.push(fn); return ticks.length; }, stopEvery: () => {}, gate });
+        p.start();
+        for (const fn of ticks) fn();
+        const skipped = asked.length;
+        p.wake();
+        busy = false;
+        for (const fn of ticks) fn();
+        out({ skipped, asked });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"skipped":0,"asked":["full","full","listing"]}' ]
+}
+
 @test "poller: wakes a never-pulled board fully, a recent one not at all, and polls only with a page connected" {
   _web "const { createPoller } = await import(W + '/server/board.js');
         const asked = []; let at = null; let pages = 0; const ticks = [];
         const board = { refresh: (o = {}) => { asked.push(o.listingOnly ? 'listing' : 'full'); return Promise.resolve(); }, pulledAt: () => at };
         let t = 1000000;
         const p = createPoller({ board, hub: { count: () => pages }, fullMs: 180000, listingMs: 15000, now: () => t,
-          every: (fn, ms) => { ticks.push([fn, ms]); return ticks.length; }, stopEvery: () => {} });
+          every: (fn, ms) => { ticks.push([fn, ms]); return ticks.length; }, stopEvery: () => {},
+          gate: { pass: () => true } });
         p.start(); p.wake();
         at = t; t += 1000; p.wake();
         t += 20000; p.wake();

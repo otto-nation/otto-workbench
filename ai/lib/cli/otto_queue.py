@@ -47,7 +47,7 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.FlagGroup(
             "submit", ("--queue-only",)),
         core.command_contract.FlagGroup("worker", ("--idle",)),
-        core.command_contract.FlagGroup("status", ("--json",)),
+        core.command_contract.FlagGroup("status", ("--json", "--slots")),
         core.command_contract.FlagGroup("cancel", ("id",)),
     ),
     exits=(
@@ -97,6 +97,9 @@ CONTRACT = core.command_contract.CommandContract(
             "otto-queue status", "list live entries and recent finished ones"),
         core.command_contract.Example(
             "otto-queue status --json", "the same, one JSON object per entry"),
+        core.command_contract.Example(
+            "otto-queue status --json --slots",
+            "the same, with a leading line of running counts and class limits"),
         core.command_contract.Example(
             "otto-queue cancel 12", "stop waiting entry 12, or SIGTERM a running one"),
     ),
@@ -162,6 +165,8 @@ def build_parser() -> argparse.ArgumentParser:
     worker.add_argument("--slice", default=otto_queue.supervisor.SLICE, help=argparse.SUPPRESS)
     status = sub.add_parser("status", help="List live entries and the most recent finished ones")
     status.add_argument("--json", action="store_true", help="One JSON object per entry")
+    status.add_argument("--slots", action="store_true",
+                        help="With --json, a leading line of running counts and class limits")
     cancel = sub.add_parser("cancel", help="Cancel a waiting or running entry")
     cancel.add_argument("id", type=int, help="The entry's id, from status")
     core.command_contract.attach_help(parser, CONTRACT)
@@ -261,11 +266,22 @@ def _line(entry: Entry, now: float) -> str:
             f"{_age(now - since):>5}{status}{retry}  {title}")
 
 
+def _slot_header(entries: list[Entry], policy: batch.admission.QueuePolicy) -> dict:
+    running = [e for e in entries if e.state is EntryState.RUNNING]
+    return {"slots": {
+        c.value: {"running": sum(e.entry_class is c for e in running),
+                  "limit": policy.limit(c)}
+        for c in EntryClass
+    }}
+
+
 def _status(args: argparse.Namespace) -> int:
     ledger = otto_queue.ledger.Ledger.open()
     ledger.reap_orphans()
     entries = ledger.entries()
     if args.json:
+        if args.slots:
+            print(json.dumps(_slot_header(entries, machine_policy())))
         for entry in entries:
             print(json.dumps(core.serde.to_dict(entry)))
         return ExitCode.OK

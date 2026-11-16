@@ -5060,6 +5060,8 @@ long: the joiner reaps it and resolves again. An orphaned ticket becomes
 `failed`. A job that exits 75 is put back by `requeue` with `not_before` set;
 `next_job` does not offer it before then. `label` is an optional display
 string stored beside `not_before`; it is never used to match entries.
+`subject`, `action` and `terminal` are optional structured facts about the work
+(`owner/repo#N`, the `pr` subcommand, the herdr pane); they are never used to match.
 `resolve(reuse=False)` joins a live entry but never answers from a `done` one.
 `claim_as_ticket` converts a still-queued job into a ticket for the process
 that runs it.
@@ -5077,7 +5079,9 @@ Every value here is persisted in the ledger, so the enums' string values are
 stable. A machine mid-sync runs old and new code against one file, so a value
 is added, never renamed or removed — the rule the schema follows too.
 A `label` is display-only: `status` shows it in place of the command; it is
-never used to match entries.
+never used to match entries. `subject` (`owner/repo#N`), `action` (the `pr`
+subcommand) and `terminal` (the herdr pane) are optional facts about the work;
+they are never used to match entries either.
 
 | State | Meaning |
 |---|---|
@@ -5211,9 +5215,12 @@ the machine's budget, and runs once per idempotency key.
    given). Reaching `wait_s` with no slot records `tempfail` and returns 75
    (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
 
-`LABEL_ENV` and `WAIT_ENV` are the names `cli.queue_gate` and `pr batch` use to
-pass a display label and wait bound into a ticket they construct. `run_ticket`
-does not read them: the `otto-queue run` flags stay the only input to the CLI.
+`LABEL_ENV`, `WAIT_ENV`, `SUBJECT_ENV` and `ACTION_ENV` are the names
+`cli.queue_gate` and `pr batch` use to pass a display label, wait bound, and
+structured subject/action into a ticket they construct. `run_ticket` does not
+read them: the `otto-queue run` flags stay the only input to the CLI.
+`HC_TERMINAL_ID` is different: `TicketRequest.entry` copies it onto the row as
+`terminal` when it is set, so a ticket started from a herdr pane records which.
 3. **Run.** The row moves to `running`, and the command runs through
    `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
    terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue

@@ -42,7 +42,7 @@ const withPr = (rows, slugOf = () => "acme/box", extra = {}, answer = () => null
               cols: s.columns.length, owed: s.repoStates[0].owed,
               phases: calls.filter((c) => c.cmd === 'pr').map((c) => phaseOf(c.args) + ':' + c.timeout) });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"me":"me","slugs":["acme/box"],"n":4,"cwd":false,"checkout":true,"errors":[],"at":5,"rec":"/w/box","root":"/r","cols":15,"owed":{"state":"idle","error":null},"phases":["listing:60000","status:180000"]}' ]
+  [ "$output" = '{"me":"me","slugs":["acme/box"],"n":4,"cwd":false,"checkout":true,"errors":[],"at":5,"rec":"/w/box","root":"/r","cols":16,"owed":{"state":"idle","error":null},"phases":["listing:60000","status:180000"]}' ]
 }
 
 @test "board: while a page wants owed it is read, then again only once a minute" {

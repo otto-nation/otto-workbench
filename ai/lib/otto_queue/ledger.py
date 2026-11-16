@@ -135,7 +135,7 @@ class LedgerError(RuntimeError):
 
 class LedgerBusy(LedgerError):
     """Raised by any ledger operation (open or later) that stayed
-    SQLITE_BUSY past the deadline."""
+    SQLITE_BUSY, SQLITE_LOCKED or SQLITE_PROTOCOL past the deadline."""
 
 
 # sqlite3 busy-handler wait on each Ledger.open attempt. Zero so the overall
@@ -153,16 +153,29 @@ def _connect(root: Path, *, timeout: float) -> sqlite3.Connection:
     return conn
 
 
+# Primary-byte codes SQLite can raise under contention. SQLITE_PROTOCOL is not
+# handed to the busy handler, so a timeout= on connect never waits it out.
+_TRANSIENT_PRIMARY = frozenset({
+    sqlite3.SQLITE_BUSY,
+    sqlite3.SQLITE_LOCKED,
+    sqlite3.SQLITE_PROTOCOL,
+})
+
+
 def _is_busy(exc: BaseException) -> bool:
     if not isinstance(exc, sqlite3.OperationalError):
         return False
     code = getattr(exc, "sqlite_errorcode", None)
     if code is not None:
-        # Extended codes (BUSY_RECOVERY, BUSY_SNAPSHOT, BUSY_TIMEOUT) share
-        # SQLITE_BUSY as the primary byte; WAL open races raise those too.
-        return (code & 0xFF) == sqlite3.SQLITE_BUSY
+        # Extended codes (BUSY_SNAPSHOT, LOCKED_SHAREDCACHE) share the primary
+        # byte; WAL open races raise those too.
+        return (code & 0xFF) in _TRANSIENT_PRIMARY
     name = getattr(exc, "sqlite_errorname", None) or ""
-    return name == "SQLITE_BUSY" or name.startswith("SQLITE_BUSY_")
+    if name in {"SQLITE_BUSY", "SQLITE_LOCKED", "SQLITE_PROTOCOL"}:
+        return True
+    if name.startswith("SQLITE_BUSY_") or name.startswith("SQLITE_LOCKED_"):
+        return True
+    return "locking protocol" in str(exc).lower()
 
 
 def _translate(root: Path, exc: sqlite3.Error) -> LedgerError:

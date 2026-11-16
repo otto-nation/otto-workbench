@@ -4,7 +4,12 @@
 (`otto-queue status`) never blocks a writer. A connection is opened per
 operation and closed after it, so no process holds the file between calls,
 and a read-modify-write runs under `BEGIN IMMEDIATE`: two processes deciding
-about the same key are serialized by SQLite's own write lock.
+about the same key are serialized by SQLite's own write lock. SQLITE_BUSY,
+SQLITE_LOCKED and SQLITE_PROTOCOL (including a `locking protocol` message
+with no code) are `LedgerBusy`; every operation retries them with jittered
+backoff for `TRANSIENT_RETRY_S` on a fresh connection, a write as a whole.
+`reap_orphans` reads first and takes a write transaction only when it found
+an orphan, so idle waiters do not hammer `BEGIN IMMEDIATE`.
 
 Schema changes are additive only. `MIGRATIONS[n]` takes a ledger from version
 n to n+1. Each statement creates something that did not exist or adds a

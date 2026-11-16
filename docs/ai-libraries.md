@@ -5023,7 +5023,12 @@ The per-machine ledger: one SQLite file holding every entry the queue has accept
 (`otto-queue status`) never blocks a writer. A connection is opened per
 operation and closed after it, so no process holds the file between calls,
 and a read-modify-write runs under `BEGIN IMMEDIATE`: two processes deciding
-about the same key are serialized by SQLite's own write lock.
+about the same key are serialized by SQLite's own write lock. SQLITE_BUSY,
+SQLITE_LOCKED and SQLITE_PROTOCOL (including a `locking protocol` message
+with no code) are `LedgerBusy`; every operation retries them with jittered
+backoff for `TRANSIENT_RETRY_S` on a fresh connection, a write as a whole.
+`reap_orphans` reads first and takes a write transaction only when it found
+an orphan, so idle waiters do not hammer `BEGIN IMMEDIATE`.
 
 Schema changes are additive only. `MIGRATIONS[n]` takes a ledger from version
 n to n+1. Each statement creates something that did not exist or adds a
@@ -5189,13 +5194,16 @@ the machine's budget, and runs once per idempotency key.
    cancelling it. `force` skips the match. A joined entry whose holder died is
    not a result: the ticket resolves again and, finding nothing live, runs the
    work itself.
-2. **Wait.** Every `POLL_S`, orphans are reaped, and only the oldest waiting
-   entry of the class (tickets, and while a worker is alive its ready jobs)
-   asks `otto_queue.slots.try_admit`. Each new reason for waiting is printed
-   once. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler while waiting
-   ends the ticket with that exit status (130 when none is given). Reaching
-   `wait_s` with no slot records `tempfail` and returns 75 (EX_TEMPFAIL), so a
-   caller can tell "never got room" from a failure.
+2. **Wait.** Every `POLL_S` (jittered so waiters do not poll in lockstep),
+   orphans are reaped, and only the oldest waiting entry of the class
+   (tickets, and while a worker is alive its ready jobs) asks
+   `otto_queue.slots.try_admit`. Each new reason for waiting is printed once.
+   `LedgerBusy` after the ledger's own retries is printed once (`ledger busy;
+   still waiting`) and is not a crash: the ticket keeps waiting until `wait_s`,
+   then returns 75. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler
+   while waiting ends the ticket with that exit status (130 when none is
+   given). Reaching `wait_s` with no slot records `tempfail` and returns 75
+   (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
 
 `LABEL_ENV` and `WAIT_ENV` are the names `cli.queue_gate` and `pr batch` use to
 pass a display label and wait bound into a ticket they construct. `run_ticket`
@@ -5204,14 +5212,18 @@ does not read them: the `otto-queue run` flags stay the only input to the CLI.
    `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
    terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue
    cancel`) forwarded. Its exit status is recorded (75 as `tempfail`, never a
-   failure) and returned.
+   failure) and returned. Recording retries inside the ledger; if it still
+   cannot be written, the command's exit status is returned anyway, never
+   replaced by an infrastructure error. A crash while recording is logged and
+   the original exception is re-raised.
 
 The command sees `OTTO_QUEUE_ENTRY`, its entry id. A ticket started under that
 variable runs its command directly: a nested heavy ticket would otherwise wait
 for a slot its own parent holds. When the ledger stays busy past the open
-deadline, the ticket returns 75 without running. When the ledger cannot be
-opened at all, the command runs unqueued with a warning. The queue's absence
-degrades to today's behaviour, never to work not done.
+deadline, or stays unreachable for the whole wait, the ticket returns 75
+without running. When the ledger cannot be opened at all, the command runs
+unqueued with a warning. The queue's absence degrades to today's behaviour,
+never to work not done.
 
 ceiling: the ticket process, not its command, holds the lease and the slot, so
 a ticket killed with SIGKILL while its command runs leaves the command running

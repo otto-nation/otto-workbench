@@ -45,9 +45,12 @@ def _ts(modules, expr, *args):
     """JSON of *expr*, with each of *modules* imported under its name and `args` bound."""
     imports = "".join(f"const {name} = await import({json.dumps(path.as_uri())});"
                       for name, path in modules.items())
-    script = (f"{imports}const args = process.argv.slice(1);"
+    # Arguments travel as JSON on stdin, not argv: a report is over a kilobyte.
+    script = (f"{imports}import {{ readFileSync }} from 'node:fs';"
+              f"const args = JSON.parse(readFileSync(0, 'utf8'));"
               f"process.stdout.write(JSON.stringify({expr}));")
-    out = subprocess.run(["node", "--input-type=module", "-e", script, "--", *args],
+    out = subprocess.run(["node", "--input-type=module", "-e", script],
+                         input=json.dumps(list(args)),
                          check=True, capture_output=True, text=True, timeout=NODE_TIMEOUT)
     return json.loads(out.stdout)
 
@@ -87,17 +90,18 @@ def test_the_extension_names_a_run_session_as_the_recipe_does():
     recipe = batch.run_session.recipe(run)
     run_dir = recipe.env[batch.run_session.RUN_DIR_ENV]
     got = _ts({"m": RUN_DIR_TS},
-              "[m.RUN_DIR_ENV, m.runSessionDir({ [m.RUN_DIR_ENV]: args[0] }, args[1])]",
+              "m.sessionOf({ [m.KINDS.batch.dirEnv]: args[0] }, args[1])",
               run_dir, recipe.session_id)
-    assert got == [batch.run_session.RUN_DIR_ENV, run_dir]
+    assert got == {"kind": "batch", "dir": run_dir}
 
 
 def test_record_decision_argv_is_one_pr_batch_note_accepts(capsys):
     run = _seeded()
     decision = {"pr": "o/r#1", "finding": "ci_failing:ci", "verdict": "handed_off",
                 "reason": "-flaky", "commands": ["pr ci --fix", "--weird"]}
-    argv = _ts({"m": SESSION_TS}, "m.noteArgv(args[0], JSON.parse(args[1]))",
-               run.id, json.dumps(decision))
+    argv = _ts({"m": SESSION_TS},
+              "m.noteArgv({kind:'batch',runDir:'x',runId:args[0],cursor:0,nowDigest:''}, args[1])",
+              run.id, decision)
     assert _main(argv) == 0
     capsys.readouterr()
     [event] = core.run_events.read(batch.store.run_dir(run.id)).events
@@ -133,9 +137,9 @@ def test_the_now_block_renders_the_real_report_with_its_latest_decision(capsys):
     assert _main(["batch", "report", run.id, "--offline", "--format", "json"]) == 0
     report = capsys.readouterr().out
     text = _ts({"m": NOW_TS, "e": EVENTS_TS},
-               "m.renderNow(args[0], m.parseReport(args[1]).sessions,"
-               " e.latestDecisions(e.consume(new TextEncoder().encode(args[2]), 0).events))",
-               run.id, report, _history_path(run).read_text())
+               "m.renderNow('run t', m.parseReport(args[0]).sessions,"
+               " e.latestDecisions(e.consume(new TextEncoder().encode(args[1]), 0).events))",
+               report, _history_path(run).read_text())
     assert "### o/r#1 — needs_session" in text
     assert "- finding `ci_failing:ci` — red on main" in text
     assert "  decided: fixed — re-ran green" in text

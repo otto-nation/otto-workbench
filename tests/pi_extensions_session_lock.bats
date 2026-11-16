@@ -11,7 +11,7 @@ setup() {
   load 'test_helper'
   common_setup
   # The suite may itself run inside a run session, which exports this.
-  unset WORKBENCH_RUN_DIR
+  unset WORKBENCH_RUN_DIR WORKBENCH_TARGET_DIR WORKBENCH_SESSION_ID
   export NODE_COMPILE_CACHE="$BATS_FILE_TMPDIR/node-compile-cache"
   SL="$REPO_ROOT/ai/pi/extensions/session-lock"
 }
@@ -72,6 +72,18 @@ _start_session() {
   _claims '{"WORKBENCH_RUN_DIR":"/state/batch/r1/"}' 'batch-r1'
   [ "$status" -eq 0 ]
   [ "$output" = "false" ]
+}
+
+@test "session-lock: the target's own session claims nothing" {
+  _claims '{"WORKBENCH_TARGET_DIR":"/t/dir","WORKBENCH_SESSION_ID":"target-abc"}' 'target-abc'
+  [ "$status" -eq 0 ]
+  [ "$output" = "false" ]
+}
+
+@test "session-lock: a pi the target session started still claims" {
+  _claims '{"WORKBENCH_TARGET_DIR":"/t/dir","WORKBENCH_SESSION_ID":"target-abc"}' 'child-1'
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
 }
 
 @test "session-lock: an ordinary session's claim holds the worktree" {

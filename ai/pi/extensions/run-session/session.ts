@@ -1,8 +1,10 @@
 /**
  * What a run session stores and says: its state entry, the system note, and
- * how record_decision and the Now block call `pr`. Imports nothing, so node
- * loads it in tests.
+ * how record_decision and the Now block call `pr`. Imports the kind table
+ * only; node loads it in tests.
  */
+
+import { KINDS, LEGACY_KIND, type Kind } from "../_shared/run-dir.ts";
 
 /** The custom entry holding the run, the history cursor and Now's digest. */
 export const STATE_TYPE = "workbench-run";
@@ -43,6 +45,7 @@ export const DECISION_SCHEMA = {
 };
 
 export interface RunState {
+  kind: Kind;
   runDir: string;
   runId: string;
   /** Byte offset into events.jsonl just past the history already shown. */
@@ -73,7 +76,15 @@ export function latestState(branch: readonly EntryLike[]): RunState | null {
     const data = entry.data as Partial<RunState> | undefined;
     if (!data || typeof data.runDir !== "string" || typeof data.runId !== "string") continue;
     if (typeof data.cursor !== "number") continue;
+    const kind =
+      typeof data.kind === "string" && data.kind in KINDS
+        ? (data.kind as Kind)
+        : data.kind === undefined
+          ? LEGACY_KIND
+          : null;
+    if (kind === null) continue;
     return {
+      kind,
       runDir: data.runDir,
       runId: data.runId,
       cursor: data.cursor,
@@ -83,21 +94,19 @@ export function latestState(branch: readonly EntryLike[]): RunState | null {
   return null;
 }
 
-/** `pr` argv for the Now block: the run's report, offline, as JSON. */
-export function reportArgv(runId: string): string[] {
-  return ["batch", "report", runId, "--offline", "--format", "json"];
+/** `pr` argv for the Now block. */
+export function reportArgv(state: RunState): string[] {
+  return KINDS[state.kind].reportArgv(state.runId);
 }
 
 /**
- * `pr batch note` argv for `input` (ai/lib/cli/pr_batch_session.py
- * add_note_parser). Every flag value is attached with `=`, so a reason or a
- * command starting with `-` is read as that flag's value, not as a flag.
+ * `pr … note` argv for `input`. Every flag value is attached with `=`, so a
+ * reason or a command starting with `-` is read as that flag's value, not as a
+ * flag.
  */
-export function noteArgv(runId: string, input: DecisionInput): string[] {
+export function noteArgv(state: RunState, input: DecisionInput): string[] {
   return [
-    "batch",
-    "note",
-    runId,
+    ...KINDS[state.kind].noteArgv(state.runId),
     input.pr,
     `--finding=${input.finding}`,
     `--verdict=${input.verdict}`,
@@ -108,11 +117,13 @@ export function noteArgv(runId: string, input: DecisionInput): string[] {
 
 /** The system-prompt section that says what this session is for. */
 export function systemNote(state: RunState, cwd: string): string {
+  const spec = KINDS[state.kind];
   return [
-    `You are the orchestrator of pr batch run ${state.runId}. Its checkout is ${cwd}; its run directory is ${state.runDir}.`,
-    "- The latest \"Now\" message is the run's report: each PR it waits on, its findings, and the exact commands that act on them. Act only through those commands; never invent flags.",
+    spec.intro(state.runId, state.runDir, cwd),
+    '- The latest "Now" message is the report: each PR it waits on, its findings, and the exact commands that act on them. Act only through those commands; never invent flags.',
     `- Record every verdict on a finding, yours or the operator's, with ${TOOL_NAME}. A decision changes no item state: a PR stops waiting only when the report stops showing its finding.`,
-    "- Never push, publish, or run a command marked \"pushes\" unless the operator says so in this session.",
-    `- The run's full history is ${state.runDir}/events.jsonl, one JSON event per line; read it when the history shown is not enough. Now is read offline; \`pr batch report ${state.runId} --format json\` without --offline asks GitHub too.`,
+    '- Never push, publish, or run a command marked "pushes" unless the operator says so in this session.',
+    `- The full history is ${state.runDir}/events.jsonl, one JSON event per line; read it when the history shown is not enough.`,
+    ...spec.rules(state.runId).map((rule) => "- " + rule),
   ].join("\n");
 }

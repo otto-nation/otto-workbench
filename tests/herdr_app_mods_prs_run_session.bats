@@ -126,12 +126,21 @@ RUNS_JS
 
 @test "run session: the run row and the Needs-you card both draw sessionControl, labelled Open session" {
   local view="$REPO_ROOT/ai/herdr/app/mods/prs/workflows_view.js"
-  run grep -c 'sessionControl("open-session-run", session)' "$view"
+  run grep -c 'sessionButton("open-session-run", session)' "$view"
   [ "$output" = "1" ]
   run grep -c 'sessionControl("open-session", state.runSession)' "$view"
   [ "$output" = "1" ]
   run grep -c 'button(id, "Open session", () => s.onOpen())' "$view"
   [ "$output" = "1" ]
+  local sess trail
+  sess="$(grep -n 'sessionButton("open-session-run"' "$view" | cut -d: -f1)"
+  trail="$(grep -n 'button("open-trail"' "$view" | cut -d: -f1)"
+  [ "$sess" -lt "$trail" ]
+  run grep -nF 'sessionControl("open-session-run"' "$view"
+  [ "$status" -eq 1 ]
+  local between
+  between="$(awk '/^export function renderRunPanel/,/^}/' "$view" | grep -c justify_between || true)"
+  [ "$between" -eq 0 ]
 }
 
 # A standalone PR (no run) opens its target's session: asked on the branch, started in the

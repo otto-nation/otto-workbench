@@ -14,10 +14,12 @@ the machine's budget, and runs once per idempotency key.
    cancelling it. `force` skips the match. A joined entry whose holder died is
    not a result: the ticket resolves again and, finding nothing live, runs the
    work itself.
-2. **Wait.** Every `POLL_S` (jittered so waiters do not poll in lockstep),
-   orphans are reaped, and only the oldest waiting entry of the class
-   (tickets, and while a worker is alive its ready jobs) asks
-   `otto_queue.slots.try_admit`. Each new reason for waiting is printed once.
+2. **Wait.** Polls start at `POLL_S` for `FAST_WAIT_S`, then back off
+   geometrically to `POLL_CAP_S` (jittered ±20% so waiters do not lockstep;
+   the interval resets when the wait reason or joined state changes). A sleep
+   never runs past `wait_s`. Orphans are reaped, and only the oldest waiting
+   entry of the class (tickets, and while a worker is alive its ready jobs)
+   asks `otto_queue.slots.try_admit`. Each new reason for waiting is printed once.
    `LedgerBusy` after the ledger's own retries is printed once (`ledger busy;
    still waiting`) and is not a crash: the ticket keeps waiting until `wait_s`,
    then returns 75. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler
@@ -79,8 +81,11 @@ from otto_queue.model import (  # noqa: F401  LABEL_ENV and WAIT_ENV are re-expo
 # only a ticket stuck behind a wedged entry times out.
 DEFAULT_WAIT_S = 3600.0
 
-# Between admission attempts, and between looks at a joined entry.
+# Between admission attempts, and between looks at a joined entry. Stays at
+# POLL_S for FAST_WAIT_S, then doubles each POLL_S of extra wait up to POLL_CAP_S.
 POLL_S = 0.5
+FAST_WAIT_S = 5.0
+POLL_CAP_S = 3.0
 
 # Printed once when a wait poll hits LedgerBusy after the ledger's own retries.
 _BUSY_NOTICE = "otto-queue: ledger busy; still waiting"
@@ -181,6 +186,9 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
     entry_id = entry.id
     notify(f"otto-queue: joining entry {entry_id}, which is {entry.state.value}")
     deadline = time.monotonic() + request.wait_s
+    origin = time.monotonic()
+    last_state = entry.state
+    rng = random.Random()
     busy_said = False
     while entry is not None and entry.state.live:
         try:
@@ -193,7 +201,11 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
         if time.monotonic() >= deadline:
             notify(f"otto-queue: entry {entry_id} did not finish in {request.wait_s:g}s")
             return TicketResult(os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT, entry_id)
-        _poll_sleep(poll_s)
+        state = None if entry is None else entry.state
+        if state != last_state:
+            origin = time.monotonic()
+            last_state = state
+        _poll_sleep(poll_delay(time.monotonic() - origin, rng, poll_s), deadline)
         try:
             ledger.reap_orphans()
             entry = ledger.get(entry_id)
@@ -269,8 +281,25 @@ def _record_status(ledger: otto_queue.ledger.Ledger, entry_id: int,
         return None
 
 
-def _poll_sleep(poll_s: float) -> None:
-    time.sleep(poll_s * random.uniform(0.8, 1.2))
+def poll_delay(waited_s: float, rng, poll_s: float = POLL_S) -> float:
+    """Seconds to sleep after a wait that has already lasted *waited_s*.
+
+    *poll_s* for the first `FAST_WAIT_S`, then doubles each *poll_s* of extra
+    wait up to `POLL_CAP_S`. Each sleep is jittered ±20% and never above the cap.
+    """
+    if waited_s < FAST_WAIT_S:
+        base = poll_s
+    else:
+        steps = int((waited_s - FAST_WAIT_S) / poll_s)
+        base = min(poll_s * (2 ** steps), POLL_CAP_S)
+    return min(base * rng.uniform(0.8, 1.2), POLL_CAP_S)
+
+
+def _poll_sleep(delay: float, deadline: float) -> None:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return
+    time.sleep(min(delay, remaining))
 
 
 def _note_busy(notify: Callable[[str], None], already: bool) -> bool:
@@ -336,7 +365,9 @@ def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
                  request: TicketRequest, policy: otto_queue.slots.Policy,
                  poll_s: float, notify: Callable[[str], None]) -> _Wait:
     deadline = time.monotonic() + request.wait_s
+    origin = time.monotonic()
     said = ""
+    rng = random.Random()
     busy_said = False
     while True:
         try:
@@ -349,9 +380,10 @@ def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
         if reason != said:
             notify(f"otto-queue: entry {entry_id} is waiting: {reason}")
             said = reason
+            origin = time.monotonic()
         if time.monotonic() >= deadline:
             return _Wait(_WaitEnd.TIMED_OUT)
-        _poll_sleep(poll_s)
+        _poll_sleep(poll_delay(time.monotonic() - origin, rng, poll_s), deadline)
 
 
 def _try_once(ledger: otto_queue.ledger.Ledger, entry_id: int, entry_class: EntryClass,

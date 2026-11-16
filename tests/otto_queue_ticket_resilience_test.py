@@ -4,6 +4,7 @@ import os
 import sqlite3
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,7 +18,8 @@ import otto_queue.ledger  # noqa: E402
 import otto_queue.ticket  # noqa: E402
 from otto_queue.ledger import Ledger, LedgerBusy, LedgerError  # noqa: E402
 from otto_queue.model import EntryState  # noqa: E402
-from otto_queue.ticket import TicketOutcome, TicketRequest  # noqa: E402
+from otto_queue.ticket import (  # noqa: E402
+    FAST_WAIT_S, POLL_CAP_S, POLL_S, TicketOutcome, TicketRequest, poll_delay)
 from otto_queue_support import Room, exit_argv, touch_argv  # noqa: E402
 
 
@@ -105,3 +107,45 @@ def test_record_crash_reraises_the_original_when_fail_raises(tmp_path, monkeypat
     monkeypatch.setattr(Ledger, "fail", boom_fail)
     with pytest.raises(RuntimeError, match="queue crashed"):
         _ticket(tmp_path, exit_argv(0))
+
+
+class _NoJitter:
+    def uniform(self, a, b):
+        assert (a, b) == (0.8, 1.2)
+        return 1.0
+
+
+def test_poll_delay_stays_at_poll_s_for_the_first_fast_window():
+    rng = _NoJitter()
+    assert poll_delay(0.0, rng) == POLL_S
+    assert poll_delay(FAST_WAIT_S - 0.01, rng) == POLL_S
+    assert poll_delay(FAST_WAIT_S, rng) == POLL_S
+
+
+def test_poll_delay_doubles_geometrically_then_caps():
+    rng = _NoJitter()
+    assert poll_delay(FAST_WAIT_S + POLL_S, rng) == POLL_S * 2
+    assert poll_delay(FAST_WAIT_S + 2 * POLL_S, rng) == POLL_S * 4
+    assert poll_delay(FAST_WAIT_S + 3 * POLL_S, rng) == POLL_CAP_S
+    assert poll_delay(60.0, rng) == POLL_CAP_S
+
+
+def test_poll_delay_applies_jitter_without_exceeding_the_cap():
+    high = SimpleNamespace(uniform=lambda a, b: 1.2)
+    low = SimpleNamespace(uniform=lambda a, b: 0.8)
+    assert poll_delay(0.0, high) == pytest.approx(POLL_S * 1.2)
+    assert poll_delay(0.0, low) == pytest.approx(POLL_S * 0.8)
+    assert poll_delay(60.0, high) == POLL_CAP_S
+    assert poll_delay(60.0, low) == pytest.approx(POLL_CAP_S * 0.8)
+
+
+def test_poll_sleep_never_sleeps_past_the_deadline(monkeypatch):
+    slept = []
+    monkeypatch.setattr(otto_queue.ticket.time, "sleep", slept.append)
+    monkeypatch.setattr(otto_queue.ticket.time, "monotonic", lambda: 9.7)
+    otto_queue.ticket._poll_sleep(3.0, 10.0)
+    assert slept == [pytest.approx(0.3)]
+    slept.clear()
+    monkeypatch.setattr(otto_queue.ticket.time, "monotonic", lambda: 11.0)
+    otto_queue.ticket._poll_sleep(3.0, 10.0)
+    assert slept == []

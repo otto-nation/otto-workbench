@@ -286,6 +286,11 @@ teardown() {
   [ "$status" -eq 1 ]
 }
 
+@test "iconButton draws the brand outline edge" {
+  local ui="$MODS/_ui/ui.js"
+  awk '/^export function iconButton/,/^}/' "$ui" | grep -qF 'border_color(t.input)'
+}
+
 @test "queue row detail draws detailModel through keyValue" {
   grep -q 'export function keyValue(' "$MODS/_ui/ui.js"
   grep -q 'text("section", row.key, t.muted)' "$MODS/_ui/ui.js"

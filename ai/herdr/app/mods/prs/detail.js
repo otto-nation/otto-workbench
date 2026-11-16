@@ -7,7 +7,7 @@ import { SP, LAYOUT } from "./_lib/tokens.js";
 import { prPresentation } from "./_lib/pr_status.js";
 import { sessionControl } from "./workflows_view.js";
 import {
-  segment, segmented, button, scrollInset, card, placeholder, caption,
+  segment, segmented, button, solidButton, scrollInset, card, placeholder, caption,
   paneBar, pinned, selectableCode, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
   badgeRow, statsRow, tag, backButton,
 } from "./_ui/ui.js";
@@ -36,7 +36,7 @@ export function renderActionBar(actions, { confirm, note, onAction, onConfirm, o
         : `${confirm.label} on ${c.pr}?${notes ? ` ${notes}` : ""}`);
     return paneBar()
       .child(text("body", msg))
-      .child(h_flex().gap(SP.sm).child(button("act-confirm", `Confirm: ${confirm.label}`, onConfirm))
+      .child(h_flex().gap(SP.sm).child(solidButton("act-confirm", `Confirm: ${confirm.label}`, onConfirm))
         .child(button("act-cancel", "Cancel", onCancel)));
   }
   const on = actions.filter((a) => a.enabled);

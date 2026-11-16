@@ -346,6 +346,13 @@ teardown() {
   [ "$status" -eq 1 ]
 }
 
+@test "posting confirm is a solid button next to outline Cancel" {
+  local detail="$MODS/prs/detail.js"
+  grep -qF 'solidButton("act-confirm", `Confirm: ${confirm.label}`, onConfirm)' "$detail"
+  run grep -nF 'button("act-confirm"' "$detail"
+  [ "$status" -eq 1 ]
+}
+
 @test "mods never use ghostButton: a labelled action is an outline button" {
   run grep -rn 'ghostButton' "$MODS"
   [ "$status" -eq 1 ]

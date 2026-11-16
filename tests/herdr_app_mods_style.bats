@@ -129,6 +129,40 @@ teardown() {
   done
 }
 
+@test "queue view draws lanes, filter and staleness from the model" {
+  local view="$MODS/queue/view.js"
+  grep -q 'laneTitle(lane.label, lane.count)' "$view"
+  grep -q 'sectionLabel(section.label)' "$view"
+  grep -Fq 'segmented([' "$view"
+  grep -q 'segment("queue-filter-all", "All"' "$view"
+  grep -q 'segment("queue-filter-live", "Live"' "$view"
+  grep -q 'segment("queue-filter-failed", "Failed"' "$view"
+  grep -q 'caption(props.summary)' "$view"
+  grep -q 'spinning: props.spinning' "$view"
+  grep -q 'statusText("warn", stale.words)' "$view"
+  grep -q 'if (!row.members) return renderOne(on, row, opts);' "$view"
+  grep -q 'row.members.flatMap' "$view"
+  grep -q 'row.timing' "$view"
+  grep -q 'row.position' "$view"
+  grep -q 'row.retry' "$view"
+  grep -q 'row.failure' "$view"
+  grep -q 'onToggleGroup' "$view"
+  run grep -nE 'filterRows|lanesModel|staleness|refreshSpinning|liveCounts|rowMeta|ageText' "$view"
+  [ "$status" -eq 1 ]
+  run grep -nF 'spinning: props.manual' "$view"
+  [ "$status" -eq 1 ]
+}
+
+@test "queue main composes lanes, filter, staleness and refreshSpinning" {
+  local main="$MODS/queue/main.js"
+  grep -q 'lanesModel(filterRows(rows, this.filter), nowMs)' "$main"
+  grep -q 'staleness({ result, at: entry.at }, nowMs)' "$main"
+  grep -q 'refreshSpinning(this.refreshSince, nowMs)' "$main"
+  grep -q 'summary: summary(allRows)' "$main"
+  grep -q 'onFilter: (filter) => this.setFilter(filter)' "$main"
+  grep -q 'onToggleGroup: (on, id) => this.toggleGroup(on, id)' "$main"
+}
+
 @test "queue row detail draws detailModel through keyValue" {
   grep -q 'export function keyValue(' "$MODS/_ui/ui.js"
   grep -q 'text("section", row.key, t.muted)' "$MODS/_ui/ui.js"

@@ -1,8 +1,8 @@
 /**
- * Queue home model: slot gauges, per-machine summary, collapse. Pure.
+ * Queue home model: slot gauges, per-machine overview, machine pages, navigation. Pure.
  */
 import { liveCounts } from './queue.js';
-import { staleness } from './queue_lanes.js';
+import { filterRows, lanesModel, staleness, summary as rowsSummary } from './queue_lanes.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CLASSES = Object.freeze(['heavy', 'light']);
@@ -82,6 +82,10 @@ function machineTitle(entry) {
   return String(entry.on);
 }
 
+function staleCaption(stale) {
+  return { kind: stale.kind, words: stale.words };
+}
+
 export function machineSummary(entry, nowMs) {
   const stale = staleness(entry, nowMs);
   const rows = stale.rows ?? [];
@@ -91,7 +95,7 @@ export function machineSummary(entry, nowMs) {
     title: machineTitle(entry),
     gauges: gaugesOf(rows, entry?.result?.slots ?? null),
     counts: `${running} running · ${queued} queued · ${failed} failed today`,
-    staleness: stale,
+    staleness: staleCaption(stale),
     hostNote: null,
   };
 }
@@ -102,19 +106,20 @@ function machineKey(entry) {
   return String(entry.on);
 }
 
-function overrideCollapsed(collapsed, key) {
-  if (collapsed == null || typeof collapsed !== 'object') return null;
-  if (!Object.prototype.hasOwnProperty.call(collapsed, key)) return null;
-  return Boolean(collapsed[key]);
+function cardOf(entry, nowMs) {
+  const key = machineKey(entry);
+  const summary = machineSummary({ ...entry, title: machineTitle(entry) }, nowMs);
+  return {
+    key,
+    title: summary.title,
+    staleness: summary.staleness,
+    gauges: summary.gauges,
+    counts: summary.counts,
+    hostNote: summary.hostNote,
+  };
 }
 
-function defaultOpen(rows, nowMs) {
-  const { queued, running } = liveCounts(rows);
-  if (queued > 0 || running > 0) return true;
-  return failedToday(rows, nowMs) > 0;
-}
-
-export function homeModel(machines, nowMs, collapsed) {
+export function homeModel(machines, nowMs) {
   const local = [];
   const rest = [];
   for (const entry of machines ?? []) {
@@ -122,17 +127,45 @@ export function homeModel(machines, nowMs, collapsed) {
     else rest.push(entry);
   }
   return [...local, ...rest].map((entry) => {
-    const key = machineKey(entry);
-    const summary = machineSummary({ ...entry, title: machineTitle(entry) }, nowMs);
-    const forced = overrideCollapsed(collapsed, key);
-    const open = forced == null ? defaultOpen(summary.staleness.rows, nowMs) : !forced;
-    return { key, summary, open };
+    const card = cardOf(entry, nowMs);
+    // queue/main.js still reads block.summary until the view half; delete with it.
+    return { ...card, summary: machineSummary({ ...entry, title: card.title }, nowMs) };
   });
 }
 
-// toggleCollapsed flips what the reader sees: `open` is the block's visible state,
-// so the stored override (true = collapsed) is right even for a machine whose
-// default was decided by homeModel and has no entry in the map yet.
+const FILTERS = new Set(['all', 'live', 'failed']);
+
+export function machinePage(entry, nowMs, filter) {
+  const value = FILTERS.has(filter) ? filter : 'all';
+  const card = cardOf(entry, nowMs);
+  const rows = staleness(entry, nowMs).rows ?? [];
+  return {
+    summary: card,
+    filter: value,
+    filterSummary: rowsSummary(rows),
+    lanes: lanesModel(filterRows(rows, value), nowMs),
+  };
+}
+
+export function selectMachine(state, key) {
+  return { ...(state ?? {}), machine: key ?? null };
+}
+
+export function clearMachine(state) {
+  return { ...(state ?? {}), machine: null };
+}
+
+export function pageOf(state, machines) {
+  const key = state?.machine;
+  if (key == null) return null;
+  const want = String(key);
+  for (const entry of machines ?? []) {
+    if (machineKey(entry) === want) return entry;
+  }
+  return null;
+}
+
+// Compatibility for queue/main.js until the view half; delete with it.
 export function toggleCollapsed(map, key, open) {
   const next = { ...(map ?? {}) };
   next[key] = Boolean(open);

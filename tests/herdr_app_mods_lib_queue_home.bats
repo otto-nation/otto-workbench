@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for herdr-app queue home model (pure: gauges, summary, collapse).
+# Tests for herdr-app queue home model (pure: gauges, overview, machine pages).
 bats_require_minimum_version 1.5.0
 # select-on: ai/herdr/app/mods/_lib/*.js
 
@@ -95,7 +95,7 @@ _js() {
   [ "$output" = '{"title":"mini","gauges":[{"class":"heavy","text":"1 running"},{"class":"light","text":"0 running"}],"counts":"1 running · 1 queued · 0 failed today"}' ]
 }
 
-@test "homeModel puts This computer first and opens live or failed-today machines" {
+@test "homeModel puts This computer first; cards have no rows and no open state" {
   _js '
     const NOW = 1_700_000_000_000;
     const SEC = 1_700_000_000;
@@ -104,52 +104,81 @@ _js() {
       {on:null, at:NOW, result:{ok:true, rows:[{id:2, state:"running", entry_class:"heavy"}]}},
       {on:"studio", at:NOW, result:{ok:true, rows:[{id:3, state:"failed", finished_at: SEC - 30}]}},
     ];
-    const model = h.homeModel(machines, NOW, {});
-    process.stdout.write(JSON.stringify(model.map((b) => ({
-      key: b.key, title: b.summary.title, open: b.open,
-    }))));
-  '
-  [ "$status" -eq 0 ]
-  [ "$output" = '[{"key":"","title":"This computer","open":true},{"key":"mini","title":"mini","open":false},{"key":"studio","title":"studio","open":true}]' ]
-}
-
-@test "homeModel collapsed map overrides the default open state" {
-  _js '
-    const NOW = 1_700_000_000_000;
-    const SEC = 1_700_000_000;
-    const machines = [
-      {on:null, at:NOW, result:{ok:true, rows:[{id:1, state:"running"}]}},
-      {on:"mini", at:NOW, result:{ok:true, rows:[{id:2, state:"done", finished_at: SEC - 10}]}},
-    ];
-    const model = h.homeModel(machines, NOW, {"": true, mini: false});
-    process.stdout.write(JSON.stringify(model.map((b) => ({key:b.key, open:b.open}))));
-  '
-  [ "$status" -eq 0 ]
-  [ "$output" = '[{"key":"","open":false},{"key":"mini","open":true}]' ]
-}
-
-@test "toggleCollapsed is immutable and flips what the reader sees, defaults included" {
-  _js '
-    const orig = {mini: true};
-    const once = h.toggleCollapsed(orig, "mini", false);
-    const twice = h.toggleCollapsed(once, "mini", true);
-    const closedByDefault = h.toggleCollapsed({}, "idle", false);
-    const openByDefault = h.toggleCollapsed({}, "busy", true);
+    const model = h.homeModel(machines, NOW);
+    const local = model[0];
     process.stdout.write(JSON.stringify({
-      orig, once, twice, closedByDefault, openByDefault, same: orig === once,
+      keys: model.map((b) => b.key),
+      titles: model.map((b) => b.title),
+      counts: model.map((b) => b.counts),
+      hostNote: local.hostNote,
+      staleKind: local.staleness.kind,
+      staleWords: local.staleness.words,
+      staleRows: local.staleness.rows ?? null,
+      open: local.open ?? null,
+      rows: local.rows ?? null,
     }));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"orig":{"mini":true},"once":{"mini":false},"twice":{"mini":true},"closedByDefault":{"idle":false},"openByDefault":{"busy":true},"same":false}' ]
+  [ "$output" = '{"keys":["","mini","studio"],"titles":["This computer","mini","studio"],"counts":["1 running · 0 queued · 0 failed today","0 running · 0 queued · 0 failed today","0 running · 0 queued · 1 failed today"],"hostNote":null,"staleKind":"fresh","staleWords":"updated 0s ago","staleRows":null,"open":null,"rows":null}' ]
 }
 
-@test "a machine closed by default opens on its first toggle, and an open one closes" {
+@test "machinePage returns the card, filter summary from uncoalesced rows, Running first" {
   _js '
-    const idle = {key: "idle", at: 1, result: {ok: true, rows: []}};
-    const first = h.homeModel([idle], 1000, {})[0];
-    const after = h.homeModel([idle], 1000, h.toggleCollapsed({}, "idle", first.open))[0];
-    process.stdout.write(JSON.stringify({before: first.open, after: after.open}));
+    const NOW = 1_700_000_000_000;
+    const SEC = 1_700_000_000;
+    const entry = {
+      on: "mini", key: "mini", at: NOW,
+      result: {ok:true, rows:[
+        {id:1, state:"running", action:"review", entry_class:"heavy", started_at: SEC - 10},
+        {id:2, state:"running", action:"review", entry_class:"heavy", started_at: SEC - 20},
+        {id:3, state:"running", action:"review", entry_class:"heavy", started_at: SEC - 30},
+        {id:4, state:"queued", action:"comments", entry_class:"light", created_at: SEC - 5},
+        {id:5, state:"failed", action:"review", finished_at: SEC - 40, exit_status: 1},
+      ]},
+    };
+    const page = h.machinePage(entry, NOW, "all");
+    const live = h.machinePage(entry, NOW, "live");
+    const bad = h.machinePage(entry, NOW, "nope");
+    process.stdout.write(JSON.stringify({
+      title: page.summary.title,
+      counts: page.summary.counts,
+      hostNote: page.summary.hostNote,
+      filter: page.filter,
+      filterSummary: page.filterSummary,
+      keys: page.lanes.map((l) => l.key),
+      runningCount: page.lanes[0].count,
+      runningRows: page.lanes[0].rows.length,
+      liveFilter: live.filter,
+      liveKeys: live.lanes.map((l) => l.key),
+      liveFinished: live.lanes[2].count,
+      badFilter: bad.filter,
+      staleRows: page.summary.staleness.rows ?? null,
+    }));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"before":false,"after":true}' ]
+  [ "$output" = '{"title":"mini","counts":"3 running · 1 queued · 1 failed today","hostNote":null,"filter":"all","filterSummary":"4 live · 1 failed","keys":["running","waiting","finished"],"runningCount":3,"runningRows":1,"liveFilter":"live","liveKeys":["running","waiting","finished"],"liveFinished":0,"badFilter":"all","staleRows":null}' ]
+}
+
+@test "selectMachine and clearMachine are immutable; pageOf falls back when the machine is gone" {
+  _js '
+    const orig = {machine: null};
+    const selected = h.selectMachine(orig, "mini");
+    const cleared = h.clearMachine(selected);
+    const machines = [
+      {on:null, key:""},
+      {on:"mini", key:"mini"},
+    ];
+    process.stdout.write(JSON.stringify({
+      orig,
+      selected,
+      cleared,
+      same: orig === selected,
+      hit: h.pageOf(selected, machines)?.key ?? null,
+      miss: h.pageOf({machine: "gone"}, machines),
+      home: h.pageOf({machine: null}, machines),
+      local: h.pageOf({machine: ""}, machines)?.key ?? null,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"orig":{"machine":null},"selected":{"machine":"mini"},"cleared":{"machine":null},"same":false,"hit":"mini","miss":null,"home":null,"local":""}' ]
 }

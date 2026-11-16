@@ -128,6 +128,143 @@ function failKey(row) {
   return `id:${row.id}`;
 }
 
+export const COALESCE_MIN = 3;
+
+function actionOf(row) {
+  if (typeof row?.action === 'string' && row.action.trim() !== '') return row.action.trim();
+  const argv = Array.isArray(row?.argv) ? row.argv : [];
+  if (!argv.length) return '';
+  const parts = String(argv[0]).split('/');
+  return parts[parts.length - 1] || String(argv[0]);
+}
+
+function newerMember(a, b, field) {
+  const ta = toMs(a?.[field]);
+  const tb = toMs(b?.[field]);
+  if (ta == null && tb == null) return (b?.id ?? 0) >= (a?.id ?? 0) ? b : a;
+  if (ta == null) return b;
+  if (tb == null) return a;
+  if (tb !== ta) return tb > ta ? b : a;
+  return (b?.id ?? 0) >= (a?.id ?? 0) ? b : a;
+}
+
+function leadField(laneKey) {
+  if (laneKey === 'running') return 'started_at';
+  if (laneKey === 'waiting') return 'created_at';
+  return 'finished_at';
+}
+
+function leadOf(members, laneKey) {
+  const field = leadField(laneKey);
+  let lead = members[0];
+  for (let i = 1; i < members.length; i += 1) {
+    lead = newerMember(lead, members[i], field);
+  }
+  return lead;
+}
+
+function subjectsOf(members) {
+  const seen = new Set();
+  const names = [];
+  for (const row of members) {
+    const subject = row.subject || subjectOf(row);
+    if (subject == null || subject === '' || seen.has(subject)) continue;
+    seen.add(subject);
+    names.push(subject);
+  }
+  const extra = names.length - 3;
+  return {
+    names: names.slice(0, 3),
+    more: extra > 0 ? `+${extra} more` : '',
+  };
+}
+
+function longestSpan(members, field, nowMs) {
+  let max = null;
+  for (const row of members) {
+    const from = toMs(row[field]);
+    if (from == null) continue;
+    const sec = Math.max(0, Math.round((nowMs - from) / 1000));
+    if (max == null || sec > max) max = sec;
+  }
+  return max;
+}
+
+function groupTiming(members, laneKey, nowMs) {
+  if (laneKey === 'running') {
+    const sec = longestSpan(members, 'started_at', nowMs);
+    return sec == null ? '' : `ran ${spanText(sec)}`;
+  }
+  if (laneKey === 'waiting') {
+    const sec = longestSpan(members, 'created_at', nowMs);
+    return sec == null ? '' : `waited ${spanText(sec)}`;
+  }
+  const lead = leadOf(members, 'finished');
+  const finished = toMs(lead?.finished_at);
+  if (finished == null) return '';
+  return `${spanText(Math.max(0, Math.round((nowMs - finished) / 1000)))} ago`;
+}
+
+const OUTCOME_ORDER = Object.freeze(['failed', 'done', 'cancelled', 'tempfail']);
+
+function groupFailure(members, laneKey) {
+  if (laneKey !== 'finished') return '';
+  const counts = Object.create(null);
+  for (const row of members) {
+    const state = row.state;
+    if (state == null || state === '') continue;
+    counts[state] = (counts[state] ?? 0) + 1;
+  }
+  const parts = [];
+  const seen = new Set();
+  for (const state of OUTCOME_ORDER) {
+    if (!counts[state]) continue;
+    parts.push(`${counts[state]} ${state}`);
+    seen.add(state);
+  }
+  for (const state of Object.keys(counts)) {
+    if (seen.has(state)) continue;
+    parts.push(`${counts[state]} ${state}`);
+  }
+  return parts.join(' · ');
+}
+
+// Repeat-failure grouping (same subject+action, failed ≥2) runs first and
+// produces one `failed Nx` row. Coalesce then groups remaining rows by action
+// (COALESCE_MIN). That order is the contract: coalescing first would hide the
+// Nx row inside an action group of the same failures.
+function coalesceRows(rows, laneKey, nowMs) {
+  const groups = new Map();
+  const order = [];
+  for (const row of rows) {
+    const action = actionOf(row);
+    if (!groups.has(action)) {
+      groups.set(action, []);
+      order.push(action);
+    }
+    groups.get(action).push(row);
+  }
+  const out = [];
+  for (const action of order) {
+    const members = groups.get(action);
+    if (members.length < COALESCE_MIN) {
+      out.push(...members);
+      continue;
+    }
+    out.push({
+      key: `${laneKey}:${action}`,
+      action,
+      count: members.length,
+      members,
+      lead: leadOf(members, laneKey),
+      subjects: subjectsOf(members),
+      timing: groupTiming(members, laneKey, nowMs),
+      failure: groupFailure(members, laneKey),
+    });
+  }
+  return out;
+}
+
 function collapseFailed(rows) {
   const groups = new Map();
   const order = [];
@@ -172,8 +309,8 @@ function compareFinished(a, b) {
   return fb - fa || b.id - a.id;
 }
 
-function lane(key, label, rows) {
-  return { key, label, count: rows.length, rows };
+function lane(key, label, rows, count = rows.length) {
+  return { key, label, count, rows };
 }
 
 export function lanesModel(rows, nowMs) {
@@ -199,10 +336,13 @@ export function lanesModel(rows, nowMs) {
   }
 
   const present = (row) => presentRow(row, nowMs, eligibleByClass);
+  const runningRows = running.map(present);
+  const waitingRows = waiting.map(present);
+  const finishedRows = collapseFailed(finished.map(present));
   return [
-    lane('running', 'Running', running.map(present)),
-    lane('waiting', 'Waiting', waiting.map(present)),
-    lane('finished', 'Finished', collapseFailed(finished.map(present))),
+    lane('running', 'Running', coalesceRows(runningRows, 'running', nowMs), runningRows.length),
+    lane('waiting', 'Waiting', coalesceRows(waitingRows, 'waiting', nowMs), waitingRows.length),
+    lane('finished', 'Finished', coalesceRows(finishedRows, 'finished', nowMs), finishedRows.length),
   ];
 }
 

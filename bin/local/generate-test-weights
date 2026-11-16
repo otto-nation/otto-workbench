@@ -14,8 +14,9 @@
 # junit report a CI shard uploaded, not from a local run, unless you are
 # bootstrapping the file.
 #
-# To refresh from CI, take the three shards' artifacts from any run of the
-# workflow and hand all three to this script at once:
+# To refresh from CI, take the three shards' artifacts from a run on main (a push, not a
+# pull request: PR shards run only the files their diff selects and upload no timings) and
+# hand all three to this script at once:
 #
 #   gh run download <run-id> --pattern 'bats-timings-*' --dir /tmp/timings
 #   bin/local/generate-test-weights /tmp/timings/*/*.xml

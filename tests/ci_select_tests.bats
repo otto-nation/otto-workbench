@@ -61,3 +61,9 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$output" = $'bats-shard\ntest-pytest' ]
 }
+
+@test "bats timings are uploaded from main only, never from a PR's partial run" {
+  run yq -r '.jobs."bats-shard".steps[] | select(.name == "Upload timings") | .if' "$CI_YML"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"github.event_name != 'pull_request'"* ]]
+}

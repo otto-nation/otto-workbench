@@ -608,7 +608,9 @@ c.bats	1
 d.bats	1
 EOF
 )
+  # shellcheck disable=SC2034  # read by shard_files / _shard_weights in bin/local/run-tests
   TEST_WEIGHTS_FILE="$WORKBENCH_DIR/tests/weights.tsv"
+  # shellcheck disable=SC2034  # read by _shard_weights in bin/local/run-tests
   SHARD_POOL="$WORKBENCH_DIR/tests/a.bats"
   local empty=0 shard count
   for shard in 1 2 3; do

@@ -5,6 +5,10 @@
 # arguments they were given, so what --changed asks for is readable without
 # starting a suite.
 
+# The runner is sourced in setup(); the "--changed with --shard" test stubs select_changed and
+# run_bats inside its own body, which ShellCheck reads as a later definition of the function the
+# earlier tests call. Each test runs in its own process, so the stub cannot leak.
+# shellcheck disable=SC2218
 bats_require_minimum_version 1.5.0
 
 setup() {
@@ -139,6 +143,7 @@ _stub_select_tests() {
   # shellcheck disable=SC2034  # read by run_bats in bin/local/run-tests
   SHARD=2/3
   BATS_NONE=false
+  CHANGED=true
   BATS_FILES="$BATS_TEST_TMPDIR/a.bats"
   local bin="$BATS_TEST_TMPDIR/bin"
   mkdir -p "$bin"
@@ -221,4 +226,21 @@ _stub_select_tests() {
   [ "$status" -eq 2 ]
   run main --pytest --pytest-files
   [ "$status" -eq 2 ]
+}
+
+@test "an empty shard of a full run is an error, not a green" {
+  shard_files() { return 0; }
+  # shellcheck disable=SC2034  # read by run_bats in bin/local/run-tests
+  SHARD=2/3
+  BATS_NONE=false
+  CHANGED=false
+  BATS_FILES=""
+  local bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\necho RAN-BATS\n' > "$bin/bats"
+  chmod +x "$bin/bats"
+  PATH="$bin:$PATH" run --separate-stderr run_bats
+  [ "$status" -eq 1 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
+  [[ "$stderr" == *"produced an empty file list"* ]]
 }

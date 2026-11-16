@@ -326,6 +326,18 @@ shard_files() {
 # of this stream to report the ones over its threshold.
 #
 # When SHARD is set (N/M), only the files assigned to that shard are run.
+# _empty_shard — what a shard with no files means. Only a narrowed selection (--changed) can
+# leave a shard with nothing to run: success. On a full run an empty shard means the packer or
+# the weights broke, and a green with no tests run is the failure this guard exists to prevent.
+_empty_shard() {
+  if $CHANGED; then
+    info "no test files affected" >&2
+    return 0
+  fi
+  err "--shard $SHARD: produced an empty file list"
+  return 1
+}
+
 run_bats() {
   if $BATS_NONE; then
     info "no test files affected" >&2
@@ -407,8 +419,8 @@ run_bats() {
     done < <(shard_files "$shard_n" "$shard_m")
     SHARD_POOL=""
     if [[ ${#shard_test_files[@]} -eq 0 ]]; then
-      info "no test files affected" >&2
-      return 0
+      _empty_shard
+      return $?
     fi
     _run_watched bats "$watch_jobs" bats "${shard_test_files[@]}" "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
   elif [[ -n "${BATS_FILES:-}" ]]; then

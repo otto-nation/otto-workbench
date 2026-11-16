@@ -258,7 +258,9 @@ _is_full_suite_trigger() {
   _is_in_array "$1" "${FULL_SUITE_TRIGGERS[@]}" && return 0
   local prefix
   for prefix in "${FULL_SUITE_TRIGGER_PREFIXES[@]}"; do
-    [[ "$1" == "$prefix"* ]] && return 0
+    if [[ "$1" == "$prefix"* ]]; then
+      return 0
+    fi
   done
   return 1
 }

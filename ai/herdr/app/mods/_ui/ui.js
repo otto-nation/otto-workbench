@@ -77,15 +77,17 @@ export function dangerButton(id, label, onClick) {
 
 // ceiling: refresh keeps glyph.spin(900); once gpui-kit exposes reduce-motion, skip spin.
 // A square icon-only button holding an svg (tinted with the text colour). `label` is its tooltip and
-// accessible name; `spinning` turns the icon while work runs.
-export function iconButton(id, icon, label, onClick, { disabled = false, spinning = false } = {}) {
+// accessible name; `spinning` turns the icon while work runs. `selected` is icon-button-selected:
+// solid fill, solid_foreground glyph, no hover fill.
+export function iconButton(id, icon, label, onClick, { disabled = false, spinning = false, selected = false } = {}) {
   const t = theme();
   const glyph = svg(icon).size(LAYOUT.iconSize);
   return control(id, { disabled, onClick }).w(CONTROL.h)
     .border_1().border_color(t.input)
-    .text_color(disabled ? t.muted : t.foreground)
+    .when(selected, (e) => e.bg(t.solid).text_color(t.solid_foreground))
+    .when(!selected, (e) => e.text_color(disabled ? t.muted : t.foreground))
     .tooltip(label).accessibility_label(label)
-    .when(!disabled, (e) => e.hover((s) => s.bg(t.hover)))
+    .when(!disabled && !selected, (e) => e.hover((s) => s.bg(t.hover)))
     .child(spinning ? glyph.spin(900) : glyph);
 }
 

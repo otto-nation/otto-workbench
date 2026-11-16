@@ -1,14 +1,18 @@
-// Queue: this machine's otto-queue and each remote's, polled while this pane is shown. A row
-// expands to its command, timings and log tail; live rows cancel after a confirm.
+// Queue: this machine's otto-queue and each remote's, polled while this pane is shown. Home is
+// one block per machine; a row expands to its command, timings and log tail; live rows cancel
+// after a confirm.
 import { View } from "gpui-kit";
-import { exec, spaces } from "herdr";
+import { exec, spaces, panes, run, shared, setShared } from "herdr";
 import * as herdr from "herdr";
 import { eachByMachine, machineOf } from "./_lib/board_pull.js";
+import { parsePrKey } from "./_lib/launch.js";
 import { LOAD_DELAY_MS } from "./_lib/load_state.js";
 import { cancelEntry, loadLog, loadStatus, logNote } from "./_lib/queue.js";
+import { homeModel, toggleCollapsed } from "./_lib/queue_home.js";
 import {
   filterRows, lanesModel, refreshSpinning, staleness, summary,
 } from "./_lib/queue_lanes.js";
+import { focusSteps } from "./_lib/run_session.js";
 import { renderQueue } from "./view.js";
 
 function uniqueOns(values) {
@@ -173,8 +177,24 @@ export default class Queue extends View {
     });
   }
 
+  toggleMachine(key) {
+    setShared("queue.collapsed", toggleCollapsed(shared("queue.collapsed"), key));
+    this.acx.notify();
+  }
+
+  copyPr(row) {
+    const parsed = parsePrKey(row?.subject);
+    if (!parsed) return;
+    this.acx.write_to_clipboard(`https://github.com/${parsed.repo}/pull/${parsed.number}`);
+  }
+
+  focusTerminal(address) {
+    if (address == null || address === "") return;
+    for (const [name, args] of focusSteps(address, panes(), spaces())) run(name, args);
+  }
+
   queueModel(nowMs) {
-    const sections = [];
+    const machines = [];
     const allRows = [];
     for (const t of this.targets()) {
       const key = machineOf(t.on);
@@ -183,19 +203,31 @@ export default class Queue extends View {
       const stale = result == null ? null : staleness({ result, at: entry.at }, nowMs);
       const rows = stale?.rows ?? result?.rows ?? [];
       allRows.push(...rows);
-      const kind = stale?.kind;
-      sections.push({
-        on: t.on,
-        label: t.on ?? "This computer",
-        stale: stale && { words: stale.words, warn: kind !== "fresh" },
-        muted: kind === "stale" || kind === "unreachable",
-        loading: result == null,
-        busy: Boolean(result?.ok && result.busy),
-        lanes: result == null || (result.ok && result.busy) ? [] : lanesModel(filterRows(rows, this.filter), nowMs),
-        cancelError: this.cancelErr.get(key),
+      machines.push({
+        on: t.on, key, title: t.on ?? "This computer", at: entry?.at, result, stale, rows,
       });
     }
-    return { sections, summary: summary(allRows) };
+    const blocks = homeModel(machines, nowMs, shared("queue.collapsed") ?? {}).map((block) => {
+      const src = machines.find((m) => m.key === block.key);
+      const stale = src?.stale;
+      const result = src?.result;
+      const rows = src?.rows ?? [];
+      const kind = stale?.kind;
+      return {
+        ...block,
+        section: {
+          on: src?.on ?? (block.key === "" ? null : block.key),
+          label: block.summary.title,
+          stale: stale && { words: stale.words, warn: kind !== "fresh" },
+          muted: kind === "stale" || kind === "unreachable",
+          loading: result == null,
+          busy: Boolean(result?.ok && result.busy),
+          lanes: result == null || (result.ok && result.busy) ? [] : lanesModel(filterRows(rows, this.filter), nowMs),
+          cancelError: this.cancelErr.get(block.key),
+        },
+      };
+    });
+    return { blocks, summary: summary(allRows) };
   }
 
   render(_cx) {
@@ -203,7 +235,7 @@ export default class Queue extends View {
     const nowMs = Date.now();
     const model = this.queueModel(nowMs);
     return renderQueue({
-      sections: model.sections,
+      blocks: model.blocks,
       summary: model.summary,
       filter: this.filter,
       spinning: refreshSpinning(this.refreshSince, nowMs),
@@ -215,6 +247,9 @@ export default class Queue extends View {
       rowKey,
       onToggle: (on, id) => this.toggle(on, id),
       onToggleGroup: (on, id) => this.toggleGroup(on, id),
+      onToggleMachine: (key) => this.toggleMachine(key),
+      onOpenPr: (row) => this.copyPr(row),
+      onOpenTerminal: (id) => this.focusTerminal(id),
       onAskCancel: (on, id) => this.askCancel(on, id),
       onCancel: (on, id) => this.cancel(on, id),
       onDismiss: () => this.dismissCancel(),

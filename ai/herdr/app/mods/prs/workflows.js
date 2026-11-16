@@ -385,18 +385,26 @@ export class Workflows {
   }
 
   targetSession(on, d) {
-    const ui = this.sessionUi.get(sessionKey(TARGET, on, `${d.repo}#${d.number}`)) ?? {};
+    const key = sessionKey(TARGET, on, `${d.repo}#${d.number}`);
+    const ui = this.sessionUi.get(key) ?? {};
+    const branch = d.presentation?.branch;
     return {
       gate: sessionGate(this.featuresOf(on), TARGET),
       opening: Boolean(ui.opening),
       error: ui.error ?? null,
       waiting: null,
       onOpen: () => {
+        // A row with no branch cannot name its target; asking `pr` would target "undefined".
+        if (!branch) {
+          this.sessionUi.set(key, { opening: false, error: "This PR's branch is not known yet" });
+          this.acx.notify();
+          return;
+        }
         const ctx = this.machines.get(k(on))?.ctx ?? { on, cwd: null };
-        this.startSession(TARGET, sessionKey(TARGET, on, `${d.repo}#${d.number}`), {
+        this.startSession(TARGET, key, {
           on,
           cwd: d.cwd ?? ctx.cwd ?? null,
-          branch: d.presentation?.branch,
+          branch,
           repo: d.repo,
           features: this.featuresOf(on),
         });

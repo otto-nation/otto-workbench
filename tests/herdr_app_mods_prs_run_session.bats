@@ -167,6 +167,18 @@ RUNS_JS
   [ "$output" = '{"gate":"outdated","error":"Update pr on this machine to open sessions (otto-workbench sync)","seen":0}' ]
 }
 
+@test "target session: a PR with no branch says so and asks pr nothing" {
+  _host "$RUNS
+    const { w, settle } = await load();
+    w.featuresOf = () => ['target-session'];
+    const d = { repo: 'o/n', number: 9, cwd: '/w/n', presentation: { branch: '' } };
+    seen.length = 0;
+    w.targetSession(null, d).onOpen(); await settle();
+    out({ error: w.targetSession(null, d).error, seen: seen.length });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"error":"This PR'"'"'s branch is not known yet","seen":0}' ]
+}
+
 # The host cannot mount renderDetailHeader (gpui-kit), so the header wiring is pinned by source.
 @test "target session: the detail header draws the control only when a targetSession is passed" {
   local detail="$REPO_ROOT/ai/herdr/app/mods/prs/detail.js"

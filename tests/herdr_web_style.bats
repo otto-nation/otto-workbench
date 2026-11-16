@@ -89,3 +89,8 @@ teardown() {
   run grep -rnE 'stale ·|\} failed`|errorStatus *\(error' "$WEB/public" "$WEB/lib"
   [ "$status" -eq 1 ]
 }
+
+@test "the web board never uses ghost buttons: a labelled action is an outline .btn" {
+  run grep -ri ghost "$WEB/public"
+  [ "$status" -eq 1 ]
+}

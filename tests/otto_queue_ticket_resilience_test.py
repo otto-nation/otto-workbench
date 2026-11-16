@@ -239,3 +239,39 @@ def test_wait_poll_returns_the_row_and_the_oldest_waiter(tmp_path):
     assert first == ledger.first_waiting(EntryClass.HEAVY)
     older.lease.release()
     newer.lease.release()
+
+
+def _bounded_polls(wait_s, poll_s=POLL_S):
+    """Polls a wait of *wait_s* would take with no jitter and geometric backoff.
+
+    Independent of `poll_delay` so removing the backoff still fails this bound.
+    """
+    t = 0.0
+    n = 0
+    while True:
+        n += 1
+        if t >= wait_s:
+            return n
+        if t < FAST_WAIT_S:
+            delay = poll_s
+        else:
+            steps = int((t - FAST_WAIT_S) / poll_s)
+            delay = min(poll_s * (2 ** steps), POLL_CAP_S)
+        t += min(delay, wait_s - t)
+
+
+def test_six_waiters_issue_far_fewer_ledger_calls_than_a_fixed_poll(monkeypatch):
+    wait_s = 60.0
+    max_polls = _bounded_polls(wait_s)
+    max_reaps = 1 + int(wait_s / REAP_EVERY_S)
+    max_reads = max_polls + max_reaps
+    old_polls = int(wait_s / POLL_S) + 1
+    assert max_polls < old_polls
+    for i in range(6):
+        waiter = _queued(i + 2)
+        ledger = _CountingLedger(waiter, first_id=1)
+        wait = _drive_wait(monkeypatch, ledger, waiter.id, wait_s)
+        assert wait.end.value == "timed_out"
+        assert ledger.reaps <= max_reaps
+        assert ledger.reads <= max_reads
+        assert ledger.reads < old_polls

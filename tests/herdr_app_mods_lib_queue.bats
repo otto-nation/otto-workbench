@@ -166,6 +166,55 @@ _q() {
   [ "$output" = '["Runs in the terminal that started it — no log is kept","Log starts when it runs","No log",null]' ]
 }
 
+@test "detailModel: ticket vs job, queued vs running vs done, at a fixed nowMs" {
+  _q '
+    const NOW = 1_700_000_000_000;
+    const SEC = 1_700_000_000;
+    const pick = (row) => {
+      const m = q.detailModel(row, NOW);
+      return {
+        command: m.command,
+        facts: m.facts,
+        timing: m.timing,
+        logNote: m.logNote,
+        canFocus: m.canFocus,
+        tooltip: m.tooltip === q.timesText(row),
+      };
+    };
+    const ticketQueued = {
+      id: 1, kind: "ticket", entry_class: "heavy", argv: ["pr", "review", "--self"],
+      cwd: "/work/repo", state: "queued", attempts: 0, created_at: SEC - 120, log_path: null,
+    };
+    const jobRunning = {
+      id: 2, kind: "job", entry_class: "light", argv: ["sleep", "90"], cwd: "/tmp/q",
+      state: "running", attempts: 1, pid: 4321, created_at: SEC - 180, started_at: SEC - 72,
+      log_path: "/s/queue/logs/2.log",
+    };
+    const jobDone = {
+      id: 3, kind: "job", entry_class: "heavy", argv: ["true"], cwd: "/repo", state: "done",
+      attempts: 3, exit_status: 0, pid: 99, created_at: SEC - 64800 - 120,
+      started_at: SEC - 64800 - 60, finished_at: SEC - 64800, log_path: null,
+    };
+    process.stdout.write(JSON.stringify([
+      pick(ticketQueued), pick(jobRunning), pick(jobDone),
+    ]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"command":"pr review --self","facts":[{"key":"Directory","value":"/work/repo","mono":true},{"key":"Kind","value":"Ticket — runs in its terminal"},{"key":"Class","value":"heavy"}],"timing":"waited 2m 0s","logNote":"Runs in the terminal that started it — no log is kept","canFocus":false,"tooltip":true},{"command":"sleep 90","facts":[{"key":"Directory","value":"/tmp/q","mono":true},{"key":"Kind","value":"Job — run by the queue worker"},{"key":"Class","value":"light"},{"key":"PID","value":"4321"}],"timing":"waited 1m 48s · ran 1m 12s","logNote":null,"canFocus":false,"tooltip":true},{"command":"true","facts":[{"key":"Directory","value":"/repo","mono":true},{"key":"Kind","value":"Job — run by the queue worker"},{"key":"Class","value":"heavy"},{"key":"Attempts","value":"3"},{"key":"Exit","value":"0"}],"timing":"waited 1m 0s · ran 1m 0s · ended 18h 0m ago","logNote":"No log","canFocus":false,"tooltip":true}]' ]
+}
+
+@test "detailModel omits facts that are absent" {
+  _q '
+    const m = q.detailModel({ id: 4, argv: ["echo"], state: "queued", attempts: 1 }, 1_700_000_000_000);
+    process.stdout.write(JSON.stringify({
+      command: m.command, facts: m.facts, timing: m.timing, logNote: m.logNote, canFocus: m.canFocus,
+      tooltip: m.tooltip === q.timesText({ id: 4, argv: ["echo"], state: "queued", attempts: 1 }),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"command":"echo","facts":[],"timing":"","logNote":"Log starts when it runs","canFocus":false,"tooltip":true}' ]
+}
+
 @test "a remote log tail goes through the preamble and surfaces a failure" {
   _q '
     const calls = [];

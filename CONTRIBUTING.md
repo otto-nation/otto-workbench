@@ -77,10 +77,18 @@ where there is a status to check.
 `bin/local/select-pytest`. On this repo's recent history that is a median of 45 of 154
 bats files and 28 of 187 pytest files. A per-area bats helper selects the suites that
 `load` it. A change to the fixtures every suite shares — `test_helper.bash` for bats,
-`conftest.py` for pytest — selects everything, and so does a selector that fails or cannot
-narrow: failing towards the whole suite is the only safe direction, since a selection that
-silently narrowed to nothing would report green having run no tests.
-Reach for `task test:all` when you suspect the map rather than the code.
+`conftest.py` for pytest — selects everything, and so does a change to the test machinery
+itself (`bin/local/run-tests`, the selectors, `Taskfile.yml`, `.github/workflows/*`)
+and a selector that fails or cannot narrow: failing towards the whole suite is the only
+safe direction, since a selection that silently narrowed to nothing would report green
+having run no tests. Reach for `task test:all` when you suspect the map rather than the code.
+
+CI on `pull_request` uses that same selection (`bin/local/run-tests --changed --base origin/<base>`),
+including the bats shards of the selected files. A PR that reaches no test file still
+reports the required `Tests (bats)` / `Tests (pytest)` checks, cheaply (`no test files affected`).
+A push to `main` runs the full suites as the backstop; so does any other trigger. The
+selectors own the fallback list — the workflow only passes flags, and has no `paths:`
+filter, so the required checks still report on a docs-only change.
 
 Every test target goes through `bin/local/run-tests`, which owns the parallelism settings
 for the whole repo — the Taskfile, the pre-push hook, and CI all call it rather than

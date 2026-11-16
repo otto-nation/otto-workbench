@@ -217,16 +217,29 @@ teardown() {
 
 # ── Full-suite triggers ─────────────────────────────────────────────────────
 
-@test "a workflow change does not trigger the full suite; CI runs it" {
+@test "a workflow change triggers the full suite" {
   run _is_full_suite_trigger ".github/workflows/ci.yml"
+  [ "$status" -eq 0 ]
+  run _is_full_suite_trigger ".github/workflows/site.yml"
+  [ "$status" -eq 0 ]
+}
+
+@test "a non-workflow path under .github is not a full-suite trigger" {
+  run _is_full_suite_trigger ".github/actions/install-yq/action.yml"
   [ "$status" -ne 0 ]
 }
 
-@test "run-tests and select-tests do not trigger the full suite" {
+@test "run-tests, the selectors, Taskfile and conftest trigger the full suite" {
   run _is_full_suite_trigger "bin/local/run-tests"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
   run _is_full_suite_trigger "bin/local/select-tests"
-  [ "$status" -ne 0 ]
+  [ "$status" -eq 0 ]
+  run _is_full_suite_trigger "bin/local/select-pytest"
+  [ "$status" -eq 0 ]
+  run _is_full_suite_trigger "Taskfile.yml"
+  [ "$status" -eq 0 ]
+  run _is_full_suite_trigger "tests/conftest.py"
+  [ "$status" -eq 0 ]
 }
 
 @test "the per-area suites for run-tests and select-tests are selected by their refs" {

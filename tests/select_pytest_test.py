@@ -327,6 +327,33 @@ def test_a_fixture_change_selects_everything(monkeypatch, capsys):
                                                for p in sp._all_tests()]
 
 
+@pytest.mark.parametrize("changed", [
+    ".github/workflows/ci.yml",
+    ".github/workflows/site.yml",
+    "bin/local/run-tests",
+    "bin/local/select-tests",
+    "bin/local/select-pytest",
+    "tests/test_helper.bash",
+    "Taskfile.yml",
+])
+def test_test_machinery_selects_everything(changed, monkeypatch, capsys):
+    """CI on pull_request selects through this map, so a machinery change
+    must not narrow. The list lives in the selector, not in the workflow."""
+    monkeypatch.setattr(
+        sp, "_changed_files", lambda base, path=changed: [path],
+    )
+    assert sp.main(["--base", "whatever"]) == 0
+    assert capsys.readouterr().out.split() == [
+        str(REPO_ROOT / p) for p in sp._all_tests()
+    ]
+
+
+def test_a_github_action_is_not_a_full_suite_trigger():
+    assert not sp._triggers_full_suite(
+        [".github/actions/install-yq/action.yml"],
+    )
+
+
 def test_validate_fails_on_an_unmapped_test():
     """The guard's teeth. Asserting only the green case lets `if False:` pass."""
     assert sp._validate({"tests/mystery_test.py": set()}) == 1

@@ -138,6 +138,8 @@ Options:
   --pytest        Run only the pytest suite
   --shard N/M     Run only shard N of M (1-indexed). Partitions bats files
                   via longest-processing-time packing on measured runtime weights.
+                  With --changed, partitions the selected files; an empty
+                  shard succeeds.
   --files LIST    Run only the bats files in LIST (newline-separated paths).
                   Used by the pre-push hook for change-based selection.
   --pytest-files LIST
@@ -209,10 +211,18 @@ TEST_WEIGHTS_FILE="$WORKBENCH_DIR/tests/weights.tsv"
 _shard_weights() {
   local -a all_bats_files=()
   local f
-  for f in "$WORKBENCH_DIR"/tests/*.bats; do
-    [[ -f "$f" ]] || continue
-    all_bats_files+=("$f")
-  done
+  # SHARD_POOL: newline-separated paths to pack instead of tests/*.bats.
+  # --changed --shard sets it so a PR shards its selection, not the suite.
+  if [[ -n "${SHARD_POOL:-}" ]]; then
+    while IFS= read -r f || [[ -n "$f" ]]; do
+      [[ -n "$f" && -f "$f" ]] && all_bats_files+=("$f")
+    done <<< "$SHARD_POOL"
+  else
+    for f in "$WORKBENCH_DIR"/tests/*.bats; do
+      [[ -f "$f" ]] || continue
+      all_bats_files+=("$f")
+    done
+  fi
   [[ ${#all_bats_files[@]} -eq 0 ]] && return 0
 
   # The file list alone, never the files' contents. The packer weighs a file by
@@ -316,9 +326,21 @@ shard_files() {
 # of this stream to report the ones over its threshold.
 #
 # When SHARD is set (N/M), only the files assigned to that shard are run.
+# _empty_shard — what a shard with no files means. Only a narrowed selection (--changed) can
+# leave a shard with nothing to run: success. On a full run an empty shard means the packer or
+# the weights broke, and a green with no tests run is the failure this guard exists to prevent.
+_empty_shard() {
+  if $CHANGED; then
+    info "no test files affected" >&2
+    return 0
+  fi
+  err "--shard $SHARD: produced an empty file list"
+  return 1
+}
+
 run_bats() {
   if $BATS_NONE; then
-    info "bats: no test file is affected by this diff — skipped" >&2
+    info "no test files affected" >&2
     return 0
   fi
   # A test that swaps HOME changes what mise considers its global config, and
@@ -391,12 +413,14 @@ run_bats() {
     local shard_n="${SHARD%/*}"
     local shard_m="${SHARD#*/}"
     local -a shard_test_files=()
+    SHARD_POOL="${BATS_FILES:-}"
     while IFS= read -r f; do
-      shard_test_files+=("$f")
+      [[ -n "$f" ]] && shard_test_files+=("$f")
     done < <(shard_files "$shard_n" "$shard_m")
+    SHARD_POOL=""
     if [[ ${#shard_test_files[@]} -eq 0 ]]; then
-      err "--shard $SHARD: produced an empty file list"
-      return 1
+      _empty_shard
+      return $?
     fi
     _run_watched bats "$watch_jobs" bats "${shard_test_files[@]}" "${bats_flags[@]}" "${jobs_flag[@]}" "$@"
   elif [[ -n "${BATS_FILES:-}" ]]; then
@@ -428,6 +452,10 @@ run_bats() {
 # BATS_RUN_TMPDIR, and left behind on exit because pytest's own `keep=3`
 # retention is what collects it.
 run_pytest() {
+  if $PYTEST_NONE; then
+    info "no test files affected" >&2
+    return 0
+  fi
   local pytest_bin="" has_xdist=0
   resolve_pytest pytest_bin has_xdist
   # No candidate on PATH: keep the bare name so the failure is `pytest: not
@@ -538,6 +566,8 @@ BATS_NONE=false
 
 # PYTEST_FILES — when set, run only these pytest files (newline-separated).
 PYTEST_FILES=""
+# PYTEST_NONE — set by --changed when select-pytest ran and selected nothing.
+PYTEST_NONE=false
 
 # CHANGED — when true, ask the selectors what the diff can reach.
 CHANGED=false
@@ -575,9 +605,9 @@ _no_selection() {
 # A selector that is missing or fails leaves its variable empty, which run_bats
 # and run_pytest read as "the whole suite". That is the only safe direction to
 # fail: a selection that silently narrowed to nothing would report a green gate
-# having run no tests. select-tests succeeding with no output is the other
-# case — the diff reaches no bats file — and sets BATS_NONE, which run_bats
-# announces rather than passing silently.
+# having run no tests. A selector succeeding with no output is the other
+# case — the diff reaches no file — and sets BATS_NONE / PYTEST_NONE, which
+# announce "no test files affected" rather than passing silently.
 # The base defaults to origin/main (see CHANGED_BASE), and there is no
 # fetch either — unlike the pre-push hook, which passes the ref it has just
 # fetched. That divergence is deliberate and safe in this direction: both
@@ -613,7 +643,12 @@ select_changed() {
     [[ -x "$WORKBENCH_DIR/bin/local/select-pytest" ]] || _no_selection select-pytest
   fi
   if [[ "$1" != bats ]] && [[ -x "$WORKBENCH_DIR/bin/local/select-pytest" ]]; then
-    selected=$("$WORKBENCH_DIR/bin/local/select-pytest" "${scope[@]}" "${py_flags[@]+"${py_flags[@]}"}" 2>/dev/null) || { _no_selection select-pytest; selected=""; }
+    if selected=$("$WORKBENCH_DIR/bin/local/select-pytest" "${scope[@]}" "${py_flags[@]+"${py_flags[@]}"}" 2>/dev/null); then
+      [[ -n "$selected" ]] || PYTEST_NONE=true
+    else
+      _no_selection select-pytest
+      selected=""
+    fi
     PYTEST_FILES="$selected"
   fi
 }
@@ -687,8 +722,8 @@ main() {
     exit 1
   fi
 
-  if $CHANGED && [[ -n "$SHARD$BATS_FILES$PYTEST_FILES" ]]; then
-    err "--changed cannot be combined with --shard, --files or --pytest-files"
+  if $CHANGED && [[ -n "$BATS_FILES$PYTEST_FILES" ]]; then
+    err "--changed cannot be combined with --files or --pytest-files"
     exit 1
   fi
 

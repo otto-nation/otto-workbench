@@ -30,7 +30,7 @@ npm --prefix site test         # run the site's remark plugin tests
 npm --prefix site run build    # static-export the site to site/out (what CI's Site job runs)
 ```
 
-**Never run a whole suite locally — CI runs everything.** Run only the test files the change
+**Never run a whole suite locally — CI answers for the rest** (it runs the tests a pull request's diff selects, and everything on `main`). Run only the test files the change
 needs: the suite for each file you touched, and any suite whose subject you changed
 (`bats tests/one.bats tests/two.bats`, `pytest tests/one_test.py tests/two_test.py`). That covers checking a
 change, a revert check, and confirming a fix — none of them is a reason to run every file.

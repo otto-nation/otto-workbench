@@ -47,7 +47,7 @@ export class FilterBar {
     const t = theme();
     return h_flex().id("prs-query").flex_none().h(CONTROL.h).gap(SP.xs).items_center()
       .child(
-        Input.new(this.prSearch).h(CONTROL.h).px(SP.sm).rounded(RADIUS.control)
+        Input.new(this.prSearch).w(LAYOUT.searchW).h(CONTROL.h).px(SP.sm).rounded(RADIUS.control)
           .border_1().border_color(t.input).bg(t.background),
       )
       .when(Boolean(model.queryActive), (e) => e.child(

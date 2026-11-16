@@ -49,7 +49,7 @@ function row(onAction, { name, on, action, option = null, hint = null, count = n
       hint ? h('span', { class: 'meta-text' }, hint) : null),
     option
       ? h('button', {
-        class: 'btn ghost',
+        class: 'btn',
         type: 'button',
         'aria-pressed': excluded,
         onclick: () => onAction(option.exclude),
@@ -156,7 +156,7 @@ export function renderFilterBar(el, model, { onAction, trailing = null } = {}) {
       onclick: () => onAction(t.action),
     }, t.text, h('span', { class: 'x' }, '×'))));
   const clear = model.clear
-    ? h('button', { class: 'btn ghost', type: 'button', onclick: () => onAction(model.clear) }, 'Clear filters')
+    ? h('button', { class: 'btn', type: 'button', onclick: () => onAction(model.clear) }, 'Clear filters')
     : null;
   setChildren(el,
     (model.facets ?? []).map((f) => facet(f, onAction)),

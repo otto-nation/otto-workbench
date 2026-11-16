@@ -15,7 +15,7 @@ function header(pr, files, { onClose, slots, itemOf }) {
   const marks = [p.ci, p.decision, ...p.detail_issues, p.review, p.busy].filter(Boolean);
   const url = prUrl(pr);
   return h('div', { class: 'dhead' },
-    h('div', { class: 'row' }, h('button', { class: 'btn ghost mback', onclick: onClose }, '‹ Back'),
+    h('div', { class: 'row' }, h('button', { class: 'btn mback', onclick: onClose }, '‹ Back'),
       h('span', { class: 'num' }, p.ref), h('h2', {}, p.title), ...p.tags.map((name) => tag(name)),
       h('button', { class: 'icon-btn desk', title: 'Close', 'aria-label': 'Close', onclick: onClose }, '×')),
     h('div', { class: 'sub' }, h('span', {}, p.author),

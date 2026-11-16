@@ -14,13 +14,19 @@ the machine's budget, and runs once per idempotency key.
    cancelling it. `force` skips the match. A joined entry whose holder died is
    not a result: the ticket resolves again and, finding nothing live, runs the
    work itself.
-2. **Wait.** Every `POLL_S`, orphans are reaped, and only the oldest waiting
-   entry of the class (tickets, and while a worker is alive its ready jobs)
-   asks `otto_queue.slots.try_admit`. Each new reason for waiting is printed
-   once. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler while waiting
-   ends the ticket with that exit status (130 when none is given). Reaching
-   `wait_s` with no slot records `tempfail` and returns 75 (EX_TEMPFAIL), so a
-   caller can tell "never got room" from a failure.
+2. **Wait.** Polls start at `POLL_S` for `FAST_WAIT_S`, then back off
+   geometrically to `POLL_CAP_S` (jittered ±20% so waiters do not lockstep;
+   the interval resets when the wait reason or joined state changes). A sleep
+   never runs past `wait_s`. A waiter that is not first only reads the head of
+   the queue each poll and reaps orphans at most every `REAP_EVERY_S`; the first
+   waiter reaps, then asks `otto_queue.slots.try_admit`. Each new reason for
+   waiting is printed once.
+   `LedgerBusy` after the ledger's own retries is printed once (`ledger busy;
+   still waiting`) and is not a crash: the ticket keeps waiting until `wait_s`,
+   then returns 75. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler
+   while waiting ends the ticket with that exit status (130 when none is
+   given). Reaching `wait_s` with no slot records `tempfail` and returns 75
+   (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
 
 `LABEL_ENV` and `WAIT_ENV` are the names `cli.queue_gate` and `pr batch` use to
 pass a display label and wait bound into a ticket they construct. `run_ticket`
@@ -29,14 +35,18 @@ does not read them: the `otto-queue run` flags stay the only input to the CLI.
    `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
    terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue
    cancel`) forwarded. Its exit status is recorded (75 as `tempfail`, never a
-   failure) and returned.
+   failure) and returned. Recording retries inside the ledger; if it still
+   cannot be written, the command's exit status is returned anyway, never
+   replaced by an infrastructure error. A crash while recording is logged and
+   the original exception is re-raised.
 
 The command sees `OTTO_QUEUE_ENTRY`, its entry id. A ticket started under that
 variable runs its command directly: a nested heavy ticket would otherwise wait
 for a slot its own parent holds. When the ledger stays busy past the open
-deadline, the ticket returns 75 without running. When the ledger cannot be
-opened at all, the command runs unqueued with a warning. The queue's absence
-degrades to today's behaviour, never to work not done.
+deadline, or stays unreachable for the whole wait, the ticket returns 75
+without running. When the ledger cannot be opened at all, the command runs
+unqueued with a warning. The queue's absence degrades to today's behaviour,
+never to work not done.
 
 ceiling: the ticket process, not its command, holds the lease and the slot, so
 a ticket killed with SIGKILL while its command runs leaves the command running
@@ -50,6 +60,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import random
 import signal
 import time
 from collections.abc import Callable
@@ -71,8 +82,15 @@ from otto_queue.model import (  # noqa: F401  LABEL_ENV and WAIT_ENV are re-expo
 # only a ticket stuck behind a wedged entry times out.
 DEFAULT_WAIT_S = 3600.0
 
-# Between admission attempts, and between looks at a joined entry.
+# Between admission attempts, and between looks at a joined entry. Stays at
+# POLL_S for FAST_WAIT_S, then doubles each POLL_S of extra wait up to POLL_CAP_S.
 POLL_S = 0.5
+FAST_WAIT_S = 5.0
+POLL_CAP_S = 3.0
+REAP_EVERY_S = 5.0
+
+# Printed once when a wait poll hits LedgerBusy after the ledger's own retries.
+_BUSY_NOTICE = "otto-queue: ledger busy; still waiting"
 
 ENTRY_ENV = "OTTO_QUEUE_ENTRY"
 
@@ -170,16 +188,31 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
     entry_id = entry.id
     notify(f"otto-queue: joining entry {entry_id}, which is {entry.state.value}")
     deadline = time.monotonic() + request.wait_s
+    origin = time.monotonic()
+    last_state = entry.state
+    rng = random.Random()
+    busy_said = False
     while entry is not None and entry.state.live:
-        ran = _run_unstarted(ledger, entry, request, policy, poll_s, notify)
+        try:
+            ran = _run_unstarted(ledger, entry, request, policy, poll_s, notify)
+        except otto_queue.ledger.LedgerBusy:
+            ran = None
+            busy_said = _note_busy(notify, busy_said)
         if ran is not None:
             return ran
         if time.monotonic() >= deadline:
             notify(f"otto-queue: entry {entry_id} did not finish in {request.wait_s:g}s")
             return TicketResult(os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT, entry_id)
-        time.sleep(poll_s)
-        ledger.reap_orphans()
-        entry = ledger.get(entry_id)
+        state = None if entry is None else entry.state
+        if state != last_state:
+            origin = time.monotonic()
+            last_state = state
+        _poll_sleep(poll_delay(time.monotonic() - origin, rng, poll_s), deadline)
+        try:
+            ledger.reap_orphans()
+            entry = ledger.get(entry_id)
+        except otto_queue.ledger.LedgerBusy:
+            busy_said = _note_busy(notify, busy_said)
     if entry is None or entry.exit_status is None:
         notify(f"otto-queue: entry {entry_id} ended without a result; queuing again")
         return None
@@ -206,13 +239,18 @@ def _run_unstarted(ledger: otto_queue.ledger.Ledger, entry: Entry, request: Tick
 def _record_crash(ledger: otto_queue.ledger.Ledger, entry_id: int, exc: BaseException) -> None:
     # Terminal before the lease (and any slot) is released: a live row
     # whose lease is gone is an orphan, and reap_orphans marks it failed.
-    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-        ledger.cancel(entry_id)
-        code = exc.code if isinstance(getattr(exc, "code", None), int) and exc.code else (
-            core.proc.INTERRUPT_RETURNCODE)
-        ledger.finish(entry_id, code)
-        return
-    ledger.fail(entry_id)
+    # A LedgerError here must not replace *exc*: the original traceback is
+    # the one the caller re-raises.
+    try:
+        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+            ledger.cancel(entry_id)
+            code = exc.code if isinstance(getattr(exc, "code", None), int) and exc.code else (
+                core.proc.INTERRUPT_RETURNCODE)
+            ledger.finish(entry_id, code)
+            return
+        ledger.fail(entry_id)
+    except otto_queue.ledger.LedgerError:
+        core.log.warn(f"otto-queue: could not record crash for entry {entry_id}")
 
 
 def run_claimed(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolution,
@@ -235,6 +273,43 @@ def run_claimed(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolut
         res.lease.release()
 
 
+def _record_status(ledger: otto_queue.ledger.Ledger, entry_id: int,
+                   code: int) -> EntryState | None:
+    """Record *code*; on LedgerError keep the command's status rather than raising."""
+    try:
+        return ledger.finish(entry_id, code)
+    except otto_queue.ledger.LedgerError:
+        core.log.warn(f"otto-queue: could not record exit {code} for entry {entry_id}")
+        return None
+
+
+def poll_delay(waited_s: float, rng, poll_s: float = POLL_S) -> float:
+    """Seconds to sleep after a wait that has already lasted *waited_s*.
+
+    *poll_s* for the first `FAST_WAIT_S`, then doubles each *poll_s* of extra
+    wait up to `POLL_CAP_S`. Each sleep is jittered ±20% and never above the cap.
+    """
+    if waited_s < FAST_WAIT_S:
+        base = poll_s
+    else:
+        steps = int((waited_s - FAST_WAIT_S) / poll_s)
+        base = min(poll_s * (2 ** steps), POLL_CAP_S)
+    return min(base * rng.uniform(0.8, 1.2), POLL_CAP_S)
+
+
+def _poll_sleep(delay: float, deadline: float) -> None:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return
+    time.sleep(min(delay, remaining))
+
+
+def _note_busy(notify: Callable[[str], None], already: bool) -> bool:
+    if not already:
+        notify(_BUSY_NOTICE)
+    return True
+
+
 def _release_slot(slot: otto_queue.slots.Slot | None) -> None:
     if slot is not None:
         slot.release()
@@ -246,14 +321,18 @@ def _run_after_wait(ledger: otto_queue.ledger.Ledger, entry_id: int,
     if wait.end is _WaitEnd.CANCELLED:
         return TicketResult(core.proc.INTERRUPT_RETURNCODE, TicketOutcome.CANCELLED, entry_id)
     if wait.end is _WaitEnd.TIMED_OUT:
-        ledger.finish(entry_id, os.EX_TEMPFAIL)
+        _record_status(ledger, entry_id, os.EX_TEMPFAIL)
         notify(f"otto-queue: entry {entry_id} found no room in {request.wait_s:g}s")
         return TicketResult(os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT, entry_id)
-    started = ledger.mark_running(entry_id, os.getpid())
+    try:
+        started = ledger.mark_running(entry_id, os.getpid())
+    except otto_queue.ledger.LedgerBusy:
+        notify(f"otto-queue: entry {entry_id} found no room in {request.wait_s:g}s")
+        return TicketResult(os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT, entry_id)
     code = _run(request, entry_id) if started else core.proc.INTERRUPT_RETURNCODE
     if not started:
         return TicketResult(code, TicketOutcome.CANCELLED, entry_id)
-    state = ledger.finish(entry_id, code)
+    state = _record_status(ledger, entry_id, code)
     outcome = TicketOutcome.CANCELLED if state is EntryState.CANCELLED else TicketOutcome.RAN
     return TicketResult(code, outcome, entry_id)
 
@@ -272,32 +351,60 @@ def _admit_and_run(ledger: otto_queue.ledger.Ledger, entry_id: int,
         _release_slot(wait.slot if wait is not None else None)
 
 
+def _slot_once(ledger: otto_queue.ledger.Ledger, entry_id: int,
+               entry_class: EntryClass, policy: otto_queue.slots.Policy,
+               said: str, *, reap: bool) -> tuple[_Wait | None, str]:
+    jobs = otto_queue.lease.worker_alive(ledger.root)
+    entry, first = ledger.wait_poll(entry_id, entry_class, jobs=jobs)
+    if entry is None or entry.state is not EntryState.QUEUED:
+        return _Wait(_WaitEnd.CANCELLED), said
+    admission = _try_once(ledger, entry_id, entry_class, policy, first, reap=reap)
+    if admission.slot is not None:
+        return _Wait(_WaitEnd.ADMITTED, admission.slot), said
+    return None, admission.reason
+
+
 def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
                  request: TicketRequest, policy: otto_queue.slots.Policy,
                  poll_s: float, notify: Callable[[str], None]) -> _Wait:
     deadline = time.monotonic() + request.wait_s
+    origin = time.monotonic()
     said = ""
+    rng = random.Random()
+    last_reap = time.monotonic()
+    busy_said = False
     while True:
-        entry = ledger.get(entry_id)
-        if entry is None or entry.state is not EntryState.QUEUED:
-            return _Wait(_WaitEnd.CANCELLED)
-        admission = _try_once(ledger, entry_id, request.entry_class, policy)
-        if admission.slot is not None:
-            return _Wait(_WaitEnd.ADMITTED, admission.slot)
-        if admission.reason != said:
-            notify(f"otto-queue: entry {entry_id} is waiting: {admission.reason}")
-            said = admission.reason
+        now = time.monotonic()
+        reap = now - last_reap >= REAP_EVERY_S
+        try:
+            wait, reason = _slot_once(
+                ledger, entry_id, request.entry_class, policy, said, reap=reap)
+        except otto_queue.ledger.LedgerBusy:
+            wait, reason = None, said
+            busy_said = _note_busy(notify, busy_said)
+            reap = False
+        last_reap = now if reap else last_reap
+        if wait is not None:
+            return wait
+        if reason != said:
+            notify(f"otto-queue: entry {entry_id} is waiting: {reason}")
+            said = reason
+            origin = time.monotonic()
         if time.monotonic() >= deadline:
             return _Wait(_WaitEnd.TIMED_OUT)
-        time.sleep(poll_s)
+        _poll_sleep(poll_delay(time.monotonic() - origin, rng, poll_s), deadline)
 
 
 def _try_once(ledger: otto_queue.ledger.Ledger, entry_id: int, entry_class: EntryClass,
-              policy: otto_queue.slots.Policy) -> otto_queue.slots.Admission:
+              policy: otto_queue.slots.Policy, first: int | None, *,
+              reap: bool) -> otto_queue.slots.Admission:
     """Ask for a slot, unless an older entry of the class is still waiting.
 
     An older entry is a ticket, or a ready job while a worker is alive.
+    A waiter that is not first skips `reap_orphans` unless *reap*.
     """
+    if first is not None and first != entry_id and not reap:
+        return otto_queue.slots.Admission(None, f"behind entry {first}, which queued first")
     ledger.reap_orphans()
     first = ledger.first_waiting(entry_class, jobs=otto_queue.lease.worker_alive(ledger.root))
     if first is not None and first != entry_id:

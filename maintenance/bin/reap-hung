@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# Terminate heavy processes that have run past their command's maximum runtime.
+#
+# Usage: reap-hung
+#
+# Run by the reaper timer on Linux hosts. Only the invoking user's processes
+# are looked at, never PID 1, this script or its ancestors. A process matches by
+# executable basename (never a substring):
+#
+#   golangci-lint  reaper.max_minutes.lint   (default 30)
+#   go             reaper.max_minutes.go     (default 30)
+#   gh             reaper.max_minutes.gh     (default 10)
+#   tasks          reaper.max_minutes.tasks  (default 45)
+#
+# A match over its limit is a candidate. A candidate with a candidate ancestor
+# is left to that ancestor, which is terminated together with all its
+# descendants. Descendants named git are never signalled: SIGKILL on a git
+# write strands its lock files. SIGTERM goes first; whatever is still alive
+# after reaper.grace_s seconds gets SIGKILL. Each signal is recorded with
+# otto-log.
+#
+# Prints `reaped=<n>` on stdout only when something was signalled. Does
+# nothing when reaper.enabled is false. Always exits 0 unless the script
+# itself is broken.
+#
+# Env:
+#   HOME, PATH, WORKBENCH_CONFIG_DIR, WORKBENCH_STATE_DIR
+#
+# Exit codes:
+#   0  Always, when the script ran.
+
+set -e
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  sed -n '2,/^set -e/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'
+  exit 0
+fi
+
+WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+# shellcheck source=../../lib/constants.sh
+. "$WORKBENCH_DIR/lib/constants.sh"
+# shellcheck source=../../lib/config.sh
+. "$WORKBENCH_DIR/lib/config.sh"
+
+log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2; }
+
+# _cfg KEY DEFAULT — machine-wide config only; a repo's .workbench.yml must
+# not steer machine-wide reaping, so the read runs from / where project and
+# container scopes never apply.
+_cfg() {
+  local value
+  value="$(
+    cd /
+    wb_config_get "$1" "$2"
+  )"
+  printf '%s' "$value"
+  return 0
+}
+
+# _limit_s COMM — the limit in seconds for a matching command, or nothing.
+_limit_s() {
+  case "$1" in
+    golangci-lint) printf '%s' "$(( LIMIT_LINT * 60 ))" ;;
+    go) printf '%s' "$(( LIMIT_GO * 60 ))" ;;
+    gh) printf '%s' "$(( LIMIT_GH * 60 ))" ;;
+    tasks) printf '%s' "$(( LIMIT_TASKS * 60 ))" ;;
+    *) ;;
+  esac
+  return 0
+}
+
+# _record PID SIGNAL — trail one signal. Non-fatal: the kill already happened.
+_record() {
+  "$WORKBENCH_DIR/ai/bin/otto-log" record \
+    --script maintenance \
+    --action "reap-$2" \
+    --data "pid=$1" \
+    --data "command=${COMM_OF[$1]}" \
+    --data "age_s=${AGE_OF[$1]}" \
+    > /dev/null \
+    || log "WARNING: could not record reap-$2 of $1 to the trail"
+  return 0
+}
+
+# _walk PID — append PID and its descendants to TREE, skipping git and the
+# protected set.
+_walk() {
+  local child
+  if [[ -n "${PROTECTED[$1]:-}" ]]; then
+    return 0
+  fi
+  TREE+=("$1")
+  for child in "${PIDS[@]}"; do
+    if [[ "${PPID_OF[$child]}" != "$1" || "${COMM_OF[$child]}" == git ]]; then
+      continue
+    fi
+    _walk "$child"
+  done
+  return 0
+}
+
+if [[ "$(_cfg "$REAPER_ENABLED_CONFIG_KEY" true)" != true ]]; then
+  exit 0
+fi
+
+LIMIT_LINT="$(_cfg "$REAPER_MAX_MINUTES_LINT_CONFIG_KEY" 30)"
+LIMIT_GO="$(_cfg "$REAPER_MAX_MINUTES_GO_CONFIG_KEY" 30)"
+LIMIT_GH="$(_cfg "$REAPER_MAX_MINUTES_GH_CONFIG_KEY" 10)"
+LIMIT_TASKS="$(_cfg "$REAPER_MAX_MINUTES_TASKS_CONFIG_KEY" 45)"
+GRACE_S="$(_cfg "$REAPER_GRACE_S_CONFIG_KEY" 30)"
+
+declare -A PPID_OF AGE_OF COMM_OF PROTECTED CANDIDATE
+PIDS=()
+
+if ! listing="$(ps -u "$(id -un)" -o pid=,ppid=,etimes=,comm= 2>/dev/null)"; then
+  log "WARNING: ps could not list processes; nothing reaped"
+  exit 0
+fi
+
+while read -r pid ppid age comm; do
+  [[ "$pid" =~ ^[0-9]+$ && "$age" =~ ^[0-9]+$ ]] || continue
+  PIDS+=("$pid")
+  PPID_OF[$pid]="$ppid"
+  AGE_OF[$pid]="$age"
+  COMM_OF[$pid]="${comm##*/}"
+done <<< "$listing"
+
+# This script and every ancestor, plus PID 1.
+PROTECTED[1]=1
+walker=$$
+while [[ -n "$walker" && "$walker" != 0 ]]; do
+  PROTECTED[$walker]=1
+  # Asked of ps rather than read from the listing, which holds only this
+  # user's processes at one instant: the chain must not depend on it.
+  walker="$(ps -o ppid= -p "$walker" 2>/dev/null | tr -d ' ')" || walker=""
+done
+
+for pid in "${PIDS[@]}"; do
+  limit="$(_limit_s "${COMM_OF[$pid]}")"
+  [[ -n "$limit" && -z "${PROTECTED[$pid]:-}" ]] || continue
+  if (( AGE_OF[$pid] > limit )); then
+    CANDIDATE[$pid]=1
+  fi
+done
+
+# _covered PID — succeeds when an ancestor of PID is itself a candidate.
+_covered() {
+  local walker="${PPID_OF[$1]:-}"
+  while [[ -n "$walker" && "$walker" != 0 && "$walker" != 1 ]]; do
+    if [[ -n "${CANDIDATE[$walker]:-}" ]]; then
+      return 0
+    fi
+    walker="${PPID_OF[$walker]:-}"
+  done
+  return 1
+}
+
+TREE=()
+for pid in "${!CANDIDATE[@]}"; do
+  # A candidate with a candidate ancestor is left to that ancestor.
+  if ! _covered "$pid"; then
+    _walk "$pid"
+  fi
+done
+
+if (( ${#TREE[@]} == 0 )); then
+  exit 0
+fi
+
+for pid in "${TREE[@]}"; do
+  if kill -TERM "$pid" 2>/dev/null; then
+    log "SIGTERM $pid (${COMM_OF[$pid]}, ${AGE_OF[$pid]}s old)"
+    _record "$pid" TERM
+  fi
+done
+
+sleep "$GRACE_S"
+
+for pid in "${TREE[@]}"; do
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -KILL "$pid" 2>/dev/null || true
+    log "SIGKILL $pid (${COMM_OF[$pid]}) still alive after ${GRACE_S}s"
+    _record "$pid" KILL
+  fi
+done
+
+echo "reaped=${#TREE[@]}"
+exit 0

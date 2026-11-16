@@ -84,6 +84,9 @@ jobs:
         shard: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # --changed diffs against origin/<base>; a shallow clone cannot.
+          fetch-depth: 0
 
       # tests/herdr_web_server.bats and tests/herdr_web_release.bats run the PR board under Bun.
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
@@ -135,7 +138,12 @@ jobs:
       - name: Run bats tests (shard ${{ matrix.shard }}/3)
         run: |
           mkdir -p "$RUNNER_TEMP/junit"
-          bin/local/run-tests --bats --shard ${{ matrix.shard }}/3 -- \
+          extra=()
+          if [[ "${{ github.event_name }}" == pull_request ]]; then
+            extra=(--changed --base "origin/${{ github.base_ref || 'main' }}")
+          fi
+          bin/local/run-tests --bats --shard ${{ matrix.shard }}/3 \
+            "${extra[@]}" -- \
             --report-formatter junit --output "$RUNNER_TEMP/junit"
 
       # The timings tests/weights.tsv is packed from. They have to come from
@@ -195,6 +203,9 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # --changed diffs against origin/<base>; a shallow clone cannot.
+          fetch-depth: 0
 
       # xdist is what makes the suite parallel; bin/local/run-tests probes for
       # it and falls back to a serial run when it is absent, so the version is
@@ -215,7 +226,12 @@ jobs:
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
 
       - name: Run pytest
-        run: bin/local/run-tests --pytest
+        run: |
+          extra=()
+          if [[ "${{ github.event_name }}" == pull_request ]]; then
+            extra=(--changed --base "origin/${{ github.base_ref || 'main' }}")
+          fi
+          bin/local/run-tests --pytest "${extra[@]}"
 
   surface-compat:
     name: Surface Compatibility

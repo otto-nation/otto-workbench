@@ -573,6 +573,51 @@ EOF
   done
 }
 
+@test "sharding a selection packs only those files" {
+  WORKBENCH_DIR=$(_weighted_tree <<'EOF'
+heavy.bats	100
+light_a.bats	1
+light_b.bats	1
+light_c.bats	1
+EOF
+)
+  TEST_WEIGHTS_FILE="$WORKBENCH_DIR/tests/weights.tsv"
+  SHARD_POOL="$WORKBENCH_DIR/tests/light_a.bats
+$WORKBENCH_DIR/tests/light_b.bats"
+
+  local -a seen=()
+  local shard
+  for shard in 1 2 3; do
+    while IFS= read -r f; do
+      [[ -n "$f" ]] && seen+=("$(basename "$f")")
+    done < <(shard_files "$shard" 3)
+  done
+  [ "${#seen[@]}" -eq 2 ]
+  printf '%s\n' "${seen[@]}" | grep -qx light_a.bats
+  printf '%s\n' "${seen[@]}" | grep -qx light_b.bats
+  ! printf '%s\n' "${seen[@]}" | grep -qx heavy.bats
+}
+
+@test "a shard of a small selection may be empty" {
+  # Four files would fill all three shards; SHARD_POOL keeps one, so two shards
+  # stay empty. Without the pool this assertion fails (every shard gets a file).
+  WORKBENCH_DIR=$(_weighted_tree <<'EOF'
+a.bats	1
+b.bats	1
+c.bats	1
+d.bats	1
+EOF
+)
+  TEST_WEIGHTS_FILE="$WORKBENCH_DIR/tests/weights.tsv"
+  SHARD_POOL="$WORKBENCH_DIR/tests/a.bats"
+  local empty=0 shard count
+  for shard in 1 2 3; do
+    count=$(shard_files "$shard" 3 | wc -l | tr -d ' ')
+    [[ "$count" -eq 0 ]] && empty=$((empty + 1))
+  done
+  [ "$empty" -eq 2 ]
+}
+
 @test "shard partition is deterministic" {
   local run1 run2
   run1=$(shard_files 1 3)

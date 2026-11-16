@@ -103,8 +103,69 @@ _stub_select_tests() {
   PATH="$bin:$PATH" run --separate-stderr run_bats
   [ "$status" -eq 0 ]
   # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
-  [[ "$stderr" == *"no test file is affected by this diff"* ]]
+  [[ "$stderr" == *"no test files affected"* ]]
   [[ "$output" != *RAN-BATS* ]]
+}
+
+@test "run_pytest with nothing affected says so and runs no pytest" {
+  # shellcheck disable=SC2034  # read by run_pytest in bin/local/run-tests
+  PYTEST_NONE=true
+  local bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\necho RAN-PYTEST\n' > "$bin/pytest"
+  chmod +x "$bin/pytest"
+  PATH="$bin:$PATH" run --separate-stderr run_pytest
+  [ "$status" -eq 0 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
+  [[ "$stderr" == *"no test files affected"* ]]
+  [[ "$output" != *RAN-PYTEST* ]]
+}
+
+@test "a selector that succeeds and selects nothing marks pytest as none affected" {
+  local dir="$BATS_TEST_TMPDIR/wb"
+  mkdir -p "$dir/bin/local"
+  printf '#!/usr/bin/env bash\necho tests/x.bats\n' > "$dir/bin/local/select-tests"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$dir/bin/local/select-pytest"
+  chmod +x "$dir/bin/local/select-tests" "$dir/bin/local/select-pytest"
+  # shellcheck disable=SC2034  # read by select_changed in bin/local/run-tests
+  WORKBENCH_DIR="$dir"
+  select_changed all
+  [ -z "$PYTEST_FILES" ]
+  [ "$PYTEST_NONE" = true ]
+}
+
+@test "an empty shard of a selection succeeds" {
+  shard_files() { return 0; }
+  # shellcheck disable=SC2034  # read by run_bats in bin/local/run-tests
+  SHARD=2/3
+  BATS_NONE=false
+  BATS_FILES="$BATS_TEST_TMPDIR/a.bats"
+  local bin="$BATS_TEST_TMPDIR/bin"
+  mkdir -p "$bin"
+  printf '#!/bin/sh\necho RAN-BATS\n' > "$bin/bats"
+  chmod +x "$bin/bats"
+  PATH="$bin:$PATH" run --separate-stderr run_bats
+  [ "$status" -eq 0 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
+  [[ "$stderr" == *"no test files affected"* ]]
+  [[ "$output" != *RAN-BATS* ]]
+}
+
+@test "--changed with --shard is allowed" {
+  export WORKBENCH_TREE_LOCK=1 WORKBENCH_TEST_SLOTS=1 TEST_JOBS=1
+  run_bats() { echo "ok shard=$SHARD changed=$CHANGED"; }
+  select_changed() { :; }
+  report_jobs() { :; }
+  run main --bats --changed --shard 2/3
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"shard=2/3"* ]]
+  [[ "$output" == *"changed=true"* ]]
+}
+
+@test "--changed cannot be combined with --files" {
+  run main --bats --changed --files x.bats
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"cannot be combined"* ]]
 }
 
 @test "--direct reaches select-pytest only" {

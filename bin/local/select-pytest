@@ -80,16 +80,21 @@ MODULE_ROOTS = (REPO_ROOT / "ai" / "lib", REPO_ROOT / "lib")
 # selecting through. tests/fixtures/ holds golden files that no test names by a
 # path this map can resolve: both golden tests spell the directory with a single
 # `.parent`, which is the tests dir rather than the repo root.
+# The rest is the test machinery CI on pull_request selects through: a change
+# there must not narrow, and the list lives here rather than in the workflow.
 FULL_SUITE_TRIGGERS = {
     "tests/conftest.py",
     "tests/test_nesting/conftest.py",
     "pyproject.toml",
     "bin/local/run-tests",
     "bin/local/select-pytest",
+    "bin/local/select-tests",
+    "tests/test_helper.bash",
+    "Taskfile.yml",
 }
 
 # Prefixes under which any change runs everything, for the same reason.
-FULL_SUITE_TRIGGER_DIRS = ("tests/fixtures/",)
+FULL_SUITE_TRIGGER_DIRS = ("tests/fixtures/", ".github/workflows/")
 
 # Path refs that name a search root rather than a subject. A test assigning
 # LIB_DIR = REPO_ROOT / "ai" / "lib" is saying where imports come from, not

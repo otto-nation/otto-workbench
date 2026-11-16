@@ -34,13 +34,22 @@ WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 
 TESTS_DIR="$WORKBENCH_DIR/tests"
 
-# Fallback triggers — changes to these run the full suite. Only the helper
-# every suite loads belongs here. A per-area helper selects the suites that
-# load it (_loads_helper). run-tests and select-tests are selected by their own
-# suites' refs — the pre-push hook runs both on every push, so a break in either
-# shows there — and a workflow file is CI's, which runs the whole suite anyway.
+# Fallback triggers — changes to these run the full suite. CI on pull_request
+# uses this same list (via --changed), so a workflow or runner change has to
+# live here rather than in YAML: the YAML only passes flags. A per-area helper
+# selects the suites that load it (_loads_helper).
 FULL_SUITE_TRIGGERS=(
   tests/test_helper.bash
+  tests/conftest.py
+  bin/local/run-tests
+  bin/local/select-tests
+  bin/local/select-pytest
+  Taskfile.yml
+)
+
+# Any path under these prefixes is a trigger too.
+FULL_SUITE_TRIGGER_PREFIXES=(
+  .github/workflows/
 )
 
 # ── Transitive dependency graph ────────────────────────────────────────────────
@@ -246,7 +255,12 @@ _is_in_array() {
 
 # _is_full_suite_trigger CHANGED_FILE — returns 0 if this file triggers a full run.
 _is_full_suite_trigger() {
-  _is_in_array "$1" "${FULL_SUITE_TRIGGERS[@]}"
+  _is_in_array "$1" "${FULL_SUITE_TRIGGERS[@]}" && return 0
+  local prefix
+  for prefix in "${FULL_SUITE_TRIGGER_PREFIXES[@]}"; do
+    [[ "$1" == "$prefix"* ]] && return 0
+  done
+  return 1
 }
 
 # _loads_helper TEST_FILE CHANGED_FILE — returns 0 when CHANGED_FILE is a

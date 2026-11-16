@@ -1,6 +1,6 @@
 # herdr-app mods
 
-Conventions for the mods under this directory (`prs`, `prs-button`, `queue`, `queue-button`, `space-prs`, `_lib`, `_ui`, …).
+Conventions for the mods under this directory (`prs`, `prs-button`, `queue`, `queue-button`, `space-prs`, `hosts`, `hosts-button`, `_lib`, `_ui`, …).
 
 ## Where things live
 
@@ -34,6 +34,7 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `queue`, `qu
 
 - Lanes, position, timing, grouping and staleness live in `_lib/queue_lanes.js` (`lanesModel`, `staleness`, `refreshSpinning`). The machines home and pages (`homeModel`, `machinePage`, `meterModel`, `selectMachine`, `pageOf`) live in `_lib/queue_home.js`. `queue/main.js` chooses machines and asks the model; `queue/view.js` only draws
 - Default screen is the machines home: one `card` per machine from `homeModel` — name plus a staleness caption, a `meter` per class, the counts line. The card is one click target that opens that machine via `selectMachine` into `shared("queue.machine")`. No runs on the home. A disappeared machine falls back through `pageOf` to the home. The machine page starts with an outline Back (`‹ Machines`), then meters, counts, and Running / Waiting / Finished: a non-empty section is a `card` with `laneTitle`; an empty one is one muted header line (`Waiting 0`), no `None`
+- Hosts is read-only and mirrors the Queue home: one block per machine (this one first, then `_lib/machines.js` `remoteOns`), each from `host-health --json` through `_lib/hosts_load.js` `loadHealth`. Severity, gauges, staleness, counts and the top-process rows are `_lib/hosts.js` (`severityOf`, `hostSummary`, `topProcesses`, `hostsModel`); `hosts/main.js` polls every 15 s while shown and `hosts/view.js` only draws. A host reads `ok`, `loaded` or `strained` from the worst of load per core (`BUSY_PER_CORE` and `STRAINED_PER_CORE` in `_lib/load_backoff.js`), memory free and disk used; an unreachable or unsynced host is `warn`, never `ok`. Healthy hosts start collapsed, others open; collapse is `shared("hosts.collapsed")`. Gauges reuse `meter`, processes are two-line rows (the pane is compact, so no table), and nothing here kills or changes a process
 - A row is glyph, action + subject (or label), timing, then `#id · class · position · retry/failure`. A coalesced group expands inline against its model `key` in `shared("queue.groups")`. An expanded row offers `Open PR` when `row.subject` is set (copies the GitHub URL; mods have no cross-mod navigation) and `Open terminal` when `row.terminal` is set (`focusSteps`). There is no All / Live / Failed filter. The refresh icon spins only when `refreshSpinning` says so
 
 ## Trying models
@@ -54,7 +55,7 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `queue`, `qu
 - Only the panel copy (mounted with `props.placement === "panel"`) offers it. The layout owns "is full screen": `main` hidden (`_lib/fullscreen.js` `fullscreenState` reads it from `layout()`; a shown node's `hidden` is absent, not `false`). Enter hides `main` and sets the panel to weight 1; exit shows `main` and restores the width saved in `shared("prs.panelPx")`. `_lib/fullscreen_run.js` owns that sequence; the board button and each tab-bar toggle (`_lib/panel_button.js`) call it
 - Herdr clamps a node to its `max` even at weight 1, so `ai/herdr/app/layouts/workbench.jq` drops the panel's `max` (900 in Herdr's main layout); with it, full screen holds the board to 900px and leaves the rest of the area empty
 - A render is not re-run by a layout click, but `layout()` read in a `cx.timer.every` callback is current, so anything derived from it is refreshed by a timer, not left to `render`
-- herdr's tabs mod shows or hides the panel per space, so a space switch (or the Files button) can leave `main` and the panel both hidden. Each tab-bar toggle (`_lib/panel_button.js`) heals that from a one-second timer (`healDue` is the rule) by exiting full screen, exits at startup so the app never opens with the terminals hidden, and its click exits before it hides the panel. `ai/herdr/app/layouts/workbench.jq` mounts `prs-panel` and `queue-panel` as `panel-body` children and `prs-button` / `queue-button` in `tabs-row`; each toggle selects its child with `layout.select`
+- herdr's tabs mod shows or hides the panel per space, so a space switch (or the Files button) can leave `main` and the panel both hidden. Each tab-bar toggle (`_lib/panel_button.js`) heals that from a one-second timer (`healDue` is the rule) by exiting full screen, exits at startup so the app never opens with the terminals hidden, and its click exits before it hides the panel. `ai/herdr/app/layouts/workbench.jq` mounts `prs-panel`, `queue-panel` and `hosts-panel` as `panel-body` children and `prs-button` / `queue-button` / `hosts-button` in `tabs-row`; each toggle selects its child with `layout.select`
 - No Esc to exit: a mod only gets keys when it is focusable
 
 ## Design

@@ -247,6 +247,19 @@ teardown() {
   grep -q 'searchW:' "$MODS/_lib/tokens.js"
 }
 
+@test "one menuButton draws facet and Models triggers; Models always shows its value" {
+  grep -qF 'export function menuButton(' "$MODS/_ui/ui.js"
+  grep -qF 'menuButton(f.label, { active: f.active })' "$MODS/prs/filter_bar.js"
+  grep -qF 'menuButton("Models"' "$MODS/prs/model_picker.js"
+  grep -qF '"Configured defaults"' "$MODS/prs/model_picker.js"
+  run grep -nF '.rounded(RADIUS.control).border_1().border_color(t.border)' "$MODS/prs/filter_bar.js"
+  [ "$status" -eq 1 ]
+  run grep -nF '.rounded(RADIUS.control).border_1().border_color(t.border)' "$MODS/prs/model_picker.js"
+  [ "$status" -eq 1 ]
+  run grep -nF '.when(Boolean(summary), (e) => e.child(caption(summary)))' "$MODS/prs/model_picker.js"
+  [ "$status" -eq 1 ]
+}
+
 @test "every text field goes through textInput, which sets the body type role" {
   grep -q 'export function textInput(' "$MODS/_ui/ui.js"
   grep -q 'type(Input.new(state), "body")' "$MODS/_ui/ui.js"

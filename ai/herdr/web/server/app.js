@@ -88,7 +88,14 @@ export function createApp({
       const stamp = url.searchParams.get('stamp') ?? '';
       const run = (pr.reviewRuns ?? []).map((r) => r.run).find((r) => r && (r.stamp ?? '') === stamp);
       if (!run?.review_file) return json({ error: 'not_found' }, 404);
-      return json(await readReview(readTextFile, run.review_file, pr.on ?? null));
+      return json(await readReview(readTextFile, run.review_file, pr.on ?? null, null, {
+        timer: {
+          after(ms, fn) {
+            const t = setTimeout(fn, ms);
+            return { cancel: () => clearTimeout(t) };
+          },
+        },
+      }));
     });
   }
 

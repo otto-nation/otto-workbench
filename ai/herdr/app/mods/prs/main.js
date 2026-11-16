@@ -79,7 +79,7 @@ export default class PrsBoard extends Board {
     this.acx.spawn(async (cx) => {
       let result;
       try {
-        result = await readReview(readTextFile, run.review_file, this.detail.on, exec);
+        result = await readReview(readTextFile, run.review_file, this.detail.on, exec, { timer: cx.timer });
       } catch (err) {
         result = { ok: false, error: { kind: "failed", message: String(err?.message ?? err) } };
       }

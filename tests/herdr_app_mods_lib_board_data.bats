@@ -220,23 +220,73 @@ _bd() {
   _rr '
     const hang = () => new Promise(() => {});
     const boom = async () => { throw new Error("cat down"); };
-    const t0 = Date.now();
-    const r = await m.readReview(hang, "/r.md", "agent", boom, { deadlineMs: 40 });
-    process.stdout.write(JSON.stringify({ r, ms: Date.now() - t0 }));
+    const scheduled = [];
+    const timer = {
+      after(ms, fn) {
+        const entry = { ms, fn, cancelled: false };
+        scheduled.push(entry);
+        return { cancel() { entry.cancelled = true; } };
+      },
+    };
+    const p = m.readReview(hang, "/r.md", "agent", boom, { deadlineMs: 40, timer });
+    const n = scheduled.length;
+    const ms = scheduled[0] && scheduled[0].ms;
+    if (scheduled[0]) scheduled[0].fn();
+    const r = await p;
+    process.stdout.write(JSON.stringify({ n, ms, r }));
   '
   [ "$status" -eq 0 ]
-  jq -e '.r.ok==false and .r.error.kind=="exec" and (.r.error.message|test("timed out")) and .ms<2000' <<<"$output"
+  jq -e '.n==1 and .ms==40 and .r.ok==false and .r.error.kind=="exec" and (.r.error.message|test("timed out"))' <<<"$output"
 }
 
-@test "readReview times out when both readTextFile and exec never settle" {
+@test "readReview cancel()s the deadline timer when the read wins" {
   _rr '
-    const hang = () => new Promise(() => {});
-    const t0 = Date.now();
-    const r = await m.readReview(hang, "/r.md", "agent", hang, { deadlineMs: 40 });
-    process.stdout.write(JSON.stringify({ r, ms: Date.now() - t0 }));
+    const scheduled = [];
+    const timer = {
+      after(ms, fn) {
+        const entry = { ms, fn, cancelled: false };
+        scheduled.push(entry);
+        return { cancel() { entry.cancelled = true; } };
+      },
+    };
+    const r = await m.readReview(async () => "# review", "/r.md", "mac", null, { deadlineMs: 40, timer });
+    process.stdout.write(JSON.stringify({
+      r, n: scheduled.length, cancelled: scheduled[0] && scheduled[0].cancelled,
+    }));
   '
   [ "$status" -eq 0 ]
-  jq -e '.r.ok==false and .r.error.kind=="exec" and (.r.error.message|test("timed out")) and .ms<2000' <<<"$output"
+  jq -e '.r.ok==true and .r.text=="# review" and .n==1 and .cancelled==true' <<<"$output"
+}
+
+@test "readReview never calls setTimeout or clearTimeout" {
+  run node --input-type=module -e "
+    for (const name of ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval']) {
+      globalThis[name] = () => { throw new Error(name + ' is not available in the shell');
+      };
+    }
+    function fakeTimer() {
+      const scheduled = [];
+      return {
+        scheduled,
+        after(ms, fn) {
+          const entry = { ms, fn, cancelled: false };
+          scheduled.push(entry);
+          return { cancel() { entry.cancelled = true; } };
+        },
+      };
+    }
+    const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/board_data.js');
+    const okTimer = fakeTimer();
+    const ok = await m.readReview(async () => '# review', '/r.md', null, null, { timer: okTimer });
+    const hang = () => new Promise(() => {});
+    const toTimer = fakeTimer();
+    const p = m.readReview(hang, '/r.md', 'agent', hang, { deadlineMs: 40, timer: toTimer });
+    toTimer.scheduled[0].fn();
+    const timed = await p;
+    process.stdout.write(JSON.stringify({ ok, timed }));
+  "
+  [ "$status" -eq 0 ]
+  jq -e '.ok.ok==true and .ok.text=="# review" and .timed.ok==false and (.timed.error.message|test("timed out")) and (.|tostring|test("is not available in the shell")|not)' <<<"$output"
 }
 
 @test "readReview on a remote answers from exec cat when readTextFile never settles" {

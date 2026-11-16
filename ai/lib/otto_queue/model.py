@@ -45,6 +45,8 @@ class EntryClass(StrEnum):
 # `ticket` so a caller that only names them does not import the whole ticket machinery.
 LABEL_ENV = "OTTO_QUEUE_LABEL"
 WAIT_ENV = "OTTO_QUEUE_WAIT_S"
+SUBJECT_ENV = "OTTO_QUEUE_SUBJECT"
+ACTION_ENV = "OTTO_QUEUE_ACTION"
 
 
 class EntryState(StrEnum):

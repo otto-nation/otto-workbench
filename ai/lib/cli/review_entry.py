@@ -628,7 +628,8 @@ def main(argv: list[str] | None = None, *,
             entry_class=cli.queue_gate.class_for("review", argv),
             label=cli.queue_gate.label_for(
                 "review", argv, pr_ref=parsed.pr, branch=parsed.branch,
-                repo_dir=parsed.repo_dir))
+                repo_dir=parsed.repo_dir),
+            pr_ref=parsed.pr, repo_dir=parsed.repo_dir)
         if code is not None:
             return code
 

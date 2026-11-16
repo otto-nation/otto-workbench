@@ -672,6 +672,8 @@ class Scheduler:
         env = batch.targets.child_env(item)
         if self._ai(rec):
             env[otto_queue.model.LABEL_ENV] = f"pr batch · {rec.step.value} · {item.key}"
+            env[otto_queue.model.SUBJECT_ENV] = item.key
+            env[otto_queue.model.ACTION_ENV] = f"batch:{rec.step.value}"
             env[otto_queue.model.WAIT_ENV] = "inf"
         proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root, env=env)
         rec.status, rec.started_at, rec.log_path = StepStatus.RUNNING, batch.store.now_iso(), str(log)

@@ -196,7 +196,8 @@ def main(argv: list[str] | None = None, *,
             entry_class=cli.queue_gate.class_for("ci", argv),
             label=cli.queue_gate.label_for(
                 "ci", argv, pr_ref=args.pr, branch=args.branch,
-                repo_dir=args.repo_dir))
+                repo_dir=args.repo_dir),
+            pr_ref=args.pr, repo_dir=args.repo_dir)
         if code is not None:
             return code
 

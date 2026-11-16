@@ -33,6 +33,8 @@ def _clear_gate_env(monkeypatch):
     monkeypatch.delenv(QUEUED_MARKER, raising=False)
     monkeypatch.delenv(cli.queue_gate.NO_QUEUE_ENV, raising=False)
     monkeypatch.delenv(otto_queue.ticket.LABEL_ENV, raising=False)
+    monkeypatch.delenv(otto_queue.ticket.SUBJECT_ENV, raising=False)
+    monkeypatch.delenv(otto_queue.ticket.ACTION_ENV, raising=False)
 
 
 _CLASS_CASES = (
@@ -125,6 +127,8 @@ def test_gate_sets_the_marker_and_returns_the_ticket_status(monkeypatch):
         seen["argv"] = request.argv
         seen["class"] = request.entry_class
         seen["label"] = request.label
+        seen["subject"] = request.subject
+        seen["action"] = request.action
         seen["marker"] = os.environ.get(QUEUED_MARKER)
         return TicketResult(7, TicketOutcome.RAN, 1)
 
@@ -135,7 +139,64 @@ def test_gate_sets_the_marker_and_returns_the_ticket_status(monkeypatch):
     assert seen["argv"] == reexec
     assert seen["class"] is EntryClass.HEAVY
     assert seen["label"] == "pr comments --fix"
+    assert seen["subject"] is None
+    assert seen["action"] is None
     assert seen["marker"] == "1"
+
+
+def test_gate_passes_subject_and_action_when_a_number_is_known(monkeypatch):
+    seen = {}
+
+    def fake_run(request, _policy, **_kw):
+        seen["subject"] = request.subject
+        seen["action"] = request.action
+        return TicketResult(0, TicketOutcome.RAN, 1)
+
+    monkeypatch.setattr(otto_queue.ticket, "run_ticket", fake_run)
+    monkeypatch.setattr(
+        "pr.target.repo_identity_from_origin",
+        lambda *_a, **_k: type("I", (), {"label": "acme/widget"})(),
+    )
+    assert gate("review", ["--self"], reexec=(PY, "-c", "pass"),
+                entry_class=EntryClass.HEAVY, label="L",
+                pr_ref="42", repo_dir=None) == 0
+    assert seen == {"subject": "acme/widget#42", "action": "review"}
+
+
+# passes-at-base: asserts behaviour this change was careful not to break
+def test_gate_omits_subject_and_action_when_no_number(monkeypatch):
+    seen = {}
+
+    def fake_run(request, _policy, **_kw):
+        seen["subject"] = request.subject
+        seen["action"] = request.action
+        return TicketResult(0, TicketOutcome.RAN, 1)
+
+    monkeypatch.setattr(otto_queue.ticket, "run_ticket", fake_run)
+    monkeypatch.setattr(
+        "pr.target.repo_identity_from_origin",
+        lambda *_a, **_k: type("I", (), {"label": "acme/widget"})(),
+    )
+    assert gate("review", ["--self"], reexec=(PY, "-c", "pass"),
+                entry_class=EntryClass.HEAVY, label="L",
+                pr_ref=None, repo_dir=None) == 0
+    assert seen == {"subject": None, "action": None}
+
+
+def test_gate_prefers_subject_and_action_from_env(monkeypatch):
+    seen = {}
+
+    def fake_run(request, _policy, **_kw):
+        seen["subject"] = request.subject
+        seen["action"] = request.action
+        return TicketResult(0, TicketOutcome.RAN, 1)
+
+    monkeypatch.setattr(otto_queue.ticket, "run_ticket", fake_run)
+    monkeypatch.setenv(otto_queue.ticket.SUBJECT_ENV, "o/r#1")
+    monkeypatch.setenv(otto_queue.ticket.ACTION_ENV, "batch:review")
+    assert gate("review", ["--self"], reexec=(PY, "-c", "pass"),
+                entry_class=EntryClass.HEAVY, label="L") == 0
+    assert seen == {"subject": "o/r#1", "action": "batch:review"}
 
 
 def test_label_for_prefers_the_env_override(monkeypatch):
@@ -225,6 +286,8 @@ def _fake_ticket(seen, code=9):
         seen["argv"] = request.argv
         seen["class"] = request.entry_class
         seen["label"] = request.label
+        seen["subject"] = request.subject
+        seen["action"] = request.action
         seen["marker"] = os.environ.get(QUEUED_MARKER)
         return TicketResult(code, TicketOutcome.RAN, 1)
     return run
@@ -258,10 +321,14 @@ def test_pr_main_label_uses_pr_number_and_env(monkeypatch):
     )
     assert cli.pr.main(["comments", "--fix", "--pr", "123"], bin_dir=BIN_DIR) == 9
     assert "#123" in seen["label"]
+    assert seen["subject"] == "acme/widget#123"
+    assert seen["action"] == "comments"
     monkeypatch.delenv(QUEUED_MARKER, raising=False)
     monkeypatch.setenv(otto_queue.ticket.LABEL_ENV, "x")
     assert cli.pr.main(["comments", "--fix"], bin_dir=BIN_DIR) == 9
     assert seen["label"] == "x"
+    assert seen["subject"] is None
+    assert seen["action"] is None
 
 
 def test_pr_main_skips_the_gate_when_asked(monkeypatch):

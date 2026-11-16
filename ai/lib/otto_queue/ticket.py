@@ -30,9 +30,12 @@ the machine's budget, and runs once per idempotency key.
    given). Reaching `wait_s` with no slot records `tempfail` and returns 75
    (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
 
-`LABEL_ENV` and `WAIT_ENV` are the names `cli.queue_gate` and `pr batch` use to
-pass a display label and wait bound into a ticket they construct. `run_ticket`
-does not read them: the `otto-queue run` flags stay the only input to the CLI.
+`LABEL_ENV`, `WAIT_ENV`, `SUBJECT_ENV` and `ACTION_ENV` are the names
+`cli.queue_gate` and `pr batch` use to pass a display label, wait bound, and
+structured subject/action into a ticket they construct. `run_ticket` does not
+read them: the `otto-queue run` flags stay the only input to the CLI.
+`HC_TERMINAL_ID` is different: `TicketRequest.entry` copies it onto the row as
+`terminal` when it is set, so a ticket started from a herdr pane records which.
 3. **Run.** The row moves to `running`, and the command runs through
    `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
    terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue
@@ -77,8 +80,9 @@ import otto_queue.lease
 import otto_queue.ledger
 import otto_queue.slots
 import otto_queue.wait_report
-from otto_queue.model import (  # noqa: F401  LABEL_ENV and WAIT_ENV are re-exported
-    LABEL_ENV, WAIT_ENV, Entry, EntryClass, EntryKind, EntryState, NewEntry)
+from otto_queue.model import (  # noqa: F401  env names are re-exported for callers
+    ACTION_ENV, LABEL_ENV, SUBJECT_ENV, WAIT_ENV, Entry, EntryClass, EntryKind,
+    EntryState, NewEntry)
 
 # How long a ticket waits for a slot before ending as `tempfail`. A review takes
 # about ten minutes, so an hour is several heavy entries deep: long enough that
@@ -96,6 +100,7 @@ REAP_EVERY_S = 5.0
 _BUSY_NOTICE = "otto-queue: ledger busy; still waiting"
 
 ENTRY_ENV = "OTTO_QUEUE_ENTRY"
+TERMINAL_ENV = "HC_TERMINAL_ID"
 
 
 class TicketOutcome(StrEnum):
@@ -120,16 +125,20 @@ class TicketRequest:
     reuse: bool = True
     wait_s: float = DEFAULT_WAIT_S
     label: str | None = None
+    subject: str | None = None
+    action: str | None = None
 
     def entry(self) -> NewEntry:
         return NewEntry(argv=self.argv, cwd=self.cwd, entry_class=self.entry_class,
-                        idem_key=self.idem_key, label=self.label)
+                        idem_key=self.idem_key, label=self.label,
+                        subject=self.subject, action=self.action,
+                        terminal=os.environ.get(TERMINAL_ENV) or None)
 
 
 def claimed_request(entry: Entry, request: TicketRequest) -> TicketRequest:
     """*request* running the claimed *entry*'s own command, so the ledger and the run agree."""
     return replace(request, argv=entry.argv, cwd=entry.cwd, entry_class=entry.entry_class,
-                   label=entry.label)
+                   label=entry.label, subject=entry.subject, action=entry.action)
 
 
 @dataclass(frozen=True)

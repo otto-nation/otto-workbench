@@ -20,7 +20,7 @@ import core.log
 import git.client
 import pr.target
 from cli.registry import COMMANDS, queue_for
-from otto_queue.model import EntryClass
+from otto_queue.model import ACTION_ENV, SUBJECT_ENV, EntryClass
 
 NO_QUEUE_ENV = "WORKBENCH_PR_NO_QUEUE"
 QUEUED_MARKER = "_WB_PR_QUEUED"
@@ -53,12 +53,15 @@ def label_for(command: str, argv: Sequence[str], *, pr_ref: str | None,
 
 def gate(command: str, argv: Sequence[str], *, reexec: Sequence[str],
          entry_class: EntryClass | None, label: str,
-         no_queue: bool = False) -> int | None:
+         no_queue: bool = False, pr_ref: str | None = None,
+         repo_dir: str | None = None) -> int | None:
     """Wait for a slot and re-exec *reexec* under it, or return None to continue.
 
     None when there is no class, *no_queue* is set, `WORKBENCH_PR_NO_QUEUE` is
     1, this process already holds a ticket (`OTTO_QUEUE_ENTRY`), or this is the
     re-exec'd child (`_WB_PR_QUEUED`). An int is the ticket's exit status.
+    Subject is `owner/repo#N` only when a number is known (or `OTTO_QUEUE_SUBJECT`
+    is set); action is the `pr` subcommand then, or `OTTO_QUEUE_ACTION`.
     """
     if entry_class is None or no_queue or os.environ.get(NO_QUEUE_ENV) == "1":
         return None
@@ -71,9 +74,11 @@ def gate(command: str, argv: Sequence[str], *, reexec: Sequence[str],
     # safe: the marker is how the re-exec'd child knows not to gate again.
     os.environ[QUEUED_MARKER] = "1"
     import cli.otto_queue
+    subject = _subject(pr_ref=pr_ref, repo_dir=repo_dir)
     request = otto_queue.ticket.TicketRequest(
         argv=tuple(reexec), cwd=os.getcwd(), entry_class=entry_class,
-        label=label, wait_s=_wait_s())
+        label=label, wait_s=_wait_s(), subject=subject,
+        action=_action(command, subject))
     return otto_queue.ticket.run_ticket(
         request, cli.otto_queue.machine_policy()).exit_status
 
@@ -94,6 +99,26 @@ def _wait_s() -> float:
             f"non-negative float; waiting {otto_queue.ticket.DEFAULT_WAIT_S:g}s")
         return otto_queue.ticket.DEFAULT_WAIT_S
     return value
+
+
+def _subject(*, pr_ref: str | None, repo_dir: str | None) -> str | None:
+    """`owner/repo#N` when a number is known, or `OTTO_QUEUE_SUBJECT`."""
+    override = os.environ.get(SUBJECT_ENV) or None
+    if override:
+        return override
+    repo = _repo_label(repo_dir)
+    number = _pr_number(pr_ref)
+    if repo and number:
+        return f"{repo}#{number}"
+    return None
+
+
+def _action(command: str, subject: str | None) -> str | None:
+    """The `pr` subcommand when *subject* is set, or `OTTO_QUEUE_ACTION`."""
+    override = os.environ.get(ACTION_ENV) or None
+    if override:
+        return override
+    return command if subject is not None else None
 
 
 def _target(*, pr_ref: str | None, branch: str | None,

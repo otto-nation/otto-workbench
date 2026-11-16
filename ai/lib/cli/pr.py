@@ -817,6 +817,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
             args.command, extra, pr_ref=original_pr,
             branch=original_branch, repo_dir=original_repo_dir),
         no_queue=global_args.no_queue,
+        pr_ref=original_pr, repo_dir=original_repo_dir,
     )
     if queued is not None:
         return queued

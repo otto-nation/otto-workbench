@@ -318,5 +318,3 @@ teardown() {
     "$MODS"
   [ "$status" -eq 1 ]
 }
-  [ "$status" -eq 1 ]
-}

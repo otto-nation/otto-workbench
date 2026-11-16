@@ -217,9 +217,29 @@ teardown() {
 
 @test "detail header: disabled Open for Review carries the reason as a tooltip, not a caption line" {
   local detail="$MODS/prs/detail.js"
-  grep -q 'button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled })' "$detail"
-  grep -q '.tooltip(reviewState.reason)' "$detail"
+  grep -qF 'button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled, reason: reviewState.reason })' "$detail"
+  run grep -nF '.tooltip(reviewState.reason)' "$detail"
+  [ "$status" -eq 1 ]
   run grep -nF 'caption(reviewState.reason)' "$detail"
+  [ "$status" -eq 1 ]
+}
+
+@test "Batch start and Clear sit in an actionBar with the reason beside them" {
+  local ui="$MODS/_ui/ui.js"
+  local page="$MODS/prs/batch_page.js"
+  local detail="$MODS/prs/detail.js"
+  grep -qF '.child(renderStartBar(' "$page"
+  grep -qF 'solidButton("batch-start", "Start", () => L.launch(prs), { disabled, reason })' "$page"
+  grep -qF 'button("batch-clear", "Clear", () => L.reset(), { disabled: !L.canClear()' "$page"
+  grep -qF 'export function actionBar(' "$ui"
+  grep -qF 'border_t_1()' "$ui"
+  grep -qF 'e.tooltip(reason)' "$ui"
+  grep -qF 'reason: reviewState.reason' "$detail"
+  run grep -nF '.when(Boolean(reason), (e) => e.child(text("body", reason' "$page"
+  [ "$status" -eq 1 ]
+  run grep -nF '.tooltip(reviewState.reason)' "$detail"
+  [ "$status" -eq 1 ]
+  run grep -nF 'selected PR(s) hidden by filters won'\''t run' "$page"
   [ "$status" -eq 1 ]
 }
 

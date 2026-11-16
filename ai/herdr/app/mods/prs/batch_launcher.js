@@ -132,6 +132,12 @@ export class BatchLauncher {
     this.acx.notify();
   }
 
+  // True when reset() would drop a non-pending selection or a note.
+  canClear() {
+    const hasClearable = [...this.selected].some((k) => !this.isPending(k));
+    return hasClearable || (Boolean(this.note) && !this.starting);
+  }
+
   launch(prs) {
     if (this.starting) return;
     this.launching = true;

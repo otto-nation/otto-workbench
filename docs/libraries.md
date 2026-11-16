@@ -218,6 +218,13 @@ Every key any of them accepts:
 | `maintenance.prune.mise` | boolean | `false` |
 | `maintenance.prune.docker` | boolean | `false` |
 | `maintenance.disk_pct` | integer | `85` |
+| `reaper.enabled` | boolean | `true` |
+| `reaper.grace_s` | integer | `30` |
+| `reaper.max_minutes.lint` | integer | `30` |
+| `reaper.max_minutes.go` | integer | `30` |
+| `reaper.max_minutes.gh` | integer | `10` |
+| `reaper.max_minutes.tasks` | integer | `45` |
+| `queue.heavy_repos` | list of string | `[]` |
 
 `<phase>` is one of: `single`, `holistic`, `scout`, `group`, `synthesis`, `disprove`, `fix`, `fix_verify`, `comments_fix`, `comments_verify`, `comments_triage`, `comments_plan`, `comments_implement`, `comments_escalate`, `ci_fix`, `ci_verify`, `rebase`, `prepush_fix`, `describe`, `create`
 
@@ -236,6 +243,10 @@ Every key any of them accepts:
 `github.ssh_over_443` may only be written at global scope: it describes the network this machine is on, never the repo, and a repo's .workbench.yml is read by everyone who clones it.
 
 `maintenance.disk_pct`, `maintenance.prune.docker`, `maintenance.prune.go_cache`, `maintenance.prune.go_cache_gb` and `maintenance.prune.mise` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
+
+`queue.heavy_repos` may only be written at global scope: the queue guard decides per machine which repos are admitted, so a repo cannot opt itself in or out.
+
+`reaper.enabled`, `reaper.grace_s`, `reaper.max_minutes.gh`, `reaper.max_minutes.go`, `reaper.max_minutes.lint` and `reaper.max_minutes.tasks` may only be written at global scope: the reaper runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
 
 `wiki.root` may only be written at global scope: it is an absolute path on this machine, which means nothing on any other, and a repo's .workbench.yml is read by everyone who clones it.
 

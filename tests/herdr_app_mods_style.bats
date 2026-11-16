@@ -136,3 +136,26 @@ teardown() {
   run grep -nE 'commandText\(|caption\(`cwd' "$view"
   [ "$status" -eq 1 ]
 }
+
+@test "detail header: disabled Open for Review carries the reason as a tooltip, not a caption line" {
+  local detail="$MODS/prs/detail.js"
+  grep -q 'button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled })' "$detail"
+  grep -q '.tooltip(reviewState.reason)' "$detail"
+  run grep -nF 'caption(reviewState.reason)' "$detail"
+  [ "$status" -eq 1 ]
+}
+
+@test "run output: Show/Hide output is a status-row ghost, not a full-width toggle" {
+  local detail="$MODS/prs/detail.js"
+  grep -q 'ghostButton("out-tail", tailOpen ? "Hide output" : "Show output", onToggleTail)' "$detail"
+  grep -q 'ghostButton("out-tab", "Open as tab", onTab)' "$detail"
+  grep -q 'ghostButton("out-review", "View review"' "$detail"
+  grep -q 'selectableCode("output"' "$detail"
+  grep -q 'text("body", model.line, lineColor)' "$detail"
+  run grep -nF '.child(ghostButton("out-tail"' "$detail"
+  [ "$status" -eq 1 ]
+  run grep -nF 'function landedRow' "$detail"
+  [ "$status" -eq 1 ]
+}
+  [ "$status" -eq 1 ]
+}

@@ -81,7 +81,7 @@ and record the gap in otto-nation/otto-nation.github.io's issue tracker.
 
 ## Run output
 
-- Owner: `_lib/run_output.js` `outputModel` (status kinds from `_lib/status.js`, elapsed via `durationText`, last meaningful line, landed run). The panel auto-opens on a successful launch. Glyphs are static (no spinners). A finished review/rerun/recover swaps to the landed run (`reviewed_at >= startedMs`) with View review; the raw tail stays behind Show output. The running batch step shows the same one-line summary, from a 20-line preview on the existing 3 s timer.
+- Owner: `_lib/run_output.js` `outputModel` (status kinds from `_lib/status.js`, elapsed via `durationText`, last meaningful line, landed run). The panel auto-opens on a successful launch. Glyphs are static (no spinners). `prs/detail.js` draws one `paneBar`: a status row with the ghost cluster (Show/Hide output only when there is output, Open as tab, Hide, View review for a finished review/rerun/recover), one summary line from `line`/`lineKind`, and the tail in `scrollInset` only while open. A finished review/rerun/recover swaps to the landed run (`reviewed_at >= startedMs`); the raw tail stays behind Show output. The running batch step shows the same one-line summary, from a 20-line preview on the existing 3 s timer.
 
 ## Checking and installing
 

@@ -1,6 +1,6 @@
 // Shared pieces for the mods, each one a DESIGN.md component: buttons (outline, solid, ghost,
 // icon), checkbox, checkRow, popover surface, tag, status glyph, section label, segmented control,
-// card, list row, keyValue. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
+// card, list row, keyValue, gauge. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, TextView, Checkbox } from "gpui-base";
 import { theme, settings } from "herdr";
@@ -170,6 +170,11 @@ export function errorLine(content) {
 // Meta-sized supporting text; muted unless a colour is given.
 export function caption(content, color) {
   return text("meta", content, color ?? theme().muted);
+}
+
+// A slot-gauge glyph string (█░ n/limit) in the code role. Colour comes from the caller via theme().
+export function gauge(content, color) {
+  return text("code", content, color ?? theme().muted);
 }
 
 // The centred, padded pane for an empty or error state.

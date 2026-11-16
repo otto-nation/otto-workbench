@@ -4,7 +4,7 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `queue`, `qu
 
 ## Where things live
 
-- Shared UI components: `_ui/ui.js` (installed into every mod as `./_ui/ui.js`, like `_lib/`). Reuse `button` (outline), `solidButton` (the one primary action), `iconButton`, `ghostButton`, `checkbox`, `checkRow`, `popoverSurface`, `inset` (static bordered box), `scrollInset` (bordered outer, inner scroller — never a self-scrolling TextView), `segment`/`segmented`, `laneTitle`, `card`, `hoverRow`, `pane`, `paneBar`, `emptyPane`, `scrollBody`, `placeholder`, `caption`, `type`/`text`, `tag`, `statusText`, `sectionLabel`, `badge`/`badgeRow`/`statsRow`, `addStat`/`delStat`, `keyValue` (compact two-column facts: section-muted keys, meta values, code for paths), `mono` before hand-building a chain; add a component there when a pattern appears a second time
+- Shared UI components: `_ui/ui.js` (installed into every mod as `./_ui/ui.js`, like `_lib/`). Reuse `button` (outline), `solidButton` (the one primary action), `iconButton`, `ghostButton`, `checkbox`, `checkRow`, `popoverSurface`, `inset` (static bordered box), `scrollInset` (bordered outer, inner scroller — never a self-scrolling TextView), `segment`/`segmented`, `laneTitle`, `card`, `hoverRow`, `pane`, `paneBar`, `emptyPane`, `scrollBody`, `placeholder`, `caption`, `gauge` (static █░ slot glyphs, colour from `theme()`), `type`/`text`, `tag`, `statusText`, `sectionLabel`, `badge`/`badgeRow`/`statsRow`, `addStat`/`delStat`, `keyValue` (compact two-column facts: section-muted keys, meta values, code for paths), `mono` before hand-building a chain; add a component there when a pattern appears a second time
 - Every top-level `_*/` directory under `mods/` is a shared tree installed into every mod, so only put real libraries there (no scratch dirs like `_tmp/`)
 - Sizes, spacing, fills and breakpoints: `_lib/tokens.js`. Colours come only from `theme()`. No literal pixel or colour values in views
 - Pure logic: `_lib/*.js`, covered by `tests/herdr_app_mods_lib_*.bats`
@@ -26,8 +26,9 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `queue`, `qu
 
 ## The Queue panel
 
-- Lanes, position, timing, failure collapse, filters and staleness live in `_lib/queue_lanes.js` (`lanesModel`, `filterRows`, `summary`, `staleness`, `refreshSpinning`). `queue/main.js` chooses machines and asks the model; `queue/view.js` only draws
-- Per machine: `sectionLabel` plus a staleness caption; lanes Running, Waiting, Finished via `laneTitle`. A row is glyph, action + subject (or label), timing, then `#id · class · position · retry/failure`. Repeated failures expand to members. All / Live / Failed is `segmented` with counts in a `caption` beside it, never in the labels. The refresh icon spins only when `refreshSpinning` says so
+- Lanes, position, timing, failure collapse, filters and staleness live in `_lib/queue_lanes.js` (`lanesModel`, `filterRows`, `summary`, `staleness`, `refreshSpinning`). The machines home (`homeModel`, `slotGauge`, `toggleCollapsed`) lives in `_lib/queue_home.js`. `queue/main.js` chooses machines and asks the model; `queue/view.js` only draws
+- Default screen is the machines home: one block per machine from `homeModel` — `sectionLabel` plus a staleness caption, a `gauge` line per class coloured via `theme()`, the counts line, and a ▾/▸ chevron. Collapse is `toggleCollapsed` into `shared("queue.collapsed")` (session only). An expanded machine reuses the existing lanes (Running, Waiting, Finished via `laneTitle`)
+- A row is glyph, action + subject (or label), timing, then `#id · class · position · retry/failure`. Repeated failures expand to members. An expanded row offers `Open PR` when `row.subject` is set (copies the GitHub URL; mods have no cross-mod navigation) and `Open terminal` when `row.terminal` is set (`focusSteps`). All / Live / Failed is `segmented` with counts in a `caption` beside it, never in the labels. The refresh icon spins only when `refreshSpinning` says so
 
 ## Trying models
 

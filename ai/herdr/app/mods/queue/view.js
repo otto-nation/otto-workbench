@@ -1,4 +1,4 @@
-// Queue pane: one section per machine, Running / Waiting / Finished lanes, All/Live/Failed filter.
+// Queue pane: machines home (gauges + collapse) then Running / Waiting / Finished lanes.
 // A row expands to detailModel (command, facts, timing, log); Cancel on a live row asks before it acts.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -9,8 +9,8 @@ import { friendlyError } from "./_lib/scope.js";
 import { SP, RADIUS, FILL, LAYOUT } from "./_lib/tokens.js";
 import {
   pane, paneBar, scrollBody, sectionLabel, laneTitle, hoverRow, text, type, statusText, button,
-  iconButton, placeholder, errorLine, caption, scrollInset, selectableCode, keyValue, segment,
-  segmented,
+  iconButton, ghostButton, placeholder, errorLine, caption, gauge, scrollInset, selectableCode,
+  keyValue, segment, segmented,
 } from "./_ui/ui.js";
 
 function headline(row) {
@@ -68,16 +68,32 @@ function renderLog(row, log, id) {
     .text_color(theme().foreground), "code");
 }
 
+function renderDetailActions(on, row, opts) {
+  const id = domId(on, row.id);
+  const pr = row.subject
+    ? ghostButton(`queue-open-pr-${id}`, "Open PR", () => opts.onOpenPr(row))
+    : null;
+  const term = row.terminal
+    ? ghostButton(`queue-open-term-${id}`, "Open terminal", () => opts.onOpenTerminal(row.terminal))
+    : null;
+  if (!pr && !term) return null;
+  return h_flex().gap(SP.xs).items_center()
+    .when(pr != null, (e) => e.child(pr))
+    .when(term != null, (e) => e.child(term));
+}
+
 function renderDetail(on, row, opts) {
   const id = domId(on, row.id);
   const model = detailModel(row, opts.nowMs);
   const timing = caption(model.timing);
   if (model.tooltip) timing.tooltip(model.tooltip);
+  const actions = renderDetailActions(on, row, opts);
   return v_flex().gap(SP.xs).pl(SP.md).pr(SP.sm).pb(SP.sm)
     .child(type(scrollInset(`queue-cmd-box-${id}`, selectableCode(`queue-cmd-${id}`, [model.command]),
       { maxH: LAYOUT.titleMaxH * 3 }).text_color(theme().foreground), "code"))
     .when(model.facts.length > 0, (e) => e.child(keyValue(model.facts)))
     .when(Boolean(model.timing), (e) => e.child(timing))
+    .when(actions != null, (e) => e.child(actions))
     .child(model.logNote != null ? caption(model.logNote) : renderLog(row, opts.log, id));
 }
 
@@ -113,12 +129,14 @@ function staleLine(stale) {
   return stale.warn ? statusText("warn", stale.words) : caption(stale.words);
 }
 
+function gaugeColor(cls, t) {
+  if (cls === "heavy") return t.working;
+  if (cls === "light") return t.muted;
+  return t.foreground;
+}
+
 function renderSection(section, opts) {
-  const stale = staleLine(section.stale);
-  const body = v_flex().gap(SP.xs)
-    .child(h_flex().gap(SP.sm).items_center()
-      .child(sectionLabel(section.label))
-      .when(stale != null, (e) => e.child(stale)));
+  const body = v_flex().gap(SP.xs);
   if (section.loading) {
     return body.child(placeholder("Loading…").px(SP.sm));
   }
@@ -133,12 +151,37 @@ function renderSection(section, opts) {
   return body.children((section.lanes ?? []).map((lane) => renderLane(section, lane, laneOpts)));
 }
 
+function renderHomeBlock(block, opts) {
+  const t = opts.t;
+  const summary = block.summary;
+  const kind = summary.staleness?.kind;
+  const stale = staleLine(summary.staleness && {
+    words: summary.staleness.words,
+    warn: kind != null && kind !== "fresh",
+  });
+  const header = hoverRow(`queue-machine-${block.key || "local"}`)
+    .px(SP.sm).py(SP.xs)
+    .on_click(() => opts.onToggleMachine(block.key, block.open))
+    .child(v_flex().gap(SP.xxs).min_w(0)
+      .child(h_flex().gap(SP.sm).items_center()
+        .child(sectionLabel(summary.title))
+        .when(stale != null, (e) => e.child(stale))
+        .child(div().flex_1())
+        .child(text("meta", block.open ? "▾" : "▸", t.muted)))
+      .child(h_flex().gap(SP.sm).items_center().flex_wrap()
+        .children((summary.gauges ?? []).map((g) => gauge(g.text, gaugeColor(g.class, t)))))
+      .child(caption(summary.counts)));
+  const body = v_flex().gap(SP.xs).child(header);
+  if (!block.open) return body;
+  return body.child(renderSection(block.section, opts));
+}
+
 export function renderQueue(props) {
   const t = theme();
   const opts = { ...props, t, openGroups: props.openGroups ?? new Set() };
   const filter = props.filter ?? "all";
   const body = scrollBody().p(SP.md).gap(SP.lg)
-    .children((props.sections ?? []).map((section) => renderSection(section, opts)));
+    .children((props.blocks ?? []).map((block) => renderHomeBlock(block, opts)));
   return pane("queue")
     .child(paneBar()
       .child(h_flex().items_center().gap(SP.sm)

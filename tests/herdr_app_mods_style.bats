@@ -132,7 +132,7 @@ teardown() {
 @test "queue view draws lanes, filter and staleness from the model" {
   local view="$MODS/queue/view.js"
   grep -q 'laneTitle(lane.label, lane.count)' "$view"
-  grep -q 'sectionLabel(section.label)' "$view"
+  grep -q 'sectionLabel(summary.title)' "$view"
   grep -Fq 'segmented([' "$view"
   grep -q 'segment("queue-filter-all", "All"' "$view"
   grep -q 'segment("queue-filter-live", "Live"' "$view"
@@ -147,7 +147,7 @@ teardown() {
   grep -q 'row.retry' "$view"
   grep -q 'row.failure' "$view"
   grep -q 'onToggleGroup' "$view"
-  run grep -nE 'filterRows|lanesModel|staleness|refreshSpinning|liveCounts|rowMeta|ageText' "$view"
+  run grep -nE 'filterRows\(|lanesModel\(|staleness\(|refreshSpinning\(|liveCounts\(|rowMeta\(|ageText\(' "$view"
   [ "$status" -eq 1 ]
   run grep -nF 'spinning: props.manual' "$view"
   [ "$status" -eq 1 ]
@@ -161,6 +161,44 @@ teardown() {
   grep -q 'summary: summary(allRows)' "$main"
   grep -q 'onFilter: (filter) => this.setFilter(filter)' "$main"
   grep -q 'onToggleGroup: (on, id) => this.toggleGroup(on, id)' "$main"
+}
+
+@test "queue home draws homeModel blocks with gauges, counts and a collapse chevron" {
+  local view="$MODS/queue/view.js"
+  local main="$MODS/queue/main.js"
+  grep -q 'homeModel(' "$main"
+  grep -q 'toggleCollapsed(' "$main"
+  grep -q 'shared("queue.collapsed")' "$main"
+  grep -q 'setShared("queue.collapsed"' "$main"
+  grep -q 'sectionLabel(summary.title)' "$view"
+  grep -q 'gauge(g.text' "$view"
+  grep -q 'caption(summary.counts)' "$view"
+  grep -q 'block.open ? "▾" : "▸"' "$view"
+  grep -q 'onToggleMachine' "$view"
+  grep -q 'opts.onToggleMachine(block.key, block.open)' "$view"
+  grep -q 'props.blocks' "$view"
+  run grep -nE 'homeModel|toggleCollapsed|slotGauge' "$view"
+  [ "$status" -eq 1 ]
+}
+
+@test "queue expanded row offers Open PR and Open terminal from model data" {
+  local view="$MODS/queue/view.js"
+  local main="$MODS/queue/main.js"
+  grep -q 'ghostButton(`queue-open-pr-${id}`, "Open PR"' "$view"
+  grep -q 'ghostButton(`queue-open-term-${id}`, "Open terminal"' "$view"
+  grep -q 'row.subject' "$view"
+  grep -q 'row.terminal' "$view"
+  grep -q 'write_to_clipboard' "$main"
+  grep -q 'focusSteps(' "$main"
+  run grep -nE 'parsePrKey|subjectOf|focusSteps' "$view"
+  [ "$status" -eq 1 ]
+}
+
+@test "gauge is a static text glyph in ui.js, not a pill" {
+  grep -q 'export function gauge(content, color)' "$MODS/_ui/ui.js"
+  grep -q 'text("code", content, color ?? theme().muted)' "$MODS/_ui/ui.js"
+  run grep -nE 'export function gauge\([^)]*\)[^{]*\{[^}]*pill' "$MODS/_ui/ui.js"
+  [ "$status" -eq 1 ]
 }
 
 @test "queue row detail draws detailModel through keyValue" {

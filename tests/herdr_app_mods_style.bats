@@ -391,3 +391,45 @@ teardown() {
     "$MODS"
   [ "$status" -eq 1 ]
 }
+
+# A mod imports `_lib` and `_ui` through its own installed copy, which node cannot load here (the
+# files import herdr), so a name removed from a shared module only fails when the app opens the mod.
+@test "every name a mod imports from _lib or _ui is exported by that module" {
+  run node --input-type=module -e '
+    import fs from "node:fs";
+    import path from "node:path";
+    const mods = process.argv[1];
+    const files = [];
+    const walk = (d) => {
+      for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+        const p = path.join(d, e.name);
+        if (e.isDirectory()) walk(p);
+        else if (p.endsWith(".js") && !p.endsWith(".generated.js")) files.push(p);
+      }
+    };
+    walk(mods);
+    const missing = [];
+    for (const file of files) {
+      const src = fs.readFileSync(file, "utf8");
+      for (const m of src.matchAll(/import\s*\{([^}]*)\}\s*from\s*["\x27](\.[^"\x27]+)["\x27]/g)) {
+        let target = path.resolve(path.dirname(file), m[2]);
+        if (!fs.existsSync(target)) {
+          const rel = path.relative(mods, target).replace(/^[^/]+\//, "");
+          target = path.join(mods, rel);
+        }
+        if (!fs.existsSync(target)) { missing.push(`${path.relative(mods, file)}: ${m[2]} does not resolve`); continue; }
+        const dest = fs.readFileSync(target, "utf8");
+        for (const raw of m[1].split(",")) {
+          const name = raw.trim().split(/\s+as\s+/)[0];
+          if (!name) continue;
+          const decl = new RegExp(`export\\s+(?:async\\s+)?(?:function\\*?|const|let|class)\\s+${name}\\b`);
+          const list = new RegExp(`export\\s*\\{[^}]*\\b${name}\\b`);
+          if (!decl.test(dest) && !list.test(dest)) missing.push(`${path.relative(mods, file)}: ${name} is not exported by ${m[2]}`);
+        }
+      }
+    }
+    process.stdout.write(missing.join("\n"));
+    process.exit(missing.length ? 1 : 0);
+  ' "$MODS"
+  [ "$status" -eq 0 ] || { echo "$output" >&3; return 1; }
+}

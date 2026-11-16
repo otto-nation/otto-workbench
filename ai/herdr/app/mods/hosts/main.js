@@ -2,12 +2,11 @@
 import { View } from "gpui-kit";
 import { exec, shared, setShared, layout } from "herdr";
 import { eachByMachine, machineOf } from "./_lib/board_pull.js";
-import { hostsModel } from "./_lib/hosts.js";
+import { hostsModel, toggleCollapsed } from "./_lib/hosts.js";
 import { loadHealth } from "./_lib/hosts_load.js";
 import { LOAD_DELAY_MS } from "./_lib/load_state.js";
 import { panelOn } from "./_lib/panel_toggle.js";
 import { remoteOns } from "./_lib/machines.js";
-import { toggleCollapsed } from "./_lib/queue_home.js";
 import { refreshSpinning } from "./_lib/queue_lanes.js";
 import { renderHosts } from "./view.js";
 

@@ -110,12 +110,6 @@ _js() {
   [ "$status" -eq 0 ]
 }
 
-@test "bar fills cells and clamps out of range" {
-  _js 'out([h.bar(0), h.bar(1), h.bar(0.5), h.bar(2), h.bar(-1), h.bar(NaN), h.bar(0.5, 4)])'
-  [ "$status" -eq 0 ]
-  [ "$output" = '["░░░░░░░░","████████","████░░░░","████████","░░░░░░░░","░░░░░░░░","██░░"]' ]
-}
-
 @test "hostStaleness: loading, fresh/stale at STALE_MS, unreachable, outdated" {
   _js 'const now = 1_000_000;
        out({
@@ -176,9 +170,9 @@ _js() {
          disk: { home: { size_mb: 100, used_mb: 10 }, docker: { size_mb: 100, used_mb: 96 } },
        }) } }, 1);
        const disk = s.gauges.find((x) => x.key === "disk");
-       out({ status: s.status.word, kind: disk.kind, text: disk.text })'
+       out({ status: s.status.word, kind: disk.kind, meter: disk.meter })'
   [ "$status" -eq 0 ]
-  run jq -e '.status=="strained" and .kind=="fail" and (.text | endswith("96% disk"))' <<< "$output"
+  run jq -e '.status=="strained" and .kind=="fail" and (.meter.text == "96% disk") and .meter.filled==96' <<< "$output"
   [ "$status" -eq 0 ]
 }
 
@@ -196,7 +190,7 @@ _js() {
        out({
          keys: s.gauges.map((x) => x.key),
          kinds: s.gauges.map((x) => x.kind),
-         loadText: s.gauges[0].text,
+         loadMeter: s.gauges[0].meter,
          counts: s.counts,
          busy: busy.counts,
          noQ: noQ.counts,
@@ -205,7 +199,7 @@ _js() {
        })'
   [ "$status" -eq 0 ]
   run jq -e '.keys==["load","mem","disk"] and .kinds==["warn","pass","pass"]
-    and .loadText=="████░░░░ 1.5/core"
+    and .loadMeter=={kind:"bar",total:100,filled:50,text:"1.5/core"}
     and .counts=="2 processes, 1 zombies · golangci-lint 2, go 1 · queue 1 running, 3 waiting"
     and (.busy | endswith("queue busy"))
     and (.noQ | test("queue") | not)
@@ -298,5 +292,14 @@ _js() {
     and .args==["--json"]
     and .miss=="missing-tool" and .bad=="bad-json"
     and .foo=="outdated" and .arr=="outdated"' <<< "$output"
+  [ "$status" -eq 0 ]
+}
+
+@test "toggleCollapsed stores the visible state, returns a new map and keeps other keys" {
+  _js 'const m = { a: true };
+       const next = h.toggleCollapsed(m, "b", true);
+       out({ next, same: next === m, m, none: h.toggleCollapsed(null, "", false) })'
+  [ "$status" -eq 0 ]
+  run jq -e '.next=={a:true,b:true} and .same==false and .m=={a:true} and .none=={"":false}' <<< "$output"
   [ "$status" -eq 0 ]
 }

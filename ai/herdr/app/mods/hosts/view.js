@@ -1,18 +1,19 @@
-// Hosts pane: one machine block (status, gauges, collapse) then that host's top processes.
+// Hosts pane: one machine block (status, meters, collapse) then that host's top processes.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import { topProcesses } from "./_lib/hosts.js";
-import { statusOf } from "./_lib/status.js";
 import { SP } from "./_lib/tokens.js";
 import {
   pane, paneBar, scrollBody, sectionLabel, hoverRow, text, type, statusText,
-  iconButton, placeholder, caption, gauge, segment, segmented,
+  iconButton, placeholder, caption, meter, segment, segmented,
 } from "./_ui/ui.js";
 
-function gaugeColor(kind, t) {
-  if (kind === "warn" || kind === "fail") return t[statusOf(kind).field];
-  return t.muted;
+// A figure past its threshold carries a status glyph beside the meter, so colour is never the only cue.
+function renderMeter(g) {
+  const row = h_flex().flex_none().gap(SP.xs).items_center().child(meter(g.meter, { label: g.label }));
+  if (g.kind === "warn" || g.kind === "fail") row.child(statusText(g.kind, null, { aria: `${g.label} ${g.kind}` }));
+  return row;
 }
 
 function staleLine(stale) {
@@ -54,7 +55,7 @@ function renderBlock(block, props) {
         .child(div().flex_1())
         .child(text("meta", block.open ? "▾" : "▸", t.muted)))
       .child(h_flex().gap(SP.sm).items_center().flex_wrap()
-        .children((summary.gauges ?? []).map((g) => gauge(g.text, gaugeColor(g.kind, t)))))
+        .children((summary.gauges ?? []).map(renderMeter)))
       .when(Boolean(summary.counts), (e) => e.child(caption(summary.counts)))
       .when(summary.note != null, (e) => e.child(caption(summary.note))));
   const body = v_flex().gap(SP.xs).child(header);

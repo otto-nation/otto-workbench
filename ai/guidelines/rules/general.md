@@ -40,7 +40,7 @@ The recommendation is the option you would still defend a year from now, not the
 - When the easiest option genuinely is the best long-term one, say why it is — that it is easy is not the argument
 - If the long-term fix is larger than the task, present it anyway as the recommendation, with its size and what it would touch, and offer the smaller fix as the alternative. Scoping it down is the user's call, not a filter applied before they see it
 - The reuse ladder below and `reuse.level` govern how a chosen design is *built* — reuse before writing, shortest diff that implements it. They never choose *which* design to recommend
-- "Long-term" means removing the cause of a defect that exists, not preparing for ones that might. A design that defends against an unobserved scenario is not the long-term option, it is the speculative one (`general.md` § Solve the Confirmed Problem)
+- "Long-term" means removing the cause of a defect that exists, not preparing for ones that might. A design that defends against an unobserved scenario is not the long-term option, it is the speculative one (see § Solve the Confirmed Problem below)
 
 ## Solve the Confirmed Problem
 

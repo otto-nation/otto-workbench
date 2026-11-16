@@ -72,11 +72,14 @@ restates none of their contents:
 - Shape of a control, card, tag, status or label: `_ui/ui.js`, one function per
   `DESIGN.md` component.
 - There is no ghost button: a labelled action is an outline `button`, the primary one a `solidButton`, an icon-only one an `iconButton`; a borderless clickable reads as text.
+- Buttons follow `DESIGN.md` **button hierarchy**, **confirm**,
+  **menu-button**, **back**, **action-bar**, **icon-button**, the `disabled`
+  state and the Layout click-target paragraph.
 - `tests/herdr_app_mods_style.bats` holds the views to the brand rules a grep
   can see: no hover that changes a border, no `pill`, no ✗ glyph.
 
 Where `DESIGN.md` is silent, keep to those owners rather than inventing a value,
-and record the gap in otto-nation/otto-nation.github.io's issue tracker.
+and fix the gap in otto-nation/otto-nation.github.io's `packages/brand/DESIGN.md` directly.
 
 ## Loading
 

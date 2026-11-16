@@ -5,6 +5,7 @@ import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
 import {
   liveCounts, isLive, stateKind, ageText, rowTitle, rowMeta, commandText, timesText, LOG_TAIL_LINES,
+  logNote,
 } from "./_lib/queue.js";
 import { tailLines } from "./_lib/output.js";
 import { friendlyError } from "./_lib/scope.js";
@@ -50,7 +51,8 @@ function renderHead(on, row, opts) {
 }
 
 function renderLog(row, log, id) {
-  if (!row.log_path) return placeholder("No log yet");
+  const note = logNote(row);
+  if (note != null) return caption(note);
   if (log == null) return placeholder("Loading log…");
   if (log.error) return errorLine(log.error);
   const lines = tailLines(log.text ?? "", LOG_TAIL_LINES);

@@ -4,7 +4,7 @@ import { View } from "gpui-kit";
 import { exec, spaces } from "herdr";
 import * as herdr from "herdr";
 import { eachByMachine, machineOf } from "./_lib/board_pull.js";
-import { cancelEntry, loadLog, loadStatus } from "./_lib/queue.js";
+import { cancelEntry, loadLog, loadStatus, logNote } from "./_lib/queue.js";
 import { renderQueue } from "./view.js";
 
 function uniqueOns(values) {
@@ -105,13 +105,13 @@ export default class Queue extends View {
     return rows.find((r) => r.id === this.open.id) ?? null;
   }
 
-  // Re-read the open row's log; a row with no log yet (queued) shows that instead.
+  // Re-read the open row's log; a row with no log shows logNote instead of a tail.
   async pullLog() {
     const open = this.open;
     const row = this.openRow();
     if (open == null || row == null) return;
-    if (!row.log_path) {
-      this.log = { text: "" };
+    if (logNote(row) != null) {
+      this.log = null;
       return;
     }
     const r = await loadLog(exec, { on: open.on, cwd: null }, row.log_path);

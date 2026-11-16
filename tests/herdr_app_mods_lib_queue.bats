@@ -153,6 +153,19 @@ _q() {
   [ "$output" = '{"calls":[{"cmd":"otto-queue","args":["status","--json"],"on":null},{"cmd":"tail","args":["-n","80","/s/queue/logs/4.log"],"on":null}],"log":{"ok":true,"text":"line\n"}}' ]
 }
 
+@test "logNote: ticket, queued job, finished job without a log" {
+  _q '
+    process.stdout.write(JSON.stringify([
+      q.logNote({ kind: "ticket", state: "running", log_path: null }),
+      q.logNote({ kind: "job", state: "queued", log_path: null }),
+      q.logNote({ kind: "job", state: "done", log_path: null }),
+      q.logNote({ kind: "job", state: "done", log_path: "/s/queue/logs/1.log" }),
+    ]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["Runs in the terminal that started it — no log is kept","Log starts when it runs","No log",null]' ]
+}
+
 @test "a remote log tail goes through the preamble and surfaces a failure" {
   _q '
     const calls = [];

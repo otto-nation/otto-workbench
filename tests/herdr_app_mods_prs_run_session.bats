@@ -133,3 +133,45 @@ RUNS_JS
   run grep -c 'ghostButton(id, "Open session", () => s.onOpen())' "$view"
   [ "$output" = "1" ]
 }
+
+# A standalone PR (no run) opens its target's session: asked on the branch, started in the
+# recipe's worktree, and gated on the machine's target-session feature.
+@test "target session: Open session asks pr for the branch and starts pr target session in its worktree" {
+  _host "$RUNS
+    const TARGET = { schema_version: 1, session_id: 'target-abc', name: 'target o/n feat/x', cwd: '/w/feat-x', argv: ['pi'], env: {} };
+    ANSWERS.unshift([(l) => l === 'pr --branch feat/x target session --json', json(TARGET)]);
+    const { w, settle } = await load();
+    w.featuresOf = () => ['target-session'];
+    const d = { repo: 'o/n', number: 9, cwd: '/w/n', presentation: { branch: 'feat/x' } };
+    const before = w.targetSession(null, d);
+    before.onOpen();
+    const during = w.targetSession(null, d).opening;
+    await settle();
+    const after = w.targetSession(null, d);
+    out({ gate: before.gate, waiting: before.waiting, during, error: after.error, ran,
+      asked: seen.filter((x) => x.line.startsWith('pr --branch') || x.line.startsWith('hc ')).map((x) => x.line.split(' --label')[0]) });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"gate":"ready","waiting":null,"during":true,"error":null,"ran":[["terminal.keep",{"terminal":"t9"}]],"asked":["pr --branch feat/x target session --json","hc ls --json","hc run --bg --json --cwd /w/feat-x"]}' ]
+}
+
+@test "target session: a machine whose features lack target-session is outdated and runs nothing" {
+  _host "$RUNS
+    const { w, settle } = await load();
+    w.featuresOf = () => ['batch-session'];
+    const d = { repo: 'o/n', number: 9, cwd: '/w/n', presentation: { branch: 'feat/x' } };
+    const s = w.targetSession(null, d);
+    seen.length = 0;
+    s.onOpen(); await settle();
+    out({ gate: s.gate, error: w.targetSession(null, d).error, seen: seen.length });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"gate":"outdated","error":"Update pr on this machine to open sessions (otto-workbench sync)","seen":0}' ]
+}
+
+# The host cannot mount renderDetailHeader (gpui-kit), so the header wiring is pinned by source.
+@test "target session: the detail header draws the control only when a targetSession is passed" {
+  local detail="$REPO_ROOT/ai/herdr/app/mods/prs/detail.js"
+  run grep -c '.when(Boolean(targetSession), (e) => e.child(sessionControl("open-session-target", targetSession)))' "$detail"
+  [ "$output" = "1" ]
+  run grep -c 'targetSession: this.workflows.targetSession(this.detail.on, this.detail)' "$REPO_ROOT/ai/herdr/app/mods/prs/main.js"
+  [ "$output" = "1" ]
+}

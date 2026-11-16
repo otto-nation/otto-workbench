@@ -27,7 +27,7 @@ function cardShell(id) {
 
 // Open session (Workflows.runSession), with its state beside it as text. A machine whose pr
 // predates run sessions gets the reason in the button's place.
-function sessionControl(id, s) {
+export function sessionControl(id, s) {
   const row = h_flex().gap(SP.sm).items_center();
   if (s.gate === "outdated") return row.child(caption(OUTDATED_TEXT));
   return row

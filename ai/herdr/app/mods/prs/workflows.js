@@ -7,9 +7,17 @@ import {
 import { cancelArgv, runProgress } from "./_lib/batch_launch.js";
 import { invoke, readJson } from "./_lib/board_data.js";
 import { parseRunReply } from "./_lib/launch.js";
-import { openRunSession, sessionGate, waitingText } from "./_lib/run_session.js";
+import {
+  openSession as openKindSession, sessionGate, waitingText, SESSION_KINDS,
+} from "./_lib/run_session.js";
+
+const [BATCH, TARGET] = Object.keys(SESSION_KINDS);
 
 function k(on) { return String(on ?? ""); }
+
+function sessionKey(kind, on, id) {
+  return `${kind}\0${k(on)}\0${id}`;
+}
 
 function itemIn(doc, want) {
   return doc?.items?.find((i) => String(i.key ?? "").toLowerCase() === want) ?? null;
@@ -322,25 +330,29 @@ export class Workflows {
     return `${k(on)}\0${id}`;
   }
 
-  // Open session for a run: focus the terminal already running its pi session, or start one.
-  openSession(on, runId, repo) {
-    const key = this.runKeyOf(on, runId);
+  // Open session: focus the terminal already running its pi session, or start one.
+  startSession(kind, key, target) {
     if (this.sessionUi.get(key)?.opening) return;
     this.sessionUi.set(key, { opening: true, error: null });
-    const ctx = this.machines.get(k(on))?.ctx ?? { on, cwd: null };
-    const target = { on, cwd: ctx.cwd ?? null, runId, repo, features: this.featuresOf(on) };
     this.acx.spawn(async (cx) => {
       let res;
       try {
-        res = await openRunSession({ exec, run, panes, spaces }, target);
+        res = await openKindSession({ exec, run, panes, spaces }, kind, target);
       } catch (err) {
-        // openRunSession never rejects; a throwing host call still ends "Opening".
+        // openSession never rejects; a throwing host call still ends "Opening".
         res = { ok: false, message: String(err?.message ?? err) };
       }
       this.sessionUi.set(key, { opening: false, error: res.ok ? null : res.message });
       cx.notify();
     });
     this.acx.notify();
+  }
+
+  openSession(on, runId, repo) {
+    const ctx = this.machines.get(k(on))?.ctx ?? { on, cwd: null };
+    this.startSession(BATCH, sessionKey(BATCH, on, runId), {
+      on, cwd: ctx.cwd ?? null, runId, repo, features: this.featuresOf(on),
+    });
   }
 
   // The pinned run's report session count, re-read only when its items' states change.
@@ -362,13 +374,33 @@ export class Workflows {
 
   // What the views draw for one run's Open session; `waiting` is the report's session count.
   runSession(on, runId, repo, waiting) {
-    const ui = this.sessionUi.get(this.runKeyOf(on, runId)) ?? {};
+    const ui = this.sessionUi.get(sessionKey(BATCH, on, runId)) ?? {};
     return {
-      gate: sessionGate(this.featuresOf(on)),
+      gate: sessionGate(this.featuresOf(on), BATCH),
       opening: Boolean(ui.opening),
       error: ui.error ?? null,
       waiting: waitingText(waiting),
       onOpen: () => this.openSession(on, runId, repo),
+    };
+  }
+
+  targetSession(on, d) {
+    const ui = this.sessionUi.get(sessionKey(TARGET, on, `${d.repo}#${d.number}`)) ?? {};
+    return {
+      gate: sessionGate(this.featuresOf(on), TARGET),
+      opening: Boolean(ui.opening),
+      error: ui.error ?? null,
+      waiting: null,
+      onOpen: () => {
+        const ctx = this.machines.get(k(on))?.ctx ?? { on, cwd: null };
+        this.startSession(TARGET, sessionKey(TARGET, on, `${d.repo}#${d.number}`), {
+          on,
+          cwd: d.cwd ?? ctx.cwd ?? null,
+          branch: d.presentation?.branch,
+          repo: d.repo,
+          features: this.featuresOf(on),
+        });
+      },
     };
   }
 

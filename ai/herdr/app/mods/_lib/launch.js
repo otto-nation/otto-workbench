@@ -80,14 +80,14 @@ export function hcBatchArgv({ repo, cwd, on, argv }) {
   });
 }
 
-// A terminal running `pr batch session RUN_ID`, which execs pi with the run's env in its checkout.
+// A terminal running the given session argv (which execs pi) in its checkout.
 // The session label is how herdr finds it again: `hc ls --json` lists no labels, but `--label`
 // filters by them.
-export function hcSessionArgv({ repo, runId, sessionId, cwd, on }) {
+export function hcSessionArgv({ repo, argv, sessionId, cwd, on }) {
   return hcLaunchArgv({
     cwd,
     on,
-    argv: ['pr', 'batch', 'session', String(runId)],
+    argv,
     labels: [
       ...(repo ? [`${LABEL_REPO}=${repo}`] : []),
       `${LABEL_ACTION}=session`,

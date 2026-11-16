@@ -1,9 +1,8 @@
 /**
- * Queue panel model: lanes, position in line, timing, failure text, filters, staleness.
+ * Queue panel model: lanes, position in line, timing, failure text, staleness.
  * Pure. Admission order matches otto_queue.ledger._first_waiting_id.
  */
 import { LOAD_DELAY_MS } from './load_state.js';
-import { isLive } from './queue.js';
 
 const FINISHED = new Set(['done', 'failed', 'cancelled', 'tempfail']);
 const SUCCESS_STATES = new Set(['done', 'cancelled', 'tempfail']);
@@ -407,7 +406,7 @@ function lane(key, label, rows, count, more = 0) {
   return { key, label, count, rows, card: count > 0, more };
 }
 
-export function lanesModel(rows, nowMs) {
+export function lanesModel(rows, nowMs, { allWaiting = false, allFinished = false } = {}) {
   const list = rows ?? [];
   const running = [];
   const waiting = [];
@@ -433,30 +432,13 @@ export function lanesModel(rows, nowMs) {
   const runningRows = running.map(present);
   const waitingRows = groupWaiting(waiting.map(present), nowMs, eligibleByClass);
   const finishedRows = groupFinished(finished.map(present), nowMs);
-  const waitingShown = capWaiting(waitingRows);
-  const finishedShown = capFinished(finishedRows, nowMs);
+  const waitingShown = allWaiting ? { rows: waitingRows, more: 0 } : capWaiting(waitingRows);
+  const finishedShown = allFinished ? { rows: finishedRows, more: 0 } : capFinished(finishedRows, nowMs);
   return [
     lane('running', 'Running', runningRows, runningRows.length),
     lane('waiting', 'Waiting', waitingShown.rows, waiting.length, waitingShown.more),
     lane('finished', 'Finished', finishedShown.rows, finished.length, finishedShown.more),
   ];
-}
-
-export function filterRows(rows, filter) {
-  const list = rows ?? [];
-  if (filter === 'live') return list.filter((row) => isLive(row.state));
-  if (filter === 'failed') return list.filter((row) => row.state === 'failed');
-  return list;
-}
-
-export function summary(rows) {
-  let live = 0;
-  let failed = 0;
-  for (const row of rows ?? []) {
-    if (isLive(row.state)) live += 1;
-    else if (row.state === 'failed') failed += 1;
-  }
-  return `${live} live · ${failed} failed`;
 }
 
 function agoText(at, nowMs) {

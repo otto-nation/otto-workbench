@@ -141,19 +141,15 @@ export function homeModel(machines, nowMs) {
     if (machineKey(entry) === '') local.push(entry);
     else rest.push(entry);
   }
-  return [...local, ...rest].map((entry) => {
-    const card = cardOf(entry, nowMs);
-    // queue/main.js still reads block.summary until the view half; delete with it.
-    return { ...card, summary: machineSummary({ ...entry, title: card.title }, nowMs) };
-  });
+  return [...local, ...rest].map((entry) => cardOf(entry, nowMs));
 }
 
-export function machinePage(entry, nowMs) {
+export function machinePage(entry, nowMs, opts = {}) {
   const card = cardOf(entry, nowMs);
   const rows = staleness(entry, nowMs).rows ?? [];
   return {
     summary: card,
-    lanes: lanesModel(rows, nowMs),
+    lanes: lanesModel(rows, nowMs, opts),
   };
 }
 
@@ -173,11 +169,4 @@ export function pageOf(state, machines) {
     if (machineKey(entry) === want) return entry;
   }
   return null;
-}
-
-// Compatibility for queue/main.js until the view half; delete with it.
-export function toggleCollapsed(map, key, open) {
-  const next = { ...(map ?? {}) };
-  next[key] = Boolean(open);
-  return next;
 }

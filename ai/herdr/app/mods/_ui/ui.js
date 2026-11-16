@@ -1,10 +1,10 @@
 // Shared pieces for the mods, each one a DESIGN.md component: buttons (outline, solid,
 // icon), checkbox, checkRow, popover surface, tag, status glyph, section label, segmented control,
-// card, list row, keyValue, gauge. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
+// card, list row, keyValue, meter. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, TextView, Checkbox, Input } from "gpui-base";
 import { theme, settings } from "herdr";
-import { SP, TYPE, RADIUS, CONTROL, LAYOUT, ROW_H } from "../_lib/tokens.js";
+import { SP, TYPE, RADIUS, CONTROL, LAYOUT, ROW_H, METER } from "../_lib/tokens.js";
 import { STATUS, DIFF, statusOf } from "../_lib/status.js";
 
 export function mono() {
@@ -157,12 +157,13 @@ export function hoverRow(id, { selected = false } = {}) {
     .when(!selected, (e) => e.hover((s) => s.bg(t.hover)));
 }
 
-// card-linked: hairline card on canvas; hover fills, the border stays. Callers chain gap, on_click
-// and content.
-export function card(id) {
+// card: hairline on canvas, card radius and padding. linked (default) is card-linked: hover
+// fills, the border stays, the card is a click target. A section card passes linked: false.
+export function card(id, { linked = true } = {}) {
   const t = theme();
-  return v_flex().id(id).p(SP.md).rounded(RADIUS.card).border_1().border_color(t.border)
-    .cursor_pointer().hover((s) => s.bg(t.hover));
+  const el = v_flex().id(id).p(SP.md).rounded(RADIUS.card).border_1().border_color(t.border);
+  if (!linked) return el;
+  return el.cursor_pointer().hover((s) => s.bg(t.hover));
 }
 
 // The empty and loading state: muted body text ("Loading…", "No pull requests").
@@ -183,9 +184,36 @@ export function caption(content, color) {
   return text("meta", content, color ?? theme().muted);
 }
 
-// A slot-gauge glyph string (█░ n/limit) in the code role. Colour comes from the caller via theme().
-export function gauge(content, color) {
-  return text("code", content, color ?? theme().muted);
+// Capacity reading from meterModel: discrete segments, a continuous bar, or text only.
+// Track width is METER.w px via .w(), the same Length channel as .h().
+export function meter(model, { muted = false, label = "" } = {}) {
+  const t = theme();
+  const ink = muted ? t.muted : t.foreground;
+  const fill = muted ? t.muted : t.working;
+  const hair = t.border;
+  const row = h_flex().flex_none().gap(SP.sm).items_center()
+    .when(Boolean(label), (e) => e.child(text("section", label, t.muted)));
+  const track = meterTrack(model, fill, hair);
+  if (track != null) row.child(track);
+  return row.child(text("meta", model?.text ?? "", ink));
+}
+
+function meterTrack(model, fill, hair) {
+  if (model == null || model.kind === "none") return null;
+  const total = Math.max(0, Number(model.total) || 0);
+  const filled = Math.max(0, Number(model.filled) || 0);
+  if (model.kind === "segments") {
+    if (total <= 0) return null;
+    return h_flex().flex_none().w(METER.w).h(METER.h).gap(METER.gap).items_center()
+      .children(Array.from({ length: total }, (_, i) =>
+        div().flex_1().h(METER.h).rounded(RADIUS.tag).bg(i < filled ? fill : hair)));
+  }
+  if (model.kind === "bar") {
+    const ratio = total <= 0 ? 0 : Math.min(1, filled / total);
+    return div().flex_none().w(METER.w).h(METER.h).rounded(RADIUS.tag).bg(hair).overflow_hidden()
+      .child(div().w(Math.round(METER.w * ratio)).h(METER.h).bg(fill));
+  }
+  return null;
 }
 
 // The centred, padded pane for an empty or error state.

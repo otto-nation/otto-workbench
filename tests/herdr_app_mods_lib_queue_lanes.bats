@@ -177,25 +177,6 @@ _js() {
   [ "$output" = '{"ids":[5,11,8,6],"keys":[null,"finished:failed:s:acme/box#7\nreview","finished:failed:l:lint sweep",null],"failures":["","failed 3× · last 10s ago","failed 2× · last 40s ago","exit 1"],"members":[null,[11,10,9],[8,7],null]}' ]
 }
 
-@test "filterRows all/live/failed and summary counts as text" {
-  _js '
-    const rows = [
-      {id:1, state:"queued"}, {id:2, state:"running"}, {id:3, state:"failed"},
-      {id:4, state:"done"}, {id:5, state:"cancelled"}, {id:6, state:"tempfail"},
-      {id:7, state:"failed"},
-    ];
-    process.stdout.write(JSON.stringify({
-      all: q.filterRows(rows, "all").map((r) => r.id),
-      live: q.filterRows(rows, "live").map((r) => r.id),
-      failed: q.filterRows(rows, "failed").map((r) => r.id),
-      summary: q.summary(rows),
-      empty: q.summary([]),
-    }));
-  '
-  [ "$status" -eq 0 ]
-  [ "$output" = '{"all":[1,2,3,4,5,6,7],"live":[1,2],"failed":[3,7],"summary":"2 live · 2 failed","empty":"0 live · 0 failed"}' ]
-}
-
 @test "staleness maps result kinds and keeps last good rows" {
   _js '
     const NOW = 1_000_000;

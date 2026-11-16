@@ -18,6 +18,10 @@ const CHECK = fileURLToPath(
   new URL("../../../../bin/local/queue-guard-check", import.meta.url),
 );
 
+// Spelled again in ai/claude/bin/claude-bash-guard, whose tests require the
+// citation literally on its block call; tests/queue_guard.bats holds them equal.
+const CITATION = "See general.md § Waiting on Background Work.";
+
 /**
  * The refusal for a bash COMMAND run from CWD, or null when it may proceed.
  * Exit 0 from the checker is "refuse" and its stdout is the reason; anything
@@ -35,7 +39,7 @@ export function commandRefusal(command: string, cwd: string): string | null {
       stdio: ["ignore", "pipe", "ignore"],
       env,
     }).trim();
-    return reason || null;
+    return reason ? `${reason} ${CITATION}` : null;
   } catch {
     return null;
   }

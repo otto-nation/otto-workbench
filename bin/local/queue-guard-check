@@ -17,7 +17,10 @@
 #
 # The single owner of this decision: `ai/claude/bin/claude-bash-guard` and
 # `ai/pi/extensions/queue-guard` both ask it, so the harnesses cannot disagree
-# about what is heavy, which repos are listed, or what the refusal says.
+# about what is heavy, which repos are listed, or what the refusal says. Each
+# appends the rules citation itself (`See general.md § Waiting on Background
+# Work.`): claude-bash-guard's tests require it literally on the block call, and
+# tests/queue_guard.bats holds the two spellings equal.
 #
 # The cheap tests run first (inside a queued job, then the command shape) so the
 # config read — one python interpreter — is only paid by a heavy command.
@@ -114,5 +117,5 @@ if [[ "$found" == no ]]; then
   exit "$EXIT_NO"
 fi
 
-echo "This repo (${repo}) is listed in queue.heavy_repos, so a heavy command is admitted through otto-queue: run \`otto-queue run --ticket --class heavy -- ${statement}\` instead. See general.md § Waiting on Background Work."
+echo "This repo (${repo}) is listed in queue.heavy_repos, so a heavy command is admitted through otto-queue: run \`otto-queue run --ticket --class heavy -- ${statement}\` instead."
 exit 0

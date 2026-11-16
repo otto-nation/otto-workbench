@@ -532,7 +532,7 @@ fi
 # the wording, which ai/pi/extensions/queue-guard asks as well; it prints the
 # reason on stdout and exits 0 to refuse.
 if [[ -n "$hook_cwd" ]] && _qgc_reason="$("$(cd "$(dirname "$_icc")/../../.." && pwd)/bin/local/queue-guard-check" "$cmd" "$hook_cwd")"; then
-  block "$_qgc_reason"
+  block "$_qgc_reason See general.md § Waiting on Background Work."
 fi
 
 # ── Normalize the command for scanning ───────────────────────────────────────

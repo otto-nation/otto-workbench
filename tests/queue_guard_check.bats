@@ -47,7 +47,6 @@ _check() {
   _check "golangci-lint run ./..." "$CONTAINER/main"
   [ "$status" -eq 0 ]
   [[ "$output" == *"otto-queue run --ticket --class heavy -- golangci-lint run ./..."* ]]
-  [[ "$output" == *"general.md § Waiting on Background Work"* ]]
 }
 
 @test "a listed plain clone is named by its toplevel directory" {

@@ -46,22 +46,24 @@ function control(id, { disabled, onClick }) {
 
 // button-outline: hairline border on canvas, ink label; hover fills, the border stays.
 // Disabled: muted label, no hover.
-export function button(id, label, onClick, { disabled = false } = {}) {
+export function button(id, label, onClick, { disabled = false, reason = null } = {}) {
   const t = theme();
   return type(control(id, { disabled, onClick }), "label").px(CONTROL.px)
     .border_1().border_color(t.border)
     .text_color(disabled ? t.muted : t.foreground)
     .when(!disabled, (e) => e.hover((s) => s.bg(t.hover)))
+    .when(disabled && Boolean(reason), (e) => e.tooltip(reason))
     .child(label);
 }
 
 // button-solid, the one primary action: ink fill, canvas label. Disabled keeps the fill at half
 // opacity, since a muted label on ink does not read.
-export function solidButton(id, label, onClick, { disabled = false } = {}) {
+export function solidButton(id, label, onClick, { disabled = false, reason = null } = {}) {
   const t = theme();
   return type(control(id, { disabled, onClick }), "label").px(CONTROL.px)
     .bg(t.solid).text_color(t.solid_foreground)
     .when(disabled, (e) => e.opacity(0.5))
+    .when(disabled && Boolean(reason), (e) => e.tooltip(reason))
     .child(label);
 }
 
@@ -193,6 +195,12 @@ export function pinned(el) {
 // The top strip of a pane: hairline below, content stacked.
 export function paneBar() {
   return pinned(v_flex().gap(SP.sm).px(SP.lg).py(SP.md));
+}
+
+// Pinned footer of a pane whose primary would scroll away: canvas, hairline top.
+export function actionBar() {
+  const t = theme();
+  return v_flex().flex_none().gap(SP.sm).px(SP.lg).py(SP.md).bg(t.background).border_t_1().border_color(t.border);
 }
 
 // Selectable code: a fenced block in a TextView, so it can be highlighted and copied.

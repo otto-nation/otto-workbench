@@ -10,6 +10,7 @@ import { SP } from "./_lib/tokens.js";
 import {
   scrollBody, button, solidButton, pane, pinned, checkbox,
   sectionHeading, text, type, statusText, badge, dangerColor,
+  actionBar, caption, errorLine,
 } from "./_ui/ui.js";
 import { renderRunPanel, renderRunItems } from "./workflows_view.js";
 import { loadPlaceholder, renderLoadLine } from "./load_status.js";
@@ -131,15 +132,6 @@ function checkLine(id, on, label, extra, onToggle) {
 function renderForm({ launcher: L, prs, load, filterBar }) {
   const t = theme();
   const all = prs ?? [];
-  const shown = L.shown(all);
-  const selectedPrs = shown.filter((p) => L.selected.has(prKey(p.repoSlug, p.number)));
-  const hiddenSelected = all.filter((p) => L.selected.has(prKey(p.repoSlug, p.number))).length
-    - selectedPrs.length;
-  const disabled = L.starting || selectedPrs.length === 0 || L.steps.size === 0;
-  const reason = L.starting ? null
-    : selectedPrs.length === 0 ? "Select at least one PR"
-    : L.steps.size === 0 ? "Turn on at least one step"
-    : null;
   const filters = renderFormFilters(L, all, filterBar);
   return v_flex().gap(SP.lg)
     .child(filters)
@@ -156,16 +148,41 @@ function renderForm({ launcher: L, prs, load, filterBar }) {
         "rebase-behind", L.rebaseBehind, "Also rebase PRs that are only behind", "",
         () => L.toggleRebaseBehind())))
       .child(checkLine("auto-publish", L.autoPublish, "Push clean fast-forwards", "", () => L.toggleAutoPublish()))
-      .child(L.models.render()))
-    .child(v_flex().gap(SP.sm)
-      .when(Boolean(reason), (e) => e.child(text("body", reason, t.muted)))
-      .when(hiddenSelected > 0, (e) => e.child(
-        text("body", `${hiddenSelected} selected PR(s) hidden by filters won't run`, t.muted)))
-      .when(Boolean(L.note), (e) => e.child(text("body", L.note, dangerColor())))
-      .child(h_flex().gap(SP.md).items_center()
-        .child(solidButton("batch-start", "Start", () => L.launch(prs), { disabled }))
-        .child(button("batch-clear", "Clear", () => L.reset()))
-        .when(L.starting, (e) => e.child(statusText("running", "Starting")))));
+      .child(L.models.render()));
+}
+
+function startBarModel(L, prs) {
+  const all = prs ?? [];
+  const shown = L.shown(all);
+  const selectedPrs = shown.filter((p) => L.selected.has(prKey(p.repoSlug, p.number)));
+  const hiddenSelected = all.filter((p) => L.selected.has(prKey(p.repoSlug, p.number))).length
+    - selectedPrs.length;
+  const disabled = L.starting || selectedPrs.length === 0 || L.steps.size === 0;
+  const reason = L.starting ? "Starting"
+    : selectedPrs.length === 0 ? "Select at least one PR"
+    : L.steps.size === 0 ? "Turn on at least one step"
+    : null;
+  return { selectedPrs, hiddenSelected, disabled, reason };
+}
+
+function startBarSlot(L, { selectedPrs, hiddenSelected, reason }) {
+  if (L.starting) return statusText("running", "Starting");
+  if (reason) return caption(reason);
+  let summary = `${selectedPrs.length} PRs selected`;
+  if (hiddenSelected > 0) summary += ` · ${hiddenSelected} hidden by filters won't run`;
+  return caption(summary);
+}
+
+function renderStartBar({ launcher: L, prs }) {
+  const model = startBarModel(L, prs);
+  const { disabled, reason } = model;
+  const slot = startBarSlot(L, model);
+  return actionBar()
+    .when(Boolean(L.note), (e) => e.child(errorLine(L.note)))
+    .child(h_flex().gap(SP.sm).items_center()
+      .child(solidButton("batch-start", "Start", () => L.launch(prs), { disabled, reason }))
+      .child(button("batch-clear", "Clear", () => L.reset(), { disabled: !L.canClear(), reason: "Nothing to clear" }))
+      .child(slot));
 }
 
 export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOpenPr, run, load, filterBar }) {
@@ -183,5 +200,6 @@ export function renderBatchPage({ launcher, workflows, prs, allPrs, onBack, onOp
       .child(renderForm({ launcher, prs, load, filterBar }))
       .child(v_flex().gap(SP.sm)
         .child(sectionHeading("Recent runs"))
-        .child(renderRunPanel(workflows.barState(), expanded))));
+        .child(renderRunPanel(workflows.barState(), expanded))))
+    .child(renderStartBar({ launcher, prs }));
 }

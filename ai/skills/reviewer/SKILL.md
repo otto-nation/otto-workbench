@@ -11,4 +11,6 @@ trigger: "Loaded automatically for review agents. Pi has no agent files, so the 
      full transcript of it in the skill index. ai/skills/steps.sh splices the
      agent body in below at install time. -->
 
+A finding resting on a hypothetical input, environment or future need is a question, not must-fix — see `general.md` § Solve the Confirmed Problem.
+
 <!-- AGENT_PROTOCOL_PLACEHOLDER: replaced at install with the body of ai/claude/agents/reviewer.md -->

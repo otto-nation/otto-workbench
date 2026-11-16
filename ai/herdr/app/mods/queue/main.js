@@ -4,7 +4,11 @@ import { View } from "gpui-kit";
 import { exec, spaces } from "herdr";
 import * as herdr from "herdr";
 import { eachByMachine, machineOf } from "./_lib/board_pull.js";
+import { LOAD_DELAY_MS } from "./_lib/load_state.js";
 import { cancelEntry, loadLog, loadStatus, logNote } from "./_lib/queue.js";
+import {
+  filterRows, lanesModel, refreshSpinning, staleness, summary,
+} from "./_lib/queue_lanes.js";
 import { renderQueue } from "./view.js";
 
 function uniqueOns(values) {
@@ -46,7 +50,9 @@ export default class Queue extends View {
     this.visible = false;
     this.inflight = false;
     this.again = false;
-    this.manual = false;
+    this.refreshSince = null;
+    this.filter = "all";
+    this.openGroups = new Set();
     // The expanded row ({on, id}), its log tail, and the row whose Cancel awaits a confirm.
     this.open = null;
     this.log = null;
@@ -66,13 +72,15 @@ export default class Queue extends View {
       return;
     }
     this.inflight = true;
+    this.refreshSince = Date.now();
+    cx.timer.after(LOAD_DELAY_MS, (cx) => { if (this.refreshSince != null) cx.notify(); });
     cx.spawn(async (cx) => {
       try {
         await this.pull();
         await this.pullLog();
       } finally {
         this.inflight = false;
-        this.manual = false;
+        this.refreshSince = null;
         cx.notify();
         if (this.again) {
           this.again = false;
@@ -83,9 +91,20 @@ export default class Queue extends View {
   }
 
   refreshNow() {
-    this.manual = true;
-    this.acx.notify();
     this.refresh(this.acx);
+    this.acx.notify();
+  }
+
+  setFilter(filter) {
+    this.filter = filter;
+    this.acx.notify();
+  }
+
+  toggleGroup(on, id) {
+    const key = rowKey(on, id);
+    if (this.openGroups.has(key)) this.openGroups.delete(key);
+    else this.openGroups.add(key);
+    this.acx.notify();
   }
 
   async pull() {
@@ -95,13 +114,18 @@ export default class Queue extends View {
       if (!keys.has(key)) this.byOn.delete(key);
     }
     await eachByMachine(wanted, (t) => t.on, async (t) => {
-      this.byOn.set(machineOf(t.on), await loadStatus(exec, { on: t.on, cwd: null }));
+      const key = machineOf(t.on);
+      const prev = this.byOn.get(key);
+      const result = await loadStatus(exec, { on: t.on, cwd: null });
+      if (!result.ok) result.rows = prev?.result?.rows ?? [];
+      const at = result.ok && !result.busy ? Date.now() : prev?.at;
+      this.byOn.set(key, { result, at });
     });
   }
 
   openRow() {
     if (this.open == null) return null;
-    const rows = this.byOn.get(machineOf(this.open.on))?.rows ?? [];
+    const rows = this.byOn.get(machineOf(this.open.on))?.result?.rows ?? [];
     return rows.find((r) => r.id === this.open.id) ?? null;
   }
 
@@ -149,29 +173,53 @@ export default class Queue extends View {
     });
   }
 
-  sections() {
-    return this.targets().map((t) => ({
-      on: t.on,
-      result: this.byOn.get(machineOf(t.on)),
-      cancelError: this.cancelErr.get(machineOf(t.on)),
-    }));
+  queueModel(nowMs) {
+    const sections = [];
+    const allRows = [];
+    for (const t of this.targets()) {
+      const key = machineOf(t.on);
+      const entry = this.byOn.get(key);
+      const result = entry?.result;
+      const stale = result == null ? null : staleness({ result, at: entry.at }, nowMs);
+      const rows = stale?.rows ?? result?.rows ?? [];
+      allRows.push(...rows);
+      const kind = stale?.kind;
+      sections.push({
+        on: t.on,
+        label: t.on ?? "This computer",
+        stale: stale && { words: stale.words, warn: kind !== "fresh" },
+        muted: kind === "stale" || kind === "unreachable",
+        loading: result == null,
+        busy: Boolean(result?.ok && result.busy),
+        lanes: result == null || (result.ok && result.busy) ? [] : lanesModel(filterRows(rows, this.filter), nowMs),
+        cancelError: this.cancelErr.get(key),
+      });
+    }
+    return { sections, summary: summary(allRows) };
   }
 
   render(_cx) {
     this.visible = true;
+    const nowMs = Date.now();
+    const model = this.queueModel(nowMs);
     return renderQueue({
-      sections: this.sections(),
-      nowMs: Date.now(),
+      sections: model.sections,
+      summary: model.summary,
+      filter: this.filter,
+      spinning: refreshSpinning(this.refreshSince, nowMs),
+      nowMs,
       openKey: this.open == null ? null : rowKey(this.open.on, this.open.id),
+      openGroups: this.openGroups,
       confirming: this.confirming,
       log: this.log,
-      manual: this.manual,
       rowKey,
       onToggle: (on, id) => this.toggle(on, id),
+      onToggleGroup: (on, id) => this.toggleGroup(on, id),
       onAskCancel: (on, id) => this.askCancel(on, id),
       onCancel: (on, id) => this.cancel(on, id),
       onDismiss: () => this.dismissCancel(),
       onRefresh: () => this.refreshNow(),
+      onFilter: (filter) => this.setFilter(filter),
     });
   }
 }

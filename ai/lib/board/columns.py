@@ -1,8 +1,10 @@
 """Classify a PR row into team / mine lanes and issue badges.
 
 Python emits both the resting lanes and the reviewing overrides; a client
-picks ``lanes.*_reviewing`` when its terminals show a review running. A draft
-is not a lane.
+picks ``lanes.*_reviewing`` when its terminals show a review running (Team:
+In Progress). A queued review is Team In Queue; Mine shows a running review
+under In Review and leaves a queued one in its resting lane. A draft is not
+a lane.
 """
 
 # doc-group: board
@@ -34,9 +36,10 @@ TEAM_COLUMNS: tuple[Column, ...] = (
     _col(Board.TEAM, TeamLane.OPEN, "Open", 0),
     _col(Board.TEAM, TeamLane.NEEDS_MY_REVIEW, "Needs My Review", 1),
     _col(Board.TEAM, TeamLane.IN_QUEUE, "In Queue", 2),
-    _col(Board.TEAM, TeamLane.REVIEW_READY, "Review Ready", 3),
-    _col(Board.TEAM, TeamLane.REVIEWED, "Reviewed", 4),
-    _col(Board.TEAM, TeamLane.LANDED, "Landed", 5),
+    _col(Board.TEAM, TeamLane.IN_PROGRESS, "In Progress", 3),
+    _col(Board.TEAM, TeamLane.REVIEW_READY, "Review Ready", 4),
+    _col(Board.TEAM, TeamLane.REVIEWED, "Reviewed", 5),
+    _col(Board.TEAM, TeamLane.LANDED, "Landed", 6),
 )
 
 MINE_COLUMNS: tuple[Column, ...] = (
@@ -57,6 +60,9 @@ def team_lane(row: Row) -> TeamLane:
         return TeamLane.LANDED
     if row.is_requested_reviewer or row.has_new_changes_since_review:
         return TeamLane.NEEDS_MY_REVIEW
+    queued = _queue_lane(row)
+    if queued is not None:
+        return queued
     runs = row.review_runs
     if runs:
         latest_posted_idx = next(
@@ -78,11 +84,23 @@ def team_lane(row: Row) -> TeamLane:
     return TeamLane.OPEN
 
 
+def _queue_lane(row: Row) -> TeamLane | None:
+    if row.queue is None:
+        return None
+    if row.queue.state == "running":
+        return TeamLane.IN_PROGRESS
+    if row.queue.state == "queued":
+        return TeamLane.IN_QUEUE
+    return None
+
+
 def mine_lane(row: Row) -> MineLane:
     if row.state is PrState.MERGED:
         return MineLane.MERGED
     if row.in_merge_queue:
         return MineLane.IN_QUEUE
+    if row.queue is not None and row.queue.state == "running":
+        return MineLane.IN_REVIEW
     if row.mergeable is Mergeable.CONFLICTING:
         return MineLane.HAS_CONFLICTS
     if row.ci_status is CiStatus.FAILING:
@@ -108,7 +126,7 @@ def lanes(row: Row) -> Lanes:
     return Lanes(
         team=team,
         mine=mine,
-        team_reviewing=TeamLane.IN_QUEUE,
+        team_reviewing=TeamLane.IN_PROGRESS,
         mine_reviewing=mine_reviewing,
     )
 

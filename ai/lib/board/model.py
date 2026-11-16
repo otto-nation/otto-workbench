@@ -19,7 +19,7 @@ SCHEMA_VERSIONS = (1,)
 # What this build's `pr` accepts that a board consumer drives; add one when a
 # consumer must tell a newer `pr` from an older one; never remove one without
 # a schema bump.
-FEATURES = ("review-publish", "batch-session", "target-session")
+FEATURES = ("review-publish", "batch-session", "target-session", "queue-lanes")
 
 
 class Phase(StrEnum):
@@ -64,6 +64,7 @@ class TeamLane(StrEnum):
     OPEN = "open"
     NEEDS_MY_REVIEW = "needs-my-review"
     IN_QUEUE = "in-queue"
+    IN_PROGRESS = "in-progress"
     REVIEW_READY = "review-ready"
     REVIEWED = "reviewed"
     LANDED = "landed"
@@ -157,6 +158,15 @@ class ReviewRunRef:
     output_tokens: int = 0
     post: RunPostRef | None = None
     models: str = ""
+
+
+@dataclass(frozen=True)
+class QueueWork:
+    """A live otto-queue review for this PR: queued or running."""
+
+    state: str
+    entry: int
+    terminal: str | None = None
 
 
 @dataclass(frozen=True)
@@ -260,3 +270,4 @@ class Row:
     is_mine: bool = False
     owed: str | None = None
     owed_known: bool = False
+    queue: QueueWork | None = None

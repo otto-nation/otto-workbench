@@ -205,8 +205,12 @@ def test_stamp_stable_across_fetched_at(tmp_path, monkeypatch):
 def test_full_document_carries_its_features(tmp_path, monkeypatch):
     found = _env(tmp_path, monkeypatch, pulls=[_pull(7, "aaa")])
     doc = build(Phase.LISTING, [found.path])
-    assert doc["features"] == ["review-publish", "batch-session", "target-session"]
-    assert list(FEATURES) == ["review-publish", "batch-session", "target-session"]
+    assert doc["features"] == [
+        "review-publish", "batch-session", "target-session", "queue-lanes",
+    ]
+    assert list(FEATURES) == [
+        "review-publish", "batch-session", "target-session", "queue-lanes",
+    ]
 
 
 def test_stamp_differs_when_features_differ(tmp_path, monkeypatch):

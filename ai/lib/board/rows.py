@@ -16,11 +16,14 @@ import board.presentation
 import board.reviews
 import core.serde
 from batch.store import RepoRef
+from collections.abc import Mapping
+
 from board.model import (
     CiStatus,
     LatestReview,
     Mergeable,
     PrState,
+    QueueWork,
     ReviewHealth,
     Row,
 )
@@ -36,6 +39,7 @@ def from_cache(
     *,
     only: list[int] | None = None,
     mine_only: bool = False,
+    queue: Mapping[str, QueueWork] | None = None,
 ) -> list[dict]:
     """Document rows for one checkout, joined from the board cache."""
     merged = board.cache.merged(repo_key)
@@ -48,6 +52,7 @@ def from_cache(
         for item in board.reviews.join(prs, listing, slug, host, viewer)
     }
     busy = batch.store.busy_prs(RepoRef(key=repo_key, label=slug))
+    work = {} if queue is None else queue
     out: list[dict] = []
     for number, raw in merged.items():
         row = _row_from_merged(
@@ -56,6 +61,7 @@ def from_cache(
             busy=number in busy,
             viewer=viewer,
             slug=slug,
+            queue=work.get(f"{slug}#{number}"),
         )
         if mine_only and not row.is_mine:
             continue
@@ -92,6 +98,7 @@ def _row_from_merged(
     busy: bool,
     viewer: str,
     slug: str,
+    queue: QueueWork | None = None,
 ) -> Row:
     author = raw.get("author") or ""
     is_mine = bool(viewer) and author.casefold() == viewer.casefold()
@@ -149,6 +156,7 @@ def _row_from_merged(
         is_mine=is_mine,
         owed=owed_reason,
         owed_known=owed_known,
+        queue=queue,
     )
 
 
@@ -182,4 +190,6 @@ def _emit_row(row: Row) -> dict:
     payload["lanes"] = core.serde.to_dict(board.columns.lanes(row))
     payload["issues"] = [core.serde.to_dict(issue) for issue in board.columns.issues(row)]
     payload["presentation"] = core.serde.to_dict(board.presentation.present(row))
+    if payload.get("queue") is None:
+        del payload["queue"]
     return payload

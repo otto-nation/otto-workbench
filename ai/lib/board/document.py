@@ -24,6 +24,7 @@ import board.columns
 import board.github
 import board.owed
 import board.precheck
+import board.queue
 import board.reviews
 import board.rows
 import core.serde
@@ -111,8 +112,10 @@ def build(
     if pre is not None and if_changed and pre.answers(if_changed):
         return _unchanged(wanted.value, if_changed)
     listing = _listing_rows(resolved)
+    queue = board.queue.review_work()
     repos, rows, complete = _assemble(
         wanted, resolved, numbers, listing, viewer, now, offline=offline,
+        queue=queue,
     )
     doc = {
         "schema_version": SCHEMA_VERSIONS[-1],
@@ -162,14 +165,15 @@ def _assemble(
     now: str,
     *,
     offline: bool = False,
+    queue,
 ) -> tuple[list[RepoStatus], list[dict], bool]:
     if offline:
-        return _offline_phase(resolved, listing, viewer, now)
+        return _offline_phase(resolved, listing, viewer, now, queue)
     if phase is Phase.LISTING:
-        return _listing_phase(resolved, listing, viewer, now)
+        return _listing_phase(resolved, listing, viewer, now, queue)
     if phase is Phase.STATUS:
-        return _status_phase(resolved, prs, listing, viewer, now)
-    return _owed_phase(resolved, listing, viewer, now)
+        return _status_phase(resolved, prs, listing, viewer, now, queue)
+    return _owed_phase(resolved, listing, viewer, now, queue)
 
 
 def _offline_repo_phase(repo_key: str) -> RepoPhase:
@@ -186,6 +190,7 @@ def _offline_phase(
     listing,
     viewer: str,
     now: str,
+    queue,
 ) -> tuple[list[RepoStatus], list[dict], bool]:
     repos: list[RepoStatus] = []
     rows: list[dict] = []
@@ -197,7 +202,7 @@ def _offline_phase(
         repos.append(_repo(found, repo_phase, now))
         if repo_phase is RepoPhase.QUEUED:
             continue
-        rows.extend(_cached_rows(found, listing, viewer))
+        rows.extend(_cached_rows(found, listing, viewer, queue=queue))
     return repos, rows, True
 
 
@@ -222,6 +227,7 @@ def _listing_phase(
     listing,
     viewer: str,
     now: str,
+    queue,
 ) -> tuple[list[RepoStatus], list[dict], bool]:
     repos: list[RepoStatus] = []
     rows: list[dict] = []
@@ -238,7 +244,7 @@ def _listing_phase(
             "rows": [core.serde.to_dict(pull) for pull in listed.pulls],
         })
         repos.append(_repo(found, RepoPhase.HYDRATING, now))
-        rows.extend(_cached_rows(found, listing, viewer))
+        rows.extend(_cached_rows(found, listing, viewer, queue=queue))
     return repos, rows, True
 
 
@@ -248,13 +254,16 @@ def _status_phase(
     listing,
     viewer: str,
     now: str,
+    queue,
 ) -> tuple[list[RepoStatus], list[dict], bool]:
     repos: list[RepoStatus] = []
     rows: list[dict] = []
     complete = prs is None
     with ThreadPoolExecutor(max_workers=POOL_WORKERS) as pool:
         for path, found in resolved:
-            repo, repo_rows = _status_one(path, found, prs, listing, viewer, now, pool)
+            repo, repo_rows = _status_one(
+                path, found, prs, listing, viewer, now, pool, queue,
+            )
             repos.append(repo)
             rows.extend(repo_rows)
     return repos, rows, complete
@@ -268,10 +277,11 @@ def _status_one(
     viewer: str,
     now: str,
     pool: ThreadPoolExecutor,
+    queue,
 ) -> tuple[RepoStatus, list[dict]]:
     if isinstance(found, RepoError):
         return _failed(path, found), []
-    return _status_repo(found, prs, listing, viewer, now, pool)
+    return _status_repo(found, prs, listing, viewer, now, pool, queue)
 
 
 def _status_repo(
@@ -281,6 +291,7 @@ def _status_repo(
     viewer: str,
     now: str,
     pool: ThreadPoolExecutor,
+    queue,
 ) -> tuple[RepoStatus, list[dict]]:
     pulls = _fresh_listing_pulls(found)
     fetched_listing = pulls is None
@@ -310,7 +321,7 @@ def _status_repo(
     kept_landed = _kept_landed(landed_nums, fetched.by_number, listing, found)
     _merge_landed_into_listing(found, kept_landed, now)
     repo = _repo(found, RepoPhase.LOADED, now, partial=fetched.partial)
-    return repo, _cached_rows(found, listing, viewer, only=prs)
+    return repo, _cached_rows(found, listing, viewer, only=prs, queue=queue)
 
 
 def _fresh_listing_pulls(found: Checkout) -> list[PullFacts] | None:
@@ -517,6 +528,7 @@ def _owed_phase(
     listing,
     viewer: str,
     now: str,
+    queue,
 ) -> tuple[list[RepoStatus], list[dict], bool]:
     repos: list[RepoStatus] = []
     rows: list[dict] = []
@@ -547,7 +559,7 @@ def _owed_phase(
             ],
         })
         repos.append(_repo(found, RepoPhase.LOADED, now))
-        rows.extend(_cached_rows(found, listing, viewer, mine_only=True))
+        rows.extend(_cached_rows(found, listing, viewer, mine_only=True, queue=queue))
     return repos, rows, False
 
 
@@ -558,6 +570,7 @@ def _cached_rows(
     *,
     only: list[int] | None = None,
     mine_only: bool = False,
+    queue=None,
 ) -> list[dict]:
     return board.rows.from_cache(
         found.key,
@@ -567,6 +580,7 @@ def _cached_rows(
         viewer,
         only=only,
         mine_only=mine_only,
+        queue=queue,
     )
 
 

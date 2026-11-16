@@ -144,6 +144,11 @@ tools:
     visibility: brief
     description: "macOS memory analysis report — pressure, swap usage, top processes, per-user totals"
 
+  - name: host-health
+    permission: true
+    visibility: brief
+    description: "One machine's health as JSON or text — load, memory, disk, processes, heavy commands, queue"
+
   - name: wt-cleanup
     permission: true
     visibility: brief

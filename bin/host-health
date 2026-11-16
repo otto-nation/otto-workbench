@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+# Report one machine's health: load, memory, disk, processes, heavy commands and the queue.
+#
+# ```
+# host-health [--json] [--reaper]
+# ```
+#
+# Prints a short summary, or one JSON object with `--json`. It is meant to be
+# cheap enough to poll every few seconds on a machine that is already struggling:
+# no Python, one `ps`, one `df` per filesystem, and `otto-queue status` only
+# when it is installed. A section that cannot be read is `null`, never an
+# error, so a host missing a tool still answers and the reader decides.
+#
+# | Flag | Description |
+# |------|-------------|
+# | `--json` | One JSON object instead of text |
+# | `--reaper` | Also read the reaper's activity from the trail (starts Python; leave it out of a poll) |
+# | `-h`, `--help` | Show help |
+#
+# JSON fields: `host`, `at` (UTC), `cores`, `load` (`m1`, `m5`, `m15`), `mem`
+# (`total_mb`, `available_mb`, `swap_used_mb`), `disk` (`home` and `docker`, each
+# `{fs, mount, size_mb, used_mb}`), `procs` (`count`, `zombies`, `top_cpu`,
+# `top_mem`: `{pid, user, age_s, cpu, mem, command}`), `heavy` (live counts of
+# `golangci-lint`, `go`, `gh`, `tasks` — the commands `maintenance/bin/reap-hung`
+# reaps), `queue` (`{running, queued}`, `{busy: true}` while the ledger is
+# locked, null without otto-queue) and, with `--reaper`, `reaper` (`{last_at,
+# signals_24h}`).
+#
+# Env:
+#   HOST_HEALTH_PROC    directory standing in for /proc (tests)
+#   HOST_HEALTH_OS      Linux or Darwin, instead of uname -s (tests)
+#   HOST_HEALTH_DOCKER  Docker data root to measure; default ~/.local/share/docker
+#
+# Exit codes:
+#   0  The report was printed, however many sections were null.
+#   2  Usage error, or jq is missing.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
+
+EXIT_USAGE=2
+PROC="${HOST_HEALTH_PROC:-/proc}"
+OS="${HOST_HEALTH_OS:-$(uname -s)}"
+TOP_N=5
+
+usage() {
+  sed -n '2,/^set -e/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
+}
+
+want_json=false
+want_reaper=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --json) want_json=true ;;
+    --reaper) want_reaper=true ;;
+    -h | --help) usage; exit 0 ;;
+    *) echo "host-health: unknown argument: $1" >&2; exit "$EXIT_USAGE" ;;
+  esac
+  shift
+done
+
+if ! command -v jq > /dev/null 2>&1; then
+  echo "host-health: jq is required" >&2
+  exit "$EXIT_USAGE"
+fi
+
+# num VALUE — VALUE if it is a non-negative number, else null.
+num() {
+  if [[ "$1" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then echo "$1"; else echo null; fi
+}
+
+cores() {
+  local n
+  n="$(nproc 2> /dev/null || sysctl -n hw.ncpu 2> /dev/null || true)"
+  num "$n"
+}
+
+# load — {"m1":…,"m5":…,"m15":…} from /proc/loadavg or vm.loadavg.
+load() {
+  local a="" b="" c="" rest=""
+  if [[ -r "$PROC/loadavg" ]]; then
+    read -r a b c rest < "$PROC/loadavg" || true
+  else
+    read -r _ a b c rest <<< "$(sysctl -n vm.loadavg 2> /dev/null || true)"
+  fi
+  printf '{"m1":%s,"m5":%s,"m15":%s}' "$(num "$a")" "$(num "$b")" "$(num "$c")"
+}
+
+# kb_of KEY — the kB figure for KEY in $PROC/meminfo, or empty.
+kb_of() {
+  awk -v k="$1:" '$1 == k { print $2 }' "$PROC/meminfo" 2> /dev/null
+}
+
+mem_linux() {
+  local total avail stotal sfree
+  total="$(kb_of MemTotal)"
+  avail="$(kb_of MemAvailable)"
+  stotal="$(kb_of SwapTotal)"
+  sfree="$(kb_of SwapFree)"
+  if [[ -z "$total" || -z "$avail" ]]; then echo null; return 0; fi
+  printf '{"total_mb":%d,"available_mb":%d,"swap_used_mb":%d}' \
+    $((total / 1024)) $((avail / 1024)) $(((${stotal:-0} - ${sfree:-0}) / 1024))
+}
+
+mem_darwin() {
+  local bytes page free swap
+  bytes="$(sysctl -n hw.memsize 2> /dev/null || true)"
+  if [[ ! "$bytes" =~ ^[0-9]+$ ]]; then echo null; return 0; fi
+  page="$(vm_stat 2> /dev/null | sed -n 's/.*page size of \([0-9]*\) bytes.*/\1/p')"
+  free="$(vm_stat 2> /dev/null | awk '/^Pages (free|inactive|speculative):/ { gsub("\\.", "", $NF); s += $NF } END { print s + 0 }')"
+  swap="$(sysctl -n vm.swapusage 2> /dev/null | sed -n 's/.*used = \([0-9]*\).*/\1/p')"
+  printf '{"total_mb":%d,"available_mb":%d,"swap_used_mb":%d}' \
+    $((bytes / 1048576)) $((free * ${page:-16384} / 1048576)) "${swap:-0}"
+}
+
+mem() {
+  if [[ "$OS" == Darwin ]]; then mem_darwin; else mem_linux; fi
+}
+
+# disk_of PATH — {fs, mount, size_mb, used_mb} for the filesystem holding PATH, or null.
+disk_of() {
+  local fs size used mount
+  [[ -e "$1" ]] || { echo null; return 0; }
+  read -r fs size used _ _ mount <<< "$(df -Pk "$1" 2> /dev/null | tail -n 1)" || true
+  if [[ ! "$size" =~ ^[0-9]+$ || ! "$used" =~ ^[0-9]+$ ]]; then echo null; return 0; fi
+  jq -nc --arg fs "$fs" --arg mount "$mount" --argjson size $((size / 1024)) --argjson used $((used / 1024)) \
+    '{fs: $fs, mount: $mount, size_mb: $size, used_mb: $used}'
+}
+
+disk() {
+  jq -nc --argjson home "$(disk_of "$HOME")" \
+    --argjson docker "$(disk_of "${HOST_HEALTH_DOCKER:-$HOME/.local/share/docker}")" \
+    '{home: $home, docker: $docker}'
+}
+
+# procs — the process section, from one `ps`.
+procs() {
+  local listing rows="" pid user etime cpu mem stat comm
+  if ! listing="$(ps -axo pid=,user=,etime=,pcpu=,pmem=,stat=,comm= 2> /dev/null)"; then
+    echo null
+    return 0
+  fi
+  while read -r pid user etime cpu mem stat comm; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    rows+="$pid"$'\t'"$user"$'\t'"$etime"$'\t'"$cpu"$'\t'"$mem"$'\t'"$stat"$'\t'"${comm##*/}"$'\n'
+  done <<< "$listing"
+  printf '%s' "$rows" | jq -Rsc --argjson n "$TOP_N" '
+    # [[dd-]hh:]mm:ss as seconds.
+    def etime_s: (split("-") | if length == 2 then [(.[0] | tonumber * 86400), .[1]] else [0, .[0]] end) as $d
+      | $d[0] + ($d[1] | split(":") | map(tonumber) | reduce .[] as $x (0; . * 60 + $x));
+    split("\n") | map(select(length > 0) | split("\t")
+      | {pid: (.[0] | tonumber), user: .[1], age_s: (.[2] | etime_s),
+         cpu: (.[3] | tonumber), mem: (.[4] | tonumber), stat: .[5], command: .[6]}) as $p
+    | {count: ($p | length),
+       zombies: ($p | map(select(.stat | startswith("Z"))) | length),
+       top_cpu: ($p | sort_by(-.cpu) | .[:$n] | map(del(.stat))),
+       top_mem: ($p | sort_by(-.mem) | .[:$n] | map(del(.stat))),
+       heavy: ($p | reduce .[] as $x ({"golangci-lint": 0, go: 0, gh: 0, tasks: 0};
+         if has($x.command) then .[$x.command] += 1 else . end))}'
+}
+
+queue() {
+  local out rc=0
+  command -v otto-queue > /dev/null 2>&1 || { echo null; return 0; }
+  out="$(otto-queue status --json 2> /dev/null)" || rc=$?
+  if [[ "$rc" -eq 75 ]]; then echo '{"busy":true}'; return 0; fi
+  if [[ "$rc" -ne 0 ]]; then echo null; return 0; fi
+  printf '%s\n' "$out" | jq -sc '{running: (map(select(.state == "running")) | length),
+    queued: (map(select(.state == "queued")) | length)}' 2> /dev/null || echo null
+}
+
+reaper() {
+  local out
+  out="$("$WORKBENCH_DIR/ai/bin/otto-log" query --script maintenance --since 1d --json 2> /dev/null)" \
+    || { echo null; return 0; }
+  printf '%s\n' "$out" | jq -sc '[.[] | select(.action | startswith("reap-"))]
+    | {last_at: (map(.ts) | max), signals_24h: length}' 2> /dev/null || echo null
+}
+
+report() {
+  local p reaper_json=null
+  p="$(procs)"
+  if [[ "$want_reaper" == true ]]; then reaper_json="$(reaper)"; fi
+  jq -nc --arg host "$(hostname -s 2> /dev/null || hostname)" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --argjson cores "$(cores)" --argjson load "$(load)" --argjson mem "$(mem)" \
+    --argjson disk "$(disk)" --argjson procs "$p" --argjson queue "$(queue)" \
+    --argjson reaper "$reaper_json" --argjson reaperAsked "$want_reaper" '
+    {host: $host, at: $at, cores: $cores, load: $load, mem: $mem, disk: $disk,
+     procs: ($procs | if . == null then null else del(.heavy) end),
+     heavy: ($procs | if . == null then null else .heavy end),
+     queue: $queue}
+    + (if $reaperAsked then {reaper: $reaper} else {} end)'
+}
+
+text() {
+  jq -r '
+    "\(.host)  \(.at)",
+    "  load   \(.load.m1) \(.load.m5) \(.load.m15)  on \(.cores) cores",
+    "  mem    \(if .mem then "\(.mem.available_mb) MB free of \(.mem.total_mb), swap \(.mem.swap_used_mb) MB" else "unknown" end)",
+    "  disk   \(if .disk.home then "\(.disk.home.used_mb)/\(.disk.home.size_mb) MB on \(.disk.home.mount)" else "unknown" end)",
+    "  procs  \(if .procs then "\(.procs.count), \(.procs.zombies) zombies" else "unknown" end)",
+    "  heavy  \(if .heavy then (.heavy | to_entries | map("\(.key)=\(.value)") | join(" ")) else "unknown" end)",
+    "  queue  \(if .queue == null then "none" elif .queue.busy then "busy" else "\(.queue.running) running, \(.queue.queued) queued" end)"'
+}
+
+if [[ "$want_json" == true ]]; then
+  report
+else
+  report | text
+fi

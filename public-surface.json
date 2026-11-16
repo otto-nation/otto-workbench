@@ -9,6 +9,7 @@
     "command:ghostty-terminfo-push",
     "command:herdr-app",
     "command:herdr-app-untrusted",
+    "command:host-health",
     "command:lint-sweep",
     "command:mem-analyze",
     "command:otto-workbench",

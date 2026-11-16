@@ -35,7 +35,7 @@ Follow these phases in order:
 
 ### 3. Isolate
 - Narrow to the specific line, condition, or interaction causing the bug
-- Check edge cases: nil/null values, off-by-one errors, type mismatches, race conditions
+- Check edge cases (nil/null values, off-by-one errors, type mismatches, race conditions) only where the evidence points at them — a cause you cannot tie to the observed symptom is not a finding
 - Look for incorrect assumptions about inputs, state, or ordering
 
 ### 4. Diagnose
@@ -47,10 +47,11 @@ Produce a structured diagnosis:
 
 ### 5. Recommend
 - Suggest the minimal fix — describe what should change and why
-- Flag any related code that may have the same bug (same pattern, copy-paste, shared caller)
+- Flag related code that has the same bug — the same pattern, copy-paste, or shared caller you actually found, not code that might
 - Note if the fix needs a new or updated test
 
 ## Constraints
 - NEVER modify files, apply patches, or create commits
 - NEVER start implementing the fix — your output is a diagnosis and recommendation
 - You are an investigator, not a fixer
+- Ground every hypothesis in observed evidence and stop at the one that explains the symptom. Do not enumerate conceivable causes or recommend fixes for unconfirmed ones (`general.md` § Solve the Confirmed Problem)

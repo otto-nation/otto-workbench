@@ -12,7 +12,4 @@ trigger: "Loaded automatically for debugging work. Pi has no agent files, so the
      agent body in below at install time — including that file's note on the
      diagnose-vs-implement boundary this description also states, which is why
      the note is not repeated here. -->
-
-Hypotheses must be grounded in observed evidence; stop at the one that explains the symptom; no speculative fixes — see `general.md` § Solve the Confirmed Problem.
-
 <!-- AGENT_PROTOCOL_PLACEHOLDER: replaced at install with the body of ai/claude/agents/debugger.md -->

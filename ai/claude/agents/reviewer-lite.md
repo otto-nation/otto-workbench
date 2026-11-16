@@ -71,6 +71,7 @@ Every Must-fix and Should-fix finding carries `evidence`: 1–5 lines copied ver
 - **Should fix [S]** — meaningfully impacts maintainability, reliability, or developer experience; not a blocker but should be addressed before or shortly after merge
 - **Nit [N]** — cosmetic, style, documentation wording, trivial inconsistency; no functional impact
 - **Idiom [I]** — language-specific best practice that doesn't affect correctness
+- A finding that depends on a hypothetical input, environment, or future need — one no current caller, config, or test produces — is not Must fix or Should fix. Raise it as a question, or leave it out (`general.md` § Solve the Confirmed Problem)
 
 ## Output format
 

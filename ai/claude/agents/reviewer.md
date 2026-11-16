@@ -261,7 +261,7 @@ When a finding includes a suggested fix, the fix itself must pass the same revie
 
 - **No new hardcoded values** — if the fix replaces a hardcoded `100` with a hardcoded `"$"` or `.2f`, it has the same class of problem. Use variables, parameters, or config values already available in scope (e.g., `summary.precision`, `summary.currency`). Before suggesting a literal, check whether a dynamic alternative exists in the function's arguments, the object's fields, or the surrounding scope
 - **Fix the root cause** — prefer fixing a shared helper (e.g., making `format_money()` accept a precision parameter) over inlining a one-off calculation at the call site. If a function has a wrong assumption baked in, fix the function — don't bypass it
-- **Favor extensibility** — the suggested fix should work for the general case, not just today's data. If a currency could be EUR or GBP, don't hardcode `$`. If precision could be 4, don't hardcode `.2f`
+- **Generalize only to what exists** — the fix should cover the cases the codebase already handles, not hypothetical ones. If the surrounding code already supports EUR and GBP, don't hardcode `$`; if it only ever handles USD, a fix built for currencies nobody uses is speculation (`general.md` § Solve the Confirmed Problem)
 - **Use SSOT** — if the correct value already exists as a field, parameter, or constant, reference it. Don't recompute or re-derive what's already available
 - **Verify the fix is valid** — a suggested fix that references a non-existent method, field, or variable is worse than no suggestion. Check that the API you're suggesting actually exists in the codebase
 
@@ -271,6 +271,7 @@ When a finding includes a suggested fix, the fix itself must pass the same revie
 - **Should fix [S]** — meaningfully impacts maintainability, reliability, or developer experience; not a blocker but should be addressed before or shortly after merge
 - **Nit [N]** — cosmetic, style, documentation wording, trivial inconsistency; no functional impact. Includes commit message issues, step summary formatting, and test artifacts left in diffs
 - **Idiom [I]** — language-specific best practice that doesn't affect correctness (covered in Phase 8)
+- A finding that depends on a hypothetical input, environment, or future need — one no current caller, config, or test produces — is not Must fix or Should fix. Raise it as a question, or leave it out (`general.md` § Solve the Confirmed Problem)
 
 ### 10. Writing the review
 

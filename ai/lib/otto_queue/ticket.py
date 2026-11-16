@@ -379,11 +379,11 @@ def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
         try:
             wait, reason = _slot_once(
                 ledger, entry_id, request.entry_class, policy, said, reap=reap)
-            if reap:
-                last_reap = now
         except otto_queue.ledger.LedgerBusy:
             wait, reason = None, said
             busy_said = _note_busy(notify, busy_said)
+            reap = False
+        last_reap = now if reap else last_reap
         if wait is not None:
             return wait
         if reason != said:

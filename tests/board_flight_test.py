@@ -107,6 +107,17 @@ def test_status_keeps_its_memo_longer_than_listing():
     assert _serve_counting(status)[1] == []
 
 
+def test_owed_keeps_its_memo_for_thirty_seconds():
+    fresh = _req(phase=Phase.OWED)
+    stale = _req(phase=Phase.OWED, checkouts=("/y",))
+    board.flight.serve(fresh, lambda: {"v": "kept"})
+    board.flight.serve(stale, lambda: {"v": "kept"})
+    _age_memo(fresh, 25)
+    _age_memo(stale, 35)
+    assert _serve_counting(fresh)[1] == []
+    assert _serve_counting(stale)[1] == [1]
+
+
 def test_an_offline_request_takes_no_freshness_window():
     req = _req(offline=True)
     board.flight.serve(req, lambda: {"v": "kept"})

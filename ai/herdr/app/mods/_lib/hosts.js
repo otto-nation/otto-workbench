@@ -1,5 +1,5 @@
 /**
- * Host health model: severity, gauges, staleness, process list. Pure.
+ * Host health model: severity, meters, staleness, process list. Pure.
  *
  * ceiling: fixed thresholds (LOADED_MEM_FREE, STRAINED_MEM_FREE, LOADED_DISK_USED,
  * STRAINED_DISK_USED); upgrade if a host with a different size profile needs its own.
@@ -17,8 +17,6 @@ export const LOADED_DISK_USED = 0.90;
 /** Disk used at or above this fraction is strained. */
 export const STRAINED_DISK_USED = 0.95;
 
-const FULL = '█';
-const EMPTY = '░';
 const WORD = Object.freeze({ pass: 'ok', warn: 'loaded', fail: 'strained' });
 const RANK = Object.freeze({ pass: 0, warn: 1, fail: 2 });
 const HEAVY_NAMES = Object.freeze(['golangci-lint', 'go', 'gh', 'tasks']);
@@ -112,17 +110,6 @@ export function severityOf(health) {
   return { kind, word: WORD[kind], reasons };
 }
 
-/** A `cells`-wide bar of filled then empty glyphs for `fraction` in 0..1. */
-export function bar(fraction, cells = 8) {
-  const n = Number(cells);
-  if (!Number.isFinite(n) || n <= 0) return '';
-  const count = Math.floor(n);
-  if (!Number.isFinite(fraction)) return EMPTY.repeat(count);
-  const f = Math.min(1, Math.max(0, fraction));
-  const filled = Math.round(f * count);
-  return FULL.repeat(filled) + EMPTY.repeat(count - filled);
-}
-
 /** Fresh/stale/loading/unreachable/outdated words for a host entry's last read. */
 export function hostStaleness(entry, nowMs) {
   const result = entry?.result;
@@ -152,6 +139,12 @@ function hostTitle(entry) {
   return String(entry.on);
 }
 
+// A model for _ui/ui.js meter(): a continuous bar of `fraction` (clamped to 0..1) and its reading.
+function meterOf(fraction, text) {
+  const f = Number.isFinite(fraction) ? Math.min(1, Math.max(0, fraction)) : 0;
+  return { kind: 'bar', total: 100, filled: Math.round(f * 100), text };
+}
+
 function gaugesOf(health) {
   const gauges = [];
   const perCore = loadPerCore(health);
@@ -159,7 +152,7 @@ function gaugesOf(health) {
     gauges.push({
       key: 'load',
       label: 'load',
-      text: `${bar(perCore / STRAINED_PER_CORE)} ${perCore.toFixed(1)}/core`,
+      meter: meterOf(perCore / STRAINED_PER_CORE, `${perCore.toFixed(1)}/core`),
       kind: loadKind(perCore),
     });
   }
@@ -169,7 +162,7 @@ function gaugesOf(health) {
     gauges.push({
       key: 'mem',
       label: 'mem',
-      text: `${bar(used)} ${pct(used)}% used`,
+      meter: meterOf(used, `${pct(used)}% used`),
       kind: memKind(free),
     });
   }
@@ -179,7 +172,7 @@ function gaugesOf(health) {
     gauges.push({
       key: 'disk',
       label: 'disk',
-      text: `${bar(homeUsed)} ${pct(homeUsed)}% disk`,
+      meter: meterOf(homeUsed, `${pct(homeUsed)}% disk`),
       kind: diskKind(homeUsed),
     });
   }
@@ -240,6 +233,14 @@ export function hostSummary(entry, nowMs) {
     counts: health != null ? countsOf(health) : '',
     note: health != null ? noteOf(health) : null,
   };
+}
+
+/**
+ * The collapse map after a click on a block whose visible state is `open`: the stored value is
+ * true when collapsed, so an open block becomes collapsed and the reverse. Returns a new map.
+ */
+export function toggleCollapsed(map, key, open) {
+  return { ...(map ?? {}), [key]: Boolean(open) };
 }
 
 /** `health.procs.top_cpu` or `top_mem` as rows with key, command, meta and right. */

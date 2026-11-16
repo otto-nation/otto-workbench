@@ -81,6 +81,9 @@ LENGTHS = (
     ("controlPadding", "control-padding"),
     ("cardPadding", "card-padding"),
     ("columnMin", "column-min"),
+    ("meterWidth", "meter-width"),
+    ("meterHeight", "meter-height"),
+    ("meterGap", "meter-gap"),
 )
 FONT_ROLES = ("meta", "section", "label", "body", "title", "code")
 RADIUS_NAMES = ("sm", "md", "lg")

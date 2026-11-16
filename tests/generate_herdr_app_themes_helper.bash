@@ -47,7 +47,10 @@ _tokens() {
     "row-height-dense": "34px",
     "control-padding": "15px",
     "card-padding": "16px",
-    "column-min": "270px"
+    "column-min": "270px",
+    "meter-width": "96px",
+    "meter-height": "6px",
+    "meter-gap": "2px"
   },
   "radii": { "sm": "4px", "md": "6px", "lg": "8px" },
   "spacing": { "1": "4px", "2": "8px", "3": "12px", "4": "16px", "5": "20px", "6": "24px" },

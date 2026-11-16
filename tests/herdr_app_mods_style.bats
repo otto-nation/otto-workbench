@@ -129,18 +129,11 @@ teardown() {
   done
 }
 
-@test "queue view draws lanes, filter and staleness from the model" {
+@test "queue view draws lanes, staleness and spinning from the model" {
   local view="$MODS/queue/view.js"
   grep -q 'laneTitle(lane.label, lane.count)' "$view"
-  grep -q 'sectionLabel(summary.title)' "$view"
-  grep -Fq 'segmented([' "$view"
-  grep -q 'segment("queue-filter-all", "All"' "$view"
-  grep -q 'segment("queue-filter-live", "Live"' "$view"
-  grep -q 'segment("queue-filter-failed", "Failed"' "$view"
-  grep -q 'caption(props.summary)' "$view"
   grep -q 'spinning: props.spinning' "$view"
   grep -q 'statusText("warn", stale.words)' "$view"
-  grep -q 'if (!row.members) return renderOne(on, row, opts);' "$view"
   grep -q 'row.members.flatMap' "$view"
   grep -q 'row.timing' "$view"
   grep -q 'row.position' "$view"
@@ -153,31 +146,80 @@ teardown() {
   [ "$status" -eq 1 ]
 }
 
-@test "queue main composes lanes, filter, staleness and refreshSpinning" {
+@test "queue main composes pageOf, machinePage, staleness and refreshSpinning" {
   local main="$MODS/queue/main.js"
-  grep -q 'lanesModel(filterRows(rows, this.filter), nowMs)' "$main"
+  grep -q 'pageOf(navState(), machines)' "$main"
+  grep -q 'machinePage(current, nowMs' "$main"
   grep -q 'staleness({ result, at: entry.at }, nowMs)' "$main"
   grep -q 'refreshSpinning(this.refreshSince, nowMs)' "$main"
-  grep -q 'summary: summary(allRows)' "$main"
-  grep -q 'onFilter: (filter) => this.setFilter(filter)' "$main"
-  grep -q 'onToggleGroup: (on, id) => this.toggleGroup(on, id)' "$main"
+  grep -q 'onToggleGroup: (on, row) => this.toggleGroup(on, row)' "$main"
 }
 
-@test "queue home draws homeModel blocks with gauges, counts and a collapse chevron" {
+@test "queue home draws homeModel cards and has no rows" {
   local view="$MODS/queue/view.js"
   local main="$MODS/queue/main.js"
-  grep -q 'homeModel(' "$main"
-  grep -q 'toggleCollapsed(' "$main"
-  grep -q 'shared("queue.collapsed")' "$main"
-  grep -q 'setShared("queue.collapsed"' "$main"
-  grep -q 'sectionLabel(summary.title)' "$view"
-  grep -q 'gauge(g.text' "$view"
-  grep -q 'caption(summary.counts)' "$view"
-  grep -q 'block.open ? "▾" : "▸"' "$view"
-  grep -q 'onToggleMachine' "$view"
-  grep -q 'opts.onToggleMachine(block.key, block.open)' "$view"
-  grep -q 'props.blocks' "$view"
+  grep -q 'homeModel(machines, nowMs)' "$main"
+  grep -q 'cards: model.cards' "$main"
+  grep -Fq 'card(`queue-machine-${block.key || "local"}`)' "$view"
+  grep -q 'sectionLabel(block.title)' "$view"
+  grep -q 'caption(block.counts' "$view"
+  grep -Fq 'children((opts.cards ?? []).map((block) => renderHomeCard(block, opts)))' "$view"
   run grep -nE 'homeModel|toggleCollapsed|slotGauge' "$view"
+  [ "$status" -eq 1 ]
+  run grep -nE 'props.blocks|block.section|block.open' "$view"
+  [ "$status" -eq 1 ]
+}
+
+@test "queue home card opens selectMachine" {
+  local view="$MODS/queue/view.js"
+  local main="$MODS/queue/main.js"
+  grep -q 'on_click(() => opts.onSelectMachine(block.key))' "$view"
+  grep -q 'selectMachine(navState(), key)' "$main"
+  grep -q 'setShared("queue.machine"' "$main"
+  grep -q 'shared("queue.machine")' "$main"
+  run grep -nE 'toggleCollapsed|queue.collapsed|onToggleMachine' "$view" "$main"
+  [ "$status" -eq 1 ]
+}
+
+@test "queue machine page uses pageOf and machinePage" {
+  local view="$MODS/queue/view.js"
+  grep -q 'opts.page == null ? renderHome(opts) : renderMachine(opts)' "$view"
+  grep -q 'page.summary' "$view"
+  grep -q 'page.lanes' "$view"
+}
+
+@test "queue machine page has a Machines back button" {
+  local view="$MODS/queue/view.js"
+  grep -q 'button("queue-back", "‹ Machines"' "$view"
+  grep -q 'opts.onBack()' "$view"
+}
+
+@test "queue sections are cards; empty is a header line with no None" {
+  local view="$MODS/queue/view.js"
+  grep -Fq 'card(`queue-lane-${on ?? "local"}-${lane.key}`, { linked: false })' "$view"
+  grep -q 'laneTitle(lane.label, lane.count)' "$view"
+  grep -q 'if (!lane.card)' "$view"
+  grep -q 'sectionLabel(lane.label, lane.count)' "$view"
+  run grep -nF 'placeholder("None")' "$view"
+  [ "$status" -eq 1 ]
+}
+
+@test "queue has no filter or segmented control" {
+  local view="$MODS/queue/view.js"
+  local main="$MODS/queue/main.js"
+  run grep -nE 'segmented\(|onFilter|this.filter|filterRows|caption\(props.summary\)' "$view" "$main"
+  [ "$status" -eq 1 ]
+}
+
+@test "queue groups expand through the model keys" {
+  local view="$MODS/queue/view.js"
+  local main="$MODS/queue/main.js"
+  grep -q 'groupKey = (on, row) =>' "$main"
+  grep -q 'row.key' "$main"
+  grep -q 'shared("queue.groups")' "$main"
+  grep -Fq 'opts.openGroups?.[opts.groupKey(on, row)]' "$view"
+  grep -q 'onToggleGroup(on, row)' "$view"
+  run grep -nF 'onToggleGroup(on, row.id)' "$view"
   [ "$status" -eq 1 ]
 }
 
@@ -218,10 +260,16 @@ teardown() {
   [ "$status" -eq 1 ]
 }
 
-@test "gauge is a static text glyph in ui.js, not a pill" {
-  grep -q 'export function gauge(content, color)' "$MODS/_ui/ui.js"
-  grep -q 'text("code", content, color ?? theme().muted)' "$MODS/_ui/ui.js"
-  run grep -nE 'export function gauge\([^)]*\)[^{]*\{[^}]*pill' "$MODS/_ui/ui.js"
+@test "meter draws via meter() and the queue has no block glyphs" {
+  local ui="$MODS/_ui/ui.js"
+  local view="$MODS/queue/view.js"
+  grep -q 'export function meter(model' "$ui"
+  grep -q 'meterTrack(model, fill, hair)' "$ui"
+  grep -q '.w(METER.w)' "$ui"
+  grep -q 'meter(g, { muted, label: g.class })' "$view"
+  run grep -nE 'export function gauge\(|gauge\(' "$ui" "$view"
+  [ "$status" -eq 1 ]
+  run grep -nE '█|░' "$ui" "$view" "$MODS/queue/main.js"
   [ "$status" -eq 1 ]
 }
 

@@ -17,7 +17,6 @@ _js() {
   run node --input-type=module -e "
     import * as q from '$REPO_ROOT/ai/herdr/app/mods/_lib/queue_lanes.js';
     import { LOAD_DELAY_MS } from '$REPO_ROOT/ai/herdr/app/mods/_lib/load_state.js';
-    import { GLYPH } from '$REPO_ROOT/ai/herdr/app/mods/_lib/status.js';
     $1
   "
 }
@@ -58,23 +57,38 @@ _js() {
   _js '
     const NOW = 1_700_000_000_000;
     const rows = [
-      {id:3, state:"queued", kind:"ticket", entry_class:"light"},
-      {id:1, state:"running", kind:"ticket", entry_class:"heavy"},
-      {id:9, state:"done", kind:"job", entry_class:"heavy"},
-      {id:4, state:"queued", kind:"ticket", entry_class:"heavy"},
-      {id:2, state:"queued", kind:"ticket", entry_class:"heavy"},
-      {id:8, state:"failed", kind:"job", entry_class:"light"},
-      {id:7, state:"cancelled", kind:"ticket", entry_class:"heavy"},
-      {id:6, state:"tempfail", kind:"job", entry_class:"light"},
-      {id:5, state:"mystery", kind:"job", entry_class:"heavy"},
+      {id:3, state:"queued", kind:"ticket", entry_class:"light", action:"c"},
+      {id:1, state:"running", kind:"ticket", entry_class:"heavy", action:"run"},
+      {id:9, state:"done", kind:"job", entry_class:"heavy", action:"d"},
+      {id:4, state:"queued", kind:"ticket", entry_class:"heavy", action:"b"},
+      {id:2, state:"queued", kind:"ticket", entry_class:"heavy", action:"a"},
+      {id:8, state:"failed", kind:"job", entry_class:"light", action:"e"},
+      {id:7, state:"cancelled", kind:"ticket", entry_class:"heavy", action:"f"},
+      {id:6, state:"tempfail", kind:"job", entry_class:"light", action:"g"},
+      {id:5, state:"mystery", kind:"job", entry_class:"heavy", action:"h"},
     ];
     const lanes = q.lanesModel(rows, NOW);
     process.stdout.write(JSON.stringify(lanes.map((l) => ({
-      key: l.key, label: l.label, count: l.count, ids: l.rows.map((r) => r.id),
+      key: l.key, label: l.label, count: l.count, card: l.card, more: l.more,
+      ids: l.rows.map((r) => r.id),
     }))));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"key":"running","label":"Running","count":1,"ids":[1]},{"key":"waiting","label":"Waiting","count":3,"ids":[2,4,3]},{"key":"finished","label":"Finished","count":4,"ids":[9,8,7,6]}]' ]
+  [ "$output" = '[{"key":"running","label":"Running","count":1,"card":true,"more":0,"ids":[1]},{"key":"waiting","label":"Waiting","count":3,"card":true,"more":0,"ids":[2,4,3]},{"key":"finished","label":"Finished","count":4,"card":true,"more":0,"ids":[9,8,7,6]}]' ]
+}
+
+@test "an empty section is header-only (card false), not a None body" {
+  _js '
+    const NOW = 1_700_000_000_000;
+    const lanes = q.lanesModel([], NOW);
+    const finished = q.lanesModel([{id:1, state:"running", action:"a"}], NOW);
+    process.stdout.write(JSON.stringify({
+      empty: lanes.map((l) => ({key:l.key, count:l.count, card:l.card, rows:l.rows.length, label:l.label})),
+      idleFinished: finished.map((l) => ({key:l.key, count:l.count, card:l.card})),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"empty":[{"key":"running","count":0,"card":false,"rows":0,"label":"Running"},{"key":"waiting","count":0,"card":false,"rows":0,"label":"Waiting"},{"key":"finished","count":0,"card":false,"rows":0,"label":"Finished"}],"idleFinished":[{"key":"running","count":1,"card":true},{"key":"waiting","count":0,"card":false},{"key":"finished","count":0,"card":false}]}' ]
 }
 
 @test "queued rows get 1st in line / behind #id by class, and retry in from not_before" {
@@ -82,11 +96,11 @@ _js() {
     const NOW = 1_700_000_000_000;
     const SEC = 1_700_000_000;
     const rows = [
-      {id:820, state:"queued", kind:"ticket", entry_class:"heavy"},
-      {id:821, state:"queued", kind:"ticket", entry_class:"heavy"},
-      {id:830, state:"queued", kind:"ticket", entry_class:"light"},
-      {id:808, state:"queued", kind:"job", entry_class:"light", not_before: SEC + 240},
-      {id:1, state:"running", kind:"ticket", entry_class:"heavy"},
+      {id:820, state:"queued", kind:"ticket", entry_class:"heavy", action:"a"},
+      {id:821, state:"queued", kind:"ticket", entry_class:"heavy", action:"b"},
+      {id:830, state:"queued", kind:"ticket", entry_class:"light", action:"c"},
+      {id:808, state:"queued", kind:"job", entry_class:"light", action:"d", not_before: SEC + 240},
+      {id:1, state:"running", kind:"ticket", entry_class:"heavy", action:"e"},
     ];
     const waiting = q.lanesModel(rows, NOW).find((l) => l.key === "waiting").rows;
     process.stdout.write(JSON.stringify(waiting.map((r) => ({id:r.id, position:r.position, retry:r.retry}))));
@@ -117,12 +131,12 @@ _js() {
   _js '
     const NOW = 1_700_000_000_000;
     const rows = [
-      {id:1, state:"failed", kind:"job", entry_class:"heavy", exit_status: 1},
-      {id:2, state:"failed", kind:"ticket", entry_class:"heavy", exit_status: null},
-      {id:3, state:"tempfail", kind:"job", entry_class:"light"},
-      {id:4, state:"cancelled", kind:"ticket", entry_class:"heavy"},
-      {id:5, state:"tempfail", kind:"job", entry_class:"light", started_at: 1, exit_status: 75},
-      {id:6, state:"done", kind:"job", entry_class:"heavy", exit_status: 0},
+      {id:1, state:"failed", kind:"job", entry_class:"heavy", action:"a", exit_status: 1},
+      {id:2, state:"failed", kind:"ticket", entry_class:"heavy", action:"b", exit_status: null},
+      {id:3, state:"tempfail", kind:"job", entry_class:"light", action:"c"},
+      {id:4, state:"cancelled", kind:"ticket", entry_class:"heavy", action:"d"},
+      {id:5, state:"tempfail", kind:"job", entry_class:"light", action:"e", started_at: 1, exit_status: 75},
+      {id:6, state:"done", kind:"job", entry_class:"heavy", action:"f", exit_status: 0},
     ];
     const finished = q.lanesModel(rows, NOW).find((l) => l.key === "finished").rows;
     process.stdout.write(JSON.stringify(finished.map((r) => ({id:r.id, failure:r.failure}))));
@@ -131,7 +145,7 @@ _js() {
   [ "$output" = '[{"id":1,"failure":"exit 1"},{"id":2,"failure":"holder died"},{"id":3,"failure":"tempfail · never got a slot"},{"id":4,"failure":"cancelled"},{"id":5,"failure":"exited 75 (busy)"},{"id":6,"failure":""}]' ]
 }
 
-@test "repeated failed rows with the same subject+action collapse; else label; members kept" {
+@test "repeated failed rows fold by subject plus action from 2; last age, not today" {
   _js '
     const NOW = 1_700_000_000_000;
     const SEC = 1_700_000_000;
@@ -153,33 +167,14 @@ _js() {
     ];
     const finished = q.lanesModel(rows, NOW).find((l) => l.key === "finished").rows;
     process.stdout.write(JSON.stringify({
-      glyph: GLYPH.fail,
       ids: finished.map((r) => r.id),
+      keys: finished.map((r) => r.key ?? null),
       failures: finished.map((r) => r.failure),
       members: finished.map((r) => (r.members ? r.members.map((m) => m.id) : null)),
     }));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"glyph":"×","ids":[5,11,8,6],"failures":["","failed 3× today","failed 2× today","exit 1"],"members":[null,[11,10,9],[8,7],null]}' ]
-}
-
-@test "filterRows all/live/failed and summary counts as text" {
-  _js '
-    const rows = [
-      {id:1, state:"queued"}, {id:2, state:"running"}, {id:3, state:"failed"},
-      {id:4, state:"done"}, {id:5, state:"cancelled"}, {id:6, state:"tempfail"},
-      {id:7, state:"failed"},
-    ];
-    process.stdout.write(JSON.stringify({
-      all: q.filterRows(rows, "all").map((r) => r.id),
-      live: q.filterRows(rows, "live").map((r) => r.id),
-      failed: q.filterRows(rows, "failed").map((r) => r.id),
-      summary: q.summary(rows),
-      empty: q.summary([]),
-    }));
-  '
-  [ "$status" -eq 0 ]
-  [ "$output" = '{"all":[1,2,3,4,5,6,7],"live":[1,2],"failed":[3,7],"summary":"2 live · 2 failed","empty":"0 live · 0 failed"}' ]
+  [ "$output" = '{"ids":[5,11,8,6],"keys":[null,"finished:failed:s:acme/box#7\nreview","finished:failed:l:lint sweep",null],"failures":["","failed 3× · last 10s ago","failed 2× · last 40s ago","exit 1"],"members":[null,[11,10,9],[8,7],null]}' ]
 }
 
 @test "staleness maps result kinds and keeps last good rows" {
@@ -212,6 +207,208 @@ _js() {
   '
   [ "$status" -eq 0 ]
   [ "$output" = '{"delay":1000,"none":false,"early":false,"at":true,"late":true}' ]
+}
+
+@test "Running is never grouped" {
+  _js '
+    const NOW = 1_700_000_000_000;
+    const SEC = 1_700_000_000;
+    const rows = [
+      {id:1, state:"done", action:"review", finished_at: SEC - 10},
+      {id:2, state:"queued", action:"review", created_at: SEC - 10},
+      {id:3, state:"running", action:"review", started_at: SEC - 10},
+      {id:4, state:"running", action:"review", started_at: SEC - 20},
+      {id:5, state:"running", action:"review", started_at: SEC - 30},
+    ];
+    const lanes = q.lanesModel(rows, NOW);
+    process.stdout.write(JSON.stringify({
+      keys: lanes.map((l) => l.key),
+      runningCount: lanes[0].count,
+      runningRows: lanes[0].rows.length,
+      runningIds: lanes[0].rows.map((r) => r.id),
+      grouped: lanes[0].rows.some((r) => r.members),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"keys":["running","waiting","finished"],"runningCount":3,"runningRows":3,"runningIds":[3,4,5],"grouped":false}' ]
+}
+
+@test "Finished successes fold by action plus state from 3, including non-adjacent" {
+  _js '
+    const NOW = 1_700_000_000_000;
+    const SEC = 1_700_000_000;
+    const two = [
+      {id:1, state:"done", action:"review", finished_at: SEC - 10, subject:"acme/box#1"},
+      {id:2, state:"done", action:"review", finished_at: SEC - 20, subject:"acme/box#2"},
+    ];
+    const three = [
+      ...two,
+      {id:3, state:"done", action:"review", finished_at: SEC - 40, subject:"acme/box#3"},
+      {id:4, state:"cancelled", action:"review", finished_at: SEC - 30},
+    ];
+    const under = q.lanesModel(two, NOW).find((l) => l.key === "finished");
+    const over = q.lanesModel(three, NOW).find((l) => l.key === "finished");
+    const g = over.rows[0];
+    process.stdout.write(JSON.stringify({
+      min: q.COALESCE_MIN,
+      underIds: under.rows.map((r) => r.id),
+      overKeys: over.rows.map((r) => r.key ?? r.id),
+      count: g.count,
+      action: g.action,
+      memberIds: g.members.map((m) => m.id),
+      leadId: g.lead.id,
+      timing: g.timing,
+      failure: g.failure,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"min":3,"underIds":[1,2],"overKeys":["finished:done:review",4],"count":3,"action":"review","memberIds":[1,2,3],"leadId":1,"timing":"newest 10s ago","failure":"3 done"}' ]
+}
+
+@test "a failure never joins a success group" {
+  _js '
+    const NOW = 1_700_000_000_000;
+    const SEC = 1_700_000_000;
+    const rows = [
+      {id:11, state:"failed", subject:"acme/box#7", action:"review",
+        finished_at: SEC - 10, exit_status: 1},
+      {id:10, state:"failed", subject:"acme/box#7", action:"review",
+        finished_at: SEC - 20, exit_status: 1},
+      {id:9, state:"failed", subject:"acme/box#7", action:"review",
+        finished_at: SEC - 30, exit_status: 2},
+      {id:8, state:"failed", subject:"acme/box#8", action:"review",
+        finished_at: SEC - 40, exit_status: 1},
+      {id:7, state:"done", subject:"acme/box#9", action:"review",
+        finished_at: SEC - 5},
+      {id:6, state:"done", subject:"acme/box#10", action:"review",
+        finished_at: SEC - 6},
+      {id:5, state:"done", subject:"acme/box#11", action:"review",
+        finished_at: SEC - 7},
+    ];
+    const after = q.lanesModel(rows, NOW).find((l) => l.key === "finished");
+    const success = after.rows.find((r) => r.key === "finished:done:review");
+    const fail = after.rows.find((r) => r.members && r.state === "failed");
+    process.stdout.write(JSON.stringify({
+      afterCount: after.count,
+      afterKeys: after.rows.map((r) => r.key ?? r.id),
+      successMembers: success.members.map((m) => m.state),
+      failMembers: fail.members.map((m) => m.state),
+      failInSuccess: success.members.some((m) => m.state === "failed"),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"afterCount":7,"afterKeys":["finished:done:review","finished:failed:s:acme/box#7\nreview",8],"successMembers":["done","done","done"],"failMembers":["failed","failed","failed"],"failInSuccess":false}' ]
+}
+
+@test "a finished action group keeps member order, subjects, and basename fallback" {
+  _js '
+    const NOW = 1_700_000_000_000;
+    const SEC = 1_700_000_000;
+    const rows = [
+      {id:4, state:"failed", argv:["/usr/bin/git","fetch"], subject:"acme/box#4",
+        finished_at: SEC - 40},
+      {id:3, state:"done", argv:["/usr/bin/git","status"], subject:"acme/box#3",
+        finished_at: SEC - 10},
+      {id:2, state:"done", argv:["/usr/bin/git","diff"], subject:"acme/box#2",
+        finished_at: SEC - 20},
+      {id:1, state:"cancelled", argv:["/usr/bin/git","log"], subject:"acme/box#1",
+        finished_at: SEC - 30},
+      {id:5, state:"done", argv:["/usr/bin/git","show"], subject:"acme/box#5",
+        finished_at: SEC - 50},
+    ];
+    const rowsOut = q.lanesModel(rows, NOW).find((l) => l.key === "finished").rows;
+    const g = rowsOut[0];
+    process.stdout.write(JSON.stringify({
+      keys: rowsOut.map((r) => r.key ?? r.id),
+      action: g.action,
+      memberIds: g.members.map((m) => m.id),
+      leadId: g.lead.id,
+      subjects: g.subjects,
+      timing: g.timing,
+      failure: g.failure,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"keys":["finished:done:git",1,4],"action":"git","memberIds":[3,2,5],"leadId":3,"subjects":{"names":["acme/box#3","acme/box#2","acme/box#5"],"more":""},"timing":"newest 10s ago","failure":"3 done"}' ]
+}
+
+@test "Waiting folds only an adjacent run of the same action and class from 3" {
+  _js '
+    const NOW = 1_700_000_000_000;
+    const SEC = 1_700_000_000;
+    const adjacent = [
+      {id:10, state:"queued", kind:"ticket", entry_class:"heavy", action:"review", created_at: SEC - 10},
+      {id:11, state:"queued", kind:"ticket", entry_class:"heavy", action:"review", created_at: SEC - 20},
+      {id:12, state:"queued", kind:"ticket", entry_class:"heavy", action:"review", created_at: SEC - 30},
+      {id:13, state:"queued", kind:"ticket", entry_class:"heavy", action:"comments", created_at: SEC - 40},
+    ];
+    const split = [
+      {id:20, state:"queued", kind:"ticket", entry_class:"heavy", action:"review", created_at: SEC - 10},
+      {id:21, state:"queued", kind:"ticket", entry_class:"heavy", action:"comments", created_at: SEC - 20},
+      {id:22, state:"queued", kind:"ticket", entry_class:"heavy", action:"review", created_at: SEC - 30},
+      {id:23, state:"queued", kind:"ticket", entry_class:"heavy", action:"review", created_at: SEC - 40},
+      {id:24, state:"queued", kind:"ticket", entry_class:"heavy", action:"review", created_at: SEC - 50},
+    ];
+    const adj = q.lanesModel(adjacent, NOW).find((l) => l.key === "waiting");
+    const sp = q.lanesModel(split, NOW).find((l) => l.key === "waiting");
+    process.stdout.write(JSON.stringify({
+      adjKeys: adj.rows.map((r) => r.key ?? r.id),
+      adjLine: adj.rows[0].line,
+      adjCount: adj.rows[0].count,
+      splitKeys: sp.rows.map((r) => r.key ?? r.id),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"adjKeys":["waiting:review:heavy",13],"adjLine":"1st–3rd in line","adjCount":3,"splitKeys":[20,21,"waiting:review:heavy"]}' ]
+}
+
+@test "a retry countdown breaks a waiting run" {
+  _js '
+    const NOW = 1_700_000_000_000;
+    const SEC = 1_700_000_000;
+    const rows = [
+      {id:10, state:"queued", kind:"ticket", entry_class:"heavy", action:"review", created_at: SEC - 10},
+      {id:11, state:"queued", kind:"ticket", entry_class:"heavy", action:"review", created_at: SEC - 20},
+      {id:12, state:"queued", kind:"job", entry_class:"heavy", action:"review", created_at: SEC - 30,
+        not_before: SEC + 60},
+      {id:13, state:"queued", kind:"ticket", entry_class:"heavy", action:"review", created_at: SEC - 40},
+      {id:14, state:"queued", kind:"ticket", entry_class:"heavy", action:"review", created_at: SEC - 50},
+      {id:15, state:"queued", kind:"ticket", entry_class:"heavy", action:"review", created_at: SEC - 60},
+    ];
+    const waiting = q.lanesModel(rows, NOW).find((l) => l.key === "waiting");
+    process.stdout.write(JSON.stringify({
+      keys: waiting.rows.map((r) => r.key ?? r.id),
+      retry: waiting.rows.find((r) => r.id === 12).retry,
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"keys":[10,11,12,"waiting:review:heavy"],"retry":"retry in 1m"}' ]
+}
+
+@test "Finished keeps every failure from the last 24 h even past FINISHED_CAP" {
+  _js '
+    const NOW = 1_700_000_000_000;
+    const SEC = 1_700_000_000;
+    const dones = Array.from({length: q.FINISHED_CAP}, (_, i) => ({
+      id: 100 - i, state: "done", action: "a" + i, finished_at: SEC - i,
+    }));
+    const kept = {id: 50, state: "failed", action: "boom", finished_at: SEC - 3600, exit_status: 1};
+    const old = {id: 40, state: "failed", action: "stale", finished_at: SEC - (24 * 3600) - 10, exit_status: 1};
+    const extraDone = {id: 30, state: "done", action: "z", finished_at: SEC - 7200};
+    const shown = q.lanesModel([...dones, kept, extraDone], NOW).find((l) => l.key === "finished");
+    const dropped = q.lanesModel([...dones, old], NOW).find((l) => l.key === "finished");
+    process.stdout.write(JSON.stringify({
+      cap: q.FINISHED_CAP,
+      keepMs: q.FAIL_KEEP_MS,
+      shownIds: shown.rows.map((r) => r.id),
+      shownCount: shown.count,
+      shownMore: shown.more,
+      droppedIds: dropped.rows.map((r) => r.id),
+      droppedHasOld: dropped.rows.some((r) => r.id === 40),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"cap":10,"keepMs":86400000,"shownIds":[100,99,98,97,96,95,94,93,92,91,50],"shownCount":12,"shownMore":1,"droppedIds":[100,99,98,97,96,95,94,93,92,91],"droppedHasOld":false}' ]
 }
 
 @test "subjectOf prefers ledger subject and otherwise parses owner/repo#N from the label" {

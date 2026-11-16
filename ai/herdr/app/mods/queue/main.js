@@ -1,6 +1,6 @@
 // Queue: this machine's otto-queue and each remote's, polled while this pane is shown. Home is
-// one block per machine; a row expands to its command, timings and log tail; live rows cancel
-// after a confirm.
+// one card per machine; a click opens that machine's page of coalesced runs. A row expands to
+// its command, timings and log tail; live rows cancel after a confirm.
 import { View } from "gpui-kit";
 import { exec, spaces, panes, run, shared, setShared } from "herdr";
 import * as herdr from "herdr";
@@ -8,10 +8,10 @@ import { eachByMachine, machineOf } from "./_lib/board_pull.js";
 import { parsePrKey } from "./_lib/launch.js";
 import { LOAD_DELAY_MS } from "./_lib/load_state.js";
 import { cancelEntry, loadLog, loadStatus, logNote } from "./_lib/queue.js";
-import { homeModel, toggleCollapsed } from "./_lib/queue_home.js";
 import {
-  filterRows, lanesModel, refreshSpinning, staleness, summary,
-} from "./_lib/queue_lanes.js";
+  clearMachine, homeModel, machinePage, pageOf, selectMachine,
+} from "./_lib/queue_home.js";
+import { refreshSpinning, staleness } from "./_lib/queue_lanes.js";
 import { focusSteps } from "./_lib/run_session.js";
 import { renderQueue } from "./view.js";
 
@@ -43,6 +43,15 @@ function remoteOns() {
 }
 
 const rowKey = (on, id) => `${machineOf(on)}#${id}`;
+const groupKey = (on, row) => `${machineOf(on)}:${row.key}`;
+
+function navState() {
+  const machine = shared("queue.machine");
+  if (machine == null || machine === "") {
+    return machine === "" ? { machine: "" } : { machine: null };
+  }
+  return { machine };
+}
 
 export default class Queue extends View {
   // Handlers run after the render that built them; a redraw or task requested through that render's
@@ -55,8 +64,8 @@ export default class Queue extends View {
     this.inflight = false;
     this.again = false;
     this.refreshSince = null;
-    this.filter = "all";
-    this.openGroups = new Set();
+    this.waitingAll = new Set();
+    this.finishedAll = new Set();
     // The expanded row ({on, id}), its log tail, and the row whose Cancel awaits a confirm.
     this.open = null;
     this.log = null;
@@ -99,15 +108,11 @@ export default class Queue extends View {
     this.acx.notify();
   }
 
-  setFilter(filter) {
-    this.filter = filter;
-    this.acx.notify();
-  }
-
-  toggleGroup(on, id) {
-    const key = rowKey(on, id);
-    if (this.openGroups.has(key)) this.openGroups.delete(key);
-    else this.openGroups.add(key);
+  toggleGroup(on, row) {
+    const key = groupKey(on, row);
+    const map = { ...(shared("queue.groups") ?? {}) };
+    map[key] = !map[key];
+    setShared("queue.groups", map);
     this.acx.notify();
   }
 
@@ -177,8 +182,23 @@ export default class Queue extends View {
     });
   }
 
-  toggleMachine(key, open) {
-    setShared("queue.collapsed", toggleCollapsed(shared("queue.collapsed"), key, open));
+  openMachine(key) {
+    setShared("queue.machine", selectMachine(navState(), key).machine);
+    this.acx.notify();
+  }
+
+  closeMachine() {
+    setShared("queue.machine", clearMachine(navState()).machine);
+    this.acx.notify();
+  }
+
+  showMore(key) {
+    this.waitingAll.add(key);
+    this.acx.notify();
+  }
+
+  showOlder(key) {
+    this.finishedAll.add(key);
     this.acx.notify();
   }
 
@@ -195,39 +215,34 @@ export default class Queue extends View {
 
   queueModel(nowMs) {
     const machines = [];
-    const allRows = [];
     for (const t of this.targets()) {
       const key = machineOf(t.on);
       const entry = this.byOn.get(key);
       const result = entry?.result;
       const stale = result == null ? null : staleness({ result, at: entry.at }, nowMs);
       const rows = stale?.rows ?? result?.rows ?? [];
-      allRows.push(...rows);
       machines.push({
         on: t.on, key, title: t.on ?? "This computer", at: entry?.at, result, stale, rows,
       });
     }
-    const blocks = homeModel(machines, nowMs, shared("queue.collapsed") ?? {}).map((block) => {
-      const src = machines.find((m) => m.key === block.key);
-      const stale = src?.stale;
-      const result = src?.result;
-      const rows = src?.rows ?? [];
-      const kind = stale?.kind;
-      return {
-        ...block,
-        section: {
-          on: src?.on ?? (block.key === "" ? null : block.key),
-          label: block.summary.title,
-          stale: stale && { words: stale.words, warn: kind !== "fresh" },
-          muted: kind === "stale" || kind === "unreachable",
-          loading: result == null,
-          busy: Boolean(result?.ok && result.busy),
-          lanes: result == null || (result.ok && result.busy) ? [] : lanesModel(filterRows(rows, this.filter), nowMs),
-          cancelError: this.cancelErr.get(block.key),
-        },
-      };
-    });
-    return { blocks, summary: summary(allRows) };
+    const current = pageOf(navState(), machines);
+    const cards = homeModel(machines, nowMs);
+    if (current == null) return { cards, page: null, on: null, key: "" };
+    const kind = current.stale?.kind;
+    const result = current.result;
+    return {
+      cards,
+      page: machinePage(current, nowMs, {
+        allWaiting: this.waitingAll.has(current.key),
+        allFinished: this.finishedAll.has(current.key),
+      }),
+      on: current.on,
+      key: current.key,
+      muted: kind === "stale" || kind === "unreachable",
+      loading: result == null,
+      busy: Boolean(result?.ok && result.busy),
+      cancelError: this.cancelErr.get(current.key),
+    };
   }
 
   render(_cx) {
@@ -235,26 +250,33 @@ export default class Queue extends View {
     const nowMs = Date.now();
     const model = this.queueModel(nowMs);
     return renderQueue({
-      blocks: model.blocks,
-      summary: model.summary,
-      filter: this.filter,
+      cards: model.cards,
+      page: model.page,
+      on: model.on,
+      muted: model.muted,
+      loading: model.loading,
+      busy: model.busy,
+      cancelError: model.cancelError,
       spinning: refreshSpinning(this.refreshSince, nowMs),
       nowMs,
       openKey: this.open == null ? null : rowKey(this.open.on, this.open.id),
-      openGroups: this.openGroups,
+      openGroups: shared("queue.groups") ?? {},
       confirming: this.confirming,
       log: this.log,
       rowKey,
+      groupKey,
       onToggle: (on, id) => this.toggle(on, id),
-      onToggleGroup: (on, id) => this.toggleGroup(on, id),
-      onToggleMachine: (key, open) => this.toggleMachine(key, open),
+      onToggleGroup: (on, row) => this.toggleGroup(on, row),
+      onSelectMachine: (key) => this.openMachine(key),
+      onBack: () => this.closeMachine(),
+      onShowMore: () => this.showMore(model.key),
+      onShowOlder: () => this.showOlder(model.key),
       onOpenPr: (row) => this.copyPr(row),
       onOpenTerminal: (id) => this.focusTerminal(id),
       onAskCancel: (on, id) => this.askCancel(on, id),
       onCancel: (on, id) => this.cancel(on, id),
       onDismiss: () => this.dismissCancel(),
       onRefresh: () => this.refreshNow(),
-      onFilter: (filter) => this.setFilter(filter),
     });
   }
 }

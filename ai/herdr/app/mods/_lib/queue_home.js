@@ -1,14 +1,13 @@
 /**
- * Queue home model: slot gauges, per-machine summary, collapse. Pure.
+ * Queue home model: meters, per-machine overview, machine pages, navigation. Pure.
  */
 import { liveCounts } from './queue.js';
-import { staleness } from './queue_lanes.js';
+import { lanesModel, RECENT_TERMINAL, staleness } from './queue_lanes.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CLASSES = Object.freeze(['heavy', 'light']);
-const FULL = '█';
-const EMPTY = '░';
-const GAUGE_CAP = 8;
+const TERMINAL = new Set(['done', 'failed', 'cancelled', 'tempfail']);
+export const METER_SEGMENT_MAX = 8;
 
 function toMs(t) {
   if (t == null || t === '') return null;
@@ -17,20 +16,23 @@ function toMs(t) {
 }
 
 /**
- * Static bar of one glyph per slot, then `n/limit`. A null limit is `n running`.
- * More than GAUGE_CAP slots drops the bar and keeps `n/limit`.
+ * Capacity reading for one class: discrete segments at limit ≤ 8, a continuous
+ * bar above that, or text only when the CLI did not send a limit.
  */
-export function slotGauge(running, limit) {
+export function meterModel(running, limit) {
   const n = Math.max(0, Number(running) || 0);
-  if (limit == null || limit === '') return `${n} running`;
+  if (limit == null || limit === '') {
+    return { kind: 'none', filled: n, total: null, text: `${n} running` };
+  }
   const lim = Number(limit);
-  if (!Number.isFinite(lim)) return `${n} running`;
-  if (lim > GAUGE_CAP) return `${n}/${lim}`;
-  const cells = Math.max(0, Math.floor(lim));
-  const filled = Math.min(n, cells);
-  const bar = FULL.repeat(filled) + EMPTY.repeat(cells - filled);
+  if (!Number.isFinite(lim)) {
+    return { kind: 'none', filled: n, total: null, text: `${n} running` };
+  }
+  const total = Math.max(0, Math.floor(lim));
+  const filled = Math.min(n, total);
   const text = `${n}/${lim}`;
-  return bar === '' ? text : `${bar} ${text}`;
+  if (lim > METER_SEGMENT_MAX) return { kind: 'bar', filled, total, text };
+  return { kind: 'segments', filled, total, text };
 }
 
 function runningByClass(rows) {
@@ -45,7 +47,7 @@ function runningByClass(rows) {
   return counts;
 }
 
-function failedToday(rows, nowMs) {
+function failed24h(rows, nowMs) {
   let n = 0;
   for (const row of rows ?? []) {
     if (row.state !== 'failed') continue;
@@ -53,6 +55,14 @@ function failedToday(rows, nowMs) {
     if (at == null) continue;
     const age = nowMs - at;
     if (age >= 0 && age <= DAY_MS) n += 1;
+  }
+  return n;
+}
+
+function terminalCount(rows) {
+  let n = 0;
+  for (const row of rows ?? []) {
+    if (TERMINAL.has(row.state)) n += 1;
   }
   return n;
 }
@@ -72,7 +82,7 @@ function gaugesOf(rows, slots) {
     const rec = slots?.[cls];
     const running = rec != null && rec.running != null ? rec.running : (counted[cls] ?? 0);
     const limit = rec != null && rec.limit != null ? rec.limit : null;
-    return { class: cls, text: slotGauge(running, limit) };
+    return { class: cls, ...meterModel(running, limit) };
   });
 }
 
@@ -82,16 +92,23 @@ function machineTitle(entry) {
   return String(entry.on);
 }
 
+function staleCaption(stale) {
+  return { kind: stale.kind, words: stale.words };
+}
+
 export function machineSummary(entry, nowMs) {
   const stale = staleness(entry, nowMs);
   const rows = stale.rows ?? [];
   const { queued, running } = liveCounts(rows);
-  const failed = failedToday(rows, nowMs);
+  const failed = failed24h(rows, nowMs);
+  const truncated = terminalCount(rows) >= RECENT_TERMINAL;
   return {
     title: machineTitle(entry),
     gauges: gaugesOf(rows, entry?.result?.slots ?? null),
-    counts: `${running} running · ${queued} queued · ${failed} failed today`,
-    staleness: stale,
+    counts: `${running} running · ${queued} queued · ${failed} failed 24h`,
+    failed,
+    truncated,
+    staleness: staleCaption(stale),
     hostNote: null,
   };
 }
@@ -102,39 +119,54 @@ function machineKey(entry) {
   return String(entry.on);
 }
 
-function overrideCollapsed(collapsed, key) {
-  if (collapsed == null || typeof collapsed !== 'object') return null;
-  if (!Object.prototype.hasOwnProperty.call(collapsed, key)) return null;
-  return Boolean(collapsed[key]);
+function cardOf(entry, nowMs) {
+  const key = machineKey(entry);
+  const summary = machineSummary({ ...entry, title: machineTitle(entry) }, nowMs);
+  return {
+    key,
+    title: summary.title,
+    staleness: summary.staleness,
+    gauges: summary.gauges,
+    counts: summary.counts,
+    failed: summary.failed,
+    truncated: summary.truncated,
+    hostNote: summary.hostNote,
+  };
 }
 
-function defaultOpen(rows, nowMs) {
-  const { queued, running } = liveCounts(rows);
-  if (queued > 0 || running > 0) return true;
-  return failedToday(rows, nowMs) > 0;
-}
-
-export function homeModel(machines, nowMs, collapsed) {
+export function homeModel(machines, nowMs) {
   const local = [];
   const rest = [];
   for (const entry of machines ?? []) {
     if (machineKey(entry) === '') local.push(entry);
     else rest.push(entry);
   }
-  return [...local, ...rest].map((entry) => {
-    const key = machineKey(entry);
-    const summary = machineSummary({ ...entry, title: machineTitle(entry) }, nowMs);
-    const forced = overrideCollapsed(collapsed, key);
-    const open = forced == null ? defaultOpen(summary.staleness.rows, nowMs) : !forced;
-    return { key, summary, open };
-  });
+  return [...local, ...rest].map((entry) => cardOf(entry, nowMs));
 }
 
-// toggleCollapsed flips what the reader sees: `open` is the block's visible state,
-// so the stored override (true = collapsed) is right even for a machine whose
-// default was decided by homeModel and has no entry in the map yet.
-export function toggleCollapsed(map, key, open) {
-  const next = { ...(map ?? {}) };
-  next[key] = Boolean(open);
-  return next;
+export function machinePage(entry, nowMs, opts = {}) {
+  const card = cardOf(entry, nowMs);
+  const rows = staleness(entry, nowMs).rows ?? [];
+  return {
+    summary: card,
+    lanes: lanesModel(rows, nowMs, opts),
+  };
+}
+
+export function selectMachine(state, key) {
+  return { ...(state ?? {}), machine: key ?? null };
+}
+
+export function clearMachine(state) {
+  return { ...(state ?? {}), machine: null };
+}
+
+export function pageOf(state, machines) {
+  const key = state?.machine;
+  if (key == null) return null;
+  const want = String(key);
+  for (const entry of machines ?? []) {
+    if (machineKey(entry) === want) return entry;
+  }
+  return null;
 }

@@ -33,6 +33,9 @@ export const BRAND = {
   "controlPadding": 15,
   "cardPadding": 16,
   "columnMin": 270,
+  "meterWidth": 96,
+  "meterHeight": 6,
+  "meterGap": 2,
   "font": {
     "meta": {
       "size": 11,

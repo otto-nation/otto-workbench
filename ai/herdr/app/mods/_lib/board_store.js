@@ -5,9 +5,9 @@
  * `pr board` phases through board_pull.js pullTarget. No timers and no host API: the host chooses the
  * targets, decides when to pull, and redraws on onChange.
  */
-import { checkTools, loadTerminals } from './board_data.js';
-import { pullTarget, eachByMachine, FULL_PULL_MS } from './board_pull.js';
-export { FULL_PULL_MS };
+import { checkTools, loadTerminals, owedDue } from './board_data.js';
+import { pullTarget, eachByMachine, FULL_PULL_MS, wantsRefresh } from './board_pull.js';
+export { FULL_PULL_MS, wantsRefresh };
 import { boardState, repoId, representatives, staleKeys } from './scope.js';
 
 export const ctxKey = (c) => JSON.stringify({ on: c?.on ?? null, cwd: c?.cwd ?? null });
@@ -18,11 +18,21 @@ export const NO_WANT = Object.freeze({ owed: false });
 export function createBoardStore({ exec, now = Date.now }) {
   const cache = new Map();
   const repoByKey = new Map();
+  // Per repo id, the checkout key whose pull committed most recently.
+  const latestByRepo = new Map();
   const toolsByOn = new Map();
-  // Last offline→online fall-through per target, so a queued cache is not pulled every 15s.
+  // Last offline→online fall-through (or stale-cache upgrade) per target.
   const fellAt = new Map();
 
   const stateOf = (c) => cache.get(ctxKey(c)) ?? {};
+  // The freshest state for ctx's repo: the checkout whose pull committed last. A second
+  // worktree of a repo is never the representative, so its own cache entry goes stale.
+  // Falls back to stateOf(ctx) when the repo is unknown or nothing for it is cached.
+  const repoStateOf = (c) => {
+    const id = repoByKey.get(ctxKey(c));
+    const key = id == null ? null : latestByRepo.get(id);
+    return key != null && cache.has(key) ? cache.get(key) : stateOf(c);
+  };
   const begin = (key) => cache.set(key, { ...(cache.get(key) ?? {}), pulling: true });
   const end = (key) => {
     const cur = cache.get(key);
@@ -77,8 +87,17 @@ export function createBoardStore({ exec, now = Date.now }) {
     return cycle.get('terminals');
   }
 
-  async function pullOne(ctx, key, cycle, { listingOnly, fresh, want, isCurrent }, { onChange, onCommit }) {
+  async function pullOne(ctx, key, cycle, { listingOnly, fresh, want, isCurrent, refreshAfterMs }, { onChange, onCommit }) {
     const prev = cache.get(key);
+    const t = now();
+    // Stale cache-age listing upgrades to a full pull at most once per refreshAfterMs (fellAt),
+    // so a failing fetch is not retried every listing tick, and an --if-changed miss cannot.
+    // The queued fall-through shares fellAt on purpose: both mean an online pull just ran, so each
+    // throttling the other avoids back-to-back pulls.
+    if (listingOnly && wantsRefresh(prev, t, refreshAfterMs) && owedDue(fellAt.get(key), t, refreshAfterMs)) {
+      listingOnly = false;
+      fellAt.set(key, t);
+    }
     if (!listingOnly || !prev?.repo) {
       const have = await ensureTools(ctx, key, isCurrent);
       if (!have || !isCurrent(key)) return;
@@ -97,7 +116,10 @@ export function createBoardStore({ exec, now = Date.now }) {
       isCurrent: () => isCurrent(key),
       fellAt: fellAt.get(key), onFall: (t) => fellAt.set(key, t),
     }, (state) => {
-      if (state.repo?.slug) repoByKey.set(key, repoId(state.repo));
+      if (state.repo?.slug) {
+        repoByKey.set(key, repoId(state.repo));
+        latestByRepo.set(repoId(state.repo), key);
+      }
       cache.set(key, { ...state, stale: false });
       onCommit(state, ctx);
       onChange();
@@ -109,6 +131,7 @@ export function createBoardStore({ exec, now = Date.now }) {
   return {
     active: (targets) => representatives(targets ?? [], (c) => repoByKey.get(ctxKey(c))),
     stateOf,
+    repoStateOf,
     view: (targets, scope) => boardState(targets, targets.map(stateOf), scope),
     reviewsRoot(on) {
       for (const st of cache.values()) {
@@ -119,10 +142,10 @@ export function createBoardStore({ exec, now = Date.now }) {
     // One pull over `targets`. `isCurrent(key)` is asked between steps; false abandons that target.
     // `want()` says which on-demand data the host shows now ({owed}). `keep()` names the targets
     // whose cache survives (default: `targets`).
-    async pull({ targets, listingOnly = false, fresh = false, want = () => NO_WANT, isCurrent = () => true, keep = null },
+    async pull({ targets, listingOnly = false, fresh = false, want = () => NO_WANT, isCurrent = () => true, keep = null, refreshAfterMs = null },
       { onChange = () => {}, onCommit = () => {} } = {}) {
       const cycle = new Map();
-      const opts = { listingOnly, fresh, want, isCurrent };
+      const opts = { listingOnly, fresh, want, isCurrent, refreshAfterMs };
       for (const ctx of targets) begin(ctxKey(ctx));
       onChange();
       await eachByMachine(targets, (c) => c.on, async (ctx) => {
@@ -144,6 +167,7 @@ export function createBoardStore({ exec, now = Date.now }) {
         cache.delete(k);
         repoByKey.delete(k);
         fellAt.delete(k);
+        for (const [id, at] of latestByRepo) if (at === k) latestByRepo.delete(id);
       }
       const terms = cycle.has('terminals') ? await cycle.get('terminals') : null;
       return { terminals: terms?.ok ? terms.entries : null };

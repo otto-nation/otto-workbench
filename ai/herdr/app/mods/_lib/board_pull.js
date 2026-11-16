@@ -13,6 +13,16 @@ const NONE = Object.freeze({ listing: null, status: null, offline: null });
 // Full board pull interval, and the offline→online fall-through throttle.
 export const FULL_PULL_MS = 180000;
 
+// True when a listing-only pull should upgrade to a full pull: the cache is older than
+// `refreshAfterMs`, the document advertised cache-age, and cachedAt is known. Missing
+// cachedAt or features is "don't know" — no upgrade. `refreshAfterMs` null is off.
+export function wantsRefresh(state, now, refreshAfterMs) {
+  if (refreshAfterMs == null) return false;
+  if (!Array.isArray(state?.features) || !state.features.includes('cache-age')) return false;
+  if (!Number.isFinite(state?.cachedAt)) return false;
+  return state.cachedAt < now - refreshAfterMs;
+}
+
 export function machineOf(on) {
   return on == null || on === '' ? '' : String(on);
 }

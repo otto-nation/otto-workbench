@@ -19,7 +19,7 @@ SCHEMA_VERSIONS = (1,)
 # What this build's `pr` accepts that a board consumer drives; add one when a
 # consumer must tell a newer `pr` from an older one; never remove one without
 # a schema bump.
-FEATURES = ("review-publish", "batch-session", "target-session", "queue-lanes")
+FEATURES = ("review-publish", "batch-session", "target-session", "queue-lanes", "cache-age")
 
 
 class Phase(StrEnum):
@@ -185,6 +185,14 @@ class RepoError:
 
 @dataclass(frozen=True)
 class RepoStatus:
+    """One checkout's entry on the board document.
+
+    ``fetched_at`` is when this document was assembled (the read).
+    ``cached_at`` is the cache payload's own fetch time, ISO-8601 like
+    ``fetched_at``; null when nothing was cached. On an online read it
+    equals ``fetched_at``.
+    """
+
     slug: str
     host: str
     checkout: str
@@ -192,6 +200,7 @@ class RepoStatus:
     error: RepoError | None = None
     partial: bool = False
     fetched_at: str = ""
+    cached_at: str | None = None
 
 
 @dataclass(frozen=True)

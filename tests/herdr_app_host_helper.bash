@@ -1,10 +1,11 @@
 # Loads a herdr-app mod view under node with herdr's host modules stubbed, for the suites that pin
 # a view's behaviour (tests/herdr_app_mods_prs_*.bats).
 #
-# _host_setup — assembles $BATS_TEST_TMPDIR/host/prs the way _herdr_app_install_mods lays a mod out
-#   (prs/*.js, prs/_lib, prs/_ui) and writes node loader hooks that resolve `gpui-kit`, `gpui-base`
-#   and `herdr` to generated stubs: every gpui name is a chainable no-op (`View` a class); a herdr
-#   name calls globalThis.__herdr[name] when the test set it, else is a no-op.
+# _host_setup [MOD] — assembles $BATS_TEST_TMPDIR/host/<mod> the way _herdr_app_install_mods lays a
+#   mod out (mod/*.js, mod/_lib, mod/_ui). MOD defaults to prs so existing suites stay unchanged.
+#   Writes node loader hooks that resolve `gpui-kit`, `gpui-base` and `herdr` to generated stubs:
+#   every gpui name is a chainable no-op (`View` a class); a herdr name calls globalThis.__herdr[name]
+#   when the test set it, else is a no-op.
 # _host JS — runs JS (top-level await allowed) as an ES module with:
 #   M  the assembled mod dir       out(v)  print JSON.stringify(v)
 #   H  herdr state: H.state (shared keys), H.spacesList, H.panesList, H.focusedPane, and any herdr
@@ -89,18 +90,20 @@ const fakeCx = () => {
 };'
 
 _host_setup() {
+  local mod="${1:-prs}"
   HOST_DIR="$BATS_TEST_TMPDIR/host"
+  HOST_MOD="$HOST_DIR/$mod"
   local mods="$REPO_ROOT/ai/herdr/app/mods"
   # The loader hooks need node:module register() (node >= 20.6). Say so, rather than failing at import.
   node -e 'const [a, b] = process.versions.node.split(".").map(Number); process.exit(a > 20 || (a === 20 && b >= 6) ? 0 : 1)' \
     || { echo "node $(node -p process.versions.node): the host harness needs node >= 20.6 (node:module register)" >&2; return 1; }
   mkdir -p "$HOST_DIR"
-  cp -R "$mods/prs" "$HOST_DIR/prs"
-  cp -R "$mods/_lib" "$HOST_DIR/prs/_lib"
-  cp -R "$mods/_ui" "$HOST_DIR/prs/_ui"
+  cp -R "$mods/$mod" "$HOST_MOD"
+  cp -R "$mods/_lib" "$HOST_MOD/_lib"
+  cp -R "$mods/_ui" "$HOST_MOD/_ui"
   printf '%s\n' "$HOST_HOOKS" > "$HOST_DIR/hooks.mjs"
   printf '%s\n' "import { register } from 'node:module';" \
-    "register('file://$HOST_DIR/hooks.mjs', { data: { root: '$HOST_DIR/prs' } });" > "$HOST_DIR/register.mjs"
+    "register('file://$HOST_DIR/hooks.mjs', { data: { root: '$HOST_MOD' } });" > "$HOST_DIR/register.mjs"
   printf '%s\n' "$HOST_PRELUDE" > "$HOST_DIR/prelude.js"
 }
 
@@ -110,7 +113,7 @@ _host() {
   # runner file is the equivalent of that -e script. --no-deprecation: node 26 prints
   # DEP0205 for module.register on stderr, and bats run merges stderr into $output.
   {
-    printf 'const M = %s;\n' "$(node --no-deprecation -p 'JSON.stringify(process.argv[1])' "$HOST_DIR/prs")"
+    printf 'const M = %s;\n' "$(node --no-deprecation -p 'JSON.stringify(process.argv[1])' "$HOST_MOD")"
     printf 'const FIX = %s;\n' "$(node --no-deprecation -p 'JSON.stringify(process.argv[1])' "$REPO_ROOT/tests/fixtures/board_document.json")"
     printf '%s\n' 'const out = (v) => process.stdout.write(JSON.stringify(v));'
     cat "$HOST_DIR/prelude.js"

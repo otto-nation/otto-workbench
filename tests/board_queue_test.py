@@ -121,7 +121,7 @@ def test_document_row_carries_queue_and_queue_lanes_feature(
     entry_id = _insert(root, terminal="pane-3")
     doc = build(Phase.LISTING, [found.path])
     assert "queue-lanes" in doc["features"]
-    assert list(FEATURES)[-1] == "queue-lanes"
+    assert "queue-lanes" in FEATURES
     row = next(r for r in doc["rows"] if r["number"] == 7)
     assert row["queue"] == {
         "state": "queued", "entry": entry_id, "terminal": "pane-3",

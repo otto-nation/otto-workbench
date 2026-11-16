@@ -375,6 +375,45 @@
           "type": "integer"
         }
       }
+    },
+    "reaper": {
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "grace_s": {
+          "type": "integer"
+        },
+        "max_minutes": {
+          "type": "object",
+          "properties": {
+            "lint": {
+              "type": "integer"
+            },
+            "go": {
+              "type": "integer"
+            },
+            "gh": {
+              "type": "integer"
+            },
+            "tasks": {
+              "type": "integer"
+            }
+          }
+        }
+      }
+    },
+    "queue": {
+      "type": "object",
+      "properties": {
+        "heavy_repos": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
     }
   }
 }

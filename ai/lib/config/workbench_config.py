@@ -172,6 +172,14 @@ MAINTENANCE_PRUNE_GO_CACHE_GB_KEY = "maintenance.prune.go_cache_gb"
 MAINTENANCE_PRUNE_MISE_KEY = "maintenance.prune.mise"
 MAINTENANCE_PRUNE_DOCKER_KEY = "maintenance.prune.docker"
 MAINTENANCE_DISK_PCT_KEY = "maintenance.disk_pct"
+# Read from bash by maintenance/bin/reap-hung; lib/constants.sh spells the same
+# strings and tests/config.bats cross-validates every pair.
+REAPER_ENABLED_KEY = "reaper.enabled"
+REAPER_GRACE_S_KEY = "reaper.grace_s"
+REAPER_MAX_MINUTES_LINT_KEY = "reaper.max_minutes.lint"
+REAPER_MAX_MINUTES_GO_KEY = "reaper.max_minutes.go"
+REAPER_MAX_MINUTES_GH_KEY = "reaper.max_minutes.gh"
+REAPER_MAX_MINUTES_TASKS_KEY = "reaper.max_minutes.tasks"
 DISK_PCT_MIN = 50
 DISK_PCT_MAX = 99
 
@@ -709,6 +717,72 @@ class MaintenanceConfig:
             raise ValueError(f"maintenance.disk_pct must be {DISK_PCT_MIN} to {DISK_PCT_MAX}, not {self.disk_pct}")
 
 
+_REAPER_MACHINE_ONLY = ScopeRule(
+    frozenset({GLOBAL_SCOPE}),
+    "the reaper runs once per machine on its timer, from no repo in particular,"
+    " so a repo's value would never be the one it read",
+)
+
+_QUEUE_MACHINE_ONLY = ScopeRule(
+    frozenset({GLOBAL_SCOPE}),
+    "the queue guard decides per machine which repos are admitted,"
+    " so a repo cannot opt itself in or out",
+)
+
+REAPER_GRACE_MIN = 5
+REAPER_GRACE_MAX = 300
+
+
+@dataclass(frozen=True)
+class ReaperMaxMinutesConfig:
+    """How long a process may run before the reaper terminates it.
+
+    One field per command family the reaper knows: ``lint`` (golangci-lint),
+    ``go`` (go test, vet and build), ``gh`` and ``tasks``. Each is a whole
+    number of minutes, 1 or more.
+    """
+
+    lint: int = field(default=30, metadata={"scope": _REAPER_MACHINE_ONLY})
+    go: int = field(default=30, metadata={"scope": _REAPER_MACHINE_ONLY})
+    gh: int = field(default=10, metadata={"scope": _REAPER_MACHINE_ONLY})
+    tasks: int = field(default=45, metadata={"scope": _REAPER_MACHINE_ONLY})
+
+    def __post_init__(self):
+        for name in ("lint", "go", "gh", "tasks"):
+            value = getattr(self, name)
+            if value < 1:
+                raise ValueError(f"reaper.max_minutes.{name} must be 1 or more, not {value}")
+
+
+@dataclass(frozen=True)
+class ReaperConfig:
+    """Machine-wide termination of hung heavy processes.
+
+    ``enabled`` turns the timer's work on or off. ``grace_s`` is the wait
+    between SIGTERM and SIGKILL. Git writes are never reaped whatever is set
+    here, because SIGKILL strands their lock files.
+    """
+
+    enabled: bool = field(default=True, metadata={"scope": _REAPER_MACHINE_ONLY})
+    grace_s: int = field(default=30, metadata={"scope": _REAPER_MACHINE_ONLY})
+    max_minutes: ReaperMaxMinutesConfig = field(default_factory=ReaperMaxMinutesConfig)
+
+    def __post_init__(self):
+        if self.grace_s < REAPER_GRACE_MIN or self.grace_s > REAPER_GRACE_MAX:
+            raise ValueError(f"reaper.grace_s must be {REAPER_GRACE_MIN} to {REAPER_GRACE_MAX}, not {self.grace_s}")
+
+
+@dataclass(frozen=True)
+class QueueConfig:
+    """Which repos' agents must run heavy commands through otto-queue.
+
+    ``heavy_repos`` lists repository names (the checkout's container or
+    toplevel directory name). Empty means the guard is inert.
+    """
+
+    heavy_repos: list[str] = field(default_factory=list, metadata={"scope": _QUEUE_MACHINE_ONLY})
+
+
 @dataclass(frozen=True)
 class WorkbenchConfig:
     reuse: ReuseConfig = field(default_factory=ReuseConfig)
@@ -723,6 +797,8 @@ class WorkbenchConfig:
     wiki: WikiConfig = field(default_factory=WikiConfig)
     batch: BatchConfig = field(default_factory=BatchConfig)
     maintenance: MaintenanceConfig = field(default_factory=MaintenanceConfig)
+    reaper: ReaperConfig = field(default_factory=ReaperConfig)
+    queue: QueueConfig = field(default_factory=QueueConfig)
 
 
 def global_config_path() -> Path:

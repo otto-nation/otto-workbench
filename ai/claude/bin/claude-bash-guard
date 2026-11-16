@@ -527,6 +527,14 @@ if [[ -n "$hook_cwd" ]] && "$(cd "$(dirname "$_icc")/../../.." && pwd)/bin/local
   block "Creating a worktree from the installed copy leaves the branch's checkout beside the install, outside the container every other worktree lives in. Run \`wt switch -c\` from a worktree in the container, ~/git/otto-nation/otto-workbench, instead. See git-operations.md § The Installed Copy Is Read-Only."
 fi
 
+# A heavy command in a repo listed in queue.heavy_repos is admitted through
+# otto-queue. `queue-guard-check` owns what is heavy, which repos are listed and
+# the wording, which ai/pi/extensions/queue-guard asks as well; it prints the
+# reason on stdout and exits 0 to refuse.
+if [[ -n "$hook_cwd" ]] && _qgc_reason="$("$(cd "$(dirname "$_icc")/../../.." && pwd)/bin/local/queue-guard-check" "$cmd" "$hook_cwd")"; then
+  block "$_qgc_reason See general.md § Waiting on Background Work."
+fi
+
 # ── Normalize the command for scanning ───────────────────────────────────────
 # Every rule below reads one of these instead of $cmd directly.
 #

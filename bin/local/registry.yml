@@ -24,6 +24,11 @@ tools:
     visibility: brief
     description: "Exit 0 when a directory is in the installed copy's repository — the fact the guards use to keep sessions out of it"
 
+  - name: queue-guard-check
+    permission: false
+    visibility: brief
+    description: "Exit 0, with the reason on stdout, when an agent command is heavy and must run through otto-queue — the fact both harness guards use"
+
   - name: with-tree-lock
     permission: false
     visibility: brief

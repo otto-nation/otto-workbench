@@ -161,6 +161,12 @@ MAINTENANCE_PRUNE_GO_CACHE_GB_CONFIG_KEY="maintenance.prune.go_cache_gb"
 MAINTENANCE_PRUNE_MISE_CONFIG_KEY="maintenance.prune.mise"
 MAINTENANCE_PRUNE_DOCKER_CONFIG_KEY="maintenance.prune.docker"
 MAINTENANCE_DISK_PCT_CONFIG_KEY="maintenance.disk_pct"
+REAPER_ENABLED_CONFIG_KEY="reaper.enabled"
+REAPER_GRACE_S_CONFIG_KEY="reaper.grace_s"
+REAPER_MAX_MINUTES_LINT_CONFIG_KEY="reaper.max_minutes.lint"
+REAPER_MAX_MINUTES_GO_CONFIG_KEY="reaper.max_minutes.go"
+REAPER_MAX_MINUTES_GH_CONFIG_KEY="reaper.max_minutes.gh"
+REAPER_MAX_MINUTES_TASKS_CONFIG_KEY="reaper.max_minutes.tasks"
 
 # The name `otto-workbench config get` prints for the machine-wide scope. A
 # report over other people's repos distinguishes an answer a repo gave from one

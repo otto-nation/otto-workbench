@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Answer whether an agent's command must be run through otto-queue instead.
+#
+# ```
+# queue-guard-check <command> <cwd>
+# ```
+#
+# | Exit | Meaning |
+# |------|---------|
+# | `0` | Refuse: <command> runs a heavy command in a repo listed in `queue.heavy_repos`, outside the queue. The reason, naming the command to run instead, is printed on stdout |
+# | `1` | Let it run: not heavy, repo not listed, already inside a queued job, or no otto-queue to run it through |
+# | `64` | Usage error |
+#
+# Heavy commands: `golangci-lint`, `go test`, `tasks lint`, `tasks test`. The
+# command word is the first of the statement, so one that starts with
+# `otto-queue` is already admitted and never matches.
+#
+# The single owner of this decision: `ai/claude/bin/claude-bash-guard` and
+# `ai/pi/extensions/queue-guard` both ask it, so the harnesses cannot disagree
+# about what is heavy, which repos are listed, or what the refusal says. Each
+# appends the rules citation itself (`See general.md § Waiting on Background
+# Work.`): claude-bash-guard's tests require it literally on the block call, and
+# tests/queue_guard.bats holds the two spellings equal.
+#
+# The cheap tests run first (inside a queued job, then the command shape) so the
+# config read — one python interpreter — is only paid by a heavy command.
+#
+# A repo is named by the directory holding its `.git`: the container of a
+# bare-repo layout, the toplevel of a plain clone.
+#
+# ceiling: statements are split on `;`, `&&`, `||`, `|` and newlines, and the
+# command word is read from the start of each, so `timeout 60 golangci-lint`
+# and `bash -c '…'` slip through. Upgrade trigger: a wrapped heavy command is
+# seen running outside the queue in a listed repo.
+
+set -e
+
+_SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
+WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/../.." && pwd)"
+
+EXIT_NO=1
+EXIT_USAGE=64
+
+usage() {
+  echo "Usage: $(basename "$0") COMMAND CWD"
+  echo
+  echo "Exit 0 (reason on stdout) when COMMAND is heavy, CWD is in a repo listed in"
+  echo "queue.heavy_repos and the command is not already queued. Exit 1 otherwise."
+}
+
+if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
+  usage
+  exit 0
+fi
+if [[ $# -ne 2 || -z "$1" || -z "$2" ]]; then
+  usage >&2
+  exit "$EXIT_USAGE"
+fi
+command_text="$1"
+cwd="$2"
+
+# heavy_statement COMMAND — prints the first heavy statement, trimmed.
+heavy_statement() {
+  local statement words first second
+  while IFS= read -r statement; do
+    statement="${statement#"${statement%%[![:space:]]*}"}"
+    # Leading VAR=value assignments belong to the command, not the word.
+    while [[ "$statement" =~ ^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+(.*)$ ]]; do
+      statement="${BASH_REMATCH[1]}"
+    done
+    read -r -a words <<< "$statement" || true
+    first="${words[0]:-}"
+    second="${words[1]:-}"
+    first="${first##*/}"
+    case "$first:$second" in
+      golangci-lint:*|go:test|tasks:lint|tasks:test)
+        printf '%s' "$statement"
+        return 0
+        ;;
+      *) ;;
+    esac
+  done < <(printf '%s\n' "$1" | tr ';&|' '\n')
+  return 1
+}
+
+if [[ -n "${OTTO_QUEUE_ENTRY:-}" ]]; then
+  exit "$EXIT_NO"
+fi
+statement="$(heavy_statement "$command_text")" || exit "$EXIT_NO"
+
+queue="$WORKBENCH_DIR/ai/bin/otto-queue"
+if [[ ! -x "$queue" ]] && ! command -v otto-queue > /dev/null 2>&1; then
+  exit "$EXIT_NO"
+fi
+
+common_dir="$(git -C "$cwd" rev-parse --path-format=absolute --git-common-dir 2> /dev/null)" || exit "$EXIT_NO"
+repo="$(basename "$(dirname "$common_dir")")"
+
+# shellcheck source=/dev/null
+. "$WORKBENCH_DIR/lib/ui.sh"
+listed="$(
+  cd /
+  wb_config_get queue.heavy_repos
+)" || exit "$EXIT_NO"
+listed="${listed#\[}"
+listed="${listed%\]}"
+
+found=no
+IFS=',' read -r -a names <<< "$listed" || true
+for name in "${names[@]}"; do
+  name="${name//[[:space:]\"\']/}"
+  if [[ -n "$name" && "$name" == "$repo" ]]; then
+    found=yes
+  fi
+done
+if [[ "$found" == no ]]; then
+  exit "$EXIT_NO"
+fi
+
+echo "This repo (${repo}) is listed in queue.heavy_repos, so a heavy command is admitted through otto-queue: run \`otto-queue run --ticket --class heavy -- ${statement}\` instead."
+exit 0

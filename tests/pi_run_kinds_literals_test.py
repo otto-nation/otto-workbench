@@ -35,12 +35,13 @@ def _ts_files():
     return sorted(p for d in DIRS for p in d.glob("*.ts"))
 
 
+def _offences(path: Path):
+    rel = path.relative_to(REPO_ROOT)
+    for lit in _literals(_strip_comments(path.read_text())):
+        if KIND_RE.search(lit) or any(name in lit for name in FORBIDDEN_ENV):
+            yield f"{rel}: {lit!r}"
+
+
 def test_run_session_and_session_lock_literals_do_not_spell_kinds_or_env():
-    offenders = []
-    for path in _ts_files():
-        body = _strip_comments(path.read_text())
-        rel = path.relative_to(REPO_ROOT)
-        for lit in _literals(body):
-            if KIND_RE.search(lit) or any(name in lit for name in FORBIDDEN_ENV):
-                offenders.append(f"{rel}: {lit!r}")
+    offenders = [o for path in _ts_files() for o in _offences(path)]
     assert offenders == []

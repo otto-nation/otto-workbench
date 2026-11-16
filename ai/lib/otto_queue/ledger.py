@@ -206,23 +206,41 @@ def _translate(root: Path, exc: sqlite3.Error) -> LedgerError:
     return LedgerError(f"cannot use {path}: {exc}")
 
 
+def _call(conn: sqlite3.Connection, fn: Callable[[sqlite3.Connection], object], *,
+          write: bool) -> object:
+    if not write:
+        return fn(conn)
+    with _transaction(conn):
+        return fn(conn)
+
+
+def _attempt(root: Path, fn: Callable[[sqlite3.Connection], object], *,
+             write: bool) -> object:
+    conn = _connect(root, timeout=0.0)
+    try:
+        return _call(conn, fn, write=write)
+    finally:
+        conn.close()
+
+
+def _continue_transient(root: Path, exc: sqlite3.Error, deadline: float,
+                        delay: float) -> float:
+    if not _is_busy(exc) or time.monotonic() >= deadline:
+        raise _translate(root, exc) from exc
+    remaining = deadline - time.monotonic()
+    _sleep(min(_backoff(delay), remaining))
+    return min(delay * 2, _TRANSIENT_CAP_S)
+
+
 def _run(root: Path, fn: Callable[[sqlite3.Connection], object], *, write: bool = False):
     """Run *fn* on a fresh connection; retry a transient failure as a whole."""
     deadline = time.monotonic() + TRANSIENT_RETRY_S
     delay = _TRANSIENT_START_S
     while True:
         try:
-            with contextlib.closing(_connect(root, timeout=0.0)) as conn:
-                if write:
-                    with _transaction(conn):
-                        return fn(conn)
-                return fn(conn)
+            return _attempt(root, fn, write=write)
         except sqlite3.Error as exc:
-            if not _is_busy(exc) or time.monotonic() >= deadline:
-                raise _translate(root, exc) from exc
-            remaining = deadline - time.monotonic()
-            _sleep(min(_backoff(delay), remaining))
-            delay = min(delay * 2, _TRANSIENT_CAP_S)
+            delay = _continue_transient(root, exc, deadline, delay)
 
 
 @contextlib.contextmanager

@@ -185,21 +185,20 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
     while entry is not None and entry.state.live:
         try:
             ran = _run_unstarted(ledger, entry, request, policy, poll_s, notify)
-            if ran is not None:
-                return ran
-            if time.monotonic() >= deadline:
-                notify(f"otto-queue: entry {entry_id} did not finish in {request.wait_s:g}s")
-                return TicketResult(os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT, entry_id)
-            _poll_sleep(poll_s)
+        except otto_queue.ledger.LedgerBusy:
+            ran = None
+            busy_said = _note_busy(notify, busy_said)
+        if ran is not None:
+            return ran
+        if time.monotonic() >= deadline:
+            notify(f"otto-queue: entry {entry_id} did not finish in {request.wait_s:g}s")
+            return TicketResult(os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT, entry_id)
+        _poll_sleep(poll_s)
+        try:
             ledger.reap_orphans()
             entry = ledger.get(entry_id)
-            continue
         except otto_queue.ledger.LedgerBusy:
             busy_said = _note_busy(notify, busy_said)
-            if time.monotonic() >= deadline:
-                notify(f"otto-queue: entry {entry_id} did not finish in {request.wait_s:g}s")
-                return TicketResult(os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT, entry_id)
-            _poll_sleep(poll_s)
     if entry is None or entry.exit_status is None:
         notify(f"otto-queue: entry {entry_id} ended without a result; queuing again")
         return None
@@ -321,6 +320,18 @@ def _admit_and_run(ledger: otto_queue.ledger.Ledger, entry_id: int,
         _release_slot(wait.slot if wait is not None else None)
 
 
+def _slot_once(ledger: otto_queue.ledger.Ledger, entry_id: int,
+               entry_class: EntryClass, policy: otto_queue.slots.Policy,
+               said: str) -> tuple[_Wait | None, str]:
+    entry = ledger.get(entry_id)
+    if entry is None or entry.state is not EntryState.QUEUED:
+        return _Wait(_WaitEnd.CANCELLED), said
+    admission = _try_once(ledger, entry_id, entry_class, policy)
+    if admission.slot is not None:
+        return _Wait(_WaitEnd.ADMITTED, admission.slot), said
+    return None, admission.reason
+
+
 def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
                  request: TicketRequest, policy: otto_queue.slots.Policy,
                  poll_s: float, notify: Callable[[str], None]) -> _Wait:
@@ -329,17 +340,15 @@ def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
     busy_said = False
     while True:
         try:
-            entry = ledger.get(entry_id)
-            if entry is None or entry.state is not EntryState.QUEUED:
-                return _Wait(_WaitEnd.CANCELLED)
-            admission = _try_once(ledger, entry_id, request.entry_class, policy)
-            if admission.slot is not None:
-                return _Wait(_WaitEnd.ADMITTED, admission.slot)
-            if admission.reason != said:
-                notify(f"otto-queue: entry {entry_id} is waiting: {admission.reason}")
-                said = admission.reason
+            wait, reason = _slot_once(ledger, entry_id, request.entry_class, policy, said)
         except otto_queue.ledger.LedgerBusy:
+            wait, reason = None, said
             busy_said = _note_busy(notify, busy_said)
+        if wait is not None:
+            return wait
+        if reason != said:
+            notify(f"otto-queue: entry {entry_id} is waiting: {reason}")
+            said = reason
         if time.monotonic() >= deadline:
             return _Wait(_WaitEnd.TIMED_OUT)
         _poll_sleep(poll_s)

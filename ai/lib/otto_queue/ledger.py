@@ -2,8 +2,9 @@
 
 `state_dir()/queue/queue.db`, stdlib `sqlite3`, in WAL mode, so a reader
 (`otto-queue status`) never blocks a writer. A connection is opened per
-operation and closed after it, so no process holds the file between calls,
-and a read-modify-write runs under `BEGIN IMMEDIATE`: two processes deciding
+operation and closed after it, so no process holds the file between calls —
+an idle holder blocks WAL checkpoints, and each retry needs a fresh connection.
+A read-modify-write runs under `BEGIN IMMEDIATE`: two processes deciding
 about the same key are serialized by SQLite's own write lock. SQLITE_BUSY,
 SQLITE_LOCKED and SQLITE_PROTOCOL (including a `locking protocol` message
 with no code) are `LedgerBusy`; every operation retries them with jittered

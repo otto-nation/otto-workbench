@@ -29,17 +29,24 @@ export function factorFor(perCore) {
 /**
  * `read()` returns `{ load, cores }` (or a promise of it, or null when the machine cannot say).
  * `pass()` is synchronous so a timer callback stays so: it answers from the last reading and starts
- * the next one, which means the gate lags the machine by one tick. A failed read lets ticks run.
+ * the next one, which means the gate lags the machine by one tick. A failed read lets ticks run. A
+ * read still in flight is not started again, so a slow probe never piles up behind the timer. Each
+ * timer takes its own gate: one skip counter shared by two periods would skip the wrong ticks.
  */
 export function createLoadGate({ read }) {
   let factor = 1;
   let skipped = 0;
+  let reading = false;
   async function sample() {
+    if (reading) return;
+    reading = true;
     try {
       const r = await read();
       factor = r && r.cores > 0 ? factorFor(r.load / r.cores) : 1;
     } catch {
       factor = 1;
+    } finally {
+      reading = false;
     }
   }
   return {

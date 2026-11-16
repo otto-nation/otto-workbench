@@ -240,9 +240,9 @@ const withPr = (rows, slugOf = () => "acme/box", extra = {}, answer = () => null
         const asked = []; const ticks = [];
         const board = { refresh: (o = {}) => { asked.push(o.listingOnly ? 'listing' : 'full'); return Promise.resolve(); }, pulledAt: () => null };
         let busy = true;
-        const gate = { pass: () => !busy };
+        const gates = [{ pass: () => !busy }, { pass: () => !busy }];
         const p = createPoller({ board, hub: { count: () => 1 }, fullMs: 180000, listingMs: 15000, now: () => 0,
-          every: (fn) => { ticks.push(fn); return ticks.length; }, stopEvery: () => {}, gate });
+          every: (fn) => { ticks.push(fn); return ticks.length; }, stopEvery: () => {}, gates });
         p.start();
         for (const fn of ticks) fn();
         const skipped = asked.length;
@@ -261,7 +261,7 @@ const withPr = (rows, slugOf = () => "acme/box", extra = {}, answer = () => null
         let t = 1000000;
         const p = createPoller({ board, hub: { count: () => pages }, fullMs: 180000, listingMs: 15000, now: () => t,
           every: (fn, ms) => { ticks.push([fn, ms]); return ticks.length; }, stopEvery: () => {},
-          gate: { pass: () => true } });
+          gates: [{ pass: () => true }, { pass: () => true }] });
         p.start(); p.wake();
         at = t; t += 1000; p.wake();
         t += 20000; p.wake();

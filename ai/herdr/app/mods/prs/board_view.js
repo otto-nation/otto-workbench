@@ -95,10 +95,12 @@ export default class PrsBoard extends View {
     this.watchRoot = this.key = null;
     this.pollListing = false;
     this.manual = false;
-    const gate = createLoadGate({ read: execLoadReader(exec) });
-    cx.timer.every(FULL_PULL_MS, (cx) => { if (gate.pass()) this.refresh(cx); });
+    const read = execLoadReader(exec);
+    const fullGate = createLoadGate({ read });
+    const listingGate = createLoadGate({ read });
+    cx.timer.every(FULL_PULL_MS, (cx) => { if (fullGate.pass()) this.refresh(cx); });
     cx.timer.every(15000, (cx) => {
-      if (!gate.pass()) return;
+      if (!listingGate.pass()) return;
       if (this.activeTargets().some((c) => c.on != null) || this.pollListing) this.refresh(cx, { listingOnly: true });
     });
     this.refresh(cx);

@@ -112,12 +112,13 @@ export function createBoard({ exec, name, version, now = Date.now, onChange = ()
  * fullMs-old board pulls fully, a listingMs-old one pulls the listing; a page entering Mine
  * (`owedWanted`) gets a listing pull now, which reads owed when due — the mod's comments-only refresh.
  */
-export function createPoller({ board, hub, fullMs, listingMs, now = Date.now, every = setInterval, stopEvery = clearInterval, gate = createLoadGate({ read: osLoad }) }) {
+export function createPoller({ board, hub, fullMs, listingMs, now = Date.now, every = setInterval, stopEvery = clearInterval, gates = [createLoadGate({ read: osLoad }), createLoadGate({ read: osLoad })] }) {
+  const [fullGate, listingGate] = gates;
   const timers = [];
   return {
     start() {
-      timers.push(every(() => { if (hub.count() > 0 && gate.pass()) board.refresh(); }, fullMs));
-      timers.push(every(() => { if (hub.count() > 0 && gate.pass()) board.refresh({ listingOnly: true }); }, listingMs));
+      timers.push(every(() => { if (hub.count() > 0 && fullGate.pass()) board.refresh(); }, fullMs));
+      timers.push(every(() => { if (hub.count() > 0 && listingGate.pass()) board.refresh({ listingOnly: true }); }, listingMs));
     },
     stop() { for (const t of timers.splice(0)) stopEvery(t); },
     wake(owedWanted = false) {

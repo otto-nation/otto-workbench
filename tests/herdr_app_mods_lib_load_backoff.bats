@@ -78,3 +78,24 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = '[{"load":6,"cores":4},{"load":6,"cores":4},["nproc","cat","cat"],null]' ]
 }
+
+@test "a read still in flight is not started again" {
+  _js 'let started = 0; let release;
+       const gate = g.createLoadGate({ read: () => { started += 1; return new Promise((r) => { release = r; }); } });
+       gate.pass(); gate.pass(); gate.pass(); await tick();
+       const during = started;
+       release({ load: 1, cores: 4 }); await tick();
+       gate.pass(); await tick();
+       out([during, started])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[1,2]' ]
+}
+
+@test "two gates keep separate skip counts" {
+  _js 'const mk = () => g.createLoadGate({ read: () => ({ load: 7, cores: 4 }) });
+       const a = mk(); const b = mk();
+       a.pass(); b.pass(); await tick();
+       const r = [a.pass(), b.pass(), b.pass(), a.pass()]; out(r)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[false,false,true,true]' ]
+}

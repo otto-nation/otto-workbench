@@ -197,3 +197,8 @@ teardown() {
   run grep -nF 'function landedRow' "$detail"
   [ "$status" -eq 1 ]
 }
+
+@test "PR search input has an explicit width: an Input in a flex_none row has none of its own" {
+  grep -q 'Input.new(this.prSearch).w(LAYOUT.searchW)' "$MODS/prs/filter_bar.js"
+  grep -q 'searchW:' "$MODS/_lib/tokens.js"
+}

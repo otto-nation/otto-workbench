@@ -25,16 +25,28 @@ function cardShell(id) {
   return v_flex().id(id).p(SP.md).rounded(RADIUS.card).border_1().border_color(t.border);
 }
 
-// Open session (Workflows.runSession), with its state beside it as text. A machine whose pr
-// predates run sessions gets the reason in the button's place.
+// Outline Open session, or the outdated reason in its place.
+function sessionButton(id, s) {
+  if (s.gate === "outdated") return caption(OUTDATED_TEXT);
+  return button(id, "Open session", () => s.onOpen());
+}
+
+// Opening / waiting / error, as children that sit after the button group.
+function sessionState(s) {
+  if (s.gate === "outdated") return [];
+  const kids = [];
+  if (s.opening) kids.push(statusText("running", "Opening"));
+  if (Boolean(s.waiting)) kids.push(caption(s.waiting));
+  if (Boolean(s.error) && !s.opening) kids.push(errorLine(s.error));
+  return kids;
+}
+
+// Open session with its state beside it as text. A machine whose pr predates run
+// sessions gets the reason in the button's place.
 export function sessionControl(id, s) {
-  const row = h_flex().gap(SP.sm).flex_wrap().items_center();
-  if (s.gate === "outdated") return row.child(caption(OUTDATED_TEXT));
-  return row
-    .child(button(id, "Open session", () => s.onOpen()))
-    .when(s.opening, (e) => e.child(statusText("running", "Opening")))
-    .when(Boolean(s.waiting), (e) => e.child(caption(s.waiting)))
-    .when(Boolean(s.error) && !s.opening, (e) => e.child(errorLine(s.error)));
+  return h_flex().gap(SP.sm).flex_wrap().items_center()
+    .child(sessionButton(id, s))
+    .children(sessionState(s));
 }
 
 // Recent runs. A row expands the run it names (and pins it, so cards and Batch tabs read it);
@@ -70,10 +82,11 @@ export function renderRunPanel(state, expanded) {
       const session = state.session ?? null;
       const actions = trail == null && session == null ? null
         : h_flex().pl(SP.xl).py(SP.xxs).gap(SP.sm).flex_wrap().items_center()
+          .when(session != null, (e) => e.child(sessionButton("open-session-run", session)))
           .when(trail != null, (e) => e
-            .child(button("open-trail", "Open trail", () => state.onOpenTrail?.(r)))
-            .when(Boolean(state.trailError), (x) => x.child(errorLine(state.trailError))))
-          .when(session != null, (e) => e.child(sessionControl("open-session-run", session)));
+            .child(button("open-trail", "Open trail", () => state.onOpenTrail?.(r))))
+          .when(session != null, (e) => e.children(sessionState(session)))
+          .when(Boolean(state.trailError), (e) => e.child(errorLine(state.trailError)));
       return actions && expanded ? [row, actions, expanded(r)]
         : actions ? [row, actions]
         : expanded ? [row, expanded(r)] : [row];

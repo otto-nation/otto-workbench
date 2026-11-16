@@ -4,6 +4,7 @@ import fcntl
 import json
 import os
 import threading
+import time
 
 import board.flight
 import core.workbench_paths
@@ -59,6 +60,58 @@ def test_waiter_serves_the_leaders_answer_without_building():
     leader.join(_JOIN)
     assert waiter_result == [leader_doc]
     assert waiter_calls == []
+
+
+def _age_memo(req, seconds):
+    path = board.flight.memo_path(req)
+    data = json.loads(path.read_text())
+    data["at"] = time.time() - seconds
+    path.write_text(json.dumps(data))
+
+
+def _serve_counting(req):
+    calls: list[int] = []
+
+    def build():
+        calls.append(1)
+        return {"v": len(calls)}
+
+    return board.flight.serve(req, build), calls
+
+
+def test_a_memo_inside_the_freshness_window_is_served_without_building():
+    req = _req()
+    board.flight.serve(req, lambda: {"v": "kept"})
+    _age_memo(req, 3)
+    doc, calls = _serve_counting(req)
+    assert doc == {"v": "kept"}
+    assert calls == []
+
+
+def test_a_memo_past_the_freshness_window_is_rebuilt():
+    req = _req()
+    board.flight.serve(req, lambda: {"v": "kept"})
+    _age_memo(req, 11)
+    doc, calls = _serve_counting(req)
+    assert doc == {"v": 1}
+    assert calls == [1]
+
+
+def test_status_keeps_its_memo_longer_than_listing():
+    listing = _req(phase=Phase.LISTING)
+    status = _req(phase=Phase.STATUS)
+    for req in (listing, status):
+        board.flight.serve(req, lambda: {"v": "kept"})
+        _age_memo(req, 30)
+    assert _serve_counting(listing)[1] == [1]
+    assert _serve_counting(status)[1] == []
+
+
+def test_an_offline_request_takes_no_freshness_window():
+    req = _req(offline=True)
+    board.flight.serve(req, lambda: {"v": "kept"})
+    _age_memo(req, 1)
+    assert _serve_counting(req)[1] == [1]
 
 
 def test_a_memo_older_than_the_wait_is_rebuilt():

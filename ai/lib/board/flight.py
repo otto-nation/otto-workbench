@@ -3,7 +3,9 @@
 Herdr windows and copies poll the same board; without a lock each process
 recomputes listing, status, or owed on its own. Waiters take one flock per
 `(checkouts, phase, offline)` and serve the leader's memo when the request
-matches, so a second poll is a wait rather than a second GitHub round-trip.
+matches, so a second poll is a wait rather than a second GitHub round-trip. A
+memo younger than the phase's freshness window is served too, so a poll landing
+just after another window's does not recompute either.
 """
 
 # doc-group: board
@@ -24,6 +26,24 @@ import core.workbench_paths
 from board.model import Phase
 
 _WAIT_S = core.timeouts.TRANSFER
+
+# Seconds a stored answer keeps serving later polls, per phase; the herdr mod and
+# the web server poll listing every 15 s and the rest every 180 s, so each window
+# is well under its caller's interval. Offline documents read local state that
+# changes without GitHub, so they take no window.
+# ceiling: fixed per-phase constants, upgrade to a board.* config key if an
+# operator needs a different freshness on a shared host.
+_FRESH_S: dict[str, float] = {
+    Phase.LISTING.value: 10.0,
+    Phase.STATUS.value: 60.0,
+    Phase.OWED.value: 30.0,
+}
+
+
+def _window_s(req: Request) -> float:
+    if req.offline:
+        return 0.0
+    return _FRESH_S.get(_phase_value(req.phase), 0.0)
 
 
 @dataclass(frozen=True)
@@ -82,7 +102,11 @@ def _leader_answer(memo: dict | None, req: Request, started: float) -> dict | No
     if memo is None:
         return None
     at = memo.get("at")
-    if not isinstance(at, (int, float)) or at < started:
+    if not isinstance(at, (int, float)):
+        return None
+    # Stored after this poll began waiting (the leader's own answer), or recent
+    # enough that recomputing would only repeat it.
+    if at < started and started - at >= _window_s(req):
         return None
     if memo.get("request") != _request_fields(req):
         return None

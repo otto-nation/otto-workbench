@@ -5318,7 +5318,9 @@ Single-flight for concurrent `pr board` of the same checkouts.
 Herdr windows and copies poll the same board; without a lock each process
 recomputes listing, status, or owed on its own. Waiters take one flock per
 `(checkouts, phase, offline)` and serve the leader's memo when the request
-matches, so a second poll is a wait rather than a second GitHub round-trip.
+matches, so a second poll is a wait rather than a second GitHub round-trip. A
+memo younger than the phase's freshness window is served too, so a poll landing
+just after another window's does not recompute either.
 
 ### board/github.py
 

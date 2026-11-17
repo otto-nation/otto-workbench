@@ -5013,6 +5013,10 @@ before _record) has the same effect — the row is re-queued and the job may
 run again. Upgrade trigger: if a job is seen running twice, have the command
 die with its runner (PR_SET_PDEATHSIG on Linux).
 
+A waiter with no worker (`otto_queue.ticket.adopt_job`) runs a job through
+`run_leased(foreground=True)`, holding a slot it was admitted to itself, and the
+ceiling above applies to it too.
+
 ### otto_queue/keys.py
 
 Idempotency keys: the identity that makes two requests for paid work the same request.
@@ -5108,7 +5112,7 @@ string stored beside `not_before`; it is never used to match entries.
 (`owner/repo#N`, the `pr` subcommand, the herdr pane); they are never used to match.
 `resolve(reuse=False)` joins a live entry but never answers from a `done` one.
 `claim_as_ticket` converts a still-queued job into a ticket for the process
-that runs it.
+that holds its lease while `submit --queue-only` withdraws it.
 
 Compaction (`compact`, run by the worker) prunes terminal rows past a
 retention, keeping the newest `done` row of each key, and truncates the WAL
@@ -5175,8 +5179,9 @@ asked for it.
    live one joined.
 2. `otto_queue.supervisor.wake` starts the worker and confirms it.
 3. When no worker comes up (no supervisor installed, no user bus), the job is
-   claimed back as a ticket (`Ledger.claim_as_ticket`) and run here by
-   `otto_queue.ticket.run_claimed`, and the caller is told so. A job a worker
+   run here by `otto_queue.ticket.adopt_job`, which keeps it a job until it
+   starts, and the caller is told so. No slot within `DEFAULT_WAIT_S` returns
+   75 and leaves the job queued. A job a worker
    took in the meantime is left to it. Joining a live ticket waits for its
    status, and re-runs the work if that ticket ends without one. The queue's
    absence degrades to today's behaviour, never to work waiting for a worker
@@ -5259,12 +5264,6 @@ the machine's budget, and runs once per idempotency key.
    given). Reaching `wait_s` with no slot records `tempfail` and returns 75
    (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
 
-`LABEL_ENV`, `WAIT_ENV`, `SUBJECT_ENV` and `ACTION_ENV` are the names
-`cli.queue_gate` and `pr batch` use to pass a display label, wait bound, and
-structured subject/action into a ticket they construct. `run_ticket` does not
-read them: the `otto-queue run` flags stay the only input to the CLI.
-`HC_TERMINAL_ID` is different: `TicketRequest.entry` copies it onto the row as
-`terminal` when it is set, so a ticket started from a herdr pane records which.
 3. **Run.** The row moves to `running`, and the command runs through
    `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
    terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue
@@ -5273,6 +5272,17 @@ read them: the `otto-queue run` flags stay the only input to the CLI.
    cannot be written, the command's exit status is returned anyway, never
    replaced by an infrastructure error. A crash while recording is logged and
    the original exception is re-raised.
+
+`LABEL_ENV`, `WAIT_ENV`, `SUBJECT_ENV` and `ACTION_ENV` are the names
+`cli.queue_gate` and `pr batch` use to pass a display label, wait bound, and
+structured subject/action into a ticket they construct. `run_ticket` does not
+read them: the `otto-queue run` flags stay the only input to the CLI.
+`HC_TERMINAL_ID` is different: `TicketRequest.entry` copies it onto the row as
+`terminal` when it is set, so a ticket started from a herdr pane records which.
+A queued job joined with no worker alive is run here by `adopt_job`, which keeps
+it a job: it waits for a slot holding no lease, so a ticket killed before the job
+starts leaves it queued; once admitted it takes the job's own lease and runs the
+command in this process group, output to the job's log.
 
 The command sees `OTTO_QUEUE_ENTRY`, its entry id. A ticket started under that
 variable runs its command directly: a nested heavy ticket would otherwise wait

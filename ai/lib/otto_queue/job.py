@@ -25,6 +25,10 @@ window (after mark_running before forwarding_signals, or after run_child
 before _record) has the same effect — the row is re-queued and the job may
 run again. Upgrade trigger: if a job is seen running twice, have the command
 die with its runner (PR_SET_PDEATHSIG on Linux).
+
+A waiter with no worker (`otto_queue.ticket.adopt_job`) runs a job through
+`run_leased(foreground=True)`, holding a slot it was admitted to itself, and the
+ceiling above applies to it too.
 """
 
 # doc-group: queue
@@ -45,8 +49,7 @@ import core.signal_relay
 import otto_queue.lease
 import otto_queue.ledger
 import otto_queue.paths
-import otto_queue.ticket
-from otto_queue.model import MAX_JOB_ATTEMPTS, Entry, EntryState, retry_delay
+from otto_queue.model import ENTRY_ENV, MAX_JOB_ATTEMPTS, Entry, EntryState, retry_delay
 
 
 class JobOutcome(StrEnum):
@@ -75,7 +78,7 @@ def run_job(entry_id: int, slot_fd: int | None, *, root: Path | None = None,
                 f"otto-queue: job {entry_id} was handed no slot descriptor (fd {slot_fd}): "
                 "admission is not holding its slot")
     try:
-        return _run_leased(otto_queue.ledger.Ledger.open(root), entry_id, clock)
+        return run_leased(otto_queue.ledger.Ledger.open(root), entry_id, clock)
     finally:
         _close(slot_fd)
 
@@ -87,26 +90,31 @@ def _close(fd: int | None) -> None:
         os.close(fd)
 
 
-def _run_leased(ledger: otto_queue.ledger.Ledger, entry_id: int,
-                clock: Callable[[], float]) -> JobResult:
+def run_leased(ledger: otto_queue.ledger.Ledger, entry_id: int,
+               clock: Callable[[], float], *, foreground: bool = False) -> JobResult:
+    """Take *entry_id*'s lease, move it to running and run it; NOT_CLAIMED when another runner has it.
+
+    *foreground* keeps the command in this process's group (a waiter running a
+    job), so the terminal's Ctrl-C and hangup reach it as they would an unqueued run.
+    """
     try:
         lease = otto_queue.lease.take(ledger.root, entry_id)
     except otto_queue.lease.LeaseHeld:
         return JobResult(JobOutcome.NOT_CLAIMED)
     try:
-        return _run_claimed(ledger, entry_id, clock)
+        return _run_claimed(ledger, entry_id, clock, foreground)
     finally:
         lease.release()
 
 
 def _run_claimed(ledger: otto_queue.ledger.Ledger, entry_id: int,
-                 clock: Callable[[], float]) -> JobResult:
+                 clock: Callable[[], float], foreground: bool) -> JobResult:
     log = otto_queue.paths.log_path(ledger.root, entry_id)
     if not ledger.mark_running(entry_id, os.getpid(), log_path=str(log)):
         return JobResult(JobOutcome.NOT_CLAIMED)
     entry = ledger.get(entry_id)
     try:
-        code = _execute(entry, log)
+        code = _execute(entry, log, foreground=foreground)
     except BaseException:
         # Terminal before the lease is released, or the reaper re-queues it.
         with contextlib.suppress(BaseException):
@@ -120,15 +128,15 @@ def _run_claimed(ledger: otto_queue.ledger.Ledger, entry_id: int,
         raise
 
 
-def _execute(entry: Entry, log: Path) -> int:
+def _execute(entry: Entry, log: Path, *, foreground: bool = False) -> int:
     log.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
-    env[otto_queue.ticket.ENTRY_ENV] = str(entry.id)
+    env[ENTRY_ENV] = str(entry.id)
     with open(log, "ab") as out:
         out.write(f"otto-queue: entry {entry.id}, attempt {entry.attempts}: {shlex.join(entry.argv)}\n".encode())
         out.flush()
         code = core.signal_relay.run_child(list(entry.argv), env=env, cwd=entry.cwd,
-                                           origin="otto-queue", output=out)
+                                           origin="otto-queue", output=out, foreground=foreground)
         out.write(f"otto-queue: exit {code}\n".encode())
     return code
 

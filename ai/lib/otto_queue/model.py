@@ -47,6 +47,8 @@ LABEL_ENV = "OTTO_QUEUE_LABEL"
 WAIT_ENV = "OTTO_QUEUE_WAIT_S"
 SUBJECT_ENV = "OTTO_QUEUE_SUBJECT"
 ACTION_ENV = "OTTO_QUEUE_ACTION"
+# The entry id a running command sees; `ticket` re-exports it.
+ENTRY_ENV = "OTTO_QUEUE_ENTRY"
 
 
 class EntryState(StrEnum):

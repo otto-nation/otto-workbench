@@ -30,12 +30,6 @@ the machine's budget, and runs once per idempotency key.
    given). Reaching `wait_s` with no slot records `tempfail` and returns 75
    (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
 
-`LABEL_ENV`, `WAIT_ENV`, `SUBJECT_ENV` and `ACTION_ENV` are the names
-`cli.queue_gate` and `pr batch` use to pass a display label, wait bound, and
-structured subject/action into a ticket they construct. `run_ticket` does not
-read them: the `otto-queue run` flags stay the only input to the CLI.
-`HC_TERMINAL_ID` is different: `TicketRequest.entry` copies it onto the row as
-`terminal` when it is set, so a ticket started from a herdr pane records which.
 3. **Run.** The row moves to `running`, and the command runs through
    `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
    terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue
@@ -44,6 +38,17 @@ read them: the `otto-queue run` flags stay the only input to the CLI.
    cannot be written, the command's exit status is returned anyway, never
    replaced by an infrastructure error. A crash while recording is logged and
    the original exception is re-raised.
+
+`LABEL_ENV`, `WAIT_ENV`, `SUBJECT_ENV` and `ACTION_ENV` are the names
+`cli.queue_gate` and `pr batch` use to pass a display label, wait bound, and
+structured subject/action into a ticket they construct. `run_ticket` does not
+read them: the `otto-queue run` flags stay the only input to the CLI.
+`HC_TERMINAL_ID` is different: `TicketRequest.entry` copies it onto the row as
+`terminal` when it is set, so a ticket started from a herdr pane records which.
+A queued job joined with no worker alive is run here by `adopt_job`, which keeps
+it a job: it waits for a slot holding no lease, so a ticket killed before the job
+starts leaves it queued; once admitted it takes the job's own lease and runs the
+command in this process group, output to the job's log.
 
 The command sees `OTTO_QUEUE_ENTRY`, its entry id. A ticket started under that
 variable runs its command directly: a nested heavy ticket would otherwise wait
@@ -69,19 +74,21 @@ import random
 import signal
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
 import core.log
 import core.proc
 import core.signal_relay
+import otto_queue.job
 import otto_queue.lease
 import otto_queue.ledger
+import otto_queue.paths
 import otto_queue.slots
 import otto_queue.wait_report
 from otto_queue.model import (  # noqa: F401  env names are re-exported for callers
-    ACTION_ENV, LABEL_ENV, SUBJECT_ENV, WAIT_ENV, Entry, EntryClass, EntryKind,
+    ACTION_ENV, ENTRY_ENV, LABEL_ENV, SUBJECT_ENV, WAIT_ENV, Entry, EntryClass, EntryKind,
     EntryState, NewEntry)
 
 # How long a ticket waits for a slot before ending as `tempfail`. A review takes
@@ -99,7 +106,6 @@ REAP_EVERY_S = 5.0
 # Printed once when a wait poll hits LedgerBusy after the ledger's own retries.
 _BUSY_NOTICE = "otto-queue: ledger busy; still waiting"
 
-ENTRY_ENV = "OTTO_QUEUE_ENTRY"
 TERMINAL_ENV = "HC_TERMINAL_ID"
 
 
@@ -133,12 +139,6 @@ class TicketRequest:
                         idem_key=self.idem_key, label=self.label,
                         subject=self.subject, action=self.action,
                         terminal=os.environ.get(TERMINAL_ENV) or None)
-
-
-def claimed_request(entry: Entry, request: TicketRequest) -> TicketRequest:
-    """*request* running the claimed *entry*'s own command, so the ledger and the run agree."""
-    return replace(request, argv=entry.argv, cwd=entry.cwd, entry_class=entry.entry_class,
-                   label=entry.label, subject=entry.subject, action=entry.action)
 
 
 @dataclass(frozen=True)
@@ -207,7 +207,7 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
     busy_said = False
     while entry is not None and entry.state.live:
         try:
-            ran = _run_unstarted(ledger, entry, request, policy, poll_s, notify)
+            ran = _run_unstarted(ledger, entry, policy, poll_s, notify, deadline)
         except otto_queue.ledger.LedgerBusy:
             ran = None
             busy_said = _note_busy(notify, busy_said)
@@ -234,20 +234,73 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
     return TicketResult(entry.exit_status, outcome, entry_id)
 
 
-def _run_unstarted(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest,
+def _run_unstarted(ledger: otto_queue.ledger.Ledger, entry: Entry,
                    policy: otto_queue.slots.Policy, poll_s: float,
-                   notify: Callable[[str], None]) -> TicketResult | None:
-    """Run *entry* here when it is a queued job and no worker is alive to start it; else None."""
+                   notify: Callable[[str], None], deadline: float) -> TicketResult | None:
+    """Run *entry* here when it is a queued job and no worker is alive to start it; else None.
+
+    The job stays a job (`adopt_job`), so a ticket killed before it starts leaves
+    it queued. Anything but a finished run is None: the caller re-reads the row.
+    """
     if entry.kind is not EntryKind.JOB or entry.state is not EntryState.QUEUED:
+        return None
+    if entry.not_before is not None and entry.not_before > time.time():
         return None
     if otto_queue.lease.worker_alive(ledger.root):
         return None
-    claimed = ledger.claim_as_ticket(entry.id, os.getpid())
-    if claimed is None:
-        return None
-    notify(f"otto-queue: no worker is running; running entry {entry.id} here")
-    return run_claimed(ledger, claimed, claimed_request(claimed.entry, request), policy,
-                       poll_s=poll_s, notify=notify)
+    log = otto_queue.paths.log_path(ledger.root, entry.id)
+    notify(f"otto-queue: no worker is running; running entry {entry.id} here (log: {log})")
+    adoption = adopt_job(ledger, entry, policy, wait_s=max(0.0, deadline - time.monotonic()),
+                         poll_s=poll_s, notify=notify)
+    if adoption.outcome is AdoptOutcome.RAN:
+        return TicketResult(adoption.exit_status or 0, TicketOutcome.RAN, entry.id)
+    return None
+
+
+class AdoptOutcome(StrEnum):
+    RAN = "ran"
+    RETRY = "retry"
+    TAKEN = "taken"
+    TIMED_OUT = "timed_out"
+    LEFT_QUEUE = "left_queue"
+
+
+@dataclass(frozen=True)
+class Adoption:
+    """How `adopt_job` ended; *exit_status* is the command's, set when it ran here."""
+
+    outcome: AdoptOutcome
+    exit_status: int | None = None
+
+
+def adopt_job(ledger: otto_queue.ledger.Ledger, entry: Entry, policy: otto_queue.slots.Policy,
+              *, wait_s: float, poll_s: float = POLL_S,
+              notify: Callable[[str], None] = core.log.info,
+              clock: Callable[[], float] = time.time) -> Adoption:
+    """Run queued job *entry* in this process without making it a ticket.
+
+    Waits for a slot holding no lease, so a waiter killed meanwhile leaves the
+    row a queued job and nothing reaps it. Once admitted it takes the job's own
+    lease and runs the command in this process group, output to the job's log.
+    TIMED_OUT leaves the row untouched; LEFT_QUEUE means it stopped being queued
+    while waiting; TAKEN means another runner holds the lease.
+    """
+    request = TicketRequest(argv=entry.argv, cwd=entry.cwd, entry_class=entry.entry_class,
+                            wait_s=wait_s)
+    wait = _wait_for_slot(ledger, entry.id, request, policy, poll_s, notify)
+    try:
+        if wait.end is _WaitEnd.TIMED_OUT:
+            return Adoption(AdoptOutcome.TIMED_OUT)
+        if wait.end is _WaitEnd.CANCELLED:
+            return Adoption(AdoptOutcome.LEFT_QUEUE)
+        result = otto_queue.job.run_leased(ledger, entry.id, clock, foreground=True)
+    finally:
+        _release_slot(wait.slot)
+    if result.outcome is otto_queue.job.JobOutcome.NOT_CLAIMED:
+        return Adoption(AdoptOutcome.TAKEN)
+    if result.outcome is otto_queue.job.JobOutcome.RETRY:
+        return Adoption(AdoptOutcome.RETRY, result.exit_status)
+    return Adoption(AdoptOutcome.RAN, result.exit_status)
 
 
 def _record_crash(ledger: otto_queue.ledger.Ledger, entry_id: int, exc: BaseException) -> None:
@@ -272,8 +325,7 @@ def run_claimed(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolut
                 poll_s: float = POLL_S, notify: Callable[[str], None] = core.log.info) -> TicketResult:
     """Wait for a slot and run *request* for the NEW entry *res* this process holds the lease of.
 
-    `run_ticket` calls it for a ticket it recorded; `otto_queue.submit` for a job
-    it claimed back with `Ledger.claim_as_ticket` when no worker could start.
+    Only `run_ticket` calls it, for a ticket it recorded.
     """
     entry_id = res.entry.id
     try:

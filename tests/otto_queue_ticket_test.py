@@ -10,6 +10,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -332,6 +333,53 @@ def test_a_ticket_joining_an_unstarted_job_with_no_worker_runs_it(tmp_path):
     assert Ledger.open().get(job.entry.id).state is EntryState.DONE
 
 
+# Waits on a queued job keyed K, announcing itself once it is about to run it here.
+JOIN_DRIVER = """
+import os, sys
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[1])
+import otto_queue.ticket
+
+class Never:
+    def limit(self, entry_class):
+        return 2
+
+    def verdict(self, entry_class, running):
+        return SimpleNamespace(admit=False, reason="no room")
+
+def say(message):
+    if "running entry" in message:
+        open(sys.argv[2], "w").write("waiting")
+
+request = otto_queue.ticket.TicketRequest(argv=("true",), cwd=os.getcwd(), idem_key="K", wait_s=60)
+otto_queue.ticket.run_ticket(request, Never(), poll_s=0.05, notify=say)
+"""
+
+
+def test_a_ticket_killed_while_waiting_to_run_a_job_leaves_it_queued(tmp_path):
+    ledger = Ledger.open()
+    job = ledger.resolve(
+        NewEntry(argv=touch_argv(tmp_path / "ran"), cwd=os.getcwd(), kind=EntryKind.JOB, idem_key="K"),
+        force=False, pid=None)
+    waiting = tmp_path / "waiting"
+    proc = subprocess.Popen([PY, "-c", JOIN_DRIVER, str(LIB_DIR), str(waiting)])
+    try:
+        deadline = time.monotonic() + 20
+        while not waiting.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert waiting.exists()
+    finally:
+        proc.kill()
+        proc.wait()
+    ledger.reap_orphans()
+    row = ledger.get(job.entry.id)
+    assert (row.kind, row.state) == (EntryKind.JOB, EntryState.QUEUED)
+    result = _run(touch_argv(tmp_path / "ticket"), idem_key="K", wait_s=5)
+    assert (result.outcome, result.entry_id) == (TicketOutcome.RAN, job.entry.id)
+    assert Ledger.open().get(job.entry.id).state is EntryState.DONE
+    assert (tmp_path / "ran").exists()
+
+
 def test_a_ticket_joining_a_queued_job_with_a_worker_does_not_claim(tmp_path):
     marker = tmp_path / "ran"
     ledger = Ledger.open()
@@ -341,8 +389,7 @@ def test_a_ticket_joining_a_queued_job_with_a_worker_does_not_claim(tmp_path):
     worker = otto_queue.lease.take_worker(ledger.root)
     try:
         ran = otto_queue.ticket._run_unstarted(
-            ledger, job.entry, TicketRequest(argv=touch_argv(tmp_path / "ticket"), cwd=os.getcwd()),
-            Room(), 0.05, lambda _m: None)
+            ledger, job.entry, Room(), 0.05, lambda _m: None, time.monotonic() + 1)
     finally:
         worker.release()
     assert ran is None
@@ -379,27 +426,3 @@ def test_a_ticket_records_hc_terminal_id_when_set(monkeypatch):
 def test_a_ticket_leaves_terminal_blank_without_hc_terminal_id():
     result = _run(exit_argv(0))
     assert Ledger.open().get(result.entry_id).terminal is None
-
-
-def test_claimed_request_keeps_the_entrys_label():
-    held = Ledger.open().resolve(NewEntry(argv=("true",), cwd="/", label="L"),
-                                 force=False, pid=os.getpid())
-    try:
-        claimed = otto_queue.ticket.claimed_request(
-            held.entry, TicketRequest(argv=("other",), cwd="/tmp"))
-        assert claimed.label == "L"
-        assert claimed.argv == ("true",)
-    finally:
-        held.lease.release()
-
-
-def test_claimed_request_keeps_the_entrys_subject_and_action():
-    held = Ledger.open().resolve(
-        NewEntry(argv=("true",), cwd="/", subject="o/r#1", action="review"),
-        force=False, pid=os.getpid())
-    try:
-        claimed = otto_queue.ticket.claimed_request(
-            held.entry, TicketRequest(argv=("other",), cwd="/tmp"))
-        assert (claimed.subject, claimed.action) == ("o/r#1", "review")
-    finally:
-        held.lease.release()

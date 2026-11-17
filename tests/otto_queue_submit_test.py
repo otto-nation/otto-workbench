@@ -18,6 +18,7 @@ import core.proc  # noqa: E402
 import otto_queue.lease  # noqa: E402
 import otto_queue.submit  # noqa: E402
 import otto_queue.supervisor  # noqa: E402
+import otto_queue.ticket  # noqa: E402
 from otto_queue.ledger import Ledger, LedgerBusy  # noqa: E402
 from otto_queue.model import EntryClass, EntryKind, EntryState, NewEntry  # noqa: E402
 from otto_queue.submit import SubmitOutcome, SubmitRequest  # noqa: E402
@@ -61,6 +62,11 @@ def _submit(argv, wake, messages=None, **kw):
     return otto_queue.submit.submit(request, Room(), wake=wake, notify=sink.append)
 
 
+def _submit_with(policy, argv, wake, **kw):
+    request = SubmitRequest(argv=tuple(argv), cwd=os.getcwd(), **kw)
+    return otto_queue.submit.submit(request, policy, wake=wake, notify=lambda _m: None)
+
+
 def _await_path(path):
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
@@ -75,18 +81,57 @@ def test_a_job_keeps_its_label():
     assert Ledger.open().get(result.entry_id).label == "nightly"
 
 
-def test_a_job_claimed_back_as_a_ticket_keeps_its_label(tmp_path, monkeypatch):
-    seen = {}
-    real = otto_queue.ticket.run_claimed
-
-    def wrap(ledger, res, request, policy, **kw):
-        seen["label"] = request.label
-        return real(ledger, res, request, policy, **kw)
-
-    monkeypatch.setattr(otto_queue.ticket, "run_claimed", wrap)
+def test_a_job_run_here_keeps_its_label(tmp_path):
     result = _submit(touch_argv(tmp_path / "ran"), _down, label="nightly")
-    assert seen["label"] == "nightly"
-    assert Ledger.open().get(result.entry_id).label == "nightly"
+    entry = Ledger.open().get(result.entry_id)
+    assert (entry.label, entry.kind) == ("nightly", EntryKind.JOB)
+
+
+# Waits for a slot that never comes, saying so once it is about to run the job here.
+RUN_HERE_DRIVER = """
+import os, sys
+from types import SimpleNamespace
+sys.path.insert(0, sys.argv[1])
+import otto_queue.submit, otto_queue.supervisor
+
+class Never:
+    def limit(self, entry_class):
+        return 2
+
+    def verdict(self, entry_class, running):
+        return SimpleNamespace(admit=False, reason="no room")
+
+def say(message):
+    if "running entry" in message:
+        open(sys.argv[2], "w").write("waiting")
+
+request = otto_queue.submit.SubmitRequest(argv=("true",), cwd=os.getcwd())
+otto_queue.submit.submit(request, Never(), wake=lambda _r: otto_queue.supervisor.Wake(False, "none"), notify=say)
+"""
+
+
+def test_a_run_here_killed_before_admission_leaves_a_queued_job(tmp_path):
+    waiting = tmp_path / "waiting"
+    proc = subprocess.Popen([PY, "-c", RUN_HERE_DRIVER, str(LIB_DIR), str(waiting)])
+    try:
+        _await_path(waiting)
+    finally:
+        proc.kill()
+        proc.wait()
+    ledger = Ledger.open()
+    ledger.reap_orphans()
+    # The state directory is fresh per test, so the one job is entry 1.
+    entry = ledger.get(1)
+    assert (entry.kind, entry.state) == (EntryKind.JOB, EntryState.QUEUED)
+
+
+def test_run_here_that_finds_no_slot_returns_75_and_leaves_it_queued(tmp_path, monkeypatch):
+    monkeypatch.setattr(otto_queue.ticket, "DEFAULT_WAIT_S", 0.3)
+    result = _submit_with(Room(admit=False), touch_argv(tmp_path / "ran"), _down)
+    entry = Ledger.open().get(result.entry_id)
+    assert (result.exit_status, result.outcome) == (75, SubmitOutcome.BUSY)
+    assert (entry.kind, entry.state, entry.exit_status) == (EntryKind.JOB, EntryState.QUEUED, None)
+    assert not (tmp_path / "ran").exists()
 
 
 def test_with_a_worker_the_job_is_queued_and_not_run_here(tmp_path):
@@ -103,8 +148,8 @@ def test_without_a_worker_the_job_runs_here_and_says_so(tmp_path):
     entry = Ledger.open().get(result.entry_id)
     assert (result.exit_status, result.outcome) == (0, SubmitOutcome.RAN_HERE)
     assert (tmp_path / "ran").exists()
-    assert (entry.kind, entry.state) == (EntryKind.TICKET, EntryState.DONE)
-    assert any(f"no worker (no supervisor in this test); running entry {entry.id} as a ticket here" in m
+    assert (entry.kind, entry.state) == (EntryKind.JOB, EntryState.DONE)
+    assert any(f"no worker (no supervisor in this test); running entry {entry.id} here" in m
                for m in messages)
 
 
@@ -189,10 +234,10 @@ def test_run_here_uses_the_claimed_rows_argv_and_class(tmp_path):
 
 # passes-at-base: LedgerBusy after queueing already escaped submit
 def test_ledger_busy_after_queueing_propagates(monkeypatch):
-    def boom(self, entry_id, pid):
+    def boom(self, entry_id, pid, *, log_path=None):
         raise LedgerBusy("busy")
 
-    monkeypatch.setattr(Ledger, "claim_as_ticket", boom)
+    monkeypatch.setattr(Ledger, "mark_running", boom)
     with pytest.raises(LedgerBusy):
         _submit(("true",), _down)
 

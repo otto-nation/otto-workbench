@@ -259,7 +259,7 @@ def test_job_exec_runs_a_queued_job():
 def test_submit_without_a_supervisor_runs_here_and_says_so(tmp_path):
     result = _shim_env(["submit", "--", PY, "-c", "raise SystemExit(3)"], _no_supervisor_env(tmp_path))
     assert result.returncode == 3
-    assert "as a ticket here" in result.stderr and "Could not find service" in result.stderr
+    assert "running entry" in result.stderr and "here" in result.stderr and "Could not find service" in result.stderr
 
 
 def test_submit_queue_only_without_a_supervisor_exits_69_and_runs_nothing(tmp_path):

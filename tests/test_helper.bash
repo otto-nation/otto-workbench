@@ -100,11 +100,13 @@ pin_mise_to_real_home() {
 # its path. Pass that path to node in place of the code, and read it in the
 # runner with $(node_body_read N), where N is its process.argv index.
 #
-# Code is never compiled from argv: an endpoint-security agent on some machines
-# SIGKILLs node (exit 137, no output) when it compiles a string of about a
-# kilobyte or more taken from the command line, so a test that grows past that
-# fails locally while CI stays green. tests/node_test_bodies.bats holds every
-# suite to this.
+# Node never reads a long value from argv: an endpoint-security agent on some
+# machines SIGKILLs node (exit 137, no output) when it starts through a symlinked
+# path (a mise shim, a Homebrew link) and reads an argv element of about 1000
+# characters or more, so a test whose code or data grows
+# past that fails locally while CI stays green. Pass test code through
+# node_body and command output through a file or stdin (or parse it with jq).
+# tests/node_test_bodies.bats holds every suite to this.
 node_body() {
   local file
   file=$(mktemp "$BATS_TEST_TMPDIR/node-body.XXXXXX")

@@ -11,8 +11,8 @@ _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/model_overrides.js');
     const { REVIEW_PHASES, BATCH_PHASES, RUNS_MODELS, overrideEntries, phaseModelFlags, withPhaseModels, overrideSummary, copyRef } = m;
-    process.stdout.write(JSON.stringify(eval(process.argv[1])));
-  " -- "$1"
+    process.stdout.write(JSON.stringify(eval($(node_body_read 1))));
+  " -- "$(node_body "$1")"
 }
 
 @test "blank and whitespace values are dropped; order follows the phase list, not the map" {

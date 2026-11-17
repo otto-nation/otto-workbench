@@ -13,7 +13,7 @@ setup() {
 teardown() { common_teardown; }
 
 # $1: a script body with `s` (board_store), `doc`, `calls`, `fake(answer?)`, `docAs(slug, phase)`.
-# Body is argv, not interpolated into -e: the plan's double-quoted literals cannot live in a
+# Body is a file path, not interpolated into -e: the plan's double-quoted literals cannot live in a
 # double-quoted node -e (Task 2 harness ruling). node --no-deprecation: DEP0205 on node 26.
 _store() {
   local runjs="$BATS_TEST_TMPDIR/store-run.mjs"
@@ -32,10 +32,10 @@ _store() {
       '  if (l === "hc") return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };' \
       '  return docAs("acme/box", l.split(":")[1].replace(":offline", ""));' \
       '};' \
-      "const body = new (async () => {}).constructor('s', 'doc', 'calls', 'fake', 'docAs', process.argv[2]);" \
+      "const body = new (async () => {}).constructor('s', 'doc', 'calls', 'fake', 'docAs', $(node_body_read 2));" \
       'await body(s, doc, calls, fake, docAs);'
   } > "$runjs"
-  run node --no-deprecation "$runjs" "$1"
+  run node --no-deprecation "$runjs" "$(node_body "$1")"
 }
 
 @test "store: a pull checks tools, reads terminals once, runs the phases and reports each change" {

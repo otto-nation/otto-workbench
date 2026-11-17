@@ -11,8 +11,8 @@ _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/load_state.js');
     const { LOAD_DELAY_MS, loadState } = m;
-    process.stdout.write(JSON.stringify(eval(process.argv[1])));
-  " -- "$1"
+    process.stdout.write(JSON.stringify(eval($(node_body_read 1))));
+  " -- "$(node_body "$1")"
 }
 
 @test "loadState: 999ms is not shown; 1000ms is shown" {

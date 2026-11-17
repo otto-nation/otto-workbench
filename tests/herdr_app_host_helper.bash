@@ -15,7 +15,7 @@
 #   fakePr(doc, answer?) an exec answering the tools check, hc ls and `pr board` from `doc`;
 #                answer(label, opts) may return {code, stdout, stderr} (or a promise of one) first
 #   fakeCx()     {cx, timers, settle()} — cx.timer.every/after record, cx.spawn runs and is awaited by settle
-# The JS is passed as argv, never interpolated, so it needs no shell escaping.
+# The JS is passed as a file path (node_body), never interpolated, so it needs no shell escaping.
 
 HOST_HOOKS='
 import fs from "node:fs";
@@ -109,7 +109,7 @@ _host_setup() {
 
 _host() {
   # The prelude's quotes cannot sit inside a shell -e string (plan's _host interpolates
-  # HOST_PRELUDE into double quotes). Same names, argv body, and register() hooks; the
+  # HOST_PRELUDE into double quotes). Same names, file body, and register() hooks; the
   # runner file is the equivalent of that -e script. --no-deprecation: node 26 prints
   # DEP0205 for module.register on stderr, and bats run merges stderr into $output.
   {
@@ -118,8 +118,8 @@ _host() {
     printf '%s\n' 'const out = (v) => process.stdout.write(JSON.stringify(v));'
     cat "$HOST_DIR/prelude.js"
     printf '%s\n' \
-      "const body = new (async () => {}).constructor('M', 'FIX', 'out', 'H', 'calls', 'label', 'fakePr', 'fakeCx', process.argv[2]);" \
+      "const body = new (async () => {}).constructor('M', 'FIX', 'out', 'H', 'calls', 'label', 'fakePr', 'fakeCx', $(node_body_read 2));" \
       "await body(M, FIX, out, H, calls, label, fakePr, fakeCx);"
   } > "$HOST_DIR/run.mjs"
-  run node --no-deprecation --import "file://$HOST_DIR/register.mjs" "$HOST_DIR/run.mjs" "$1"
+  run node --no-deprecation --import "file://$HOST_DIR/register.mjs" "$HOST_DIR/run.mjs" "$(node_body "$1")"
 }

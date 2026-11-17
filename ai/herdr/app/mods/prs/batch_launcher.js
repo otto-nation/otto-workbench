@@ -159,6 +159,7 @@ export class BatchLauncher {
           return chosen.has(key) && !this.isPending(key);
         });
         const { groups } = groupByRepo(selectedPrs);
+        if (!groups.length) errors.push("nothing to start: the PR is already running or has no checkout");
         for (const g of groups) {
           try {
             const argv = ["pr", ...runArgv({

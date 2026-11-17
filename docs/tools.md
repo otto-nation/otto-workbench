@@ -206,7 +206,9 @@ error, so a host missing a tool still answers and the reader decides.
 JSON fields: `host`, `at` (UTC), `cores`, `load` (`m1`, `m5`, `m15`), `mem`
 (`total_mb`, `available_mb`, `swap_used_mb`), `disk` (`home` and `docker`, each
 `{fs, mount, size_mb, used_mb}`), `procs` (`count`, `zombies`, `top_cpu`,
-`top_mem`: `{pid, user, age_s, cpu, mem, command}`), `heavy` (live counts of
+`top_mem`: `{pid, user, age_s, cpu, mem, command}`), `arc` (the ZFS ARC,
+`{size_mb, max_mb}`, from `spl/kstat/zfs/arcstats`; null without ZFS, and
+counted inside `mem`'s used memory), `heavy` (live counts of
 names from `lib/heavy_commands.sh`; `tasks` includes `python -m tasks`
 runners), `queue` (`{running, queued}`, `{busy: true}` while the ledger is
 locked, null without otto-queue) and, with `--reaper`, `reaper` (`{last_at,

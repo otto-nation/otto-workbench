@@ -242,6 +242,11 @@ function detailRows(health) {
   if (mem != null && Number.isFinite(mem.swap_used_mb)) {
     rows.push({ key: 'swap', value: `${gb(mem.swap_used_mb)} GB` });
   }
+  // The ZFS ARC sits inside memory's used figure; naming it says how much of that no process owns.
+  const arc = health.arc;
+  if (arc != null && Number.isFinite(arc.size_mb) && Number.isFinite(arc.max_mb)) {
+    rows.push({ key: 'zfs cache', value: `${gb(arc.size_mb)} of ${gb(arc.max_mb)} GB` });
+  }
   for (const [key, part] of [['disk home', health.disk?.home], ['disk docker', health.disk?.docker]]) {
     const usedFrac = diskUsedOf(part);
     if (usedFrac == null) continue;

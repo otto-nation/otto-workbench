@@ -20,7 +20,9 @@
 # JSON fields: `host`, `at` (UTC), `cores`, `load` (`m1`, `m5`, `m15`), `mem`
 # (`total_mb`, `available_mb`, `swap_used_mb`), `disk` (`home` and `docker`, each
 # `{fs, mount, size_mb, used_mb}`), `procs` (`count`, `zombies`, `top_cpu`,
-# `top_mem`: `{pid, user, age_s, cpu, mem, command}`), `heavy` (live counts of
+# `top_mem`: `{pid, user, age_s, cpu, mem, command}`), `arc` (the ZFS ARC,
+# `{size_mb, max_mb}`, from `spl/kstat/zfs/arcstats`; null without ZFS, and
+# counted inside `mem`'s used memory), `heavy` (live counts of
 # names from `lib/heavy_commands.sh`; `tasks` includes `python -m tasks`
 # runners), `queue` (`{running, queued}`, `{busy: true}` while the ledger is
 # locked, null without otto-queue) and, with `--reaper`, `reaper` (`{last_at,
@@ -122,6 +124,18 @@ mem() {
   if [[ "$OS" == Darwin ]]; then mem_darwin; else mem_linux; fi
 }
 
+# arc — {size_mb, max_mb} of the ZFS ARC from $PROC/spl/kstat/zfs/arcstats, or null.
+#
+# The kernel reports the ARC as used memory, so on a ZFS host it explains
+# gigabytes of `mem` no process owns. arcstats rows are `name type value`.
+arc() {
+  local size max
+  read -r size max <<< "$(awk '$1 == "size" { s = $3 } $1 == "c_max" { m = $3 }
+    END { if (s != "" && m != "") print s, m }' "$PROC/spl/kstat/zfs/arcstats" 2> /dev/null)" || true
+  if [[ ! "$size" =~ ^[0-9]+$ || ! "$max" =~ ^[0-9]+$ ]]; then echo null; return 0; fi
+  printf '{"size_mb":%d,"max_mb":%d}' $((size / 1048576)) $((max / 1048576))
+}
+
 # disk_of PATH — {fs, mount, size_mb, used_mb} for the filesystem holding PATH, or null.
 disk_of() {
   local fs size used mount
@@ -201,9 +215,9 @@ report() {
   if [[ "$want_reaper" == true ]]; then reaper_json="$(reaper)"; fi
   jq -nc --arg host "$(hostname -s 2> /dev/null || hostname)" --arg at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     --argjson cores "$(cores)" --argjson load "$(load)" --argjson mem "$(mem)" \
-    --argjson disk "$(disk)" --argjson procs "$p" --argjson queue "$(queue)" \
+    --argjson arc "$(arc)" --argjson disk "$(disk)" --argjson procs "$p" --argjson queue "$(queue)" \
     --argjson reaper "$reaper_json" --argjson reaperAsked "$want_reaper" '
-    {host: $host, at: $at, cores: $cores, load: $load, mem: $mem, disk: $disk,
+    {host: $host, at: $at, cores: $cores, load: $load, mem: $mem, arc: $arc, disk: $disk,
      procs: ($procs | if . == null then null else del(.heavy) end),
      heavy: ($procs | if . == null then null else .heavy end),
      queue: $queue}
@@ -215,6 +229,7 @@ text() {
     "\(.host)  \(.at)",
     "  load   \(.load.m1) \(.load.m5) \(.load.m15)  on \(.cores) cores",
     "  mem    \(if .mem then "\(.mem.available_mb) MB free of \(.mem.total_mb), swap \(.mem.swap_used_mb) MB" else "unknown" end)",
+    (if .arc then "  arc    \(.arc.size_mb) MB of \(.arc.max_mb) (ZFS cache, inside mem)" else empty end),
     "  disk   \(if .disk.home then "\(.disk.home.used_mb)/\(.disk.home.size_mb) MB on \(.disk.home.mount)" else "unknown" end)",
     "  procs  \(if .procs then "\(.procs.count), \(.procs.zombies) zombies" else "unknown" end)",
     "  heavy  \(if .heavy then (.heavy | to_entries | map("\(.key)=\(.value)") | join(" ")) else "unknown" end)",

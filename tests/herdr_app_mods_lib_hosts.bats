@@ -315,6 +315,7 @@ _js() {
          cores: 4,
          load: { m1: 1.5, m5: 1.25, m15: 0.5 },
          mem: { total_mb: 8192, available_mb: 4608, swap_used_mb: 512 },
+         arc: { size_mb: 3066, max_mb: 3072 },
          disk: {
            home: { size_mb: 102400, used_mb: 42700 },
            docker: { size_mb: 51200, used_mb: 5120 },
@@ -333,6 +334,7 @@ _js() {
       {"key":"load","value":"1.5 · 1.3 · 0.5"},
       {"key":"memory","value":"3.5 of 8.0 GB used"},
       {"key":"swap","value":"0.5 GB"},
+      {"key":"zfs cache","value":"3.0 of 3.0 GB"},
       {"key":"disk home","value":"41.7 of 100.0 GB (42%)"},
       {"key":"disk docker","value":"5.0 of 50.0 GB (10%)"},
       {"key":"zombies","value":"1"},
@@ -366,6 +368,7 @@ _js() {
     and .heavy=={"key":"heavy","value":"none"}
     and (.keys | index("memory"))==null
     and (.keys | index("swap"))==null
+    and (.keys | index("zfs cache"))==null
     and (.keys | index("disk docker"))==null' <<< "$output"
   [ "$status" -eq 0 ]
 }

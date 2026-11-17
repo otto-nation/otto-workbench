@@ -99,8 +99,6 @@ export function tag(content) {
     .text_color(t.muted).child(content);
 }
 
-// Status is coloured text plus a glyph, never a pill. Without `label` the glyph stands alone and
-// `aria` names it.
 // A value that copies on click: the shown element reads "Copied" for a moment after (the caller owns
 // when, via `copied`, so a redraw cannot lose it). `field` is _lib/pr_link.js copyFields' entry.
 export function copyable(id, field, shown, { copied = false, onCopy }) {
@@ -113,6 +111,8 @@ export function copyable(id, field, shown, { copied = false, onCopy }) {
     .child(shown);
 }
 
+// Status is coloured text plus a glyph, never a pill. Without `label` the glyph stands alone and
+// `aria` names it.
 export function statusText(kind, label, { role = "meta", aria, gap = SP.xxs } = {}) {
   const s = statusOf(kind);
   const color = theme()[s.field];

@@ -59,11 +59,13 @@ export async function copyToClipboard(value) {
 export function copyable(field, shown, { tagName = 'button', cls = '' } = {}) {
   const el = h(tagName, { class: `copyable ${cls}`.trim(), type: tagName === 'button' ? 'button' : null,
     title: `Copy ${field.label.toLowerCase()}`, 'aria-label': `Copy ${field.label.toLowerCase()}: ${field.value}` }, shown);
+  let timer = null;
   el.addEventListener('click', async (e) => {
     e.stopPropagation();
     if (!(await copyToClipboard(field.value))) return;
     el.replaceChildren(status('pass', COPIED_TEXT));
-    setTimeout(() => el.replaceChildren(shown), COPIED_MS);
+    clearTimeout(timer);
+    timer = setTimeout(() => el.replaceChildren(shown), COPIED_MS);
   });
   return el;
 }

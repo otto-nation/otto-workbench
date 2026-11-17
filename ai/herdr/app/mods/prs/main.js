@@ -40,6 +40,7 @@ export default class PrsBoard extends Board {
     this.openFile = null;
     this.diff = null;
     this.opening = false;
+    this.copied = null;
     super.init(p, cx);
     // Per-run model overrides for a review launched from the detail; session-only, not saved.
     this.models = new ModelPicker(this.acx, REVIEW_PHASES, "review-models", () => (
@@ -67,6 +68,7 @@ export default class PrsBoard extends Board {
     this.openFile = null;
     this.diff = null;
     this.opening = false;
+    this.copied = null;
     this.models.reset();
   }
 
@@ -325,7 +327,6 @@ export default class PrsBoard extends Board {
     });
   }
 
-  // Check the PR out with the workbench's wt, then land in a space on that worktree.
   // Puts a header value on the clipboard and reads "Copied" for COPIED_MS.
   copyField(field) {
     this.acx.write_to_clipboard(field.value);
@@ -338,6 +339,7 @@ export default class PrsBoard extends Board {
     this.acx.notify();
   }
 
+  // Check the PR out with the workbench's wt, then land in a space on that worktree.
   openForReview() {
     const d = this.detail;
     if (this.opening || !openForReviewState(d).enabled) return;

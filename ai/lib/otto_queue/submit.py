@@ -130,7 +130,7 @@ def _handed_over(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolu
         notify(f"otto-queue: queued entry {res.entry.id}; "
                "`otto-queue status` shows it")
         return SubmitResult(0, SubmitOutcome.QUEUED, res.entry.id)
-    if res.entry.kind is EntryKind.JOB or request.mode is SubmitMode.QUEUE_ONLY:
+    if res.entry.kind is EntryKind.JOB or request.mode is not SubmitMode.RUN_HERE:
         notify(f"otto-queue: joined entry {res.entry.id}; "
                "`otto-queue status` shows it")
         return SubmitResult(0, SubmitOutcome.JOINED, res.entry.id)
@@ -140,6 +140,11 @@ def _handed_over(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolu
 def _run_here(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolution,
               request: SubmitRequest, policy: otto_queue.slots.Policy, reason: str,
               notify: Callable[[str], None]) -> SubmitResult:
+    if request.mode is SubmitMode.ADD:
+        notify(f"otto-queue: no worker ({reason}); entry {res.entry.id} stays queued; "
+               f"`otto-queue wait {res.entry.id}` runs it here")
+        joined = res.outcome is not otto_queue.ledger.Outcome.NEW
+        return SubmitResult(0, SubmitOutcome.JOINED if joined else SubmitOutcome.QUEUED, res.entry.id)
     if request.mode is SubmitMode.QUEUE_ONLY and res.outcome is not otto_queue.ledger.Outcome.NEW:
         notify(f"otto-queue: joined entry {res.entry.id}; "
                "`otto-queue status` shows it")
@@ -194,8 +199,8 @@ def _withdraw(ledger: otto_queue.ledger.Ledger, claimed: otto_queue.ledger.Resol
 
 def _unqueued(request: SubmitRequest, policy: otto_queue.slots.Policy, root: Path | None,
               reason: str, notify: Callable[[str], None]) -> SubmitResult:
-    """The ledger cannot be opened: run the command here unqueued, as a ticket would, unless the mode is `QUEUE_ONLY`."""
-    if request.mode is SubmitMode.QUEUE_ONLY:
+    """The ledger cannot be opened: run the command here unqueued, as a ticket would, unless the mode is `ADD` or `QUEUE_ONLY`."""
+    if request.mode is not SubmitMode.RUN_HERE:
         notify(f"otto-queue: queue unavailable ({reason}); ran nothing")
         return SubmitResult(ExitCode.UNAVAILABLE, SubmitOutcome.NO_WORKER)
     result = otto_queue.ticket.run_ticket(request.ticket(), policy, root=root, notify=notify)

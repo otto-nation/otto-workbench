@@ -30,6 +30,15 @@ the machine's budget, and runs once per idempotency key.
    given). Reaching `wait_s` with no slot records `tempfail` and returns 75
    (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
 
+3. **Run.** The row moves to `running`, and the command runs through
+   `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
+   terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue
+   cancel`) forwarded. Its exit status is recorded (75 as `tempfail`, never a
+   failure) and returned. Recording retries inside the ledger; if it still
+   cannot be written, the command's exit status is returned anyway, never
+   replaced by an infrastructure error. A crash while recording is logged and
+   the original exception is re-raised.
+
 `LABEL_ENV`, `WAIT_ENV`, `SUBJECT_ENV` and `ACTION_ENV` are the names
 `cli.queue_gate` and `pr batch` use to pass a display label, wait bound, and
 structured subject/action into a ticket they construct. `run_ticket` does not
@@ -40,15 +49,6 @@ A queued job joined with no worker alive is run here by `adopt_job`, which keeps
 it a job: it waits for a slot holding no lease, so a ticket killed before the job
 starts leaves it queued; once admitted it takes the job's own lease and runs the
 command in this process group, output to the job's log.
-
-3. **Run.** The row moves to `running`, and the command runs through
-   `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
-   terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue
-   cancel`) forwarded. Its exit status is recorded (75 as `tempfail`, never a
-   failure) and returned. Recording retries inside the ledger; if it still
-   cannot be written, the command's exit status is returned anyway, never
-   replaced by an infrastructure error. A crash while recording is logged and
-   the original exception is re-raised.
 
 The command sees `OTTO_QUEUE_ENTRY`, its entry id. A ticket started under that
 variable runs its command directly: a nested heavy ticket would otherwise wait

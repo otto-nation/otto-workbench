@@ -34,8 +34,9 @@ usage() {
 Usage: report-agent-worktree [--clear]
 
 Labels this herdr terminal (HC_TERMINAL_ID) with otto.worktree=<path> when a
-tool call worked in a worktree other than the agent's own. Reads a hook payload
-on stdin; --clear empties the label at session start. Always exits 0.
+tool call worked in a worktree other than the agent's own, and claims the
+worktree an agent reached into. Reads a hook payload on stdin; --clear empties
+the label at session start. Always exits 0.
 EOF
 }
 

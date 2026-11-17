@@ -96,6 +96,7 @@ teardown() {
   grep -q 'pinned(v_flex().id("prs-header")' "$MODS/prs/board_view.js"
   grep -q 'pinned(v_flex().px(SP.md)' "$MODS/prs/board_view.js"
   grep -q 'pinned(h_flex().px(SP.lg).py(SP.md).child(segmented(segs)))' "$MODS/prs/detail.js"
+  grep -q 'paneHeader("Space PRs"' "$MODS/space-prs/main.js"
   run grep -ln 'TextView.markdown(`output-\|TextView.markdown(`step-log' "$MODS"/prs/*.js "$MODS"/space-prs/*.js
   [ "$status" -eq 1 ]
   grep -q 'selectableCode("output"' "$MODS/prs/detail.js"

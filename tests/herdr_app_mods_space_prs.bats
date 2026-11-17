@@ -200,6 +200,21 @@ MOD_JS
   [ "$output" = '{"ran":[["space.select",{"id":"s0"}],["tab.select",{"id":"tab0"}],["pane.focus",{"pane":"p-sh"}]],"noRef":true}' ]
 }
 
+@test "space prs: the pinned header refresh pulls listing-only" {
+  _host "$MOD
+    spacesOf();
+    const { draw, settle } = await start();
+    draw(); await settle(); take();
+    globalThis.__gpuiRecord = [];
+    draw();
+    const el = globalThis.__gpuiRecord.find((e) => e.id === 'space-prs-refresh');
+    el.click();
+    await settle();
+    out(take());"
+  [ "$status" -eq 0 ]
+  [ "$output" = '["hc:ls:label","pr:listing:offline:stamp"]' ]
+}
+
 @test "space prs: with neither, a card click asks pr target session from the worktree" {
   _host "$MOD
     const cwds = [];

@@ -13,6 +13,7 @@ import { BRAND } from "./_lib/brand.generated.js";
 import { SP, ROW_H } from "./_lib/tokens.js";
 import {
   pane, scrollBody, card, hoverRow, text, type, tag, badge, placeholder, statusText, sectionLabel,
+  paneHeader, pinned,
 } from "./_ui/ui.js";
 
 const LISTING_MS = 15000;
@@ -231,6 +232,14 @@ export default class SpacePrs extends View {
       stateOf: this.store.repoStateOf,
     });
     const rail = (this.size?.width ?? Infinity) < BRAND.pane.compact;
+    const t = theme();
+    const header = rail
+      ? pinned(v_flex().px(SP.xs).py(SP.xxs).child(text("section", "PRs", t.muted)))
+      : paneHeader("Space PRs", {
+          spinning: this.inflight,
+          onRefresh: () => this.refresh(this.acx),
+          id: "space-prs-refresh",
+        });
     const body = !groups.length
       ? placeholder("No PR worktrees in these spaces").px(SP.md).mx(SP.xs).py(SP.sm)
       : scrollBody().children(groups.map((group) => this.renderGroup(group, rail)));
@@ -238,6 +247,6 @@ export default class SpacePrs extends View {
     return pane("space-prs")
       .bg(theme().chrome)
       .on_size_change((size, cx) => this.onSize(size, cx))
-      .child(v_flex().size_full().min_h(0).child(body));
+      .child(v_flex().size_full().min_h(0).child(header).child(body));
   }
 }

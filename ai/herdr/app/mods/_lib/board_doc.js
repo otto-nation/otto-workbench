@@ -25,7 +25,7 @@ export function rowToPr(row) {
     branch: row.branch, baseBranch: row.base_branch, url: row.url, headSha: row.head_sha,
     labels: row.labels ?? [], isDraft: row.is_draft, state: row.state,
     additions: row.additions, deletions: row.deletions, changedFiles: row.changed_files,
-    hydrated: row.hydrated, busy: row.busy, isMine: row.is_mine,
+    hydrated: row.hydrated, busy: row.busy, lock: row.lock ?? null, isMine: row.is_mine,
     hasNewChangesSinceReview: row.has_new_changes_since_review,
     reviewRuns: (row.review_runs ?? []).map((run) => ({ postedEvent: run.posted_event ?? null, run })),
     lanes: row.lanes, issues: row.issues, presentation: row.presentation,

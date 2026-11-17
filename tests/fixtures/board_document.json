@@ -195,6 +195,7 @@
       "owed": "2 unresolved threads",
       "owed_known": true,
       "worktree": null,
+      "lock": null,
       "lanes": {
         "team": "reviewed",
         "mine": "has-comments",
@@ -304,6 +305,7 @@
       "owed": null,
       "owed_known": false,
       "worktree": null,
+      "lock": null,
       "lanes": {
         "team": "open",
         "mine": "awaiting-review",
@@ -397,6 +399,7 @@
       "owed": null,
       "owed_known": false,
       "worktree": null,
+      "lock": null,
       "lanes": {
         "team": "open",
         "mine": "awaiting-review",
@@ -481,6 +484,7 @@
       "owed": null,
       "owed_known": false,
       "worktree": null,
+      "lock": null,
       "lanes": {
         "team": "landed",
         "mine": "merged",

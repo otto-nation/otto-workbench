@@ -1,5 +1,6 @@
 """board.presentation against the golden fixture."""
 
+import dataclasses
 import json
 from pathlib import Path
 
@@ -103,3 +104,24 @@ def test_the_document_passes_no_client_context():
     assert board.presentation.present(row) == board.presentation.present(
         row, reviewing=False, batch=None,
     )
+
+
+def _base_row() -> Row:
+    return _row(_pr(CASES[0]))
+
+
+def test_a_lock_fills_the_busy_slot():
+    row = dataclasses.replace(_base_row(), busy=False, lock="Locked · pr review")
+    slot = board.presentation.present(row).busy
+    assert (slot.status, slot.text) == (StatusKind.RUNNING, "Locked · pr review")
+
+
+def test_busy_beats_a_lock():
+    row = dataclasses.replace(_base_row(), busy=True, lock="Locked · pr review")
+    assert board.presentation.present(row).busy.text != "Locked · pr review"
+
+
+def test_a_batch_beats_a_lock():
+    row = dataclasses.replace(_base_row(), lock="Locked · Pi session")
+    batch = BatchState(tone=BatchTone.BUSY, text="running")
+    assert "Locked" not in board.presentation.present(row, batch=batch).busy.text

@@ -280,6 +280,9 @@ class Row:
     owed: str | None = None
     owed_known: bool = False
     queue: QueueWork | None = None
+    # board.locks.lock_of's label for an OPEN row something is working on, read at
+    # read time; None when nothing holds it.
+    lock: str | None = None
     # The worktree on this row's branch, as `git worktree list` spells it, read at read
     # time; None when no checkout holds the branch.
     worktree: str | None = None

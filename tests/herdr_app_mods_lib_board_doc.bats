@@ -74,6 +74,18 @@ _js() {
   [ "$output" = '["/wt/a",null,null]' ]
 }
 
+@test "rowToPr maps lock; absent is null" {
+  _js '
+    process.stdout.write(JSON.stringify([
+      d.rowToPr({ ...doc.rows[0], lock: "Locked · pr review" }).lock,
+      d.rowToPr(doc.rows[0]).lock,
+      d.rowToPr({ ...doc.rows[0], lock: undefined }).lock,
+    ]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["Locked · pr review",null,null]' ]
+}
+
 @test "mergeRows: complete replaces; a patch updates by repo and number and appends new rows" {
   _js '
     const a = [{ repoSlug: "o/n", number: 1, v: "old" }, { repoSlug: "o/n", number: 2, v: "keep" }];

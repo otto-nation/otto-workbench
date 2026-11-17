@@ -35,10 +35,10 @@ function publicReviewRun(entry) {
   return { ...rest, run: publicRun(run) };
 }
 
-// Keys a board record may carry that the page never sees. `worktree` is a rowToPr
-// path; `cwd`/`on` come from the scope merge; `reviewTerminal` from withRunning.
+// Keys a board record may carry that the page never sees. `cwd`/`on` come from
+// the scope merge; `reviewTerminal` from withRunning.
 export const PRIVATE_PR_KEYS = Object.freeze([
-  'worktree', 'cwd', 'on', 'reviewTerminal',
+  'cwd', 'on', 'reviewTerminal',
 ]);
 
 // Keys the page reads from a PR (public/*.js, _lib/board_model.js, columns, filters,
@@ -48,7 +48,7 @@ export const PUBLIC_PR_KEYS = Object.freeze([
   'repoSlug', 'number', 'title', 'author', 'branch', 'baseBranch', 'url', 'headSha',
   'labels', 'isDraft', 'state',
   'additions', 'deletions', 'changedFiles',
-  'hydrated', 'busy', 'isMine',
+  'hydrated', 'busy', 'lock', 'isMine',
   'hasNewChangesSinceReview',
   'reviewRuns', 'lanes', 'issues', 'presentation',
   'queue', 'reviewing', 'hasCheckout',

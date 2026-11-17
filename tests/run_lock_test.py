@@ -1,5 +1,6 @@
 """Tests for the run lock."""
 
+import fcntl
 import json
 import os
 import sys
@@ -710,3 +711,21 @@ def test_is_held_ignores_our_own_env_marker(worktree):
     """It asks the kernel, not our ancestry — a stray marker must not lie."""
     os.environ[LOCK_ENV] = str(worktree)
     assert not core.run_lock.is_held(worktree)
+
+
+def test_live_holder_is_the_record_while_held(tmp_path):
+    lock = tmp_path / core.run_lock.LOCK_FILE
+    lock.write_text(json.dumps({"pid": 1, "command": "pr review 7", "started": "x", "released": None}))
+    with open(lock, "a+") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert core.run_lock.live_holder(tmp_path)["command"] == "pr review 7"
+
+
+def test_live_holder_is_none_for_a_stale_record(tmp_path):
+    lock = tmp_path / core.run_lock.LOCK_FILE
+    lock.write_text(json.dumps({"pid": 1, "command": "pr review 7", "started": "x", "released": None}))
+    assert core.run_lock.live_holder(tmp_path) is None
+
+
+def test_live_holder_is_none_for_a_target_never_run(tmp_path):
+    assert core.run_lock.live_holder(tmp_path / "nope") is None

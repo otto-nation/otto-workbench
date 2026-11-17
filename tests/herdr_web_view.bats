@@ -106,14 +106,15 @@ const docRow = (name) => ({ presentation: fx.cases.find((c) => c.name === name).
   _web "const s = await import(W + '/lib/snapshot.js');
         const snap = s.toSnapshot({ prs: [{
           number: 1, repoSlug: 'o/n', cwd: '/w', worktree: '/srv/x/wt',
+          lock: 'Locked · pr review',
           queue: { state: 'queued', entry: 9, cwd: '/srv/x/q', worktree: '/srv/x/wt' },
           reviewing: true,
         }] }, { name: 'n', version: '1' });
         const p = snap.prs[0];
         out({ worktree: 'worktree' in p, cwd: 'cwd' in p, hasCheckout: p.hasCheckout,
-              queue: p.queue, leak: JSON.stringify(p).includes('/srv/x') });"
+              lock: p.lock, queue: p.queue, leak: JSON.stringify(p).includes('/srv/x') });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"worktree":false,"cwd":false,"hasCheckout":true,"queue":{"state":"queued"},"leak":false}' ]
+  [ "$output" = '{"worktree":false,"cwd":false,"hasCheckout":true,"lock":"Locked · pr review","queue":{"state":"queued"},"leak":false}' ]
 }
 
 @test "view: every rowToPr key is on the public allowlist or PRIVATE_PR_KEYS" {
@@ -121,7 +122,7 @@ const docRow = (name) => ({ presentation: fx.cases.find((c) => c.name === name).
         const bd = await import(L + '/board_doc.js');
         const s = await import(W + '/lib/snapshot.js');
         const doc = JSON.parse(fs.readFileSync(W + '/../../../tests/fixtures/board_document.json', 'utf8'));
-        const row = { ...doc.rows[0], queue: { state: 'queued', entry: 1, terminal: 't' }, worktree: '/wt/a' };
+        const row = { ...doc.rows[0], queue: { state: 'queued', entry: 1, terminal: 't' } };
         const known = new Set([...s.PUBLIC_PR_KEYS, ...s.PRIVATE_PR_KEYS]);
         out(Object.keys(bd.rowToPr(row)).filter((k) => !known.has(k)));"
   [ "$status" -eq 0 ]

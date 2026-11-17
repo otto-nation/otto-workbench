@@ -16,9 +16,19 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import core.session_lock  # noqa: E402
 import git.topology  # noqa: E402
 import pr.agent_worktree  # noqa: E402
-from pr.agent_worktree import LABEL, ReportOutcome, ToolCall, clear, report, target_worktree  # noqa: E402
+from pr.agent_worktree import (  # noqa: E402
+    LABEL,
+    ReportOutcome,
+    Session,
+    ToolCall,
+    clear,
+    report,
+    session_of,
+    target_worktree,
+)
 
 
 @pytest.fixture
@@ -286,6 +296,60 @@ def test_clear_empties_the_label_and_removes_state(container, state_dir):
     clear(ENV, run=run)
     assert run.calls == [["hc", "label", "t9", "otto.worktree="]]
     assert _state_files(state_dir) == []
+
+
+def test_session_of_pi_needs_its_pid():
+    assert session_of({
+        "WORKBENCH_SESSION_HARNESS": "pi",
+        "WORKBENCH_SESSION_PID": "12",
+        "PI_SESSION_ID": "s",
+    }) == Session(12, "pi", "s")
+    assert session_of({"WORKBENCH_SESSION_HARNESS": "pi", "CLAUDE_PID": "9"}) is None
+
+
+def test_session_of_claude():
+    assert session_of({"CLAUDE_PID": "9", "CLAUDE_CODE_SESSION_ID": "c"}) == Session(9, "claude", "c")
+
+
+def test_session_of_nothing():
+    assert session_of({}) is None
+
+
+def test_report_claims_with_a_session_and_no_terminal(container, state_dir, monkeypatch):
+    claims = []
+    monkeypatch.setattr(core.session_lock, "claim_reached",
+                        lambda tree, **kw: claims.append((str(tree), kw["pid"], kw["harness"], kw["command"])) or True)
+    run = FakeRun()
+    call = _git_c(container, "feat-a")
+    report(call, {"CLAUDE_PID": "9"}, run=run)
+    assert claims == [(str(_spelling(container, "feat-a")), 9, "claude", call.command)]
+    assert "git -C" in call.command and "status" in call.command
+    assert run.calls == []
+
+
+def test_report_warns_when_claim_fails(container, state_dir, monkeypatch, capsys):
+    monkeypatch.setattr(core.session_lock, "claim_reached", lambda *a, **k: False)
+    outcome = report(_git_c(container, "feat-a"), {"CLAUDE_PID": "9"}, run=FakeRun())
+    captured = capsys.readouterr()
+    assert "could not record session lock" in captured.err
+    assert outcome is ReportOutcome.SKIPPED
+
+
+def test_report_labels_without_a_session(container, state_dir, monkeypatch):
+    monkeypatch.setattr(core.session_lock, "claim_reached", lambda *a, **k: pytest.fail("claimed"))
+    assert report(_git_c(container, "feat-a"), ENV, run=FakeRun()) is ReportOutcome.LABELLED
+
+
+def test_a_subagent_claims_nothing(container, state_dir, monkeypatch):
+    monkeypatch.setattr(core.session_lock, "claim_reached", lambda *a, **k: pytest.fail("claimed"))
+    report(_git_c(container, "feat-a", agent_id="x"), {**ENV, "CLAUDE_PID": "9"}, run=FakeRun())
+
+
+def test_clear_drops_the_claim(state_dir, monkeypatch):
+    dropped = []
+    monkeypatch.setattr(core.session_lock, "drop_reached", dropped.append)
+    clear({"CLAUDE_PID": "9"}, run=FakeRun())
+    assert dropped == [9]
 
 
 def test_label_matches_launch_js():

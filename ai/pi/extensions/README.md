@@ -89,12 +89,15 @@ both sets in one-shot sessions.
 ## agent-worktree
 
 Publishes the worktree an interactive session works in on its herdr terminal
-(`hc label $HC_TERMINAL_ID otto.worktree=<path>`), so the Space PRs sidebar can
-name the agent on each PR. `tool_result` for bash, edit and write sends a
+(`hc label $HC_TERMINAL_ID otto.worktree=<path>`), so Open session's adopt-pane
+in `_lib/run_session.js` can take an agent pane in the checkout, and claims that
+reached worktree for the session. `tool_result` for bash, edit and write sends a
 Claude-shaped payload (`detect.ts` `payloadFor`) to `ai/bin/report-agent-worktree`
-unawaited; `session_start` sends `--clear`. Only in `tui` with `HC_TERMINAL_ID`
-set (`shouldReport`), so subagents and `pr` pipeline sessions never label. The
-hook is the one writer shared with Claude Code's `PostToolUse`/`SessionStart`
+unawaited; `session_start` sends `--clear`. Every `tui` session (`shouldReport`);
+herdr is only required for the label — the hook skips labelling without one.
+Subagents and `pr` pipeline sessions (`json`/`print`/`rpc`) neither claim nor
+label. The hook env carries the session pid only when `claimsWorktree` is true.
+The hook is the one writer shared with Claude Code's `PostToolUse`/`SessionStart`
 entries in `ai/claude/settings.json`; which worktree a call targeted is
 `ai/lib/pr/agent_worktree.py`'s answer, and `tests/pi_extensions_agent_worktree.bats`
 feeds both payload shapes through it. A feature, not a guard: its Claude Code twin
@@ -141,10 +144,11 @@ built-ins; `wire.ts` holds the handlers with SDK types only, so
 no Claude Code twin.
 
 session-lock records no claim in a run's or target's own session
-(`claimsWorktree`): its cwd is the run's checkout or the target's worktree, and
-a claim there would make `--fix` steps refuse the tree they edit. A target
-session's system note forbids direct file edits, since the exemption removes the
-guard against a fix pass committing over them.
+(`claimsWorktree` in `_shared/run-dir.ts`): its cwd is the run's checkout or the
+target's worktree, and a claim there would make `--fix` steps refuse the tree
+they edit. agent-worktree uses the same predicate before putting the session on
+the hook env. A target session's system note forbids direct file edits, since
+the exemption removes the guard against a fix pass committing over them.
 
 ## Overriding one
 

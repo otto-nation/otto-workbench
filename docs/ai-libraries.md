@@ -3626,16 +3626,20 @@ toplevel against `worktree_entries` by realpath, so a symlinked spelling of a
 worktree resolves to the one the board document uses. A path outside any
 checkout, or in a bare container, resolves to None.
 
-`report(call, env)` publishes the target on the agent's own herdr terminal and
-returns a `ReportOutcome`. It is SKIPPED when `HC_TERMINAL_ID` is unset or
-empty, when the call is a subagent's, or when there is no target. A state file
-per (`HC_TERMINAL_SOCKET`, `HC_SCOPE`, terminal) under the workbench state dir
-debounces it: an unchanged target is UNCHANGED and runs nothing. A changed one
-runs `hc label <terminal> otto.worktree=<path>` and is LABELLED, and the state
-is written only when hc exits 0, so a FAILED label is retried on the next call.
-`clear(env)` empties the label and removes the state file. Neither raises for a
-missing hc, a timeout or an unwritable state dir. The label is sticky by design:
-returning to the home checkout leaves it, so read-only peeks do not flap it.
+`report(call, env)` claims the target for the session `session_of(env)` names
+(`core.session_lock.claim_reached`), independent of the terminal, and publishes
+the target on the agent's own herdr terminal, returning a `ReportOutcome`. The
+claim is skipped when the call is a subagent's or there is no target; the label
+is SKIPPED when `HC_TERMINAL_ID` is unset or empty, when the call is a
+subagent's, or when there is no target. A state file per (`HC_TERMINAL_SOCKET`,
+`HC_SCOPE`, terminal) under the workbench state dir debounces it: an unchanged
+target is UNCHANGED and runs nothing. A changed one runs `hc label <terminal>
+otto.worktree=<path>` and is LABELLED, and the state is written only when hc
+exits 0, so a FAILED label is retried on the next call. `clear(env)` drops the
+reached claim for that session, empties the label and removes the state file.
+Neither raises for a missing hc, a timeout or an unwritable state dir. The
+label is sticky by design: returning to the home checkout leaves it, so
+read-only peeks do not flap it.
 
 ### pr/ci_check.py
 
@@ -5337,14 +5341,28 @@ Listing is one paginated REST call per slug. Status is aliased GraphQL
 as variables. A pool of four runs those batches; a failed batch is partial
 and its numbers stay unhydrated.
 
+### board/locks.py
+
+Whether something is working on a PR right now, in the words its badge shows.
+
+``lock_of(repo_key, branch, worktree)`` is the board's one answer. A live ``pr``
+run on the branch's target (``core.run_lock.live_holder`` over
+``pr.target.target_dir``) wins and reads ``Locked · pr <subcommand>``; else a
+live interactive session in the branch's worktree (``core.session_lock.holders``)
+reads ``Locked · <Pi|Claude> session``; else None. Only the first two words of
+the run's recorded command are shown: the full argv carries paths and body text.
+
 ### board/model.py
 
 The PR board's vocabulary: schema version, lanes, badges, and row facts.
 
 Stdlib only. Enum string values are the wire spellings; renaming a member is
 free, changing a value is a schema break. Optional fields do not bump
-``schema_version``; a removed or renamed field or a changed type does, and
-enforcement comes from ``SCHEMA_VERSIONS`` being allowed to shrink.
+``schema_version``; removing or renaming a field a live consumer reads or
+changing a type does, and enforcement comes from ``SCHEMA_VERSIONS`` being
+allowed to shrink. Dropping a feature-gated field together with its feature
+and its sole consumer needs no bump when older copies already degrade on the
+missing feature.
 
 ### board/owed.py
 
@@ -7085,6 +7103,10 @@ only names a holder in a diagnostic. Here the record *is* the verdict.
 
 Several sessions in one worktree are legitimate, so the file is JSONL with one
 object per holder, as ``tree_lock``'s is.
+
+A session also holds at most one *reached* tree (``claim_reached``), the one
+it most recently worked in from elsewhere; the per-pid state under
+``session-reach/`` names it so the next claim can release it.
 
 ### core/session_lock_cli.py
 

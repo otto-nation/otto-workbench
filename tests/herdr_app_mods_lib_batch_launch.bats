@@ -43,7 +43,7 @@ _throws() {
 @test "groupByRepo missing cwd is unrunnable; bad records are skipped" {
   _js 'm.groupByRepo([{repoSlug:"a/one",number:3,on:"m1",cwd:null},{repoSlug:"a/one",number:4,on:"m1",cwd:""},{repoSlug:"",number:1,cwd:"/x"},{number:1,cwd:"/x"},{repoSlug:"a/one",number:"x",cwd:"/x"},{repoSlug:"a/one",number:1.5,cwd:"/x"}])'
   [ "$status" -eq 0 ]
-  [ "$output" = '{"groups":[],"unrunnable":[{"key":"a/one#3","reason":"no checkout of this repo on its machine"},{"key":"a/one#4","reason":"no checkout of this repo on its machine"}]}' ]
+  [ "$output" = '{"groups":[],"unrunnable":[{"key":"a/one#3","reason":"No checkout of this repo on its machine"},{"key":"a/one#4","reason":"No checkout of this repo on its machine"}]}' ]
 }
 
 @test "runArgv default three steps" {
@@ -197,4 +197,16 @@ _throws() {
   "
   [ "$status" -eq 0 ]
   jq -e '.==["--phase-model","scout=x","batch","run"]' <<<"$output"
+}
+
+@test "batchReason: no checkout, then busy, then lock" {
+  _js "[m.batchReason({}), m.batchReason({cwd: '/w', busy: true}), m.batchReason({cwd: '/w', lock: 'Locked · Pi session'}), m.batchReason({cwd: '/w'})]"
+  [ "$status" -eq 0 ]
+  [ "$output" = '["No checkout of this repo on its machine","A review or batch is running on this PR","Locked · Pi session",null]' ]
+}
+
+@test "groupByRepo: a locked PR is unrunnable with its label" {
+  _js "m.groupByRepo([{repoSlug: 'a/one', number: 3, cwd: '/w', on: 'h', lock: 'Locked · pr review'}])"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"groups":[],"unrunnable":[{"key":"a/one#3","reason":"Locked · pr review"}]}' ]
 }

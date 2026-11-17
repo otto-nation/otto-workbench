@@ -7,6 +7,7 @@ import { renderBatchTab } from "./workflows_view.js";
 import { renderFileList, renderDiff } from "./files_view.js";
 import { MONO, LAYOUT } from "./_lib/tokens.js";
 import { actionsFor } from "./_lib/actions.js";
+import { fixesFor } from "./_lib/pr_fixes.js";
 import { readReview, loadFilesIncremental, loadPatch } from "./_lib/board_data.js";
 import { patchRows, summarize } from "./_lib/diff.js";
 import { COPIED_MS } from "./_lib/pr_link.js";
@@ -118,8 +119,9 @@ export default class PrsBoard extends Board {
     const d = this.detail;
     return actionsFor({
       repo: d.repo, number: d.number, repoDir: d.cwd, run: (d.runs ?? [])[0] ?? null,
-      headMoved: d.headMoved, batchBusy: d.batchBusy || this.launching || (this.launcher.starting && Boolean(this.selectedPr) && this.launcher.involvesPr(this.selectedPr)), live: this.launching ? null : (this.live ?? d.live),
-      finished: this.finishedId, features: d.features, own: d.own,
+      headMoved: d.headMoved, batchBusy: d.batchBusy || this.launching, live: this.launching ? null : (this.live ?? d.live),
+      starting: this.launcher.starting && Boolean(this.selectedPr) && this.launcher.involvesPr(this.selectedPr),
+      finished: this.finishedId, features: d.features, own: d.own, lock: d.lock,
     });
   }
 
@@ -400,8 +402,7 @@ export default class PrsBoard extends Board {
         confirm: this.confirm,
         starting: this.launching || (mine && this.launcher.starting),
         note: this.note ?? (mine ? this.launcher.note : null),
-        fixes: this.detail.fixes,
-        fixBusy: this.launcher.starting ? "A batch is starting" : (this.detail.batchBusy || this.launching || this.live ? "A batch is running on this PR" : null),
+        fixes: fixesFor(pr, { starting: this.launcher.starting, busy: this.detail.batchBusy || this.launching, live: this.live }),
         onFix: (f) => this.launcher.fixOne(pr, f),
         onAction: (a) => this.onAction(a, cx),
         onConfirm: () => { const a = this.confirm; this.confirm = null; this.launch(a, cx); this.acx.notify(); },

@@ -15,13 +15,14 @@ import core.command_contract
 import core.log
 import core.report
 import pr.context
-from board.model import SCHEMA_VERSIONS, Phase
+from board.model import FEATURES, SCHEMA_VERSIONS, Phase
 from core.exit_codes import ExitCode
 from core.tool_parser import EXIT_USAGE, ToolParser, enum_arg
 
 SCRIPT = "pr board"
 _BOARD_VERSIONS = ", ".join(str(v) for v in SCHEMA_VERSIONS)
 _BOARD_LATEST = str(SCHEMA_VERSIONS[-1])
+_BOARD_FEATURES = ", ".join(FEATURES[:-1]) + f" and {FEATURES[-1]}"
 
 CONTRACT = core.command_contract.CommandContract(
     summary=(
@@ -64,7 +65,7 @@ CONTRACT = core.command_contract.CommandContract(
         "complete is false for status --prs and owed (clients merge by "
         "(repo, number)). Clients hide a row whose effective team lane "
         "is landed. The full document carries features (this build's pr "
-        "capabilities a board consumer drives; currently review-publish, batch-session, target-session, queue-lanes, cache-age and worktrees).",
+        f"capabilities a board consumer drives; currently {_BOARD_FEATURES}).",
     ),
 )
 

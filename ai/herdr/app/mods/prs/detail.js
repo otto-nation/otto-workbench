@@ -6,7 +6,6 @@ import { outputModel } from "./_lib/run_output.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import { prPresentation } from "./_lib/pr_status.js";
 import { COPIED_TEXT, copyFields, shortSha, prUrl } from "./_lib/pr_link.js";
-import { fixesFor } from "./_lib/pr_fixes.js";
 import { sessionControl } from "./workflows_view.js";
 import {
   segment, segmented, button, solidButton, scrollInset, card, placeholder, caption,
@@ -27,7 +26,7 @@ function reviewInset(id, body) {
 
 // Enabled actions as buttons; when none is enabled, the first reason says why. A post action
 // asks first (confirm), because it writes to GitHub.
-export function renderActionBar(actions, { confirm, note, starting = false, onAction, onConfirm, onCancel, trailing = null, fixes = [], onFix = () => {}, fixBusy = null }) {
+export function renderActionBar(actions, { confirm, note, starting = false, onAction, onConfirm, onCancel, trailing = null, fixes = [], onFix = () => {} }) {
   const t = theme();
   if (confirm) {
     const c = confirm.confirm;
@@ -45,7 +44,7 @@ export function renderActionBar(actions, { confirm, note, starting = false, onAc
   const why = actions.find((a) => !a.enabled && a.id !== "cancel" && a.id !== "watch");
   return h_flex().flex_none().flex_wrap().gap(SP.sm).items_center().px(SP.lg).py(SP.md)
     .border_b_1().border_color(t.border)
-    .children(fixes.map((f) => button(f.id, f.label, () => onFix(f), { disabled: fixBusy != null, reason: fixBusy })))
+    .children(fixes.map((f) => button(f.id, f.label, () => onFix(f), { disabled: !f.enabled, reason: f.reason })))
     .children(on.map((a) => button(`act-${a.id}`, a.label, () => onAction(a))))
     .when(!on.length && !fixes.length && Boolean(why), (e) => e.child(caption(why.reason)))
     .when(trailing != null, (e) => e.child(trailing))
@@ -63,7 +62,7 @@ export function detailOf(pr, { item = null } = {}) {
     cwd: pr.cwd ?? null, headMoved: Boolean(pr.hasNewChangesSinceReview),
     batchBusy: Boolean(pr.busy), live: pr.reviewTerminal ?? null, sha: pr.headSha ?? "",
     features: pr.features ?? [],
-    own: Boolean(pr.isMine), fixes: fixesFor(pr),
+    own: Boolean(pr.isMine), lock: pr.lock ?? null,
     link: prUrl(pr), copy: copyFields(pr),
     presentation: prPresentation(pr, { item }),
   };

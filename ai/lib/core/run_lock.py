@@ -824,6 +824,19 @@ def is_held(target_dir: Path) -> bool:
     return _probe(Path(target_dir) / LOCK_FILE)
 
 
+def live_holder(target_dir: Path) -> dict | None:
+    """The record of the run holding *target_dir*'s lock, or None when nobody holds it.
+
+    ``is_held``'s probe is the verdict; the record is only read once the flock
+    says someone is there, because a record on disk outlives every run. An
+    unreadable record of a held lock is ``{}``.
+    """
+    path = Path(target_dir) / LOCK_FILE
+    if not _probe(path):
+        return None
+    return read_holder(path)
+
+
 def tree_hold(worktree: Path) -> TreeHold:
     """Whether a live run holds *worktree*'s checkout lock.
 

@@ -23,7 +23,7 @@ teardown() {
 # _claims ENV_JSON SESSION_ID — prints claimsWorktree(ENV, SESSION_ID).
 _claims() {
   run node --input-type=module -e "
-    const { claimsWorktree } = await import('$SL/detect.ts');
+    const { claimsWorktree } = await import('$REPO_ROOT/ai/pi/extensions/_shared/run-dir.ts');
     process.stdout.write(String(claimsWorktree(JSON.parse(process.argv[1]), process.argv[2])));
   " -- "$1" "$2"
 }

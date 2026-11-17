@@ -36,12 +36,18 @@ only names a holder in a diagnostic. Here the record *is* the verdict.
 
 Several sessions in one worktree are legitimate, so the file is JSONL with one
 object per holder, as ``tree_lock``'s is.
+
+A session also holds at most one *reached* tree (``claim_reached``), the one
+it most recently worked in from elsewhere; the per-pid state under
+``session-reach/`` names it so the next claim can release it.
 """
 
 # doc-group: platform
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import subprocess
@@ -51,6 +57,7 @@ from pathlib import Path
 import core.serde
 import core.timeouts
 import core.tree_lock
+import core.workbench_paths
 
 LOCK_FILE = "workbench-session.lock"
 
@@ -281,6 +288,103 @@ def release(worktree: Path, pid: int) -> bool:
             return False
         return True
     return _write(path, [_as_record(h) for h in keep])
+
+
+_REACH_DIR = "session-reach"
+
+
+def _reach_path(pid: int) -> Path:
+    return core.workbench_paths.state_dir() / _REACH_DIR / f"{pid}.json"
+
+
+def _read_reach(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+@contextlib.contextmanager
+def _reach_guard(pid: int):
+    """Serialise one pid's reach read-modify-write across parallel hooks."""
+    path = _reach_path(pid).with_suffix(".lock")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "a")
+    except OSError:
+        # Best-effort guard: an unwritable state dir falls through unlocked rather than failing a hook.
+        yield
+        return
+    with handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
+def _prune_reach() -> None:
+    """Forget reached claims whose session is gone; their records already read as dead."""
+    root = core.workbench_paths.state_dir() / _REACH_DIR
+    if not root.is_dir():
+        return
+    for path in sorted(root.glob("*.json")):
+        data = _read_reach(path)
+        pid = data.get("pid")
+        if not isinstance(pid, int) or not _alive(pid, data.get("started", "")):
+            path.unlink(missing_ok=True)
+            # Only dead pids: unlinking a live pid's .lock races a concurrent opener onto a new inode.
+            path.with_suffix(".lock").unlink(missing_ok=True)
+
+
+def claim_reached(
+    worktree: Path,
+    *,
+    pid: int,
+    harness: str,
+    session_id: str = "",
+    command: str = "",
+) -> bool:
+    """Record ``pid`` as editing ``worktree``, the one tree it reached into.
+
+    A session holds its starting cwd (``acquire``) plus at most one reached
+    tree; claiming a different one releases the previous. The starting cwd is
+    never released here — callers only ever pass a tree other than home.
+    """
+    started = process_start(pid)
+    if not started:
+        return False
+    with _reach_guard(pid):
+        return _claim_reached_locked(worktree, pid, harness, session_id, command, started)
+
+
+def _claim_reached_locked(worktree, pid, harness, session_id, command, started) -> bool:
+    state = _reach_path(pid)
+    previous = _read_reach(state)
+    if not previous:
+        # only a pid's first claim pays for the sweep
+        _prune_reach()
+    if previous.get("started") == started and previous.get("worktree") == str(worktree):
+        return True
+    if previous.get("started") == started and previous.get("worktree"):
+        release(Path(previous["worktree"]), pid)
+    if not acquire(worktree, pid=pid, harness=harness, session_id=session_id, command=command):
+        state.unlink(missing_ok=True)
+        return False
+    try:
+        core.serde.write_json(state, {"pid": pid, "started": started, "worktree": str(worktree)})
+    except OSError:
+        release(worktree, pid)
+        return False
+    return True
+
+
+def drop_reached(pid: int) -> None:
+    """Release ``pid``'s reached claim, if any, and forget it."""
+    state = _reach_path(pid)
+    with _reach_guard(pid):
+        worktree = _read_reach(state).get("worktree")
+        if isinstance(worktree, str) and worktree:
+            release(Path(worktree), pid)
+        state.unlink(missing_ok=True)
 
 
 def _write(path: Path, lines: list[str]) -> bool:

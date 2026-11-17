@@ -102,10 +102,23 @@ function unknownReason(run, repoDir) {
   return null;
 }
 
-function prReason(id, { run, repoDir, headMoved, batchBusy, live, features }) {
+/**
+ * Why no `pr` action may start on a PR right now, or null. The one ordered rule every
+ * `pr`-starting control reads (actionsFor, pr_fixes.js fixesFor, batch_launch.js batchReason):
+ * a launch starting, then a batch item or live review terminal, then the document's lock label.
+ */
+export function blockReason({ starting = false, busy = false, live = null, lock = null } = {}) {
+  if (starting) return 'A batch is starting';
+  if (busy || live != null) return 'A review or batch is running on this PR';
+  if (lock) return lock;
+  return null;
+}
+
+function prReason(id, { run, repoDir, headMoved, batchBusy, live, lock, features, starting }) {
   const unknown = unknownReason(run, repoDir);
   if (unknown) return unknown;
-  if (batchBusy || live != null) return 'A review or batch is running on this PR';
+  const block = blockReason({ starting, busy: batchBusy, live, lock });
+  if (block) return block;
   if (id === 'review') {
     return run === null ? null : 'Already reviewed — use Re-run';
   }

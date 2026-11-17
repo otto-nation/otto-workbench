@@ -3,9 +3,6 @@
 # copy, which offers Full screen; the board tab opened from it carries no placement.
 def prs_panel: {id: "prs-panel", type: "block", content: {mod: "prs", props: {placement: "panel"}}};
 def queue_panel: {id: "queue-panel", type: "block", content: {mod: "queue"}};
-# Each space's open PR, below herdr's own sidebar lists (a space→PR join, not a PR list;
-# the PR board itself stays in the tab-bar panel).
-def space_prs: {id: "space-prs", type: "block", size: {weight: 1}, min: 60, content: {mod: "space-prs"}};
 def hosts_panel: {id: "hosts-panel", type: "block", content: {mod: "hosts"}};
 # Herdr's tabs mod hard-codes Files/Changes, so the extra toggles are sibling blocks.
 # Button width: 2*px 8 + icon 14 + gap 5 + label + pr(SP.sm). 72/88 leave slack.
@@ -28,12 +25,5 @@ else
   | if ([.. | objects | select(.id? == "tabs")] | length) == 1
     then (.. | objects | select(.id? == "work") | .children) |= map(if .id == "tabs" then tabs_row else . end)
     else error("main layout has no single tabs block")
-    end
-  # Optional, unlike the panel and tabs: a herdr build without one sidebar-lists node keeps
-  # the rest of the workbench layout and simply shows no space-prs block.
-  | if ([.. | objects | select(.id? == "sidebar-lists")] | length) == 1
-    then (.. | objects | select(.id? == "sidebar-lists") | .children) |=
-      (map(select(.id != "space-prs")) + [space_prs])
-    else .
     end
 end

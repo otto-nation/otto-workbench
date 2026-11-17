@@ -12,7 +12,7 @@ import { enterFullscreen, exitFullscreen } from "./_lib/fullscreen_run.js";
 import { cardId, friendlyError, spaceTargets } from "./_lib/scope.js";
 import { LOAD_DELAY_MS, loadState, errorsStatus } from "./_lib/load_state.js";
 import { runStatus } from "./_lib/batch.js";
-import { selectionPreset } from "./_lib/batch_launch.js";
+import { batchReason, selectionPreset } from "./_lib/batch_launch.js";
 import { createBoardStore, ctxKey, NO_WANT, FULL_PULL_MS } from "./_lib/board_store.js";
 import { createLoadGate, execLoadReader } from "./_lib/load_backoff.js";
 import { boardModel, mineOpen, wantFor } from "./_lib/board_model.js";
@@ -295,12 +295,13 @@ export default class PrsBoard extends View {
   detailView() { return null; }
 
   // Selecting PRs for a batch: Mine's boxes and lane "Select all", then Continue opens the Batch page
-  // with them selected. Only an open PR that is not already in a launch can be picked.
+  // with them selected. Only an open PR that is not already in a launch and that batchReason does
+  // not block can be picked.
   selection() {
     if (!this.selecting) return null;
     const key = (p) => prKey(p.repoSlug, p.number);
     return {
-      can: (p) => p.state === "OPEN" && !this.launcher.isPending(key(p)),
+      can: (p) => p.state === "OPEN" && !this.launcher.isPending(key(p)) && batchReason(p) == null,
       on: (p) => this.launcher.selected.has(key(p)),
       toggle: (p) => this.launcher.toggle(key(p)),
       toggleAll: (prs) => this.launcher.toggleRepo(prs.map(key)),

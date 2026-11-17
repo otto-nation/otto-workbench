@@ -40,3 +40,27 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$output" = '[["post-approve","post-request-changes","publish-approve","publish-request-changes"],[]]' ]
 }
+
+@test "a fix carries the block reason" {
+  run node --input-type=module -e "
+    const m = await import('$LIB/pr_fixes.js');
+    process.stdout.write(JSON.stringify(m.fixesFor({isMine: true, state: 'OPEN', issues: [{kind: 'conflicts'}], lock: 'Locked · pr rebase'}).map(f => [f.enabled, f.reason])));"
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[false,"Locked · pr rebase"]]' ]
+}
+
+@test "a launcher starting blocks a fix" {
+  run node --input-type=module -e "
+    const m = await import('$LIB/pr_fixes.js');
+    process.stdout.write(JSON.stringify(m.fixesFor({isMine: true, state: 'OPEN', issues: [{kind: 'ci-failing'}]}, {starting: true})[0].reason));"
+  [ "$status" -eq 0 ]
+  [ "$output" = '"A batch is starting"' ]
+}
+
+@test "an unblocked fix is enabled" {
+  run node --input-type=module -e "
+    const m = await import('$LIB/pr_fixes.js');
+    process.stdout.write(JSON.stringify(m.fixesFor({isMine: true, state: 'OPEN', issues: [{kind: 'ci-failing'}]})[0].enabled));"
+  [ "$status" -eq 0 ]
+  [ "$output" = 'true' ]
+}

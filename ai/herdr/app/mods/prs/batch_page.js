@@ -5,6 +5,7 @@ import { theme } from "herdr";
 import { STEP_ORDER, STEP_LABEL, AI_STEPS, runStatus } from "./_lib/batch.js";
 import { filterFacets } from "./_lib/columns.js";
 import { barModel } from "./_lib/filters.js";
+import { batchReason } from "./_lib/batch_launch.js";
 import { prKey } from "./_lib/launch.js";
 import { SP } from "./_lib/tokens.js";
 import {
@@ -80,7 +81,8 @@ function renderRunning({ launcher: L, workflows, run }) {
 
 function prRow(pr, L, t) {
   const key = prKey(pr.repoSlug, pr.number);
-  const runnable = Boolean(pr.cwd);
+  const reason = batchReason(pr);
+  const runnable = reason == null;
   const row = h_flex().id(`pr-${key}`).gap(SP.md).items_center().px(SP.sm).py(SP.xs)
     .when(runnable, (e) => e.cursor_pointer().on_click(() => L.toggle(key)).child(checkbox(L.selected.has(key))))
     .child(text("body", `#${pr.number}`, t.muted).flex_none())
@@ -90,7 +92,7 @@ function prRow(pr, L, t) {
   if (runnable) return row;
   return v_flex().gap(SP.xxs)
     .child(row)
-    .child(text("body", "No checkout of this repo on its machine", t.muted).px(SP.sm));
+    .child(text("body", reason, t.muted).px(SP.sm));
 }
 
 function renderFormFilters(L, prs, filterBar) {
@@ -117,7 +119,7 @@ function renderPrs(L, prs, t, load) {
   return v_flex().gap(SP.sm)
     .child(text("title", "PRs"))
     .children(groupPrs(shown).map((g) => {
-      const keys = g.prs.filter((p) => p.cwd).map((p) => prKey(p.repoSlug, p.number));
+      const keys = g.prs.filter((p) => batchReason(p) == null).map((p) => prKey(p.repoSlug, p.number));
       const allOn = keys.length > 0 && keys.every((k) => L.selected.has(k));
       return v_flex().id(`repo-${g.on ?? ""}-${g.repo}`).gap(SP.xs)
         .child(h_flex().gap(SP.md).items_center()

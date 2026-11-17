@@ -128,6 +128,24 @@ _js() {
   [ "$output" = '[{"id":"post-draft","pr":"o/n#7","event":null,"sha":"abc1234","message":"Post draft on o/n#7? Puts the review of abc1234 on GitHub as a draft only you can see."},{"id":"post-comment","pr":"o/n#7","event":"comment","sha":"abc1234","message":"Post comment on o/n#7? Publishes the review of abc1234 as a comment."},{"id":"post-approve","pr":"o/n#7","event":"approve","sha":"abc1234","message":"Approve o/n#7? Publishes the review of abc1234 as an approval."},{"id":"post-request-changes","pr":"o/n#7","event":"request_changes","sha":"abc1234","message":"Request changes on o/n#7? Publishes the review of abc1234 as a change request."},{"id":"publish-comment","pr":"o/n#7","event":"comment","sha":"abc1234","message":"Publish draft on o/n#7? Publishes the draft of abc1234 as a comment."},{"id":"publish-approve","pr":"o/n#7","event":"approve","sha":"abc1234","message":"Approve o/n#7? Publishes the draft of abc1234 as an approval."},{"id":"publish-request-changes","pr":"o/n#7","event":"request_changes","sha":"abc1234","message":"Request changes on o/n#7? Publishes the draft of abc1234 as a change request."}]' ]
 }
 
+@test "starting disables pr actions with A batch is starting" {
+  _js 'prs({starting: true})[0].reason'
+  [ "$status" -eq 0 ]
+  [ "$output" = '"A batch is starting"' ]
+}
+
+@test "blockReason: starting, then busy or live, then lock" {
+  _js "[m.blockReason({starting: true, busy: true, lock: 'L'}), m.blockReason({busy: true, lock: 'L'}), m.blockReason({live: 't', lock: 'L'}), m.blockReason({lock: 'Locked · pr review'}), m.blockReason({})]"
+  [ "$status" -eq 0 ]
+  [ "$output" = '["A batch is starting","A review or batch is running on this PR","A review or batch is running on this PR","Locked · pr review",null]' ]
+}
+
+@test "a lock disables every pr action with its label" {
+  _js "prs({lock: 'Locked · Pi session'}).map(a => [a.enabled, a.reason]).filter(([e]) => e).length + ':' + prs({lock: 'Locked · Pi session'})[0].reason"
+  [ "$status" -eq 0 ]
+  [ "$output" = '"0:Locked · Pi session"' ]
+}
+
 @test "actionsFor follows ACTION_IDS order" {
   _js '[m.ACTION_IDS,m.actionsFor(ctx()).map(a => a.id)]'
   [ "$status" -eq 0 ]

@@ -8,6 +8,7 @@
  * item, so it shows in the Batch tab and the board's busy badge like any other batch.
  */
 
+import { blockReason } from './actions.js';
 import { COLUMN_BATCH } from './batch_launch.js';
 
 // The step a fix runs is the one its lane's shortcut runs (batch_launch.js COLUMN_BATCH).
@@ -22,16 +23,21 @@ const FIX_FOR = Object.freeze({
   'changes-requested': { id: 'fix-comments', label: 'Answer comments', steps: stepsOf('has-comments') },
 });
 
-/** The fixes for `pr`'s present problems, in the order the badges read; none for someone else's PR. */
-export function fixesFor(pr) {
+/**
+ * The fixes for `pr`'s present problems, in the order the badges read; none for someone else's PR.
+ * `starting`, `busy` and `live` are the caller's launch state; each fix is disabled with
+ * actions.js blockReason's words when any of them, `pr.busy` or `pr.lock` says so.
+ */
+export function fixesFor(pr, { starting = false, busy = false, live = null } = {}) {
   if (!pr?.isMine || pr.state === 'MERGED' || pr.state === 'CLOSED') return [];
+  const reason = blockReason({ starting, busy: busy || Boolean(pr.busy), live, lock: pr.lock ?? null });
   const seen = new Set();
   const out = [];
   for (const issue of pr.issues ?? []) {
     const fix = FIX_FOR[issue.kind];
     if (!fix || seen.has(fix.id)) continue;
     seen.add(fix.id);
-    out.push({ ...fix, ai: true });
+    out.push({ ...fix, ai: true, enabled: reason == null, reason });
   }
   return out;
 }

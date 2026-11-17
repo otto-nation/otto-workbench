@@ -12,6 +12,7 @@ from __future__ import annotations
 import batch.store
 import board.cache
 import board.columns
+import board.locks
 import board.presentation
 import board.reviews
 import core.serde
@@ -60,6 +61,8 @@ def from_cache(
         raw_branch = raw.get("branch") or ""
         p = worktrees.for_branch(raw_branch) if worktrees is not None else None
         worktree = str(p) if p else None
+        state = _enum(PrState, raw.get("state"), PrState.OPEN)
+        lock = board.locks.lock_of(repo_key, raw_branch, worktree) if state is PrState.OPEN else None
         row = _row_from_merged(
             raw,
             joined.get(number) or _empty_join(number, raw),
@@ -67,7 +70,7 @@ def from_cache(
             viewer=viewer,
             slug=slug,
             queue=work.get(f"{slug}#{number}"),
-            worktree=worktree,
+            lock=lock,
         )
         if mine_only and not row.is_mine:
             continue
@@ -105,7 +108,7 @@ def _row_from_merged(
     viewer: str,
     slug: str,
     queue: QueueWork | None = None,
-    worktree: str | None = None,
+    lock: str | None = None,
 ) -> Row:
     author = raw.get("author") or ""
     is_mine = bool(viewer) and author.casefold() == viewer.casefold()
@@ -164,7 +167,7 @@ def _row_from_merged(
         owed=owed_reason,
         owed_known=owed_known,
         queue=queue,
-        worktree=worktree,
+        lock=lock,
     )
 
 

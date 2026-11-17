@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Publish the worktree an agent is working in on its own herdr terminal.
+# Publish the worktree an agent is working in on its own herdr terminal
+# and claim the worktree an agent reached into.
 #
 # Called by both harnesses' hooks — Claude's PostToolUse (Bash, Edit|Write) and
 # SessionStart entries in ai/claude/settings.json, and ai/pi/extensions/
@@ -17,8 +18,11 @@
 # Usage: report-agent-worktree           (stdin: a post-tool hook payload)
 #        report-agent-worktree --clear   (session start: empty the label)
 #
-# Env: HC_TERMINAL_ID — the herdr terminal to label; unset or empty, nothing
-#      runs. CLAUDE_PROJECT_DIR — the agent's own checkout, under Claude.
+# Env: HC_TERMINAL_ID — the herdr terminal to label. CLAUDE_PID or
+#      WORKBENCH_SESSION_PID — the session to claim for. Unset all three,
+#      nothing runs. CLAUDE_PROJECT_DIR — the agent's own checkout, under
+#      Claude. WORKBENCH_SESSION_HARNESS=pi plus PI_SESSION_ID (Pi);
+#      CLAUDE_CODE_SESSION_ID (Claude).
 #
 # Always exits 0: a hook that fails would report a failure for a tool call that
 # already succeeded, and a stale label is harmless.
@@ -30,15 +34,16 @@ usage() {
 Usage: report-agent-worktree [--clear]
 
 Labels this herdr terminal (HC_TERMINAL_ID) with otto.worktree=<path> when a
-tool call worked in a worktree other than the agent's own. Reads a hook payload
-on stdin; --clear empties the label at session start. Always exits 0.
+tool call worked in a worktree other than the agent's own, and claims the
+worktree an agent reached into. Reads a hook payload on stdin; --clear empties
+the label at session start. Always exits 0.
 EOF
 }
 
 [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
 
-# Outside a herdr terminal there is nothing to label, and nothing is read.
-[[ -n "${HC_TERMINAL_ID:-}" ]] || exit 0
+# Nothing to label and no session to claim for: nothing is read.
+[[ -n "${HC_TERMINAL_ID:-}" || -n "${WORKBENCH_SESSION_PID:-}" || -n "${CLAUDE_PID:-}" ]] || exit 0
 
 # The Python shim beside this file. Installed to ~/.local/bin as a symlink into
 # the checkout, so the link is followed first; ~/.local/bin/agent-worktree is

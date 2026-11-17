@@ -11,6 +11,7 @@
 setup() {
   load 'test_helper'
   common_setup
+  unset CLAUDE_PID WORKBENCH_SESSION_PID WORKBENCH_SESSION_HARNESS
   sandbox_state_dir
 
   local real_python
@@ -69,12 +70,26 @@ _container() {
   git -C "$root/.git" worktree list --porcelain | sed -n 's/^worktree \(.*feat-a\)$/\1/p'
 }
 
-@test "no HC_TERMINAL_ID: exits 0 without starting python" {
+@test "no terminal and no session: exits 0 without starting python" {
   unset HC_TERMINAL_ID
   _hook '{"tool_name":"Edit","tool_input":{"file_path":"/elsewhere/f"}}'
   [ "$status" -eq 0 ]
   [ ! -e "$PY_LOG" ]
   [ ! -e "$HC_LOG" ]
+}
+
+@test "CLAUDE_PID with no terminal still starts python" {
+  unset HC_TERMINAL_ID
+  CLAUDE_PID=4242 _hook '{"tool_name":"Edit","tool_input":{"file_path":"/elsewhere/f"}}'
+  [ "$status" -eq 0 ]
+  [ -e "$PY_LOG" ]
+}
+
+@test "a Pi session pid with no terminal still starts python" {
+  unset HC_TERMINAL_ID
+  WORKBENCH_SESSION_PID=4242 _hook '{"tool_name":"Edit","tool_input":{"file_path":"/elsewhere/f"}}'
+  [ "$status" -eq 0 ]
+  [ -e "$PY_LOG" ]
 }
 
 @test "an empty HC_TERMINAL_ID counts as unset" {

@@ -5,9 +5,9 @@
  * `pr board` phases through board_pull.js pullTarget. No timers and no host API: the host chooses the
  * targets, decides when to pull, and redraws on onChange.
  */
-import { checkTools, loadTerminals, owedDue } from './board_data.js';
-import { pullTarget, eachByMachine, FULL_PULL_MS, wantsRefresh } from './board_pull.js';
-export { FULL_PULL_MS, wantsRefresh };
+import { checkTools, loadTerminals } from './board_data.js';
+import { pullTarget, eachByMachine, FULL_PULL_MS } from './board_pull.js';
+export { FULL_PULL_MS };
 import { boardState, repoId, representatives, staleKeys } from './scope.js';
 
 export const ctxKey = (c) => JSON.stringify({ on: c?.on ?? null, cwd: c?.cwd ?? null });
@@ -21,7 +21,7 @@ export function createBoardStore({ exec, now = Date.now }) {
   // Per repo id, the checkout key whose pull committed most recently.
   const latestByRepo = new Map();
   const toolsByOn = new Map();
-  // Last offline→online fall-through (or stale-cache upgrade) per target.
+  // Last offline→online fall-through per target.
   const fellAt = new Map();
 
   const stateOf = (c) => cache.get(ctxKey(c)) ?? {};
@@ -87,17 +87,8 @@ export function createBoardStore({ exec, now = Date.now }) {
     return cycle.get('terminals');
   }
 
-  async function pullOne(ctx, key, cycle, { listingOnly, fresh, want, isCurrent, refreshAfterMs }, { onChange, onCommit }) {
+  async function pullOne(ctx, key, cycle, { listingOnly, fresh, want, isCurrent }, { onChange, onCommit }) {
     const prev = cache.get(key);
-    const t = now();
-    // Stale cache-age listing upgrades to a full pull at most once per refreshAfterMs (fellAt),
-    // so a failing fetch is not retried every listing tick, and an --if-changed miss cannot.
-    // The queued fall-through shares fellAt on purpose: both mean an online pull just ran, so each
-    // throttling the other avoids back-to-back pulls.
-    if (listingOnly && wantsRefresh(prev, t, refreshAfterMs) && owedDue(fellAt.get(key), t, refreshAfterMs)) {
-      listingOnly = false;
-      fellAt.set(key, t);
-    }
     if (!listingOnly || !prev?.repo) {
       const have = await ensureTools(ctx, key, isCurrent);
       if (!have || !isCurrent(key)) return;
@@ -142,10 +133,10 @@ export function createBoardStore({ exec, now = Date.now }) {
     // One pull over `targets`. `isCurrent(key)` is asked between steps; false abandons that target.
     // `want()` says which on-demand data the host shows now ({owed}). `keep()` names the targets
     // whose cache survives (default: `targets`).
-    async pull({ targets, listingOnly = false, fresh = false, want = () => NO_WANT, isCurrent = () => true, keep = null, refreshAfterMs = null },
+    async pull({ targets, listingOnly = false, fresh = false, want = () => NO_WANT, isCurrent = () => true, keep = null },
       { onChange = () => {}, onCommit = () => {} } = {}) {
       const cycle = new Map();
-      const opts = { listingOnly, fresh, want, isCurrent, refreshAfterMs };
+      const opts = { listingOnly, fresh, want, isCurrent };
       for (const ctx of targets) begin(ctxKey(ctx));
       onChange();
       await eachByMachine(targets, (c) => c.on, async (ctx) => {

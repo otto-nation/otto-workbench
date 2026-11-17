@@ -159,6 +159,8 @@ def _busy(row: Row, batch: BatchState | None) -> Badge | None:
         return _status(TONE_STATUS[batch.tone], BATCH_PREFIX + batch.text)
     if row.busy:
         return _status(StatusKind.RUNNING, BATCH_PREFIX + BATCH_WORKING)
+    if row.lock:
+        return _status(StatusKind.RUNNING, row.lock)
     return None
 
 

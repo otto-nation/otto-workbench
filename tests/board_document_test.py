@@ -86,6 +86,34 @@ def test_status_writes_cache_and_sets_partial(tmp_path, monkeypatch):
     assert path_for(found.key, Phase.STATUS).is_file()
 
 
+def test_open_row_emits_lock_merged_row_does_not(tmp_path, monkeypatch):
+    found = board_env(
+        tmp_path,
+        monkeypatch,
+        pulls=[
+            pull_facts(7, "aaa", branch="feat/a"),
+            pull_facts(
+                8, "bbb", title="U", author="you",
+                branch="you/feat/landed", state=PrState.MERGED,
+            ),
+        ],
+    )
+    seen = []
+
+    def lock_of(repo_key, branch, worktree):
+        seen.append(branch)
+        if branch == "feat/a":
+            return "Locked · pr review"
+        return None
+
+    monkeypatch.setattr("board.locks.lock_of", lock_of)
+    doc = build(Phase.LISTING, [found.path])
+    by_number = {row["number"]: row for row in doc["rows"]}
+    assert by_number[7]["lock"] == "Locked · pr review"
+    assert by_number[8]["lock"] is None
+    assert "you/feat/landed" not in seen
+
+
 def test_status_prs_is_a_patch(tmp_path, monkeypatch):
     facts = StatusFacts(
         ci_status=CiStatus.PASSING,
@@ -182,11 +210,9 @@ def test_full_document_carries_its_features(tmp_path, monkeypatch):
     doc = build(Phase.LISTING, [found.path])
     assert doc["features"] == [
         "review-publish", "batch-session", "target-session", "queue-lanes", "cache-age",
-        "worktrees",
     ]
     assert list(FEATURES) == [
         "review-publish", "batch-session", "target-session", "queue-lanes", "cache-age",
-        "worktrees",
     ]
 
 

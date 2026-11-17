@@ -62,16 +62,16 @@ _js() {
   [ "$output" = '{"state":"queued","entry":9,"terminal":"t1"}' ]
 }
 
-@test "rowToPr maps worktree; absent is null" {
+@test "rowToPr maps lock; absent is null" {
   _js '
     process.stdout.write(JSON.stringify([
-      d.rowToPr({ ...doc.rows[0], worktree: "/wt/a" }).worktree,
-      d.rowToPr(doc.rows[0]).worktree,
-      d.rowToPr({ ...doc.rows[0], worktree: undefined }).worktree,
+      d.rowToPr({ ...doc.rows[0], lock: "Locked · pr review" }).lock,
+      d.rowToPr(doc.rows[0]).lock,
+      d.rowToPr({ ...doc.rows[0], lock: undefined }).lock,
     ]));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '["/wt/a",null,null]' ]
+  [ "$output" = '["Locked · pr review",null,null]' ]
 }
 
 @test "mergeRows: complete replaces; a patch updates by repo and number and appends new rows" {
@@ -372,24 +372,6 @@ _pull() {
   _js 'process.stdout.write(JSON.stringify([p.machineOf(null), p.machineOf(undefined), p.machineOf(""), p.machineOf("m1")]));'
   [ "$status" -eq 0 ]
   [ "$output" = '["","","","m1"]' ]
-}
-
-@test "wantsRefresh: null interval, no cache-age, missing cachedAt are false; old is true, fresh is false" {
-  _js '
-    const old = { features: ["cache-age"], cachedAt: 0 };
-    const fresh = { features: ["cache-age"], cachedAt: 900 };
-    const noFeat = { features: ["review-publish"], cachedAt: 0 };
-    const noAt = { features: ["cache-age"] };
-    process.stdout.write(JSON.stringify([
-      p.wantsRefresh(old, 1000, null),
-      p.wantsRefresh(noFeat, 1000, 100),
-      p.wantsRefresh(noAt, 1000, 100),
-      p.wantsRefresh(old, 1000, 100),
-      p.wantsRefresh(fresh, 1000, 100),
-    ]));
-  '
-  [ "$status" -eq 0 ]
-  [ "$output" = '[false,false,false,true,false]' ]
 }
 
 @test "board_store pull groups targets by machine instead of Promise.all" {

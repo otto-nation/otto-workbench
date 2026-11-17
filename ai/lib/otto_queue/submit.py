@@ -41,10 +41,12 @@ from pathlib import Path
 
 import core.log
 import otto_queue.ledger
+import otto_queue.paths
 import otto_queue.slots
 import otto_queue.supervisor
 import otto_queue.ticket
 from core.exit_codes import ExitCode
+from core.proc import INTERRUPT_RETURNCODE
 from otto_queue.model import Entry, EntryClass, EntryKind, EntryState, NewEntry
 
 
@@ -133,15 +135,38 @@ def _run_here(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolutio
         notify(f"otto-queue: joined entry {res.entry.id}; "
                "`otto-queue status` shows it")
         return SubmitResult(0, SubmitOutcome.JOINED, res.entry.id)
-    claimed = ledger.claim_as_ticket(res.entry.id, os.getpid())
-    if claimed is None:
-        return _after_missed_claim(ledger, res.entry.id, request, policy, notify)
     if not request.run_here:
+        claimed = ledger.claim_as_ticket(res.entry.id, os.getpid())
+        if claimed is None:
+            return _after_missed_claim(ledger, res.entry.id, request, policy, notify)
         return _withdraw(ledger, claimed, reason, notify)
-    notify(f"otto-queue: no worker ({reason}); running entry {res.entry.id} as a ticket here")
-    result = otto_queue.ticket.run_claimed(
-        ledger, claimed, _ticket_for(claimed.entry, request), policy, notify=notify)
-    return SubmitResult(result.exit_status, SubmitOutcome.RAN_HERE, res.entry.id)
+    if res.entry.kind is EntryKind.TICKET:
+        return _wait_on_ticket(request, policy, ledger.root, notify)
+    log = otto_queue.paths.log_path(ledger.root, res.entry.id)
+    notify(f"otto-queue: no worker ({reason}); running entry {res.entry.id} here (log: {log})")
+    adoption = otto_queue.ticket.adopt_job(
+        ledger, res.entry, policy, wait_s=otto_queue.ticket.DEFAULT_WAIT_S, notify=notify)
+    return _from_adoption(ledger, adoption, res.entry.id, request, policy, notify)
+
+
+def _from_adoption(ledger: otto_queue.ledger.Ledger, adoption: otto_queue.ticket.Adoption,
+                   entry_id: int, request: SubmitRequest, policy: otto_queue.slots.Policy,
+                   notify: Callable[[str], None]) -> SubmitResult:
+    outcome = otto_queue.ticket.AdoptOutcome
+    if adoption.outcome in (outcome.RAN, outcome.RETRY):
+        return SubmitResult(adoption.exit_status or 0, SubmitOutcome.RAN_HERE, entry_id)
+    if adoption.outcome is outcome.TIMED_OUT:
+        notify(f"otto-queue: entry {entry_id} found no room; it stays queued")
+        return SubmitResult(ExitCode.TEMPFAIL, SubmitOutcome.BUSY, entry_id)
+    if adoption.outcome is outcome.TAKEN:
+        return _after_missed_claim(ledger, entry_id, request, policy, notify)
+    # LEFT_QUEUE: never start a new ticket for a job that was cancelled under us.
+    entry = ledger.get(entry_id)
+    if entry is not None and entry.state.live:
+        notify(f"otto-queue: entry {entry_id} is with the worker; leaving it to that run")
+        return SubmitResult(0, SubmitOutcome.JOINED, entry_id)
+    status = INTERRUPT_RETURNCODE if entry is None or entry.exit_status is None else entry.exit_status
+    return SubmitResult(status, SubmitOutcome.JOINED, entry_id)
 
 
 def _withdraw(ledger: otto_queue.ledger.Ledger, claimed: otto_queue.ledger.Resolution,
@@ -196,10 +221,6 @@ def _wait_on_ticket(request: SubmitRequest, policy: otto_queue.slots.Policy,
                     root: Path, notify: Callable[[str], None]) -> SubmitResult:
     result = otto_queue.ticket.run_ticket(request.ticket(), policy, root=root, notify=notify)
     return _from_ticket(result)
-
-
-def _ticket_for(entry: Entry, request: SubmitRequest) -> otto_queue.ticket.TicketRequest:
-    return otto_queue.ticket.claimed_request(entry, request.ticket())
 
 
 def _from_ticket(result: otto_queue.ticket.TicketResult) -> SubmitResult:

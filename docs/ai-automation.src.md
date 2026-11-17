@@ -729,6 +729,13 @@ stop saved the lease). For a rebase never started by `pr` (no state), add
 
 ### otto-queue contract
 
+`otto-queue submit` records a durable queued job and prints its entry id; it
+never runs the command here unless given `--run-here`, which unattended callers
+such as scheduled maintenance use. `otto-queue wait ID` follows it: it prints
+where the job's output goes, runs the job itself when no worker is alive, and
+exits with the command's status. A `wait` that times out exits 75 and leaves the
+entry queued, so a second `wait` with the same id loses nothing.
+
 What `otto-queue` writes (nothing remotely), what each exit means, and the next
 step after one, rendered from `cli.otto_queue.CONTRACT` (`otto-queue --help`
 prints the same text).

@@ -5168,36 +5168,37 @@ bound the count, and only the host check can race.
 
 ### otto_queue/submit.py
 
-Submit: hand a command to the worker as a job, or run it here when no worker can be started.
+Submit: record a command as a durable queued job and return its entry id.
 
-`otto-queue submit` returns as soon as the job is queued: unattended work
-(scheduled maintenance and its auto-tasks) outlives the process that
-asked for it.
+`otto-queue submit` returns as soon as the job is queued and never runs the
+command here unless asked (`--run-here`): unattended work (scheduled
+maintenance and its auto-tasks) outlives the process that asked for it, and a
+caller that wants the result follows up with `otto-queue wait ID`.
 
 1. `Ledger.resolve` records a `queued` job, or answers from an entry with the
    same key as a ticket would: a `done` one is reused (unless `reuse` is off), a
    live one joined.
-2. `otto_queue.supervisor.wake` starts the worker and confirms it.
-3. When no worker comes up (no supervisor installed, no user bus), the job is
-   run here by `otto_queue.ticket.adopt_job`, which keeps it a job until it
-   starts, and the caller is told so. No slot within `DEFAULT_WAIT_S` returns
-   75 and leaves the job queued. A job a worker
-   took in the meantime is left to it. Joining a live ticket waits for its
-   status, and re-runs the work if that ticket ends without one. The queue's
-   absence degrades to today's behaviour, never to work waiting for a worker
-   that will not come. With `run_here` off (`--queue-only`) a live entry is
-   joined at 0 without waiting or cancelling, a `done` entry's status is
-   returned, and a job this process created (`NEW`) is cancelled instead —
-   `submit` then returns 69 (EX_UNAVAILABLE) having run nothing. A job it only
-   joined stays queued for the next supervisor start. That is for a caller
-   that has its own way to run the command when there is no worker and must not
-   block on it, such as maintenance's auto-task agents
-   (`maintenance/bin/run-due-auto-tasks`). An unopenable ledger, or an entry
-   that ended without a result, answers such a caller the same way.
+2. `otto_queue.supervisor.wake` starts the worker and confirms it. With a
+   worker the job is handed over: queued, or a joined live entry left running.
+3. With no worker (no supervisor installed, no user bus) the mode decides.
+   `SubmitMode.ADD` (the default) leaves the job queued and says so, so it
+   stays queued until a worker starts or someone waits on it. `RUN_HERE`
+   (`--run-here`) runs it here by `otto_queue.ticket.adopt_job`, which keeps it
+   a job until it starts; no slot within `DEFAULT_WAIT_S` returns 75 and leaves
+   it queued. A job a worker took in the meantime is left to it, and joining a
+   live ticket waits for its status, re-running the work if that ticket ends
+   without one. `QUEUE_ONLY` (`--queue-only`) joins a live entry at 0 without
+   waiting or cancelling, returns a `done` entry's status, and cancels a job
+   this process created (`NEW`) instead; `submit` then returns 69
+   (EX_UNAVAILABLE) having run nothing. A job it only joined stays queued for
+   the next supervisor start. That is for a caller that has its own way to run
+   the command when there is no worker and must not block on it, such as
+   maintenance's auto-task agents (`maintenance/bin/run-due-auto-tasks`).
 
-A ledger that cannot be opened runs the command unqueued, as a ticket does; one
-that stays busy returns 75. Exit 75 from a command run here is returned, not
-retried: there is no worker to retry it.
+A ledger that cannot be opened runs nothing under `ADD` or `QUEUE_ONLY` (69);
+under `RUN_HERE` it runs the command unqueued, as a ticket does. One that stays
+busy returns 75. Exit 75 from a command run here is returned, not retried:
+there is no worker to retry it.
 
 ### otto_queue/supervisor.py
 
@@ -5310,6 +5311,21 @@ pure, testable clock-and-notify object.
 
 `reason_kind` classifies the wording `batch.admission` and the slot/queue
 gates produce; those strings remain the owner of why a wait happened.
+
+### otto_queue/waiter.py
+
+Wait: block until a queue entry ends and answer with its status.
+
+`otto-queue wait ID` is the second half of `otto-queue submit`: submit records
+a durable job and returns its id, wait follows it. A waiter holds nothing the
+entry depends on, so one that dies or times out loses no work — wait again with
+the same id. It prints where the output goes first: a job's log file, or the
+terminal that started a ticket.
+
+A queued job with no worker alive is run by the waiter itself
+(`otto_queue.ticket.join` adopts it), so waiting cannot outlast every worker.
+Timing out returns 75 and leaves the entry as it was. Ctrl-C propagates and
+leaves the entry as it was; `otto-queue cancel` is what stops an entry.
 
 ### otto_queue/worker.py
 
@@ -9405,7 +9421,7 @@ answers no question anyone asks of it.
 
 ### cli/otto_queue.py
 
-`otto-queue`: run a command through this machine's queue, see what it holds, cancel an entry.
+`otto-queue`: run a command through this machine's queue, see what it holds, wait for or cancel an entry.
 
 The library is `otto_queue`; this module is the parser, the output and the exit
 codes. Flags, exit codes and examples are `CONTRACT` below. Admission is

@@ -879,7 +879,7 @@ Exit codes: `0` ok · `1` failure · `2` usage · `69` unavailable · `75` tempf
 | `--wait` `<wait>` | Seconds to wait for a slot before exiting 75 (default: 3600). |
 | `...` | -- and the command to run. |
 
-**`otto-queue submit`** — Queue a command for the worker and return
+**`otto-queue submit`** — Queue a command durably and print its entry id; `otto-queue wait ID` waits for it
 
 | Flag | Description |
 |------|-------------|
@@ -888,7 +888,8 @@ Exit codes: `0` ok · `1` failure · `2` usage · `69` unavailable · `75` tempf
 | `--key` `<key>` | Join a live entry with this key, or return a done one's status. |
 | `--force` | Run even when --key matches an entry. |
 | `--no-reuse` | With --key, run again when only a finished entry matches; a live one is still joined. |
-| `--queue-only` | When no worker can start, withdraw the job and exit 69 instead of running it here. |
+| `--run-here` | When no worker can start, run the job in this process (unattended callers such as scheduled maintenance). Not with `--queue-only`. |
+| `--queue-only` | When no worker can start, withdraw the job and exit 69 instead of running it here. Not with `--run-here`. |
 | `...` | -- and the command to run. |
 
 **`otto-queue worker`** — Run queued jobs until idle; started by the supervisor
@@ -909,6 +910,13 @@ Exit codes: `0` ok · `1` failure · `2` usage · `69` unavailable · `75` tempf
 | Flag | Description |
 |------|-------------|
 | `<id>` | The entry's id, from status. |
+
+**`otto-queue wait`** — Wait for an entry to end and exit with its status
+
+| Flag | Description |
+|------|-------------|
+| `<id>` | The entry's id, as `submit` printed it. |
+| `--wait` `<wait>` | Seconds to wait before exiting 75 and leaving the entry queued (default: 3600). |
 
 ### `pr`
 

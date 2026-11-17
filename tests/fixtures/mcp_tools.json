@@ -143,7 +143,7 @@
   },
   "otto-queue": {
     "_script": "ai/bin/otto-queue",
-    "description": "Machine-wide queue for background work \u2014 admits a command against the heavy/light budget or queues it as a job for an on-demand worker, de-duplicates it by key, and records it in a per-machine ledger\n\nWhen to use: Heavy or memory-hungry work an agent starts itself (generators, full builds): `otto-queue run --ticket --class heavy -- CMD` runs in the current terminal after admission. Never use `submit` for interactive work \u2014 it detaches output to queue/logs. Do not pass `--key` for work that must re-run: a done key is reused without running. Inside a queued job (`OTTO_QUEUE_ENTRY` set), just run the command. If `otto-queue` is not installed, run the command bare. Exit 75 means the ledger is busy and nothing ran. `pr`'s AI subcommands (`review`, `comments --fix`, `ci --fix`, `rebase --fix`, `fix`) take their own ticket; run them bare.\n\nUsage: otto-queue run --ticket [--class <heavy|light>] [--label <label>] [--key <key>] [--force] [--no-reuse] [--wait <wait>] ...  |  otto-queue submit [--class <heavy|light>] [--label <label>] [--key <key>] [--force] [--no-reuse] [--queue-only] ...  |  otto-queue worker [--idle <idle>]  |  otto-queue status [--json] [--slots]  |  otto-queue cancel <id>",
+    "description": "Machine-wide queue for background work \u2014 admits a command against the heavy/light budget or queues it as a job for an on-demand worker, de-duplicates it by key, and records it in a per-machine ledger\n\nWhen to use: Heavy or memory-hungry work an agent starts itself (generators, full builds): `otto-queue run --ticket --class heavy -- CMD` runs in the current terminal after admission. Never use `submit` for interactive work \u2014 it detaches output to queue/logs. Do not pass `--key` for work that must re-run: a done key is reused without running. Inside a queued job (`OTTO_QUEUE_ENTRY` set), just run the command. If `otto-queue` is not installed, run the command bare. Exit 75 means the ledger is busy and nothing ran. `pr`'s AI subcommands (`review`, `comments --fix`, `ci --fix`, `rebase --fix`, `fix`) take their own ticket; run them bare.\n\nUsage: otto-queue run --ticket [--class <heavy|light>] [--label <label>] [--key <key>] [--force] [--no-reuse] [--wait <wait>] ...  |  otto-queue submit [--class <heavy|light>] [--label <label>] [--key <key>] [--force] [--no-reuse] [--run-here | --queue-only] ...  |  otto-queue worker [--idle <idle>]  |  otto-queue status [--json] [--slots]  |  otto-queue cancel <id>  |  otto-queue wait [--wait <wait>] <id>",
     "input_schema": {
       "properties": {
         "command": {
@@ -164,12 +164,12 @@
           "exit_codes": [
             {
               "code": 0,
-              "meaning": "status listed the ledger; cancel stopped a waiting or running entry; run's command succeeded; submit queued or joined the job, or ran it here and it succeeded",
+              "meaning": "status listed the ledger; cancel stopped a waiting or running entry; run's command succeeded; submit queued or joined the job (its id on stdout), or with --run-here ran it here and it succeeded; wait's entry ended 0",
               "name": "ok"
             },
             {
               "code": 1,
-              "meaning": "cancel named no live entry (unknown id, or already finished); the ledger could not be opened",
+              "meaning": "cancel named no live entry (unknown id, or already finished); wait named no entry, or the entry ended without a status; the ledger could not be opened",
               "name": "failure"
             },
             {
@@ -179,17 +179,17 @@
             },
             {
               "code": 69,
-              "meaning": "submit --queue-only: no worker could take the job, so it was withdrawn and nothing ran",
+              "meaning": "submit --queue-only: no worker could take the job, so it was withdrawn and nothing ran; or the ledger could not be opened, so nothing was queued",
               "name": "unavailable"
             },
             {
               "code": 75,
-              "meaning": "no slot before --wait, or another process holds the ledger; retry",
+              "meaning": "no slot before --wait, or another process holds the ledger; retry; wait: the entry did not end before --wait and stays queued, so run `otto-queue wait ID` again",
               "name": "tempfail"
             },
             {
               "code": 130,
-              "meaning": "the entry was cancelled before it ran, or Ctrl-C interrupted the CLI",
+              "meaning": "the entry was cancelled before it ran, or Ctrl-C interrupted the CLI (a waited-on entry is left as it was)",
               "name": "cancelled"
             }
           ],

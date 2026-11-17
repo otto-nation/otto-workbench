@@ -111,8 +111,8 @@ _queue_worker_refresh_launchd() {
 }
 
 _queue_worker_refresh_systemd() {
-  # No user manager (no bus): nothing to install into. `otto-queue submit` runs
-  # jobs as tickets there, and says so.
+  # No user manager (no bus): nothing to install into. jobs stay
+  # queued there until `otto-queue wait` (or `submit --run-here`) runs them.
   systemctl --user show-environment >/dev/null 2>&1 || return 0
   local changed=false rc=0
   _queue_worker_apply "$MAINTENANCE_SRC_DIR/systemd/${_QUEUE_WORKER_UNIT}.template" \

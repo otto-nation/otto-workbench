@@ -35,14 +35,47 @@ function publicReviewRun(entry) {
   return { ...rest, run: publicRun(run) };
 }
 
-// A board record as the page may see it: the checkout path stays on the server.
+// Keys a board record may carry that the page never sees. `worktree` is a rowToPr
+// path; `cwd`/`on` come from the scope merge; `reviewTerminal` from withRunning.
+export const PRIVATE_PR_KEYS = Object.freeze([
+  'worktree', 'cwd', 'on', 'reviewTerminal',
+]);
+
+// Keys the page reads from a PR (public/*.js, _lib/board_model.js, columns, filters,
+// pr_status, pr_link). `hasCheckout` is derived from cwd. `queue` is copied as the
+// path-free subset below — the page only draws queue.state (laneOf / reviewStatus).
+export const PUBLIC_PR_KEYS = Object.freeze([
+  'repoSlug', 'number', 'title', 'author', 'branch', 'baseBranch', 'url', 'headSha',
+  'labels', 'isDraft', 'state',
+  'additions', 'deletions', 'changedFiles',
+  'hydrated', 'busy', 'isMine',
+  'hasNewChangesSinceReview',
+  'reviewRuns', 'lanes', 'issues', 'presentation',
+  'queue', 'reviewing', 'hasCheckout',
+  'host', 'viewer', 'features',
+]);
+
+const PUBLIC_QUEUE_KEYS = Object.freeze(['state']);
+
+function publicQueue(queue) {
+  if (queue == null || typeof queue !== 'object') return queue ?? null;
+  const out = {};
+  for (const k of PUBLIC_QUEUE_KEYS) {
+    if (Object.hasOwn(queue, k)) out[k] = queue[k];
+  }
+  return out;
+}
+
+// A board record as the page may see it: only PUBLIC_PR_KEYS, never a denylist rest-spread.
 export function publicPr(pr) {
-  const { cwd, ...rest } = pr;
-  return {
-    ...rest,
-    hasCheckout: cwd != null,
-    reviewRuns: (pr.reviewRuns ?? []).map(publicReviewRun),
-  };
+  const out = { hasCheckout: pr.cwd != null };
+  for (const k of PUBLIC_PR_KEYS) {
+    if (k === 'hasCheckout' || !Object.hasOwn(pr, k)) continue;
+    if (k === 'reviewRuns') out.reviewRuns = (pr.reviewRuns ?? []).map(publicReviewRun);
+    else if (k === 'queue') out.queue = publicQueue(pr.queue);
+    else out[k] = pr[k];
+  }
+  return out;
 }
 
 export function toSnapshot(view, { name, version, updatedAt = null, refreshing = false, discoveryError = null }) {

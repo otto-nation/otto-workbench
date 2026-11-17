@@ -102,6 +102,32 @@ const docRow = (name) => ({ presentation: fx.cases.find((c) => c.name === name).
   [ "$output" = '{"event":"pending","submitted":false,"hasCwd":false}' ]
 }
 
+@test "view: toSnapshot drops worktree, cwd, and path-bearing queue keys" {
+  _web "const s = await import(W + '/lib/snapshot.js');
+        const snap = s.toSnapshot({ prs: [{
+          number: 1, repoSlug: 'o/n', cwd: '/w', worktree: '/srv/x/wt',
+          queue: { state: 'queued', entry: 9, cwd: '/srv/x/q', worktree: '/srv/x/wt' },
+          reviewing: true,
+        }] }, { name: 'n', version: '1' });
+        const p = snap.prs[0];
+        out({ worktree: 'worktree' in p, cwd: 'cwd' in p, hasCheckout: p.hasCheckout,
+              queue: p.queue, leak: JSON.stringify(p).includes('/srv/x') });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"worktree":false,"cwd":false,"hasCheckout":true,"queue":{"state":"queued"},"leak":false}' ]
+}
+
+@test "view: every rowToPr key is on the public allowlist or PRIVATE_PR_KEYS" {
+  _web "const fs = await import('node:fs');
+        const bd = await import(L + '/board_doc.js');
+        const s = await import(W + '/lib/snapshot.js');
+        const doc = JSON.parse(fs.readFileSync(W + '/../../../tests/fixtures/board_document.json', 'utf8'));
+        const row = { ...doc.rows[0], queue: { state: 'queued', entry: 1, terminal: 't' }, worktree: '/wt/a' };
+        const known = new Set([...s.PUBLIC_PR_KEYS, ...s.PRIVATE_PR_KEYS]);
+        out(Object.keys(bd.rowToPr(row)).filter((k) => !known.has(k)));"
+  [ "$status" -eq 0 ]
+  [ "$output" = '[]' ]
+}
+
 @test "view: a pending run shows the draft-on-GitHub history label" {
   _web "const { historyRows } = await import(L + '/history.js');
         const rows = historyRows([{ stamp: 's', reviewed_at: '2026-08-18T13:00:00Z', post: { event: 'pending' } }], Date.parse('2026-08-18T14:00:00Z'));

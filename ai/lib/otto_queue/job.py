@@ -25,6 +25,10 @@ window (after mark_running before forwarding_signals, or after run_child
 before _record) has the same effect — the row is re-queued and the job may
 run again. Upgrade trigger: if a job is seen running twice, have the command
 die with its runner (PR_SET_PDEATHSIG on Linux).
+
+A waiter with no worker (`otto_queue.ticket.adopt_job`) runs a job through
+`run_leased(foreground=True)`, holding a slot it was admitted to itself, and the
+ceiling above applies to it too.
 """
 
 # doc-group: queue
@@ -91,7 +95,7 @@ def run_leased(ledger: otto_queue.ledger.Ledger, entry_id: int,
     """Take *entry_id*'s lease, move it to running and run it; NOT_CLAIMED when another runner has it.
 
     *foreground* keeps the command in this process's group (a waiter running a
-    job), so it dies with the waiter instead of outliving it.
+    job), so the terminal's Ctrl-C and hangup reach it as they would an unqueued run.
     """
     try:
         lease = otto_queue.lease.take(ledger.root, entry_id)

@@ -36,6 +36,11 @@ structured subject/action into a ticket they construct. `run_ticket` does not
 read them: the `otto-queue run` flags stay the only input to the CLI.
 `HC_TERMINAL_ID` is different: `TicketRequest.entry` copies it onto the row as
 `terminal` when it is set, so a ticket started from a herdr pane records which.
+A queued job joined with no worker alive is run here by `adopt_job`, which keeps
+it a job: it waits for a slot holding no lease, so a ticket killed before the job
+starts leaves it queued; once admitted it takes the job's own lease and runs the
+command in this process group, output to the job's log.
+
 3. **Run.** The row moves to `running`, and the command runs through
    `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
    terminal's Ctrl-C and hangup reaching it directly, SIGTERM (`otto-queue

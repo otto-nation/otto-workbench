@@ -45,7 +45,7 @@ string stored beside `not_before`; it is never used to match entries.
 (`owner/repo#N`, the `pr` subcommand, the herdr pane); they are never used to match.
 `resolve(reuse=False)` joins a live entry but never answers from a `done` one.
 `claim_as_ticket` converts a still-queued job into a ticket for the process
-that runs it.
+that holds its lease while `submit --queue-only` withdraws it.
 
 Compaction (`compact`, run by the worker) prunes terminal rows past a
 retention, keeping the newest `done` row of each key, and truncates the WAL
@@ -525,10 +525,10 @@ class Ledger:
         return _run(self.root, tx, write=True)
 
     def claim_as_ticket(self, entry_id: int, pid: int) -> Resolution | None:
-        """Turn a queued job into a ticket *pid* runs, holding its lease; None once a worker has it.
+        """Turn a queued job into a ticket *pid* holds the lease of; None once a worker has it.
 
-        `submit`'s fallback when no worker can be started. The row keeps its id and
-        key, so a request already joined to the job is joined to the ticket.
+        `submit --queue-only` uses it to withdraw a job no worker will run. The row
+        keeps its id and key, so a request already joined to the job is joined to it.
         """
         taken: list[otto_queue.lease.Lease] = []
 

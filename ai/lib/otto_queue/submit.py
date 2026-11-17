@@ -9,8 +9,9 @@ asked for it.
    live one joined.
 2. `otto_queue.supervisor.wake` starts the worker and confirms it.
 3. When no worker comes up (no supervisor installed, no user bus), the job is
-   claimed back as a ticket (`Ledger.claim_as_ticket`) and run here by
-   `otto_queue.ticket.run_claimed`, and the caller is told so. A job a worker
+   run here by `otto_queue.ticket.adopt_job`, which keeps it a job until it
+   starts, and the caller is told so. No slot within `DEFAULT_WAIT_S` returns
+   75 and leaves the job queued. A job a worker
    took in the meantime is left to it. Joining a live ticket waits for its
    status, and re-runs the work if that ticket ends without one. The queue's
    absence degrades to today's behaviour, never to work waiting for a worker

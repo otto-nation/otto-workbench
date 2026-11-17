@@ -13,7 +13,7 @@ setup() {
 teardown() { common_teardown; }
 
 # $1: a script body with m/c/f/cm/bl/d/doc/rows/kit/view.
-# Body is argv, not interpolated into -e: the plan's double-quoted literals cannot live in a
+# Body is a file path, not interpolated into -e: the plan's double-quoted literals cannot live in a
 # double-quoted node -e (Task 2/3 harness ruling). node --no-deprecation: DEP0205 on node 26.
 _model() {
   local runjs="$BATS_TEST_TMPDIR/model-run.mjs"

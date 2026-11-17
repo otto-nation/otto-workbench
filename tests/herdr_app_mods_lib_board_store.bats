@@ -13,7 +13,7 @@ setup() {
 teardown() { common_teardown; }
 
 # $1: a script body with `s` (board_store), `doc`, `calls`, `fake(answer?)`, `docAs(slug, phase)`.
-# Body is argv, not interpolated into -e: the plan's double-quoted literals cannot live in a
+# Body is a file path, not interpolated into -e: the plan's double-quoted literals cannot live in a
 # double-quoted node -e (Task 2 harness ruling). node --no-deprecation: DEP0205 on node 26.
 _store() {
   local runjs="$BATS_TEST_TMPDIR/store-run.mjs"

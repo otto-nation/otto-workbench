@@ -12,6 +12,7 @@ import { enterFullscreen, exitFullscreen } from "./_lib/fullscreen_run.js";
 import { cardId, friendlyError, spaceTargets } from "./_lib/scope.js";
 import { LOAD_DELAY_MS, loadState, errorsStatus } from "./_lib/load_state.js";
 import { runStatus } from "./_lib/batch.js";
+import { selectionPreset } from "./_lib/batch_launch.js";
 import { createBoardStore, ctxKey, NO_WANT, FULL_PULL_MS } from "./_lib/board_store.js";
 import { createLoadGate, execLoadReader } from "./_lib/load_backoff.js";
 import { boardModel, mineOpen, wantFor } from "./_lib/board_model.js";
@@ -27,7 +28,7 @@ import { FilterBar } from "./filter_bar.js";
 import { prKey } from "./_lib/launch.js";
 import { machineFeatures } from "./_lib/run_session.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
-import { segment, segmented, emptyPane, pinned, pane, button, iconButton, tag, text, type, statusText, badge, placeholder, errorLine } from "./_ui/ui.js";
+import { segment, segmented, emptyPane, pinned, pane, button, solidButton, iconButton, tag, text, type, statusText, badge, placeholder, errorLine } from "./_ui/ui.js";
 
 function ctxOf() {
   return locate(spaces(), panes(), focused());
@@ -89,6 +90,8 @@ export default class PrsBoard extends View {
     });
     this.filterBar = new FilterBar(cx, filtersOf().query);
     this.batchOpen = false;
+    // PRs are being picked for a batch on Mine (the boxes and the selection bar show).
+    this.selecting = false;
     // Every pull goes through the shared store (_lib/board_store.js); this view only schedules and draws.
     this.store = createBoardStore({ exec, now: () => Date.now() });
     this.inflight = this.again = this.againListing = false;
@@ -212,6 +215,7 @@ export default class PrsBoard extends View {
   }
 
   render(cx) {
+    if (tabOf() !== "mine") this.selecting = false;
     this.workflows.show();
     const t = theme();
     const targets = this.activeTargets();
@@ -290,11 +294,50 @@ export default class PrsBoard extends View {
   // The selector (main.js) supplies the view; the plain board has none.
   detailView() { return null; }
 
-  // A Mine column's shortcut: the Batch page with that column's visible PRs and its step set up.
-  batchFor(items, preset) {
-    this.launcher.applyPreset(items.map((p) => prKey(p.repoSlug, p.number)), preset);
+  // Selecting PRs for a batch: Mine's boxes and lane "Select all", then Continue opens the Batch page
+  // with them selected. Only an open PR that is not already in a launch can be picked.
+  selection() {
+    if (!this.selecting) return null;
+    const key = (p) => prKey(p.repoSlug, p.number);
+    return {
+      can: (p) => p.state === "OPEN" && !this.launcher.isPending(key(p)),
+      on: (p) => this.launcher.selected.has(key(p)),
+      toggle: (p) => this.launcher.toggle(key(p)),
+      toggleAll: (prs) => this.launcher.toggleRepo(prs.map(key)),
+    };
+  }
+
+  startSelecting() {
+    this.selecting = true;
+    this.acx.notify();
+  }
+
+  stopSelecting() {
+    this.selecting = false;
+    this.acx.notify();
+  }
+
+  // Opens the Batch page with the selection; one lane's step set carries over when the selection is that lane's.
+  continueBatch(lanes) {
+    const key = (p) => prKey(p.repoSlug, p.number);
+    const keys = [...this.launcher.selected];
+    const preset = selectionPreset(lanes, keys, key);
+    if (preset) this.launcher.applyPreset(keys, preset);
+    this.selecting = false;
     this.batchOpen = true;
     this.acx.notify();
+  }
+
+  // The bar under the header while selecting: what is selected, and the way out either side.
+  selectionBar(lanes) {
+    if (!this.selecting) return null;
+    const n = this.launcher.selected.size;
+    return pinned(h_flex().gap(SP.sm).items_center().flex_wrap().px(SP.lg).py(SP.sm)
+      .child(text("meta", n === 0 ? "Select PRs to batch" : `${n} selected`, theme().muted))
+      .child(div().flex_1())
+      .child(button("select-clear", "Clear", () => this.launcher.reset(), { disabled: n === 0 }))
+      .child(button("select-cancel", "Cancel", () => this.stopSelecting()))
+      .child(solidButton("select-continue", "Continue", () => this.continueBatch(lanes), { disabled: n === 0 })));
   }
 
   // The label names the action only; that runs are going shows beside it, not inside it.
@@ -302,6 +345,7 @@ export default class PrsBoard extends View {
     const running = this.workflows.activeRuns().length > 0;
     return h_flex().gap(SP.sm).items_center()
       .child(button("batch", "Batch", () => { this.batchOpen = true; this.acx.notify(); }))
+      .child(button("select-batch", "Select for batch", () => this.startSelecting(), { disabled: this.selecting }))
       .when(running, (e) => e.child(badge(runStatus("running"))));
   }
 
@@ -360,9 +404,10 @@ export default class PrsBoard extends View {
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(this.compactHeader(state, tab, load))
       .when(Boolean(load.shown), (e) => e.child(renderLoadProgress(load)))
+      .when(mine && this.selecting, (e) => e.child(this.selectionBar(model.sections)))
       .child(renderCompact({
         sections: model.sections, onOpen: (pr) => this.openDetail(pr, cx),
-        width: this.size?.width, onBatch: mine ? (items, preset) => this.batchFor(items, preset) : null,
+        width: this.size?.width, select: mine ? this.selection() : null,
         empty,
         workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
       }));
@@ -385,10 +430,11 @@ export default class PrsBoard extends View {
       .when(Boolean(load.shown), (e) => e.child(renderLoadProgress(load)))
       .child(this.filterBar.render(model.bar, (a) => this.toggleChip(a, this.acx)))
       .when(load.strip.length > 0, (e) => e.child(renderLoadStrip(load)))
+      .when(tab === "mine" && this.selecting, (e) => e.child(this.selectionBar(model.columns)))
       .child(renderBoard({
         columns: model.columns, spec: model.spec,
         onOpen: (pr) => this.openDetail(pr, cx),
-        onBatch: tab === "mine" ? (items, preset) => this.batchFor(items, preset) : null,
+        select: tab === "mine" ? this.selection() : null,
         loading: Boolean(state.loading && !state.repos),
         workflowOf: (pr) => this.workflows.itemFor(pr.repoSlug, pr.number),
         emptyLabel: model.bar.emptyLabel,

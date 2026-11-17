@@ -5,7 +5,7 @@ import { prPresentation } from "./_lib/pr_status.js";
 import { cardId } from "./_lib/scope.js";
 import { SP, RADIUS, LAYOUT, FILL } from "./_lib/tokens.js";
 import {
-  button, badgeRow, statsRow, card, placeholder, scrollBody,
+  button, checkbox, badgeRow, statsRow, card, placeholder, scrollBody,
   laneTitle, tag, text, type, errorLine,
 } from "./_ui/ui.js";
 import { skeletonLanes } from "./load_status.js";
@@ -18,7 +18,7 @@ function column(col, opts) {
   const waiting = col.status !== "ready" && col.status != null;
   return v_flex().id(`col-${col.key}`).h_full().min_h(0).rounded(RADIUS.card).bg(`${t.raised}${FILL.lane}`)
     .flex_1().min_w(COL_MIN).max_w(COL_MAX)
-    .child(laneTitle(col.label, col.items.length, batchAction(col, opts.onBatch), { status: col.status, message: col.message }))
+    .child(laneTitle(col.label, col.items.length, laneSelect(col, opts.select), { status: col.status, message: col.message }))
     .child(scrollBody().p(SP.sm).gap(SP.sm)
       // The lane's own state first: an empty lane still loading never reads as "None".
       .when(col.status === "error", (e) => e.child(errorLine(col.message).px(SP.md)))
@@ -27,15 +27,18 @@ function column(col, opts) {
       .children(col.items.map((pr) => renderCard(pr, opts))));
 }
 
-// A Mine lane a batch step can move PRs out of offers a shortcut to the Batch page with its PRs
-// and that step set up; which lanes do is _lib/board_model.js `batch` (COLUMN_BATCH).
-export function batchAction(lane, onBatch) {
-  if (!onBatch || !lane.batch) return null;
-  return button(`batch-${lane.key}`, "Batch", () => onBatch(lane.items, lane.batch));
+// While PRs are being selected for a batch, a lane offers to select (or clear) all of its PRs that
+// can be batched. `select` is board_view.js's selection: { can(pr), on(pr), toggle(pr), toggleAll(prs) }.
+export function laneSelect(lane, select) {
+  if (!select) return null;
+  const prs = lane.items.filter((p) => select.can(p));
+  if (!prs.length) return null;
+  const all = prs.every((p) => select.on(p));
+  return button(`select-${lane.key}`, all ? "Clear" : "Select all", () => select.toggleAll(prs));
 }
 
 // `columns` and `spec` are _lib/board_model.js boardModel's shown lanes and lane order.
-export function renderBoard({ columns, spec, loading, onOpen, onBatch, workflowOf, emptyLabel }) {
+export function renderBoard({ columns, spec, loading, onOpen, select, workflowOf, emptyLabel }) {
   const t = theme();
   const board = type(h_flex().id("prs-board").flex_1().h_full().min_h(0).min_w(0).gap(SP.sm).px(SP.lg).py(SP.sm)
     .bg(t.background).text_color(t.foreground).overflow_x_scrollbar(), "body");
@@ -43,14 +46,16 @@ export function renderBoard({ columns, spec, loading, onOpen, onBatch, workflowO
   if (!columns.length) {
     return board.child(placeholder(emptyLabel ?? "No pull requests").p(SP.lg));
   }
-  return board.children(columns.map((c) => column(c, { onOpen, workflowOf, onBatch })));
+  return board.children(columns.map((c) => column(c, { onOpen, workflowOf, select })));
 }
 
-export function renderCard(pr, { onOpen, workflowOf }) {
+export function renderCard(pr, { onOpen, workflowOf, select }) {
   const t = theme();
   const p = prPresentation(pr, { item: workflowOf?.(pr) ?? null });
-  return card(cardId(pr)).gap(SP.sm).on_click(() => onOpen(pr))
+  const pick = select?.can(pr);
+  return card(cardId(pr)).gap(SP.sm).on_click(() => (pick ? select.toggle(pr) : (select ? null : onOpen(pr))))
     .child(h_flex().gap(SP.sm).items_start()
+      .when(pick, (e) => e.child(checkbox(select.on(pr))))
       .child(type(div().flex_1().min_w(0).max_h(LAYOUT.cardTitleMaxH).overflow_hidden(), "title").child(p.title))
       .children(p.tags.map(tag)))
     .child(h_flex().gap(SP.sm).items_center()

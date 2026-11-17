@@ -1485,7 +1485,7 @@ Run background work through this machine's queue, so it waits for room instead o
 
 > run, submit --run-here when it ran the job here, and wait also exit with COMMAND's own status.
 > --key is idempotent: a live match is joined, a done match returns its status, --force runs regardless.
-> Admission is machine-wide `batch.admission.QueuePolicy` (`batch.*` in the workbench config), never a repo's.
+> Admission is machine-wide `otto_queue.admission.QueuePolicy` (`batch.*` in the workbench config), never a repo's.
 > The ledger is queue/queue.db under WORKBENCH_STATE_DIR (default ~/.local/state/workbench).
 
 ### wiki contract

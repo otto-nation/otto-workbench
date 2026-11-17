@@ -8,8 +8,8 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import batch.admission  # noqa: E402
 import batch.machine  # noqa: E402
+import otto_queue.admission # noqa: E402
 from batch.model import ItemStatus, Step  # noqa: E402
 # `_close_open_sessions` and `_quiet_outcomes` are autouse fixtures, imported only so
 # pytest registers them (the `noqa: F401` covers them); the other names are used directly.
@@ -28,8 +28,8 @@ def Harness(*args, **kwargs):
     return _Harness(*args, **kwargs)
 
 # Room for one rebase step above the 2G reserve once a peer's pending is counted.
-TIGHT = batch.admission.HostSample(4 * GiB, 1.0, 0.0)
-NO_METRICS = batch.admission.HostSample(None, None, None)
+TIGHT = otto_queue.admission.HostSample(4 * GiB, 1.0, 0.0)
+NO_METRICS = otto_queue.admission.HostSample(None, None, None)
 
 
 class FakeMachine:
@@ -115,14 +115,14 @@ def test_without_host_metrics_steps_elsewhere_count_against_the_pool_default():
 
 
 def test_a_scheduler_given_no_machine_keeps_the_per_run_floor():
-    h = Harness([row(1, ONLY_REBASE)], host=batch.admission.HostSample(1 * GiB, 99.0, 50.0))
+    h = Harness([row(1, ONLY_REBASE)], host=otto_queue.admission.HostSample(1 * GiB, 99.0, 50.0))
     _first_tick(h)
     assert len(h.spawned) == 1
 
 
 def test_two_real_drivers_on_a_starved_host_start_one_step_between_them(tmp_path):
     """The bug end to end: before, each driver admitted its first step on its own."""
-    starved = batch.admission.HostSample(1 * GiB, 1.0, 0.0)
+    starved = otto_queue.admission.HostSample(1 * GiB, 1.0, 0.0)
     with batch.machine.register("run-a", tmp_path) as ma, \
             batch.machine.register("run-b", tmp_path) as mb:
         a = Harness([row(1, ONLY_REBASE)], host=starved, machine=ma)
@@ -136,8 +136,8 @@ def test_two_real_drivers_on_a_starved_host_start_one_step_between_them(tmp_path
 def test_floor_refused_while_a_peer_has_a_step_live(tmp_path):
     """a's step started by normal admission; b, starved, would otherwise take the
     free floor slot and run a second step on a host with room for none."""
-    starved = batch.admission.HostSample(1 * GiB, 1.0, 0.0)
-    healthy = batch.admission.HostSample(64 * GiB, 1.0, 0.0)
+    starved = otto_queue.admission.HostSample(1 * GiB, 1.0, 0.0)
+    healthy = otto_queue.admission.HostSample(64 * GiB, 1.0, 0.0)
     with batch.machine.register("run-a", tmp_path) as ma, \
             batch.machine.register("run-b", tmp_path) as mb:
         a = Harness([row(1, ONLY_REBASE)], host=healthy, machine=ma)
@@ -162,11 +162,11 @@ def test_a_driver_defers_to_an_earlier_waiter_even_with_room():
 def test_a_freed_slot_goes_to_the_driver_that_waited_rather_than_the_one_that_finished(tmp_path):
     """Regression for the starvation a plain shared slot has: a's step ends with
     room for one more, and a — looking first — must not take it from b."""
-    starved = batch.admission.HostSample(1 * GiB, 1.0, 0.0)
+    starved = otto_queue.admission.HostSample(1 * GiB, 1.0, 0.0)
     with batch.machine.register("run-a", tmp_path) as ma, \
             batch.machine.register("run-b", tmp_path) as mb:
         a = Harness([row(1, ONLY_REBASE), row(3, ONLY_REBASE)],
-                    host=batch.admission.HostSample(4 * GiB, 1.0, 0.0), pool=1, machine=ma)
+                    host=otto_queue.admission.HostSample(4 * GiB, 1.0, 0.0), pool=1, machine=ma)
         b = Harness([row(2, ONLY_REBASE)], host=starved, machine=mb)
         a.sched._once()
         assert len(a.spawned) == 1

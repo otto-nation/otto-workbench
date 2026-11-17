@@ -16,6 +16,7 @@ import batch.admission  # noqa: E402
 import batch.plan  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
+import otto_queue.admission # noqa: E402
 from batch.model import STEP_ORDER, RebaseWhen, RunStatus, Step  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
 # `_close_open_sessions` is an autouse fixture; imported only so pytest registers it.
@@ -138,7 +139,7 @@ def test_a_finished_run_drops_its_refs(monkeypatch):
 def _scheduler(run):
     return attach_scheduler(
         run, pr_bin="pr", cfg=BatchConfig(pool_max=1),
-        host=lambda: batch.admission.HostSample(None, None, None),
+        host=lambda: otto_queue.admission.HostSample(None, None, None),
         spawn=lambda *a, **k: None, estimates=batch.admission.Estimates({}),
         emit=lambda *a, **k: None, sleep=lambda s: None)
 

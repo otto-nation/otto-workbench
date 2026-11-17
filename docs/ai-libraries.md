@@ -4417,18 +4417,9 @@ memory, minus a reserve kept for every other service on the host, covers what
 that step has been seen to need, and neither CPU nor memory is under pressure.
 Running steps are never paused or killed; admission only gates the next start.
 
-Free memory is the smaller of `MemAvailable` and the tightest headroom on the
-chain from this process's own cgroup (`/proc/self/cgroup`) up to the hierarchy
-root. Each cgroup's limit is the tighter of its `memory.max` and `memory.high`.
-A caller may name the chain to read (`read_host(cgroup=)`): the queue worker
-reads `workbench.slice`'s, found by `slice_cgroup`. Reading only
-`/sys/fs/cgroup/memory.max` saw nothing on a host whose cap sits on a nested
-user slice: the root cgroup has no limit file there, so a 6.5 GiB `MemoryMax`
-was invisible to admission.
-
-On macOS free memory comes from `vm_stat` (free, inactive and speculative
-pages); there is no pressure reading, so batch's `decide` still takes its
-`pool_default` path there.
+Host reading, `room` and the queue's own policy are `otto_queue.admission`;
+this module is what batch adds on top: the pool (`decide`), the step estimates
+(`Estimates`) and the process-tree RSS that feeds them (`tree_rss`).
 
 The host is shared by every batch driver on it for the steps batch still
 admits itself (non-AI: plain rebase, and CI without `--fix`). AI steps are
@@ -4438,12 +4429,6 @@ non-AI steps count against `batch.pool_default` where there are no host
 metrics. Whether a driver may start a step regardless — the floor slot — is
 the caller's to establish and pass as `floor`; `decide` no longer infers it
 from this run having nothing running.
-
-It is also the queue's admission policy. `QueuePolicy` is what
-`otto_queue.slots` asks, so "is there room" has one owner — the `room`
-function — whether the asker is a batch step or a queue entry. The queue's class limits are
-`class_limit`: heavy entries per platform (`HEAVY_LIMITS`), light ones every
-core but one.
 
 ### batch/autopublish.py
 
@@ -4983,6 +4968,38 @@ target: nothing can hold one for it, and its steps fail to resolve on their own.
 
 The machine-wide queue for background work: the ledger that records every entry, the leases that say an entry's process is alive, the slots admission hands out, tickets, and the keys that stop paid work running twice.
 
+### otto_queue/admission.py
+
+The queue's admission policy: host room, class limits, and what a queue entry may start.
+
+`QueuePolicy` is what `otto_queue.slots` asks, so "is there room" has one owner
+(`room`) whether the asker is a queue entry or a batch step (`batch.admission`
+calls it too). A queue entry is admitted by `admit_entry`: light work on count
+alone, heavy work on `room` beyond the first. The class limits are
+`class_limit`: heavy entries per platform (`HEAVY_LIMITS`), light ones every
+core but one.
+
+Free memory is the smaller of `MemAvailable` and the tightest headroom on the
+chain from this process's own cgroup (`/proc/self/cgroup`) up to the hierarchy
+root. Each cgroup's limit is the tighter of its `memory.max` and `memory.high`.
+A caller may name the chain to read (`read_host(cgroup=)`): the queue worker
+reads `workbench.slice`'s, found by `slice_cgroup`. Reading only
+`/sys/fs/cgroup/memory.max` saw nothing on a host whose cap sits on a nested
+user slice: the root cgroup has no limit file there, so a 6.5 GiB `MemoryMax`
+was invisible to admission.
+
+On macOS free memory comes from `vm_stat` (free, inactive and speculative
+pages); there is no pressure reading, so batch's `decide` still takes its
+`pool_default` path there.
+
+`core.job_slots` is a different concern and stays apart: it bounds how wide one
+already-started run may go (a `pr` command's own parallelism), not whether the
+machine may start another unit. Light class limits borrow its `pool_size` only
+for the core count.
+
+The budget (`batch.mem_reserve`, `batch.cpu_pressure_max`, `batch.mem_pressure_max`)
+is the machine-wide `BatchConfig`, never a repo's.
+
 ### otto_queue/job.py
 
 The process that runs one job: `otto-queue job-exec ID --slot-fd N`, started by the worker.
@@ -5157,7 +5174,7 @@ and the kernel drops it when the holder exits, SIGKILL included, so a crashed
 ticket cannot strand capacity.
 
 Whether there is room is not decided here. The caller passes a `Policy`
-(`batch.admission.QueuePolicy`), which owns the limits and the host check;
+(`otto_queue.admission.QueuePolicy`), which owns the limits and the host check;
 this module only counts and holds. `try_admit` runs under `admit.lock`, taken
 through `core.flock_wait`, so sampling the host and claiming a slot are one
 step machine-wide. The lock serialises samples but does not account for
@@ -5309,7 +5326,7 @@ line. Admission after a wait prints how long it took. Output is append-only
 even on a TTY: an in-place `\r` status is skipped so the reporter stays a
 pure, testable clock-and-notify object.
 
-`reason_kind` classifies the wording `batch.admission` and the slot/queue
+`reason_kind` classifies the wording `otto_queue.admission`, `batch.admission` and the slot/queue
 gates produce; those strings remain the owner of why a wait happened.
 
 ### otto_queue/waiter.py
@@ -9425,7 +9442,7 @@ answers no question anyone asks of it.
 
 The library is `otto_queue`; this module is the parser, the output and the exit
 codes. Flags, exit codes and examples are `CONTRACT` below. Admission is
-`batch.admission.QueuePolicy` under the machine-wide config (`batch.*`), never a
+`otto_queue.admission.QueuePolicy` under the machine-wide config (`batch.*`), never a
 repo's, because the budget belongs to the machine. Jobs are admitted against
 `workbench.slice`'s cgroup chain, or the worker's own chain when no slice is
 usable; tickets against their caller's. `worker` and `job-exec` are run by the

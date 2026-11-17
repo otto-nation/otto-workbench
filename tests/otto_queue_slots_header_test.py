@@ -13,18 +13,18 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import batch.admission  # noqa: E402
 import cli.otto_queue  # noqa: E402
 import config.workbench_config  # noqa: E402
+import otto_queue.admission # noqa: E402
 import otto_queue.paths  # noqa: E402
 from otto_queue.ledger import Ledger  # noqa: E402
 
-GB = batch.admission.GB
+GB = otto_queue.admission.GB
 
 
 def _policy(host):
     cfg = config.workbench_config.load_config_or_default(None).batch
-    return batch.admission.QueuePolicy(cfg, host=host)
+    return otto_queue.admission.QueuePolicy(cfg, host=host)
 
 
 def _header(capsys, monkeypatch, host=None):
@@ -50,7 +50,7 @@ def _insert(*, state, finished_at, n=1):
 
 
 def test_slots_header_admits_heavy_when_the_host_has_room(capsys, monkeypatch):
-    sample = batch.admission.HostSample(8 * GB, 1.0, 0.0)
+    sample = otto_queue.admission.HostSample(8 * GB, 1.0, 0.0)
     header = _header(capsys, monkeypatch, host=lambda: sample)
     assert header["host"] == {"admit_heavy": True, "reason": "host has room"}
     assert header["schema"] == 1
@@ -58,7 +58,7 @@ def test_slots_header_admits_heavy_when_the_host_has_room(capsys, monkeypatch):
 
 
 def test_slots_header_refuses_heavy_with_the_admission_reason(capsys, monkeypatch):
-    sample = batch.admission.HostSample(int(2.3 * GB), 1.0, 0.0)
+    sample = otto_queue.admission.HostSample(int(2.3 * GB), 1.0, 0.0)
     header = _header(capsys, monkeypatch, host=lambda: sample)
     assert header["host"] == {
         "admit_heavy": False,
@@ -69,8 +69,8 @@ def test_slots_header_refuses_heavy_with_the_admission_reason(capsys, monkeypatc
 @pytest.mark.parametrize(
     "sample, reason",
     (
-        (batch.admission.HostSample(8 * GB, 31.0, 0.0), "CPU pressure 31% >= 30%"),
-        (batch.admission.HostSample(8 * GB, 1.0, 29.0), "memory pressure 29% >= 5%"),
+        (otto_queue.admission.HostSample(8 * GB, 31.0, 0.0), "CPU pressure 31% >= 30%"),
+        (otto_queue.admission.HostSample(8 * GB, 1.0, 29.0), "memory pressure 29% >= 5%"),
     ),
 )
 def test_slots_header_refuses_heavy_on_pressure(capsys, monkeypatch, sample, reason):
@@ -93,7 +93,7 @@ def test_slots_header_failed_24h_counts_beyond_recent_and_ignores_the_rest(capsy
     _insert(state="failed", finished_at=now - 25 * 3600, n=3)
     _insert(state="done", finished_at=now, n=2)
     _insert(state="cancelled", finished_at=now, n=1)
-    header = _header(capsys, monkeypatch, host=lambda: batch.admission.HostSample(8 * GB, 1.0, 0.0))
+    header = _header(capsys, monkeypatch, host=lambda: otto_queue.admission.HostSample(8 * GB, 1.0, 0.0))
     assert header["failed_24h"] == 25
     assert header["slots"]["heavy"]["running"] == 0
 
@@ -103,7 +103,7 @@ def test_slots_header_failed_24h_is_null_when_the_ledger_cannot_be_read(capsys, 
         raise OSError("ledger unreadable")
 
     monkeypatch.setattr(Ledger, "count_failed_since", boom)
-    header = _header(capsys, monkeypatch, host=lambda: batch.admission.HostSample(8 * GB, 1.0, 0.0))
+    header = _header(capsys, monkeypatch, host=lambda: otto_queue.admission.HostSample(8 * GB, 1.0, 0.0))
     assert header["failed_24h"] is None
     assert header["schema"] == 1
 

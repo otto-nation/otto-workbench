@@ -2,7 +2,7 @@
 
 The library is `otto_queue`; this module is the parser, the output and the exit
 codes. Flags, exit codes and examples are `CONTRACT` below. Admission is
-`batch.admission.QueuePolicy` under the machine-wide config (`batch.*`), never a
+`otto_queue.admission.QueuePolicy` under the machine-wide config (`batch.*`), never a
 repo's, because the budget belongs to the machine. Jobs are admitted against
 `workbench.slice`'s cgroup chain, or the worker's own chain when no slice is
 usable; tickets against their caller's. `worker` and `job-exec` are run by the
@@ -22,12 +22,12 @@ import sys
 import time
 from pathlib import Path
 
-import batch.admission
 import config.workbench_config
 import core.cli_reference
 import core.command_contract
 import core.log
 import core.serde
+import otto_queue.admission
 import otto_queue.job
 import otto_queue.ledger
 import otto_queue.submit
@@ -116,7 +116,7 @@ CONTRACT = core.command_contract.CommandContract(
         "run, submit --run-here when it ran the job here, and wait also exit with COMMAND's own status.",
         "--key is idempotent: a live match is joined, a done match returns its "
         "status, --force runs regardless.",
-        "Admission is machine-wide `batch.admission.QueuePolicy` (`batch.*` in "
+        "Admission is machine-wide `otto_queue.admission.QueuePolicy` (`batch.*` in "
         "the workbench config), never a repo's.",
         "The ledger is queue/queue.db under WORKBENCH_STATE_DIR "
         "(default ~/.local/state/workbench).",
@@ -202,8 +202,8 @@ def reference_shape() -> core.cli_reference.CLIShape:
     )
 
 
-def machine_policy() -> batch.admission.QueuePolicy:
-    return batch.admission.QueuePolicy(config.workbench_config.load_config_or_default(None).batch)
+def machine_policy() -> otto_queue.admission.QueuePolicy:
+    return otto_queue.admission.QueuePolicy(config.workbench_config.load_config_or_default(None).batch)
 
 
 def _command(args: argparse.Namespace, parser: argparse.ArgumentParser) -> tuple[str, ...]:
@@ -250,15 +250,15 @@ def _job_slice(name: str) -> str | None:
     return None
 
 
-def _job_policy(slice_name: str | None) -> batch.admission.QueuePolicy:
+def _job_policy(slice_name: str | None) -> otto_queue.admission.QueuePolicy:
     """Admission for jobs: where their memory lands (open decision a).
 
     The slice's cgroup chain when jobs run in *slice_name*; the worker's own
     chain when no slice is usable and they run as its children.
     """
-    cgroup = None if slice_name is None else batch.admission.slice_cgroup(slice_name)
-    host = functools.partial(batch.admission.read_host, cgroup=cgroup)
-    return batch.admission.QueuePolicy(config.workbench_config.load_config_or_default(None).batch, host=host)
+    cgroup = None if slice_name is None else otto_queue.admission.slice_cgroup(slice_name)
+    host = functools.partial(otto_queue.admission.read_host, cgroup=cgroup)
+    return otto_queue.admission.QueuePolicy(config.workbench_config.load_config_or_default(None).batch, host=host)
 
 
 def _worker(args: argparse.Namespace) -> int:
@@ -291,11 +291,11 @@ SLOTS_HEADER_SCHEMA = 1
 FAILED_24H_S = 24 * 3600
 
 
-def _host_status(policy: batch.admission.QueuePolicy) -> dict | None:
+def _host_status(policy: otto_queue.admission.QueuePolicy) -> dict | None:
     """The host check a heavy entry uses; None when the probe cannot run."""
     try:
-        verdict = batch.admission.room(
-            policy.host(), estimate=batch.admission.QUEUE_HEAVY_ESTIMATE, cfg=policy.cfg)
+        verdict = otto_queue.admission.room(
+            policy.host(), estimate=otto_queue.admission.QUEUE_HEAVY_ESTIMATE, cfg=policy.cfg)
     except Exception:
         return None
     return {"admit_heavy": verdict.admit, "reason": verdict.reason or None}
@@ -308,7 +308,7 @@ def _failed_24h(ledger: otto_queue.ledger.Ledger) -> int | None:
         return None
 
 
-def _slot_header(entries: list[Entry], policy: batch.admission.QueuePolicy,
+def _slot_header(entries: list[Entry], policy: otto_queue.admission.QueuePolicy,
                  ledger: otto_queue.ledger.Ledger) -> dict:
     running = [e for e in entries if e.state is EntryState.RUNNING]
     return {

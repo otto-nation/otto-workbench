@@ -5,12 +5,16 @@
 #
 # Run by the reaper timer on Linux hosts. Only the invoking user's processes
 # are looked at, never PID 1, this script or its ancestors. A process matches by
-# executable basename (never a substring):
+# executable basename (never a substring). The list lives in
+# lib/heavy_commands.sh:
 #
 #   golangci-lint  reaper.max_minutes.lint   (default 30)
 #   go             reaper.max_minutes.go     (default 30)
 #   gh             reaper.max_minutes.gh     (default 10)
 #   tasks          reaper.max_minutes.tasks  (default 45)
+#
+# `tasks` also matches a Python interpreter invoked as `python* -m tasks`
+# (whole-argument match, never a substring).
 #
 # A match over its limit is a candidate. A candidate with a candidate ancestor
 # is left to that ancestor, which is terminated together with all its
@@ -41,6 +45,8 @@ WORKBENCH_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 . "$WORKBENCH_DIR/lib/constants.sh"
 # shellcheck source=../../lib/config.sh
 . "$WORKBENCH_DIR/lib/config.sh"
+# shellcheck source=../../lib/heavy_commands.sh
+. "$WORKBENCH_DIR/lib/heavy_commands.sh"
 
 log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >&2; }
 
@@ -75,7 +81,7 @@ _record() {
     --script maintenance \
     --action "reap-$2" \
     --data "pid=$1" \
-    --data "command=${COMM_OF[$1]}" \
+    --data "command=${NAME_OF[$1]}" \
     --data "age_s=${AGE_OF[$1]}" \
     > /dev/null \
     || log "WARNING: could not record reap-$2 of $1 to the trail"
@@ -109,7 +115,7 @@ LIMIT_GH="$(_cfg "$REAPER_MAX_MINUTES_GH_CONFIG_KEY" 10)"
 LIMIT_TASKS="$(_cfg "$REAPER_MAX_MINUTES_TASKS_CONFIG_KEY" 45)"
 GRACE_S="$(_cfg "$REAPER_GRACE_S_CONFIG_KEY" 30)"
 
-declare -A PPID_OF AGE_OF COMM_OF PROTECTED CANDIDATE
+declare -A PPID_OF AGE_OF COMM_OF NAME_OF ARGS_OF PROTECTED CANDIDATE
 PIDS=()
 
 if ! listing="$(ps -u "$(id -un)" -o pid=,ppid=,etimes=,comm= 2>/dev/null)"; then
@@ -125,6 +131,22 @@ while read -r pid ppid age comm; do
   COMM_OF[$pid]="${comm##*/}"
 done <<< "$listing"
 
+if ! args_listing="$(ps -ww -u "$(id -un)" -o pid=,args= 2>/dev/null)"; then
+  log "WARNING: ps could not list process args; classifying by comm only"
+else
+  while read -r pid args; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    ARGS_OF[$pid]="$args"
+  done <<< "$args_listing"
+fi
+
+for pid in "${PIDS[@]}"; do
+  NAME_OF[$pid]="$(heavy_command_name "${COMM_OF[$pid]}" "${ARGS_OF[$pid]:-}")"
+  if [[ -z "${NAME_OF[$pid]}" ]]; then
+    NAME_OF[$pid]="${COMM_OF[$pid]}"
+  fi
+done
+
 # This script and every ancestor, plus PID 1.
 PROTECTED[1]=1
 walker=$$
@@ -136,7 +158,7 @@ while [[ -n "$walker" && "$walker" != 0 ]]; do
 done
 
 for pid in "${PIDS[@]}"; do
-  limit="$(_limit_s "${COMM_OF[$pid]}")"
+  limit="$(_limit_s "${NAME_OF[$pid]}")"
   [[ -n "$limit" && -z "${PROTECTED[$pid]:-}" ]] || continue
   if (( AGE_OF[$pid] > limit )); then
     CANDIDATE[$pid]=1
@@ -169,7 +191,7 @@ fi
 
 for pid in "${TREE[@]}"; do
   if kill -TERM "$pid" 2>/dev/null; then
-    log "SIGTERM $pid (${COMM_OF[$pid]}, ${AGE_OF[$pid]}s old)"
+    log "SIGTERM $pid (${NAME_OF[$pid]}, ${AGE_OF[$pid]}s old)"
     _record "$pid" TERM
   fi
 done
@@ -208,11 +230,11 @@ for pid in "${TREE[@]}"; do
     continue
   fi
   if ! _same_process "$pid"; then
-    log "pid $pid is no longer ${COMM_OF[$pid]}; not sending SIGKILL"
+    log "pid $pid is no longer ${NAME_OF[$pid]}; not sending SIGKILL"
     continue
   fi
   kill -KILL "$pid" 2>/dev/null || true
-  log "SIGKILL $pid (${COMM_OF[$pid]}) still alive after ${GRACE_S}s"
+  log "SIGKILL $pid (${NAME_OF[$pid]}) still alive after ${GRACE_S}s"
   _record "$pid" KILL
 done
 

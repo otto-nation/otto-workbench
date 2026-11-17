@@ -79,6 +79,7 @@ import core.signal_relay
 import otto_queue.job
 import otto_queue.lease
 import otto_queue.ledger
+import otto_queue.paths
 import otto_queue.slots
 import otto_queue.wait_report
 from otto_queue.model import (  # noqa: F401  env names are re-exported for callers
@@ -207,7 +208,7 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
     busy_said = False
     while entry is not None and entry.state.live:
         try:
-            ran = _run_unstarted(ledger, entry, request, policy, poll_s, notify)
+            ran = _run_unstarted(ledger, entry, policy, poll_s, notify, deadline)
         except otto_queue.ledger.LedgerBusy:
             ran = None
             busy_said = _note_busy(notify, busy_said)
@@ -234,20 +235,27 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
     return TicketResult(entry.exit_status, outcome, entry_id)
 
 
-def _run_unstarted(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest,
+def _run_unstarted(ledger: otto_queue.ledger.Ledger, entry: Entry,
                    policy: otto_queue.slots.Policy, poll_s: float,
-                   notify: Callable[[str], None]) -> TicketResult | None:
-    """Run *entry* here when it is a queued job and no worker is alive to start it; else None."""
+                   notify: Callable[[str], None], deadline: float) -> TicketResult | None:
+    """Run *entry* here when it is a queued job and no worker is alive to start it; else None.
+
+    The job stays a job (`adopt_job`), so a ticket killed before it starts leaves
+    it queued. Anything but a finished run is None: the caller re-reads the row.
+    """
     if entry.kind is not EntryKind.JOB or entry.state is not EntryState.QUEUED:
+        return None
+    if entry.not_before is not None and entry.not_before > time.time():
         return None
     if otto_queue.lease.worker_alive(ledger.root):
         return None
-    claimed = ledger.claim_as_ticket(entry.id, os.getpid())
-    if claimed is None:
-        return None
-    notify(f"otto-queue: no worker is running; running entry {entry.id} here")
-    return run_claimed(ledger, claimed, claimed_request(claimed.entry, request), policy,
-                       poll_s=poll_s, notify=notify)
+    log = otto_queue.paths.log_path(ledger.root, entry.id)
+    notify(f"otto-queue: no worker is running; running entry {entry.id} here (log: {log})")
+    adoption = adopt_job(ledger, entry, policy, wait_s=max(0.0, deadline - time.monotonic()),
+                         poll_s=poll_s, notify=notify)
+    if adoption.outcome is AdoptOutcome.RAN:
+        return TicketResult(adoption.exit_status or 0, TicketOutcome.RAN, entry.id)
+    return None
 
 
 class AdoptOutcome(StrEnum):

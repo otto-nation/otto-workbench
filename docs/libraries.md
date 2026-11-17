@@ -551,6 +551,31 @@ git_env_clear          # then `git -C DIR ...` really means DIR
 
 Loaded via `ui.sh`.
 
+### heavy_commands.sh
+
+Classify a process as one of the workbench's heavy commands.
+
+The list is the single owner of those names. A process matches by
+executable basename, or as a Python interpreter invoked with `-m tasks`
+as whole arguments:
+
+```bash
+HEAVY_COMMANDS                  # golangci-lint go gh tasks
+heavy_command_name COMM ARGS    # the heavy name, or nothing
+```
+
+`heavy_command_name` always returns 0 and prints nothing when the process
+is not heavy, so a caller that wants the raw comm supplies it:
+
+```bash
+name=$(heavy_command_name "$comm" "$args")
+name=${name:-$comm}
+```
+
+| Function | Purpose |
+|----------|---------|
+| `heavy_command_name COMM ARGS` | the heavy command name, or nothing. |
+
 ### install.sh
 
 Component discovery, selection, and execution — the shared half of the install

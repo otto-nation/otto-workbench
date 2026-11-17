@@ -193,7 +193,7 @@ host-health [--json] [--reaper]
 
 Prints a short summary, or one JSON object with `--json`. It is meant to be
 cheap enough to poll every few seconds on a machine that is already struggling:
-no Python, one `ps`, one `df` per filesystem, and `otto-queue status` only
+no Python, two `ps` listings, one `df` per filesystem, and `otto-queue status` only
 when it is installed. A section that cannot be read is `null`, never an
 error, so a host missing a tool still answers and the reader decides.
 
@@ -207,8 +207,8 @@ JSON fields: `host`, `at` (UTC), `cores`, `load` (`m1`, `m5`, `m15`), `mem`
 (`total_mb`, `available_mb`, `swap_used_mb`), `disk` (`home` and `docker`, each
 `{fs, mount, size_mb, used_mb}`), `procs` (`count`, `zombies`, `top_cpu`,
 `top_mem`: `{pid, user, age_s, cpu, mem, command}`), `heavy` (live counts of
-`golangci-lint`, `go`, `gh`, `tasks` — the commands `maintenance/bin/reap-hung`
-reaps), `queue` (`{running, queued}`, `{busy: true}` while the ledger is
+names from `lib/heavy_commands.sh`; `tasks` includes `python -m tasks`
+runners), `queue` (`{running, queued}`, `{busy: true}` while the ledger is
 locked, null without otto-queue) and, with `--reaper`, `reaper` (`{last_at,
 signals_24h}`).
 

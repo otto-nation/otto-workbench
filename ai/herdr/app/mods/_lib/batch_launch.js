@@ -2,13 +2,22 @@
  * Argv and grouping for launching `pr batch` from the herdr board.
  */
 
+import { blockReason } from './actions.js';
 import { AI_STEPS, BUSY_STATES, laneOf } from './batch.js';
 import { DEFAULT_FILTERS } from './columns.js';
 import { facetView } from './filters.js';
 
 const DONE_LANES = new Set(['done', 'closed', 'attention']);
 
-/** Group board PRs by machine+repo; PRs with no cwd are unrunnable. */
+export const NO_CHECKOUT = 'No checkout of this repo on its machine';
+
+/** Why `pr` cannot go in a batch, or null: no checkout on its machine, else actions.js blockReason. */
+export function batchReason(pr) {
+  if (pr?.cwd == null || pr.cwd === '') return NO_CHECKOUT;
+  return blockReason({ busy: Boolean(pr.busy), lock: pr.lock ?? null });
+}
+
+/** Group board PRs by machine+repo; PRs batchReason blocks are unrunnable. */
 export function groupByRepo(prs) {
   const groups = [];
   const unrunnable = [];
@@ -18,11 +27,12 @@ export function groupByRepo(prs) {
     const number = pr?.number;
     if (!repo || !Number.isInteger(number)) continue;
     const key = `${repo}#${number}`;
-    const cwd = pr.cwd;
-    if (cwd == null || cwd === '') {
-      unrunnable.push({ key, reason: 'no checkout of this repo on its machine' });
+    const reason = batchReason(pr);
+    if (reason) {
+      unrunnable.push({ key, reason });
       continue;
     }
+    const cwd = pr.cwd;
     const gk = `${pr.on ?? ''}\0${repo}`;
     let g = index.get(gk);
     if (!g) {

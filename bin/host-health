@@ -7,7 +7,7 @@
 #
 # Prints a short summary, or one JSON object with `--json`. It is meant to be
 # cheap enough to poll every few seconds on a machine that is already struggling:
-# no Python, one `ps`, one `df` per filesystem, and `otto-queue status` only
+# no Python, two `ps` listings, one `df` per filesystem, and `otto-queue status` only
 # when it is installed. A section that cannot be read is `null`, never an
 # error, so a host missing a tool still answers and the reader decides.
 #
@@ -21,8 +21,8 @@
 # (`total_mb`, `available_mb`, `swap_used_mb`), `disk` (`home` and `docker`, each
 # `{fs, mount, size_mb, used_mb}`), `procs` (`count`, `zombies`, `top_cpu`,
 # `top_mem`: `{pid, user, age_s, cpu, mem, command}`), `heavy` (live counts of
-# `golangci-lint`, `go`, `gh`, `tasks` — the commands `maintenance/bin/reap-hung`
-# reaps), `queue` (`{running, queued}`, `{busy: true}` while the ledger is
+# names from `lib/heavy_commands.sh`; `tasks` includes `python -m tasks`
+# runners), `queue` (`{running, queued}`, `{busy: true}` while the ledger is
 # locked, null without otto-queue) and, with `--reaper`, `reaper` (`{last_at,
 # signals_24h}`).
 #
@@ -39,6 +39,8 @@ set -e
 
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/.." && pwd)"
+# shellcheck source=../lib/heavy_commands.sh
+. "$WORKBENCH_DIR/lib/heavy_commands.sh"
 
 EXIT_USAGE=2
 PROC="${HOST_HEALTH_PROC:-/proc}"
@@ -136,30 +138,43 @@ disk() {
     '{home: $home, docker: $docker}'
 }
 
-# procs — the process section, from one `ps`.
+# procs — the process section, from two `ps` listings (comm + args).
 procs() {
-  local listing rows="" pid user etime cpu mem stat comm
+  local listing rows="" pid user etime cpu mem stat comm args_listing args heavy
+  local -A ARGS=()
   if ! listing="$(ps -axo pid=,user=,etime=,pcpu=,pmem=,stat=,comm= 2> /dev/null)"; then
     echo null
     return 0
   fi
+  if args_listing="$(ps -ww -axo pid=,args= 2> /dev/null)"; then
+    while read -r pid args; do
+      [[ "$pid" =~ ^[0-9]+$ ]] || continue
+      ARGS[$pid]="$args"
+    done <<< "$args_listing"
+  fi
   while read -r pid user etime cpu mem stat comm; do
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
-    rows+="$pid"$'\t'"$user"$'\t'"$etime"$'\t'"$cpu"$'\t'"$mem"$'\t'"$stat"$'\t'"${comm##*/}"$'\n'
+    if [[ "${comm##*/}" =~ ^python[0-9.]*$ ]]; then
+      heavy="$(heavy_command_name "$comm" "${ARGS[$pid]:-}")"
+    else
+      heavy="${comm##*/}"
+    fi
+    rows+="$pid"$'\t'"$user"$'\t'"$etime"$'\t'"$cpu"$'\t'"$mem"$'\t'"$stat"$'\t'"${comm##*/}"$'\t'"$heavy"$'\n'
   done <<< "$listing"
-  printf '%s' "$rows" | jq -Rsc --argjson n "$TOP_N" '
+  printf '%s' "$rows" | jq -Rsc --argjson n "$TOP_N" --arg names "${HEAVY_COMMANDS[*]}" '
     # [[dd-]hh:]mm:ss as seconds.
     def etime_s: (split("-") | if length == 2 then [(.[0] | tonumber * 86400), .[1]] else [0, .[0]] end) as $d
       | $d[0] + ($d[1] | split(":") | map(tonumber) | reduce .[] as $x (0; . * 60 + $x));
     split("\n") | map(select(length > 0) | split("\t")
       | {pid: (.[0] | tonumber), user: .[1], age_s: (.[2] | etime_s),
-         cpu: (.[3] | tonumber), mem: (.[4] | tonumber), stat: .[5], command: .[6]}) as $p
+         cpu: (.[3] | tonumber), mem: (.[4] | tonumber), stat: .[5], command: .[6],
+         heavy_name: .[7]}) as $p
     | {count: ($p | length),
        zombies: ($p | map(select(.stat | startswith("Z"))) | length),
-       top_cpu: ($p | sort_by(-.cpu) | .[:$n] | map(del(.stat))),
-       top_mem: ($p | sort_by(-.mem) | .[:$n] | map(del(.stat))),
-       heavy: ($p | reduce .[] as $x ({"golangci-lint": 0, go: 0, gh: 0, tasks: 0};
-         if has($x.command) then .[$x.command] += 1 else . end))}' 2> /dev/null || echo null
+       top_cpu: ($p | sort_by(-.cpu) | .[:$n] | map(del(.stat, .heavy_name))),
+       top_mem: ($p | sort_by(-.mem) | .[:$n] | map(del(.stat, .heavy_name))),
+       heavy: ($p | reduce .[] as $x (reduce ($names|split(" "))[] as $k ({}; .[$k]=0);
+         if has($x.heavy_name) then .[$x.heavy_name] += 1 else . end))}' 2> /dev/null || echo null
 }
 
 queue() {

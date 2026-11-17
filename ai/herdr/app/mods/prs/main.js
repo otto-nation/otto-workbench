@@ -401,7 +401,7 @@ export default class PrsBoard extends Board {
         confirm: this.confirm,
         starting: this.launching || (mine && this.launcher.starting),
         note: this.note ?? (mine ? this.launcher.note : null),
-        fixes: fixesFor(this.selectedPr ?? {}, { starting: this.launcher.starting, busy: this.detail.batchBusy || this.launching, live: this.live }),
+        fixes: fixesFor(pr, { starting: this.launcher.starting, busy: this.detail.batchBusy || this.launching, live: this.live }),
         onFix: (f) => this.launcher.fixOne(pr, f),
         onAction: (a) => this.onAction(a, cx),
         onConfirm: () => { const a = this.confirm; this.confirm = null; this.launch(a, cx); this.acx.notify(); },

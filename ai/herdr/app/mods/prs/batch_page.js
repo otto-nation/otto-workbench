@@ -119,7 +119,7 @@ function renderPrs(L, prs, t, load) {
   return v_flex().gap(SP.sm)
     .child(text("title", "PRs"))
     .children(groupPrs(shown).map((g) => {
-      const keys = g.prs.filter((p) => p.cwd).map((p) => prKey(p.repoSlug, p.number));
+      const keys = g.prs.filter((p) => batchReason(p) == null).map((p) => prKey(p.repoSlug, p.number));
       const allOn = keys.length > 0 && keys.every((k) => L.selected.has(k));
       return v_flex().id(`repo-${g.on ?? ""}-${g.repo}`).gap(SP.xs)
         .child(h_flex().gap(SP.md).items_center()

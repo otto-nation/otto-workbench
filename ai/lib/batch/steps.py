@@ -311,14 +311,16 @@ class StepProcess:
 
     @classmethod
     def start(cls, argv: list[str], *, log_path: Path, trail_root: str,
-              env: dict[str, str] | None = None) -> StepProcess:
+              env: dict[str, str] | None = None,
+              pass_fds: Sequence[int] = ()) -> StepProcess:
         """Spawn *argv* as a step. *env* is its environment — this process's when None —
-        and the trail root is set on it either way."""
+        and the trail root is set on it either way. *pass_fds* stay open in the child
+        (close-on-exec cleared) so it can adopt an otto-queue lease."""
         env = dict(os.environ if env is None else env)
         env[core.trail.TRAIL_ROOT_ENV] = trail_root
         popen = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, env=env,
-                                 start_new_session=True)
+                                 start_new_session=True, pass_fds=pass_fds)
         return cls(popen, log_path)
 
     def _close_log(self) -> None:

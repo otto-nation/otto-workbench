@@ -21,8 +21,9 @@ import otto_queue.ticket  # noqa: E402
 from batch.requests import Cancel, Envelope, Malformed, Release  # noqa: E402
 from batch.plan import PlanError  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
-from batch_scheduler_support import (ALL, GiB, HEALTHY, NEED, NO, Harness,  # noqa: F401,E402
-                                     _close_open_sessions, _even, _quiet_outcomes, row)
+from batch_scheduler_support import (ALL, GiB, HEALTHY, NEED, NO, FakeQueueEntries,  # noqa: F401,E402
+                                     Harness, _close_open_sessions, _even, _quiet_outcomes, row)
+from otto_queue.model import EntryState  # noqa: E402
 from pr.comments_fix import CloseoutDebt  # noqa: E402
 
 
@@ -562,19 +563,17 @@ def test_the_pool_cap_still_counts_steps_waiting_on_a_ticket():
 
 
 def test_a_step_waiting_on_its_ticket_reports_why():
-    box = {"on": True}
-
-    def queue_waits(pids):
-        return {pid: 9 for pid in pids} if box["on"] else {}
-
-    h = Harness([row(1, _ONLY_REVIEW)], queue_waits=queue_waits)
+    q = FakeQueueEntries()
+    q.states_map[1] = EntryState.QUEUED
+    h = Harness([row(1, _ONLY_REVIEW)], queue_entries=q)
     h.sched._once()
     item = h.run.items[0]
-    assert "entry 9" in item.wait_reason
+    assert q.accepted and q.accepted[0].entry_id == 1
+    assert "entry 1" in item.wait_reason
     assert item.status is batch.model.ItemStatus.RUNNING
     waits = [f for k, f in h.events if k == "admission_wait"]
-    assert waits and waits[-1]["queue_entry"] == 9
-    box["on"] = False
+    assert waits and waits[-1]["queue_entry"] == 1
+    q.states_map[1] = EntryState.RUNNING
     h.sched._once()
     assert h.run.items[0].wait_reason == ""
     assert h.run.items[0].status is batch.model.ItemStatus.RUNNING
@@ -634,36 +633,40 @@ def _exits_on_kill(h, code=143):
 
 
 def test_plain_cancel_kills_a_step_waiting_on_a_ticket():
-    h = Harness([row(1, _ONLY_REVIEW)],
-                queue_waits=lambda pids: {pid: 9 for pid in pids})
+    q = FakeQueueEntries()
+    q.states_map[1] = EntryState.QUEUED
+    h = Harness([row(1, _ONLY_REVIEW)], queue_entries=q)
     killed = _exits_on_kill(h)
     h.sched._once()
     assert h.spawned
     batch.store.write_request(h.run.id, Cancel())
-    status = h.sched._once()
-    assert killed == [(1, False)]
+    h.sched._once()
+    assert q.cancelled == [1]
+    assert killed == []
+    assert h.run.items[0].status is batch.model.ItemStatus.RUNNING
     rec = h.run.items[0].step(batch.model.Step.REVIEW)
-    assert rec.status is batch.model.StepStatus.INTERRUPTED
-    assert rec.exit_code == 143
-    assert h.run.items[0].findings == []
-    assert status is batch.model.RunStatus.CANCELLED
+    assert rec.status is batch.model.StepStatus.RUNNING
 
 
 def test_plain_cancel_leaves_a_running_step():
-    h = Harness([row(1, _ONLY_REVIEW)], queue_waits=lambda pids: {})
+    q = FakeQueueEntries()
+    q.states_map[1] = EntryState.RUNNING
+    h = Harness([row(1, _ONLY_REVIEW)], queue_entries=q)
     killed = _exits_on_kill(h)
     h.sched._once()
     assert h.spawned
     batch.store.write_request(h.run.id, Cancel())
     assert h.sched._once() is None
+    assert q.cancelled == []
     assert killed == []
     assert h.run.items[0].status is batch.model.ItemStatus.RUNNING
     assert h.run.items[0].step(batch.model.Step.REVIEW).status is batch.model.StepStatus.RUNNING
 
 
 def test_release_of_a_waiting_step_stops_it():
-    h = Harness([row(1, _ONLY_REVIEW)],
-                queue_waits=lambda pids: {pid: 9 for pid in pids})
+    q = FakeQueueEntries()
+    q.states_map[1] = EntryState.QUEUED
+    h = Harness([row(1, _ONLY_REVIEW)], queue_entries=q)
     killed = _exits_on_kill(h)
     h.sched._once()
     assert h.spawned

@@ -6,11 +6,12 @@ from __future__ import annotations
 
 import collections
 import functools
+import os
 import shlex
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from typing import Callable
 
 import batch.admission
@@ -21,11 +22,12 @@ import batch.machine
 import batch.outcomes
 import batch.plan
 import batch.publish
-import batch.queue_wait
+import batch.queue_entries
 import batch.store
 import batch.targets
 import git.client
 import otto_queue.admission
+import otto_queue.ledger
 import otto_queue.model
 import pr.ci_need
 import rebase.inspect
@@ -222,7 +224,7 @@ class Scheduler:
                  branch: Callable[[str], str] = checked_out_branch,
                  tree: Callable[[Item], batch.publish.TreeState] | None = None,
                  push: Callable[..., int] | None = None,
-                 queue_waits: Callable[[Collection[int]], dict[int, int]] | None = None):
+                 queue_entries: batch.queue_entries.QueueEntries | None = None):
         self.session, self.pr_bin, self.cfg = session, pr_bin, cfg
         # Called with the run and the items whose step is still live after
         # every commit a tick makes, so the driver can give back the target
@@ -259,7 +261,7 @@ class Scheduler:
         self._descends, self._commits = descends, commits
         self._tree = tree or batch.publish.peek_tree
         self._push = push
-        self._queue_waits = queue_waits or batch.queue_wait.QueueWaits()
+        self._queue = queue_entries or batch.queue_entries.QueueEntries()
 
     @property
     def run(self) -> Run:
@@ -662,49 +664,74 @@ class Scheduler:
         if fresh is not None:
             self._start(item, rec, fresh)
 
+    def _accept(self, item: Item, rec: StepRecord, argv: list[str]
+                ) -> batch.queue_entries.Accepted | None:
+        return self._queue.accept(
+            argv=tuple(argv), cwd=item.worktree,
+            label=f"pr batch · {rec.step.value} · {item.key}",
+            subject=item.key, action=f"batch:{rec.step.value}")
+
     def _start(self, item: Item, rec: StepRecord, fresh: PlanRow) -> None:
         log = batch.store.attempt_log_path(self.run.id, item.repo, item.pr, rec.step.value)
         wait = rec.step is Step.CI and fresh.ci_state in pr.ci_need.RUNNING
         argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha,
                          wait=wait, focus=self.run.focus, ai=self.run.uses_ai(rec.step))
+        adopted = None
+        if self._ai(rec):
+            try:
+                adopted = self._accept(item, rec, argv)
+            except otto_queue.ledger.LedgerBusy:
+                self._refuse(item, rec, "otto-queue ledger busy")
+                return
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
-        rec.start_head = rec.start_head or head_before
         env = batch.targets.child_env(item)
+        spawn_kw = {}
         if self._ai(rec):
             env[otto_queue.model.LABEL_ENV] = f"pr batch · {rec.step.value} · {item.key}"
             env[otto_queue.model.SUBJECT_ENV] = item.key
             env[otto_queue.model.ACTION_ENV] = f"batch:{rec.step.value}"
             env[otto_queue.model.WAIT_ENV] = "inf"
-        proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root, env=env)
+            if adopted is not None:
+                env[otto_queue.model.ADOPT_ENV] = str(adopted.entry_id)
+                env[otto_queue.model.LEASE_FD_ENV] = str(adopted.fd)
+                spawn_kw["pass_fds"] = (adopted.fd,)
+        try:
+            proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root, env=env,
+                               **spawn_kw)
+        finally:
+            if adopted is not None:
+                os.close(adopted.fd)
+        rec.start_head = rec.start_head or head_before
         rec.status, rec.started_at, rec.log_path = StepStatus.RUNNING, batch.store.now_iso(), str(log)
         item.status, item.wait_reason = ItemStatus.RUNNING, ""
         self._live[item.key] = _Live(item, rec, proc, head_before, waits=wait,
-                                     queued=self._ai(rec))
+                                     queued=self._ai(rec),
+                                     queue_entry=None if adopted is None else adopted.entry_id)
         self._emit("step_started", run=self.run.id, item=item.key, step=rec.step.value,
                    argv=argv, log_path=str(log))
 
-    def _note_queue_waits(self) -> None:
-        lives = [live for live in self._live.values() if self._ai(live.rec)]
+    def _note_queue_states(self) -> None:
+        lives = [live for live in self._live.values() if live.queue_entry is not None]
         if not lives:
             return
-        waits = self._queue_waits({live.proc.pid for live in lives})
+        states = self._queue.states([live.queue_entry for live in lives])
         for live in lives:
-            self._note_wait(live, waits.get(live.proc.pid))
+            self._note_queue_state(live, states.get(live.queue_entry))
 
-    def _note_wait(self, live: _Live, entry_id: int | None) -> None:
-        if entry_id is None:
-            if live.queued:
-                live.item.wait_reason = ""
-                live.queued = False
-                live.queue_entry = None
+    def _note_queue_state(self, live: _Live, state: otto_queue.model.EntryState | None) -> None:
+        if state is None:
             return
-        reason = f"waiting for an otto-queue slot (entry {entry_id})"
-        if live.queue_entry != entry_id or live.item.wait_reason != reason:
-            self._emit("admission_wait", run=self.run.id, item=live.item.key,
-                       step=live.rec.step.value, reason=reason, queue_entry=entry_id)
-        live.item.wait_reason = reason
-        live.queue_entry = entry_id
+        if state is otto_queue.model.EntryState.QUEUED:
+            reason = f"waiting for an otto-queue slot (entry {live.queue_entry})"
+            if live.item.wait_reason != reason:
+                self._emit("admission_wait", run=self.run.id, item=live.item.key,
+                           step=live.rec.step.value, reason=reason,
+                           queue_entry=live.queue_entry)
+            live.item.wait_reason = reason
+            return
+        live.item.wait_reason = ""
+        live.queued = False
 
     # ── loop ─────────────────────────────────────────────────────────────
 
@@ -718,11 +745,20 @@ class Scheduler:
         self._emit("run_finished", run=self.run.id, status=status.value)
         return status
 
-    def _kill_live(self, waiting: Collection[int] | None = None) -> None:
-        """SIGTERM live steps. *waiting* limits the set to those pids (queue waiters)."""
+    def _kill_live(self) -> None:
+        """SIGTERM every live step (cancel --kill, interrupt)."""
         for live in self._live.values():
-            if waiting is None or live.proc.pid in waiting:
-                live.proc.kill()
+            live.proc.kill()
+
+    def _cancel_queued(self) -> None:
+        """Cancel still-queued tickets. A running entry is never touched."""
+        ids = [live.queue_entry for live in self._live.values()
+               if live.queue_entry is not None]
+        states = self._queue.states(ids)
+        for live in self._live.values():
+            entry_id = live.queue_entry
+            if entry_id is not None and states.get(entry_id) is otto_queue.model.EntryState.QUEUED:
+                self._queue.cancel(entry_id)
 
     def _kill_terminal_live(self) -> None:
         """SIGTERM the live step of every item that is now terminal (a release)."""
@@ -760,14 +796,11 @@ class Scheduler:
         if kill:
             self._kill_live()
         elif cancel is not None:
-            # Plain cancel: queue waiters are stopped; running steps finish. A waiter
-            # admitted since the read may be stopped as it starts: same as --kill.
-            self._kill_live(waiting=self._queue_waits(
-                {live.proc.pid for live in self._live.values()}))
+            self._cancel_queued()
         self._reap(kill)
         if cancel is None:
             self._admit()
-        self._note_queue_waits()
+        self._note_queue_states()
         self.session.commit()
         self._release(self.run, frozenset(self._live))
         return self._blocked_status(cancel)

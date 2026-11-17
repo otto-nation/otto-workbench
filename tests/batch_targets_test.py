@@ -16,6 +16,7 @@ import batch.autopublish  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.targets  # noqa: E402
 import core.run_lock  # noqa: E402
+import otto_queue.model  # noqa: E402
 import pr.target  # noqa: E402
 from batch.model import Item, ItemStatus, Run, Step  # noqa: E402
 # `_quiet_outcomes` is an autouse fixture; imported only so pytest registers it here.
@@ -108,6 +109,12 @@ def test_child_env_strips_markers_when_this_process_does_not_hold_the_target(rep
     env = batch.targets.child_env(_item(repo, "feat/a", 1))
     assert LOCK_ENV not in env
     assert TREE_LOCK_ENV not in env
+
+
+def test_child_env_strips_entry_env(repo, monkeypatch):
+    monkeypatch.setenv(otto_queue.model.ENTRY_ENV, "41")
+    env = batch.targets.child_env(_item(repo, "feat/a", 1))
+    assert otto_queue.model.ENTRY_ENV not in env
 
 
 def test_child_env_without_a_target_carries_no_marker(tmp_path, monkeypatch):

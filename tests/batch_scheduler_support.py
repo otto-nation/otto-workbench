@@ -7,6 +7,7 @@ Each Harness seeds the run, then holds a DRIVER session open for its lifetime;
 """
 
 import contextlib
+import os
 import sys
 from pathlib import Path
 
@@ -22,9 +23,11 @@ import batch.events  # noqa: E402
 import batch.inbox  # noqa: E402
 import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
+import batch.queue_entries  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 import otto_queue.admission  # noqa: E402
+import otto_queue.ledger  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
@@ -70,6 +73,42 @@ def _inbox(emit):
         report=lambda run, outcome: batch.scheduler.emit_outcome(run, outcome, emit=emit)))
 
 
+class FakeQueueEntries:
+    """QueueEntries stand-in: closeable fds, recorded calls, settable states."""
+
+    def __init__(self):
+        self.accept_calls = []
+        self.accepted = []
+        self.cancelled = []
+        self.states_map = {}
+        self.next_id = 1
+        self.busy = False
+        self.unavailable = False
+
+    def accept(self, *, argv, cwd, label, subject, action):
+        self.accept_calls.append(dict(
+            argv=argv, cwd=cwd, label=label, subject=subject, action=action))
+        if self.busy:
+            raise otto_queue.ledger.LedgerBusy("busy")
+        if self.unavailable:
+            return None
+        raw = os.open(os.devnull, os.O_RDONLY)
+        try:
+            fd = os.dup(raw)
+        finally:
+            os.close(raw)
+        result = batch.queue_entries.Accepted(self.next_id, fd)
+        self.next_id += 1
+        self.accepted.append(result)
+        return result
+
+    def states(self, ids):
+        return {i: self.states_map[i] for i in ids if i in self.states_map}
+
+    def cancel(self, entry_id):
+        self.cancelled.append(entry_id)
+
+
 def attach_scheduler(run, *, closeout=None, **kw):
     """Open a DRIVER session for *run* (creating it when needed) and return a Scheduler on it.
 
@@ -88,6 +127,7 @@ def attach_scheduler(run, *, closeout=None, **kw):
             batch.store.create(run, inbox=inbox, command="test scheduler"))
         session.commit()
     _OPEN.append(stack)
+    kw.setdefault("queue_entries", FakeQueueEntries())
     return batch.scheduler.Scheduler(session, closeout=closeout, **kw)
 
 
@@ -115,11 +155,13 @@ class Harness:
                  descends=None, commits=None, verbose=False,
                  machine=None, hold_tree=None, branch=None, focus=(),
                  with_ai=None, rebase_when=batch.model.RebaseWhen.CONFLICTS,
-                 queue_waits=None):
+                 queue_entries=None):
         self.codes = codes or {}
         self.moves, self.stdouts = set(moves), stdouts or {}
-        self.spawned, self.envs, self.events, self.live, self.max_live = [], [], [], 0, 0
+        self.spawned, self.envs, self.pass_fds = [], [], []
+        self.events, self.live, self.max_live = [], 0, 0
         self.published, self.publish_code = [], 0
+        self.queue = queue_entries or FakeQueueEntries()
         run = batch.scheduler.new_run(rows, steps=list(batch.model.STEP_ORDER),
                                       selected=selected, pool=pool,
                                       focus=focus, with_ai=with_ai,
@@ -150,7 +192,7 @@ class Harness:
             verbose=verbose, machine=machine, hold_tree=hold_tree,
             # The fake worktree for branch b is /wt/b, so its name is its branch.
             branch=branch or (lambda wt: Path(wt).name),
-            push=publish, tree=tree_fn, queue_waits=queue_waits)
+            push=publish, tree=tree_fn, queue_entries=self.queue)
         self.sched = self._make()
 
     @property
@@ -177,7 +219,7 @@ class Harness:
         self.published.append(argv)
         return self.publish_code
 
-    def _spawn(self, argv, *, log_path, trail_root, env=None):
+    def _spawn(self, argv, *, log_path, trail_root, env=None, pass_fds=(), **_kw):
         h = self
         # One past the number spawned so far, not a constant: each fake step gets
         # its own pid, so a kill or an RSS read aimed at one step cannot land on another.
@@ -213,6 +255,7 @@ class Harness:
         self.max_live = max(self.max_live, self.live)
         self.spawned.append(argv)
         self.envs.append(dict(env) if env else {})
+        self.pass_fds.append(tuple(pass_fds))
         return Proc()
 
     def kinds(self):

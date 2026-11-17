@@ -262,6 +262,18 @@ def test_submit_without_a_supervisor_runs_here_and_says_so(tmp_path):
     assert "running entry" in result.stderr and "here" in result.stderr and "Could not find service" in result.stderr
 
 
+def test_submit_run_here_without_a_supervisor_runs_here(tmp_path):
+    result = _shim_env(["submit", "--run-here", "--", PY, "-c", "raise SystemExit(3)"], _no_supervisor_env(tmp_path))
+    assert result.returncode == 3
+    assert "running entry" in result.stderr
+
+
+def test_submit_run_here_and_queue_only_are_exclusive():
+    with pytest.raises(SystemExit) as exc:
+        cli.otto_queue.main(["submit", "--run-here", "--queue-only", "--", "true"])
+    assert exc.value.code == 2
+
+
 def test_submit_queue_only_without_a_supervisor_exits_69_and_runs_nothing(tmp_path):
     ran = tmp_path / "ran"
     result = _shim_env(["submit", "--queue-only", "--", PY, "-c", f"open({str(ran)!r}, 'w')"],

@@ -15,7 +15,7 @@ asked for it.
    took in the meantime is left to it. Joining a live ticket waits for its
    status, and re-runs the work if that ticket ends without one. The queue's
    absence degrades to today's behaviour, never to work waiting for a worker
-   that will not come. With `run_here` off (`--queue-only`) a live entry is
+   that will not come. With `SubmitMode.QUEUE_ONLY` (`--queue-only`) a live entry is
    joined at 0 without waiting or cancelling, a `done` entry's status is
    returned, and a job this process created (`NEW`) is cancelled instead —
    `submit` then returns 69 (EX_UNAVAILABLE) having run nothing. A job it only
@@ -51,6 +51,14 @@ from core.proc import INTERRUPT_RETURNCODE
 from otto_queue.model import Entry, EntryClass, EntryKind, EntryState, NewEntry
 
 
+class SubmitMode(StrEnum):
+    """What submit does with the job once it is queued and no worker comes up."""
+
+    ADD = "add"
+    RUN_HERE = "run_here"
+    QUEUE_ONLY = "queue_only"
+
+
 class SubmitOutcome(StrEnum):
     QUEUED = "queued"
     JOINED = "joined"
@@ -71,7 +79,7 @@ class SubmitRequest:
     idem_key: str | None = None
     force: bool = False
     reuse: bool = True
-    run_here: bool = True
+    mode: SubmitMode = SubmitMode.RUN_HERE
     label: str | None = None
 
     def entry(self) -> NewEntry:
@@ -122,7 +130,7 @@ def _handed_over(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolu
         notify(f"otto-queue: queued entry {res.entry.id}; "
                "`otto-queue status` shows it")
         return SubmitResult(0, SubmitOutcome.QUEUED, res.entry.id)
-    if res.entry.kind is EntryKind.JOB or not request.run_here:
+    if res.entry.kind is EntryKind.JOB or request.mode is SubmitMode.QUEUE_ONLY:
         notify(f"otto-queue: joined entry {res.entry.id}; "
                "`otto-queue status` shows it")
         return SubmitResult(0, SubmitOutcome.JOINED, res.entry.id)
@@ -132,11 +140,11 @@ def _handed_over(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolu
 def _run_here(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolution,
               request: SubmitRequest, policy: otto_queue.slots.Policy, reason: str,
               notify: Callable[[str], None]) -> SubmitResult:
-    if not request.run_here and res.outcome is not otto_queue.ledger.Outcome.NEW:
+    if request.mode is SubmitMode.QUEUE_ONLY and res.outcome is not otto_queue.ledger.Outcome.NEW:
         notify(f"otto-queue: joined entry {res.entry.id}; "
                "`otto-queue status` shows it")
         return SubmitResult(0, SubmitOutcome.JOINED, res.entry.id)
-    if not request.run_here:
+    if request.mode is SubmitMode.QUEUE_ONLY:
         claimed = ledger.claim_as_ticket(res.entry.id, os.getpid())
         if claimed is None:
             return _after_missed_claim(ledger, res.entry.id, request, policy, notify)
@@ -186,8 +194,8 @@ def _withdraw(ledger: otto_queue.ledger.Ledger, claimed: otto_queue.ledger.Resol
 
 def _unqueued(request: SubmitRequest, policy: otto_queue.slots.Policy, root: Path | None,
               reason: str, notify: Callable[[str], None]) -> SubmitResult:
-    """The ledger cannot be opened: run the command here unqueued, as a ticket would, unless *run_here* is off."""
-    if not request.run_here:
+    """The ledger cannot be opened: run the command here unqueued, as a ticket would, unless the mode is `QUEUE_ONLY`."""
+    if request.mode is SubmitMode.QUEUE_ONLY:
         notify(f"otto-queue: queue unavailable ({reason}); ran nothing")
         return SubmitResult(ExitCode.UNAVAILABLE, SubmitOutcome.NO_WORKER)
     result = otto_queue.ticket.run_ticket(request.ticket(), policy, root=root, notify=notify)
@@ -201,7 +209,7 @@ def _after_missed_claim(ledger: otto_queue.ledger.Ledger, entry_id: int,
     if entry is not None and entry.kind is EntryKind.JOB and entry.state.live:
         notify(f"otto-queue: entry {entry_id} is with the worker; leaving it to that run")
         return SubmitResult(0, SubmitOutcome.JOINED, entry_id)
-    if request.run_here:
+    if request.mode is SubmitMode.RUN_HERE:
         return _wait_on_ticket(request, policy, ledger.root, notify)
     return _queue_only_miss(entry, entry_id, notify)
 

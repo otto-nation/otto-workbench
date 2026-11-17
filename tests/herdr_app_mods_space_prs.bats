@@ -1,8 +1,7 @@
 #!/usr/bin/env bats
-# Space PRs mod: listing-only pulls, no notify in render, #N opens a target session,
-# the group header selects the space. The gpui stubs are chainable no-ops (on_click /
-# child discarded), so nested clicks cannot be dispatched; cases e/f call openTarget /
-# selectSpace and case e also pins the ref handler to openTarget in source.
+# Space PRs mod: listing-only pulls, no notify in render, a card click opens a target
+# session, the group header selects the space. With globalThis.__gpuiRecord set, gpui
+# stubs record id/on_click so a card click can be dispatched.
 bats_require_minimum_version 1.5.0
 # select-on: ai/herdr/app/mods/space-prs/*.js ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/_ui/*.js tests/herdr_app_host_helper.bash tests/fixtures/board_document.json
 
@@ -110,7 +109,7 @@ MOD_JS
   [ "$output" = '["hc:ls:label","pr:listing:offline"]' ]
 }
 
-@test "space prs: the #N ref asks pr target session and focuses a matching agent pane" {
+@test "space prs: a card click asks pr target session and focuses a matching agent pane" {
   _host "$MOD
     const seen = [];
     const base = fakePr(doc, (l) => (l === 'pr:--branch' ? { code: 0, stdout: JSON.stringify(RECIPE), stderr: '' } : null));
@@ -121,11 +120,10 @@ MOD_JS
     const { v, draw, ran, settle } = await start(exec);
     draw(); await settle();
     seen.length = 0; ran.length = 0;
-    const src = fs.readFileSync(M + '/main.js', 'utf8');
     v.openTarget(clickOf(v)); await settle();
-    out({ wired: src.includes('this.openTarget(row)'), seen, ran });"
+    out({ seen, ran });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"wired":true,"seen":["pr --branch me/fix/comments target session --json","hc ls --json --label otto.session=target-abc"],"ran":[["space.select",{"id":"s-agent"}],["tab.select",{"id":"tab-agent"}],["pane.focus",{"pane":"p-agent"}]]}' ]
+  [ "$output" = '{"seen":["pr --branch me/fix/comments target session --json","hc ls --json --label otto.session=target-abc"],"ran":[["space.select",{"id":"s-agent"}],["tab.select",{"id":"tab-agent"}],["pane.focus",{"pane":"p-agent"}]]}' ]
 }
 
 @test "space prs: a row click selects that space and does not ask target session" {
@@ -143,7 +141,7 @@ MOD_JS
   [ "$output" = '{"seen":[],"ran":[["space.select",{"id":"s0"}]]}' ]
 }
 
-@test "space prs: an owned row's #N focuses the labelled agent and asks pr nothing" {
+@test "space prs: an owned row's card click focuses the labelled agent and asks pr nothing" {
   _host "$MOD
     const seen = [];
     const base = fakePr(doc);
@@ -162,7 +160,7 @@ MOD_JS
   [ "$output" = '{"owner":"t-own","seen":[],"ran":[["space.select",{"id":"s-agent"}],["tab.select",{"id":"tab-agent"}],["pane.focus",{"pane":"p-own"}]]}' ]
 }
 
-@test "space prs: with no owner, #N focuses a shell pane in the worktree and asks pr nothing" {
+@test "space prs: with no owner, a card click focuses a shell pane in the worktree and asks pr nothing" {
   _host "$MOD
     const seen = [];
     const base = fakePr(doc);
@@ -179,7 +177,30 @@ MOD_JS
   [ "$output" = '{"owner":null,"seen":[],"ran":[["space.select",{"id":"s0"}],["tab.select",{"id":"tab0"}],["pane.focus",{"pane":"p-sh"}]]}' ]
 }
 
-@test "space prs: with neither, #N asks pr target session from the worktree" {
+@test "space prs: clicking anywhere on a row's card opens its target" {
+  _host "$MOD
+    const base = fakePr(doc);
+    const exec = async (cmd, args, opts = {}) => base(cmd, args, opts);
+    spacesOf();
+    H.panesList.push({ pane: 'p-sh', tab: 'tab0', cwd: '/wt/7', status: null, terminal: 't-sh' });
+    const { draw, ran, settle } = await start(exec);
+    draw(); await settle();
+    ran.length = 0;
+    globalThis.__gpuiRecord = [];
+    draw();
+    const rec = globalThis.__gpuiRecord;
+    const el = rec.find((e) => e.id === 'space-prs-s0-7');
+    el.click({}, { stop_propagation() {} });
+    await settle();
+    out({
+      ran,
+      noRef: !rec.some((e) => String(e.id ?? '').startsWith('space-prs-ref-')),
+    });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"ran":[["space.select",{"id":"s0"}],["tab.select",{"id":"tab0"}],["pane.focus",{"pane":"p-sh"}]],"noRef":true}' ]
+}
+
+@test "space prs: with neither, a card click asks pr target session from the worktree" {
   _host "$MOD
     const cwds = [];
     const base = fakePr(doc, (l) => (l === 'pr:--branch' ? { code: 0, stdout: JSON.stringify(RECIPE), stderr: '' } : null));

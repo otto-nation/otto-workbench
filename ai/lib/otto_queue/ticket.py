@@ -184,15 +184,17 @@ def run_ticket(request: TicketRequest, policy: otto_queue.slots.Policy, *,
         if res.outcome is otto_queue.ledger.Outcome.REUSED:
             notify(f"otto-queue: entry {res.entry.id} already did this; not running it again")
             return TicketResult(res.entry.exit_status or 0, TicketOutcome.REUSED, res.entry.id)
-        joined = _join(ledger, res.entry, request, policy, poll_s, notify)
+        joined = join(ledger, res.entry, wait_s=request.wait_s, policy=policy,
+                      poll_s=poll_s, notify=notify)
         if joined is not None:
             return joined
+        notify(f"otto-queue: entry {res.entry.id} ended without a result; queuing again")
 
 
-def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest,
-          policy: otto_queue.slots.Policy, poll_s: float,
-          notify: Callable[[str], None]) -> TicketResult | None:
-    """Wait for *entry* to end and return its status; None when it ended with none (orphaned).
+def join(ledger: otto_queue.ledger.Ledger, entry: Entry, *, wait_s: float,
+         policy: otto_queue.slots.Policy, poll_s: float = POLL_S,
+         notify: Callable[[str], None] = core.log.info) -> TicketResult | None:
+    """Wait up to *wait_s* for *entry* to end and return its status; None when it ended with none.
 
     A queued job nobody will start — no worker is alive — is claimed and run
     here instead, so the wait cannot outlast every worker.
@@ -200,7 +202,7 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
     entry_id = entry.id
     reporter = otto_queue.wait_report.WaitReporter(
         entry_id, entry.entry_class.value, notify)
-    deadline = time.monotonic() + request.wait_s
+    deadline = time.monotonic() + wait_s
     origin = time.monotonic()
     last_state = entry.state
     rng = random.Random()
@@ -214,7 +216,7 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
         if ran is not None:
             return ran
         if time.monotonic() >= deadline:
-            notify(f"otto-queue: entry {entry_id} did not finish in {request.wait_s:g}s")
+            notify(f"otto-queue: entry {entry_id} did not finish in {wait_s:g}s")
             return TicketResult(os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT, entry_id)
         reporter.waiting(f"behind entry {entry_id}, which queued first")
         state = None if entry is None else entry.state
@@ -228,7 +230,6 @@ def _join(ledger: otto_queue.ledger.Ledger, entry: Entry, request: TicketRequest
         except otto_queue.ledger.LedgerBusy:
             busy_said = _note_busy(notify, busy_said)
     if entry is None or entry.exit_status is None:
-        notify(f"otto-queue: entry {entry_id} ended without a result; queuing again")
         return None
     outcome = TicketOutcome.CANCELLED if entry.state is EntryState.CANCELLED else TicketOutcome.JOINED
     return TicketResult(entry.exit_status, outcome, entry_id)

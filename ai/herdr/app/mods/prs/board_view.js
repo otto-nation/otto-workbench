@@ -215,7 +215,7 @@ export default class PrsBoard extends View {
   }
 
   render(cx) {
-    if (tabOf() !== "mine") this.selecting = false;
+    if (tabOf() !== "mine" && this.selecting) this.stopSelecting();
     this.workflows.show();
     const t = theme();
     const targets = this.activeTargets();
@@ -308,11 +308,13 @@ export default class PrsBoard extends View {
   }
 
   startSelecting() {
+    this.launcher.reset();
     this.selecting = true;
     this.acx.notify();
   }
 
   stopSelecting() {
+    this.launcher.reset();
     this.selecting = false;
     this.acx.notify();
   }

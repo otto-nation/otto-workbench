@@ -2,8 +2,11 @@
 
 Stdlib only. Enum string values are the wire spellings; renaming a member is
 free, changing a value is a schema break. Optional fields do not bump
-``schema_version``; a removed or renamed field or a changed type does, and
-enforcement comes from ``SCHEMA_VERSIONS`` being allowed to shrink.
+``schema_version``; removing or renaming a field a live consumer reads or
+changing a type does, and enforcement comes from ``SCHEMA_VERSIONS`` being
+allowed to shrink. Dropping a feature-gated field together with its feature
+and its sole consumer needs no bump when older copies already degrade on the
+missing feature.
 """
 
 # doc-group: board
@@ -17,8 +20,9 @@ from enum import StrEnum
 SCHEMA_VERSIONS = (1,)
 
 # What this build's `pr` accepts that a board consumer drives; add one when a
-# consumer must tell a newer `pr` from an older one; never remove one without
-# a schema bump.
+# consumer must tell a newer `pr` from an older one; remove one without a
+# schema bump only when its sole consumer is retired in the same change and
+# older copies already degrade on the missing entry.
 FEATURES = ("review-publish", "batch-session", "target-session", "queue-lanes", "cache-age")
 
 

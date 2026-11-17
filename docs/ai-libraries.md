@@ -5358,8 +5358,11 @@ The PR board's vocabulary: schema version, lanes, badges, and row facts.
 
 Stdlib only. Enum string values are the wire spellings; renaming a member is
 free, changing a value is a schema break. Optional fields do not bump
-``schema_version``; a removed or renamed field or a changed type does, and
-enforcement comes from ``SCHEMA_VERSIONS`` being allowed to shrink.
+``schema_version``; removing or renaming a field a live consumer reads or
+changing a type does, and enforcement comes from ``SCHEMA_VERSIONS`` being
+allowed to shrink. Dropping a feature-gated field together with its feature
+and its sole consumer needs no bump when older copies already degrade on the
+missing feature.
 
 ### board/owed.py
 

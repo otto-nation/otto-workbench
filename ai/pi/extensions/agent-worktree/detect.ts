@@ -3,8 +3,8 @@
  * result into the payload ai/bin/report-agent-worktree reads.
  *
  * index.ts imports the Pi SDK, so it only loads inside a Pi session. This file
- * imports node built-ins only, so tests/pi_extensions_agent_worktree.bats can
- * run it under plain `node`.
+ * imports node built-ins and ../_shared/run-dir.ts only, so
+ * tests/pi_extensions_agent_worktree.bats can run it under plain `node`.
  *
  * There is no predicate here on purpose. Which worktree a call targeted needs
  * git resolution — toplevel, the `git worktree list` spelling, a `wt switch`
@@ -16,7 +16,8 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
-export { claimsWorktree } from "../_shared/run-dir.ts";
+import { claimsWorktree } from "../_shared/run-dir.ts";
+export { claimsWorktree };
 
 /** The installed hook both harnesses run (ai/bin/report-agent-worktree). */
 export const HOOK_PATH = `${homedir()}/.local/bin/report-agent-worktree`;
@@ -86,6 +87,17 @@ export function payloadFor(event: ToolResultEvent, cwd: string): HookPayload | n
 
 /** The session the hook claims for, or null when this session claims no trees. */
 export interface HookSession { pid: number; sessionId: string }
+
+/**
+ * Pid and sessionId for hookEnv when ENV+sessionId claim a tree, else null.
+ */
+export function hookSession(
+  env: Record<string, string | undefined>,
+  pid: number,
+  sessionId: string,
+): HookSession | null {
+  return claimsWorktree(env, sessionId) ? { pid, sessionId } : null;
+}
 
 /**
  * The hook's environment: ENV with CLAUDE_PROJECT_DIR set to CWD (Pi sets none,

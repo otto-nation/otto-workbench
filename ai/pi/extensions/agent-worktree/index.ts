@@ -17,7 +17,7 @@
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
 import {
-  HOOK_PATH, claimsWorktree, hookEnv, payloadFor, shouldReport, type HookSession,
+  HOOK_PATH, hookEnv, hookSession, payloadFor, shouldReport, type HookSession,
 } from "./detect.ts";
 
 /**
@@ -44,9 +44,7 @@ export default function (pi: ExtensionAPI) {
     // A new session in a reused terminal must not inherit the last one's claim.
     if (!shouldReport(ctx.mode)) return;
     const sessionId = ctx.sessionManager?.getSessionId() ?? "";
-    const session = claimsWorktree(process.env, sessionId)
-      ? { pid: process.pid, sessionId }
-      : null;
+    const session = hookSession(process.env, process.pid, sessionId);
     runHook(["--clear"], "", ctx.cwd, session);
   });
 
@@ -55,9 +53,7 @@ export default function (pi: ExtensionAPI) {
     const payload = payloadFor(event, ctx.cwd);
     if (payload === null) return;
     const sessionId = ctx.sessionManager?.getSessionId() ?? "";
-    const session = claimsWorktree(process.env, sessionId)
-      ? { pid: process.pid, sessionId }
-      : null;
+    const session = hookSession(process.env, process.pid, sessionId);
     runHook([], JSON.stringify(payload), ctx.cwd, session);
   });
 }

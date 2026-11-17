@@ -125,7 +125,7 @@ export function sessionOf(
  * Whether a session started with `env` and `sessionId` claims its worktree.
  *
  * A batch run's own session and a PR target's own session do not
- * (../_shared/run-dir.ts says which those are). Batch: cwd is the run's
+ * (`sessionOf` says which those are). Batch: cwd is the run's
  * checkout, and batch reuses whichever worktree already holds an item's
  * branch (ai/lib/batch/steps.py ensure_worktree), so a claim there would make
  * that item's later `--fix` steps refuse. Target: cwd is the branch's own

@@ -25,15 +25,12 @@ _payload() {
   " -- "$1" "$2"
 }
 
-# _should MODE [HC_TERMINAL_ID] — prints shouldReport(MODE, env). With one
-# argument HC_TERMINAL_ID is absent from env; with two it is set to the second.
+# _should MODE — prints shouldReport(MODE).
 _should() {
-  local env='{}'
-  [[ $# -ge 2 ]] && env=$(jq -nc --arg t "$2" '{HC_TERMINAL_ID: $t}')
   run node --input-type=module -e "
     const { shouldReport } = await import('$DETECT');
-    process.stdout.write(String(shouldReport(process.argv[1], JSON.parse(process.argv[2]))));
-  " -- "$1" "$env"
+    process.stdout.write(String(shouldReport(process.argv[1])));
+  " -- "$1"
 }
 
 @test "payloadFor: bash maps to Claude's Bash shape with the output as stdout" {
@@ -71,8 +68,8 @@ _should() {
   done
 }
 
-@test "detect.ts imports node built-ins only" {
-  run grep -nE "^import .* from \"[^n]|@earendil-works" "$DETECT"
+@test "detect.ts imports node built-ins and _shared only" {
+  run grep -nE "^import .* from \"[^n.]|@earendil-works" "$DETECT"
   [ "$status" -ne 0 ]
 }
 
@@ -152,7 +149,7 @@ EOF
   [ "$output" = '[{"WORKBENCH_SESSION_HARNESS":"pi","CLAUDE_PROJECT_DIR":"/w","WORKBENCH_SESSION_PID":"12","PI_SESSION_ID":"s"},{"WORKBENCH_SESSION_HARNESS":"pi","CLAUDE_PROJECT_DIR":"/w"}]' ]
 }
 
-@test "hookEnv: the session cwd becomes CLAUDE_PROJECT_DIR; an empty cwd leaves env alone" {
+@test "hookEnv: the session cwd becomes CLAUDE_PROJECT_DIR; an empty cwd keeps it and still sets the harness" {
   run node --input-type=module -e "
     const { hookEnv } = await import('$DETECT');
     const env = { HOME: '/h', CLAUDE_PROJECT_DIR: '/old' };
@@ -168,4 +165,24 @@ EOF
   [ "$output" = "1" ]
   run grep -c 'timeout: 10_000, env }' "$REPO_ROOT/ai/pi/extensions/agent-worktree/index.ts"
   [ "$output" = "1" ]
+}
+
+@test "hookSession carries pid only when claiming" {
+  run node --input-type=module -e "
+    const { hookSession } = await import('$DETECT');
+    process.stdout.write(JSON.stringify([
+      hookSession({}, 12, 's'),
+      hookSession({WORKBENCH_RUN_DIR: '/state/batch/r1/'}, 12, 'batch-r1'),
+      hookSession({WORKBENCH_TARGET_DIR: '/t/dir', WORKBENCH_SESSION_ID: 'target-abc'}, 12, 'target-abc'),
+      hookSession({WORKBENCH_RUN_DIR: '/state/batch/r1'}, 12, 'child-1'),
+    ]));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"pid":12,"sessionId":"s"},null,null,{"pid":12,"sessionId":"child-1"}]' ]
+}
+
+@test "index.ts gates both handlers through hookSession" {
+  run grep -c 'hookSession(process.env, process.pid, sessionId)' "$REPO_ROOT/ai/pi/extensions/agent-worktree/index.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" = "2" ]
 }

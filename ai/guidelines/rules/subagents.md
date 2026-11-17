@@ -43,6 +43,17 @@ and test specifics live with their owners (pointers below).
   work uncommitted in the worktree; the retry, told to inspect `git diff` and
   finish, completed it. Brief a continuation with what is already done and what is
   missing. Revisit when the stall timeout or the model changes
+- A fully specified plan can be run several tasks to a dispatch. Observed 2026-11
+  (grok through pi's `subagent` tool, `thinking: medium`): six tasks of an opus
+  plan ran in one dispatch with no stall and one commit per task, then two more
+  tasks and a test fix in the next. Each task in that plan gave its files, its
+  failing test, its revert checks and its exact commit subject. A three-task
+  dispatch of another such plan, with no progress instruction, was killed for
+  300s of silence after committing all three. So read `git log` before
+  redispatching a stalled multi-task child. This is the exception to the splits
+  above, not a replacement: drop back to one item per dispatch as soon as an item
+  carries new logic that is not already specified. Revisit when the model or the
+  stall timeout changes
 - A dispatch that fails with an empty `Subagent failed:` message is the service,
   not the task, once a trivial no-tools probe fails the same way. Observed 2026-11
   (grok through pi's `subagent` tool): three failures in a row, the last a

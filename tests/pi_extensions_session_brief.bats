@@ -299,15 +299,22 @@ _wired() {
   [ "$status" -eq 1 ]
 }
 
-@test "wire: a shutdown while an idle brief is in flight still briefs afterwards" {
+@test "wire: a shutdown while an idle brief is in flight waits for it before clearing" {
   _wired '
-    const f = fakePi({ entries: [...turn()] }); wire(f.pi, f.deps);
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    const f = fakePi({ entries: [...turn()], reply: gate });
+    wire(f.pi, f.deps);
     await f.calls.handlers.agent_settled({ aborted: false }, f.ctx);
     const idle = f.calls.timers[0].fn();
-    const down = f.calls.handlers.session_shutdown({ reason: "quit" }, f.ctx);
+    let done = false;
+    const down = f.calls.handlers.session_shutdown({ reason: "quit" }, f.ctx).then(() => { done = true; });
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    const whileInflight = [done, ofType(f.entries, m.BRIEF_TYPE).length, f.calls.execs.some((c) => c.args.includes("--clear"))];
+    release({ stopReason: "stop", content: [{ type: "text", text: "{\"title\": \"Fix login\", \"tldr\": \"Fixing the login race.\"}" }] });
     await Promise.all([idle, down]);
-    out(ofType(f.entries, m.BRIEF_TYPE).length);
+    out([whileInflight, done, ofType(f.entries, m.BRIEF_TYPE).length, f.calls.execs.at(-1).args[2]]);
   '
   [ "$status" -eq 0 ]
-  [ "$output" = "1" ]
+  [ "$output" = '[[false,0,false],true,1,"--clear"]' ]
 }

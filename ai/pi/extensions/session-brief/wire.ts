@@ -63,6 +63,7 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
     pi.exec("python3", args, { timeout, signal }).catch(() => FAILED);
 
   function refresh(ctx: ExtensionContext, signal?: AbortSignal): Promise<void> {
+    if (busy) return Promise.resolve();
     const run = write(ctx, signal);
     const tracked: Promise<void> = run.finally(() => {
       if (inflight === tracked) inflight = null;

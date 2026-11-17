@@ -181,3 +181,117 @@ PS'
   run jq -e 'has("reaper")|not' <<< "$json"
   [ "$status" -eq 0 ]
 }
+
+# _stub_sysctl MEMSIZE — a sysctl stub answering the Darwin keys host-health reads. An empty MEMSIZE
+# makes hw.memsize fail; any other key exits 1.
+_stub_sysctl() {
+  cat > "$STUB_BIN/sysctl" <<STUB
+#!/usr/bin/env bash
+case "\$*" in
+  "-n hw.memsize") [[ -n "$1" ]] && { echo "$1"; exit 0; }; exit 1 ;;
+  "-n vm.swapusage") echo "total = 2048.00M  used = 1024.50M  free = 1023.50M  (encrypted)" ;;
+  "-n vm.loadavg") echo "{ 1.50 1.00 0.50 }" ;;
+  "-n hw.ncpu") echo 8 ;;
+  *) exit 1 ;;
+esac
+STUB
+  chmod +x "$STUB_BIN/sysctl"
+}
+
+# _run_hh_darwin [args...] — host-health as on macOS: empty /proc dir, HOST_HEALTH_OS=Darwin.
+_run_hh_darwin() {
+  mkdir -p "$BATS_TEST_TMPDIR/empty-proc"
+  run env PATH="$(_hh_path)" \
+    HOST_HEALTH_PROC="$BATS_TEST_TMPDIR/empty-proc" \
+    HOST_HEALTH_OS=Darwin \
+    "$HH" "$@"
+}
+
+@test "Darwin memory, load and swap come from sysctl and vm_stat" {
+  _stub_sysctl 8589934592
+  printf '#!/usr/bin/env bash\n%s\n' "cat <<'VM'
+Mach Virtual Memory Statistics: (page size of 16384 bytes)
+Pages free:                               1000.
+Pages active:                              500.
+Pages inactive:                           2000.
+Pages speculative:                         500.
+VM" > "$STUB_BIN/vm_stat"
+  chmod +x "$STUB_BIN/vm_stat"
+  _run_hh_darwin --json
+  [ "$status" -eq 0 ]
+  local json="$output"
+  # (1000 + 2000 + 500) pages * 16384 B = 54.69 MB, truncated by bash integer division.
+  run jq -e '.mem == {total_mb: 8192, available_mb: 54, swap_used_mb: 1024} and .load == {m1: 1.5, m5: 1, m15: 0.5}' \
+    <<< "$json"
+  [ "$status" -eq 0 ]
+}
+
+@test "Darwin memory is null when hw.memsize is unreadable" {
+  _stub_sysctl ""
+  _run_hh_darwin --json
+  [ "$status" -eq 0 ]
+  local json="$output"
+  run jq -e '.mem == null' <<< "$json"
+  [ "$status" -eq 0 ]
+}
+
+@test "Darwin without a working vm_stat counts zero free pages" {
+  _stub_sysctl 8589934592
+  printf '#!/usr/bin/env bash\nexit 1\n' > "$STUB_BIN/vm_stat"
+  chmod +x "$STUB_BIN/vm_stat"
+  _run_hh_darwin --json
+  [ "$status" -eq 0 ]
+  local json="$output"
+  run jq -e '.mem.total_mb == 8192 and .mem.available_mb == 0' <<< "$json"
+  [ "$status" -eq 0 ]
+}
+
+# _reaper_tree BODY — a copy of host-health in a fake workbench tree whose ai/bin/otto-log runs BODY;
+# host-health finds otto-log relative to its own location, so a PATH stub would not be used.
+_reaper_tree() {
+  local wb="$BATS_TEST_TMPDIR/wb"
+  mkdir -p "$wb/bin" "$wb/ai/bin"
+  cp "$HH" "$wb/bin/host-health"
+  printf '#!/usr/bin/env bash\n%s\n' "$1" > "$wb/ai/bin/otto-log"
+  chmod +x "$wb/bin/host-health" "$wb/ai/bin/otto-log"
+}
+
+_run_reaper() {
+  _write_proc
+  run env PATH="$(_hh_path)" \
+    HOST_HEALTH_PROC="$PROC" \
+    HOST_HEALTH_OS=Linux \
+    "$BATS_TEST_TMPDIR/wb/bin/host-health" --json --reaper
+}
+
+@test "--reaper reports the last reap signal and the count, ignoring other actions" {
+  _reaper_tree '[[ "$*" == "query --script maintenance --since 1d --json" ]] || exit 2
+cat <<'\''LOG'\''
+{"ts":"2026-11-16T10:00:00Z","action":"reap-TERM"}
+{"ts":"2026-11-16T12:00:00Z","action":"reap-KILL"}
+{"ts":"2026-11-16T13:00:00Z","action":"something-else"}
+LOG'
+  _run_reaper
+  [ "$status" -eq 0 ]
+  local json="$output"
+  run jq -e '.reaper == {last_at: "2026-11-16T12:00:00Z", signals_24h: 2}' <<< "$json"
+  [ "$status" -eq 0 ]
+}
+
+@test "--reaper with no reap actions is zero with a null last_at" {
+  _reaper_tree 'echo "{\"ts\":\"2026-11-16T13:00:00Z\",\"action\":\"something-else\"}"'
+  _run_reaper
+  [ "$status" -eq 0 ]
+  local json="$output"
+  run jq -e '.reaper == {last_at: null, signals_24h: 0}' <<< "$json"
+  [ "$status" -eq 0 ]
+}
+
+@test "--reaper is null when otto-log fails, and the report still prints" {
+  _reaper_tree 'exit 1'
+  _run_reaper
+  [ "$status" -eq 0 ]
+  local json="$output"
+  run jq -e '.reaper == null and .load.m1 == 1.5' <<< "$json"
+  [ "$status" -eq 0 ]
+}

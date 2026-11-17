@@ -129,7 +129,7 @@ JS
   [ "$status" -eq 0 ]
   _walk_imports "$OUT" ai/herdr/web/server/main.js ai/herdr/web/public/app.js
   [ "$status" -eq 0 ]
-  missing="$(node -e 'process.stdout.write(JSON.stringify(JSON.parse(process.argv[1]).missing))' -- "$output")"
+  missing="$(jq -c .missing <<< "$output")"
   [ "$missing" = '[]' ]
 }
 

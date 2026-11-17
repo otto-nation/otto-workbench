@@ -6,7 +6,10 @@
 #   fakeExec(table) an exec answering from rows {prefix, code, stdout, stderr, reject}, matched by
 #                   prefix against "cmd arg1 arg2…"; unmatched calls answer code 1 "unexpected …"
 #   calls  every call fakeExec saw: {cmd, args, cwd, on, timeout}
-# The JS is passed as argv, never interpolated, so it needs no shell escaping.
+# The JS is passed in the environment (WEB_BODY) and the wrapper script on stdin, never interpolated
+# and never as a command-line argument, so it needs no shell escaping. A long argv entry is not safe:
+# on macOS 27.2 node is SIGKILLed (status 137) when it starts through a symlinked path (a mise shim,
+# a Homebrew link) with one argument over about 975 characters, which failed every long case here.
 
 WEB_FAKE_EXEC='
 const calls = [];
@@ -23,13 +26,15 @@ const fakeExec = (table) => async (cmd, args, opts = {}) => {
 };'
 
 _web() {
-  run node --input-type=module -e "
+  local script
+  script="
     const W = '$REPO_ROOT/ai/herdr/web';
     const L = '$REPO_ROOT/ai/herdr/app/mods/_lib';
     const T = '$BATS_TEST_TMPDIR';
     const out = (v) => process.stdout.write(JSON.stringify(v));
     $WEB_FAKE_EXEC
-    const body = new (async () => {}).constructor('W', 'L', 'T', 'out', 'fakeExec', 'calls', process.argv[1]);
+    const body = new (async () => {}).constructor('W', 'L', 'T', 'out', 'fakeExec', 'calls', process.env.WEB_BODY);
     await body(W, L, T, out, fakeExec, calls);
-  " -- "$1"
+  "
+  run env WEB_BODY="$1" node --input-type=module - <<< "$script"
 }

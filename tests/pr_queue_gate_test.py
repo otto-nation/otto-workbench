@@ -507,3 +507,39 @@ def test_gate_pops_adopt_env_on_early_returns(monkeypatch):
                 entry_class=EntryClass.LIGHT, label="L", no_queue=True) is None
     assert otto_queue.ticket.ADOPT_ENV not in os.environ
     assert otto_queue.ticket.LEASE_FD_ENV not in os.environ
+
+
+def test_gate_closes_inherited_fd_on_early_return(monkeypatch):
+    r, w = os.pipe()
+    os.close(w)
+    monkeypatch.setenv(otto_queue.ticket.ADOPT_ENV, "1")
+    monkeypatch.setenv(otto_queue.ticket.LEASE_FD_ENV, str(r))
+    assert gate("status", [], reexec=(PY, "-c", "pass"),
+                entry_class=None, label="L") is None
+    try:
+        os.fstat(r)
+        raise AssertionError("fd still open")
+    except OSError:
+        pass
+
+
+def test_gate_closes_inherited_fd_on_refused_adoption(monkeypatch):
+    r, w = os.pipe()
+    os.close(w)
+
+    def refuse(*_a, **_k):
+        raise otto_queue.ticket.AdoptRefused("busy")
+
+    monkeypatch.setattr(otto_queue.ticket, "adopt", refuse)
+    monkeypatch.setattr(otto_queue.ticket, "run_ticket",
+                        lambda *_a, **_k: type("R", (), {"exit_status": 0})())
+    monkeypatch.setenv(otto_queue.ticket.ADOPT_ENV, "1")
+    monkeypatch.setenv(otto_queue.ticket.LEASE_FD_ENV, str(r))
+    monkeypatch.delenv("_WB_PR_QUEUED", raising=False)
+    assert gate("create", [], reexec=(PY, "-c", "pass"),
+                entry_class=EntryClass.LIGHT, label="L") == 0
+    try:
+        os.fstat(r)
+        raise AssertionError("fd still open")
+    except OSError:
+        pass

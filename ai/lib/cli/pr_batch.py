@@ -520,8 +520,8 @@ def _checkouts(checkout: list[str] | None, rows: list[batch.plan.PlanRow],
             or sorted({os.path.abspath(d) for d in ref_dirs}))
 
 
-# The run's --pool width: at least 1, at most cfg.pool_max.
 def ceiling(requested: int | None, cfg: config.workbench_config.BatchConfig) -> int:
+    """The run's --pool width: at least 1, at most cfg.pool_max."""
     return max(1, min(requested if requested is not None else cfg.pool_max, cfg.pool_max))
 
 

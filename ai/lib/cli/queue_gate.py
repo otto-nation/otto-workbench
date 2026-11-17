@@ -70,12 +70,11 @@ def gate(command: str, argv: Sequence[str], *, reexec: Sequence[str],
     # Pop before any return or re-exec so a grandchild never inherits the fd.
     adopt_raw = os.environ.pop(ADOPT_ENV, None)
     fd_raw = os.environ.pop(LEASE_FD_ENV, None)
-    if entry_class is None or no_queue or os.environ.get(NO_QUEUE_ENV) == "1":
-        return None
-    if os.environ.get(QUEUED_MARKER):
-        return None
     import otto_queue.ticket
-    if os.environ.get(otto_queue.ticket.ENTRY_ENV):
+    if (entry_class is None or no_queue or os.environ.get(NO_QUEUE_ENV) == "1"
+            or os.environ.get(QUEUED_MARKER)
+            or os.environ.get(otto_queue.ticket.ENTRY_ENV)):
+        _close_fd(fd_raw)
         return None
     # This process only waits and then exits, so mutating its environment is
     # safe: the marker is how the re-exec'd child knows not to gate again.
@@ -92,8 +91,20 @@ def gate(command: str, argv: Sequence[str], *, reexec: Sequence[str],
             return otto_queue.ticket.adopt(
                 int(adopt_raw), int(fd_raw), request, policy).exit_status
         except (ValueError, otto_queue.ticket.AdoptRefused):
-            pass
+            _close_fd(fd_raw)
+    else:
+        _close_fd(fd_raw)
     return otto_queue.ticket.run_ticket(request, policy).exit_status
+
+
+def _close_fd(fd_raw: str | None) -> None:
+    """Close an inherited lease fd that was not adopted, so its flock is released."""
+    if fd_raw is None:
+        return
+    try:
+        os.close(int(fd_raw))
+    except (ValueError, OSError):
+        pass
 
 
 def _wait_s() -> float:

@@ -273,7 +273,9 @@ class TestReachedClaim:
         dead.wait()
         live = sleeper()
         core.session_lock.claim_reached(other, pid=live.pid, harness="pi")
-        assert not (tmp_path / "state" / "session-reach" / f"{dead.pid}.json").exists()
+        reach = tmp_path / "state" / "session-reach"
+        assert not (reach / f"{dead.pid}.json").exists()
+        assert not (reach / f"{dead.pid}.lock").exists()
 
     def test_a_dead_pid_claims_nothing(self, worktree):
         assert not core.session_lock.claim_reached(

@@ -11,7 +11,7 @@
 migration_20261117_herdr_drop_space_prs_mod() {
   local home dir removed=0
   for home in "$HERDR_APP_DIR" "$HERDR_UNTRUSTED_APP_DIR"; do
-    [[ -n $home ]] || continue
+    [[ -n "$home" ]] || continue
     dir="$home/mods/space-prs"
     [[ -f "$dir/.workbench-install" ]] || continue
     rm -rf "$dir" || { warn "Could not remove $dir"; return 1; }

@@ -313,6 +313,7 @@ def _reach_guard(pid: int):
         path.parent.mkdir(parents=True, exist_ok=True)
         handle = open(path, "a")
     except OSError:
+        # Best-effort guard: an unwritable state dir falls through unlocked rather than failing a hook.
         yield
         return
     with handle:
@@ -330,6 +331,8 @@ def _prune_reach() -> None:
         pid = data.get("pid")
         if not isinstance(pid, int) or not _alive(pid, data.get("started", "")):
             path.unlink(missing_ok=True)
+            # Only dead pids: unlinking a live pid's .lock races a concurrent opener onto a new inode.
+            path.with_suffix(".lock").unlink(missing_ok=True)
 
 
 def claim_reached(
@@ -357,7 +360,8 @@ def _claim_reached_locked(worktree, pid, harness, session_id, command, started) 
     state = _reach_path(pid)
     previous = _read_reach(state)
     if not previous:
-        _prune_reach()  # only a pid's first claim pays for the sweep
+        # only a pid's first claim pays for the sweep
+        _prune_reach()
     if previous.get("started") == started and previous.get("worktree") == str(worktree):
         return True
     if previous.get("started") == started and previous.get("worktree"):

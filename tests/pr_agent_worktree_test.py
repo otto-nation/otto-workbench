@@ -318,11 +318,21 @@ def test_session_of_nothing():
 def test_report_claims_with_a_session_and_no_terminal(container, state_dir, monkeypatch):
     claims = []
     monkeypatch.setattr(core.session_lock, "claim_reached",
-                        lambda tree, **kw: claims.append((str(tree), kw["pid"], kw["harness"])) or True)
+                        lambda tree, **kw: claims.append((str(tree), kw["pid"], kw["harness"], kw["command"])) or True)
     run = FakeRun()
-    report(_git_c(container, "feat-a"), {"CLAUDE_PID": "9"}, run=run)
-    assert claims == [(str(_spelling(container, "feat-a")), 9, "claude")]
+    call = _git_c(container, "feat-a")
+    report(call, {"CLAUDE_PID": "9"}, run=run)
+    assert claims == [(str(_spelling(container, "feat-a")), 9, "claude", call.command)]
+    assert "git -C" in call.command and "status" in call.command
     assert run.calls == []
+
+
+def test_report_warns_when_claim_fails(container, state_dir, monkeypatch, capsys):
+    monkeypatch.setattr(core.session_lock, "claim_reached", lambda *a, **k: False)
+    outcome = report(_git_c(container, "feat-a"), {"CLAUDE_PID": "9"}, run=FakeRun())
+    captured = capsys.readouterr()
+    assert "could not record session lock" in captured.err
+    assert outcome is ReportOutcome.SKIPPED
 
 
 def test_report_labels_without_a_session(container, state_dir, monkeypatch):

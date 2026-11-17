@@ -120,7 +120,7 @@ def worktree_entries(cwd: str | None = None) -> list[WorktreeEntry]:
     except Exception as exc:
         core.log.warn(f"git worktree list --porcelain failed in {cwd}: {exc}")
         return []
-    if isinstance(r.returncode, int) and r.returncode != 0:
+    if r.returncode != 0:
         core.log.warn(failure_message(
             f"git worktree list --porcelain failed in {cwd}", r,
         ))

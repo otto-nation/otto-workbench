@@ -136,7 +136,7 @@ def test_is_bare_repo_false(mock_sub):
 
 @patch.object(git.topology, "subprocess")
 def test_find_worktree_for_branch_found(mock_sub):
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+    mock_sub.run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/home/user/repo/feat-branch", "feat/branch"),
         ("/home/user/repo/main", "main"),
     ))
@@ -146,7 +146,7 @@ def test_find_worktree_for_branch_found(mock_sub):
 
 @patch.object(git.topology, "subprocess")
 def test_find_worktree_for_branch_not_found(mock_sub):
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+    mock_sub.run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/home/user/repo/main", "main"),
     ))
     result = git.topology.find_worktree_for_branch("nonexistent")
@@ -156,7 +156,7 @@ def test_find_worktree_for_branch_not_found(mock_sub):
 @patch.object(git.topology, "subprocess")
 def test_find_worktree_for_branch_detached_head_fallback(mock_sub):
     """Detached-HEAD worktree has no branch — falls back to sanitized dir name."""
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+    mock_sub.run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/home/user/repo/isaac-feat-auth", None),
         ("/home/user/repo/main", "main"),
     ))
@@ -168,7 +168,7 @@ def test_find_worktree_for_branch_detached_head_fallback(mock_sub):
 @patch.object(git.topology, "subprocess")
 def test_find_worktree_for_branch_reads_each_detached_rebase_state_once(mock_sub, mock_rebasing):
     """The rebasing pass and the name pass share one lookup per detached worktree."""
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+    mock_sub.run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/home/user/repo/isaac-feat-auth", None),
         ("/home/user/repo/main", "main"),
     ))
@@ -180,7 +180,7 @@ def test_find_worktree_for_branch_reads_each_detached_rebase_state_once(mock_sub
 @patch.object(git.topology, "subprocess")
 def test_find_worktree_for_branch_prefers_branch_over_dir_name(mock_sub):
     """When git reports the branch, prefer it over the directory-name fallback."""
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+    mock_sub.run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/home/user/repo/wrong-dir", "feat/branch"),
         ("/home/user/repo/feat-branch", None),
     ))
@@ -191,7 +191,7 @@ def test_find_worktree_for_branch_prefers_branch_over_dir_name(mock_sub):
 @patch.object(git.topology, "subprocess")
 def test_find_worktree_for_branch_sanitized_no_match(mock_sub):
     """Neither the branch nor a sanitized dir name matches — returns None."""
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+    mock_sub.run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/home/user/repo/other-branch", None),
         ("/home/user/repo/main", "main"),
     ))
@@ -203,7 +203,7 @@ def test_find_worktree_for_branch_sanitized_no_match(mock_sub):
 @patch.object(git.topology, "subprocess")
 def test_find_worktree_for_branch_exact_beats_detached_named(mock_sub, _mock_rebasing):
     """An exact branch beats a detached worktree named after the branch."""
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+    mock_sub.run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/repo/other-dir", "feat/x"),
         ("/repo/feat-x", None),
         bare="/repo/.git",
@@ -217,7 +217,7 @@ def test_find_worktree_for_branch_exact_beats_detached_named(mock_sub, _mock_reb
 def test_find_worktree_for_branch_rebasing_beats_directory_name(
         mock_sub, mock_rebasing):
     """A detached worktree mid-rebase of the branch beats a directory-name match."""
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+    mock_sub.run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/repo/feat-x", None),
         ("/repo/unrelated-name", None),
         bare="/repo/.git",
@@ -234,7 +234,7 @@ def test_find_worktree_for_branch_rebasing_beats_directory_name(
 def test_find_worktree_for_branch_named_but_rebasing_another_is_not_returned(
         mock_sub, _mock_rebasing):
     """A detached named worktree that is rebasing another branch is not returned."""
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+    mock_sub.run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/repo/feat-x", None),
         bare="/repo/.git",
     ))
@@ -246,7 +246,7 @@ def test_find_worktree_for_branch_named_but_rebasing_another_is_not_returned(
 def test_find_worktree_for_branch_named_with_different_branch_is_not_returned(
         mock_sub):
     """A named worktree with a different branch checked out is not returned."""
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+    mock_sub.run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/repo/feat-x", "other/branch"),
         bare="/repo/.git",
     ))
@@ -257,7 +257,7 @@ def test_find_worktree_for_branch_named_with_different_branch_is_not_returned(
 @patch.object(git.topology, "subprocess")
 def test_find_worktree_for_branch_never_returns_the_bare_record(mock_sub):
     """The bare record is never returned."""
-    mock_sub.run.return_value = MagicMock(stdout=_porcelain(
+    mock_sub.run.return_value = MagicMock(returncode=0, stdout=_porcelain(
         ("/repo/main", "main"),
         bare="/repo/feat-x",
     ))

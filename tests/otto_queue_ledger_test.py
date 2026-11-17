@@ -282,3 +282,16 @@ def test_compaction_truncates_the_wal(tmp_path):
         assert wal.stat().st_size == 0
     finally:
         keeper.close()
+
+
+def test_states_maps_known_ids_omits_unknown_and_empty_is_empty(tmp_path):
+    ledger = Ledger.open(tmp_path)
+    queued = _row(tmp_path, state="queued")
+    done = _row(tmp_path, state="done")
+    extra = _row(tmp_path, state="failed")
+    assert ledger.states([]) == {}
+    assert ledger.states([queued, done, 999]) == {
+        queued: EntryState.QUEUED,
+        done: EntryState.DONE,
+    }
+    assert extra not in ledger.states([queued, done, 999])

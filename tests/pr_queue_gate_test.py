@@ -1,5 +1,6 @@
 """Tests for `cli.queue_gate` and the registry's queue class table."""
 
+import contextlib
 import os
 import subprocess
 import sys
@@ -21,7 +22,7 @@ import core.timeouts  # noqa: E402
 import otto_queue.ticket  # noqa: E402
 from cli.queue_gate import QUEUED_MARKER, class_for, gate, label_for  # noqa: E402
 from otto_queue.ledger import Ledger  # noqa: E402
-from otto_queue.model import EntryClass, EntryState  # noqa: E402
+from otto_queue.model import EntryClass, EntryKind, EntryState, NewEntry  # noqa: E402
 from otto_queue.ticket import TicketOutcome, TicketResult  # noqa: E402
 
 PY = sys.executable
@@ -35,6 +36,8 @@ def _clear_gate_env(monkeypatch):
     monkeypatch.delenv(otto_queue.ticket.LABEL_ENV, raising=False)
     monkeypatch.delenv(otto_queue.ticket.SUBJECT_ENV, raising=False)
     monkeypatch.delenv(otto_queue.ticket.ACTION_ENV, raising=False)
+    monkeypatch.delenv(otto_queue.ticket.ADOPT_ENV, raising=False)
+    monkeypatch.delenv(otto_queue.ticket.LEASE_FD_ENV, raising=False)
 
 
 _CLASS_CASES = (
@@ -415,3 +418,90 @@ def test_review_shim_gates_only_when_it_is_the_process(monkeypatch):
     assert seen == []
     assert cli.review_entry.main(["--version"]) == 0
     assert seen == []
+
+
+def test_gate_adopts_a_valid_lease_and_does_not_run_ticket(monkeypatch):
+    argv = (PY, "-c", "pass")
+    ledger = Ledger.open()
+    res = ledger.resolve(
+        NewEntry(argv=argv, cwd=os.getcwd(), kind=EntryKind.TICKET,
+                 entry_class=EntryClass.LIGHT),
+        force=False, pid=os.getpid())
+    monkeypatch.setattr(
+        otto_queue.ticket, "run_ticket",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("run_ticket")),
+    )
+    monkeypatch.setenv(otto_queue.ticket.ADOPT_ENV, str(res.entry.id))
+    monkeypatch.setenv(otto_queue.ticket.LEASE_FD_ENV, str(res.lease.fd))
+    code = gate("create", [], reexec=argv, entry_class=EntryClass.LIGHT, label="L")
+    assert code == 0
+    assert ledger.get(res.entry.id).state is EntryState.DONE
+    assert otto_queue.ticket.ADOPT_ENV not in os.environ
+    assert otto_queue.ticket.LEASE_FD_ENV not in os.environ
+
+
+def test_gate_falls_back_to_run_ticket_on_a_forged_fd(tmp_path, monkeypatch):
+    argv = (PY, "-c", "pass")
+    ledger = Ledger.open()
+    res = ledger.resolve(
+        NewEntry(argv=argv, cwd=os.getcwd(), kind=EntryKind.TICKET,
+                 entry_class=EntryClass.LIGHT),
+        force=False, pid=os.getpid())
+    forged = os.open(str(tmp_path / "forged"), os.O_RDWR | os.O_CREAT)
+    seen = {}
+
+    def fake_run(_request, _policy, **_kw):
+        seen["ran"] = True
+        return TicketResult(4, TicketOutcome.RAN, 1)
+
+    monkeypatch.setattr(otto_queue.ticket, "run_ticket", fake_run)
+    monkeypatch.setenv(otto_queue.ticket.ADOPT_ENV, str(res.entry.id))
+    monkeypatch.setenv(otto_queue.ticket.LEASE_FD_ENV, str(forged))
+    try:
+        assert gate("create", [], reexec=argv,
+                    entry_class=EntryClass.LIGHT, label="L") == 4
+        assert seen.get("ran") is True
+        assert ledger.get(res.entry.id).state is EntryState.QUEUED
+        assert otto_queue.ticket.ADOPT_ENV not in os.environ
+        assert otto_queue.ticket.LEASE_FD_ENV not in os.environ
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(forged)
+        res.lease.release()
+
+
+def test_gate_without_adopt_env_calls_run_ticket_not_adopt(monkeypatch):
+    monkeypatch.setattr(
+        otto_queue.ticket, "adopt",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("adopt")),
+    )
+    seen = {}
+    monkeypatch.setattr(otto_queue.ticket, "run_ticket", _fake_ticket(seen, code=7))
+    assert gate("create", [], reexec=(PY, "-c", "pass"),
+                entry_class=EntryClass.LIGHT, label="L") == 7
+    assert seen["marker"] == "1"
+    assert otto_queue.ticket.ADOPT_ENV not in os.environ
+    assert otto_queue.ticket.LEASE_FD_ENV not in os.environ
+
+
+def test_gate_pops_adopt_env_on_early_returns(monkeypatch):
+    monkeypatch.setattr(
+        otto_queue.ticket, "run_ticket",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("run_ticket")),
+    )
+    monkeypatch.setattr(
+        otto_queue.ticket, "adopt",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("adopt")),
+    )
+    monkeypatch.setenv(otto_queue.ticket.ADOPT_ENV, "1")
+    monkeypatch.setenv(otto_queue.ticket.LEASE_FD_ENV, "2")
+    assert gate("status", [], reexec=(PY, "-c", "pass"),
+                entry_class=None, label="L") is None
+    assert otto_queue.ticket.ADOPT_ENV not in os.environ
+    assert otto_queue.ticket.LEASE_FD_ENV not in os.environ
+    monkeypatch.setenv(otto_queue.ticket.ADOPT_ENV, "1")
+    monkeypatch.setenv(otto_queue.ticket.LEASE_FD_ENV, "2")
+    assert gate("create", [], reexec=(PY, "-c", "pass"),
+                entry_class=EntryClass.LIGHT, label="L", no_queue=True) is None
+    assert otto_queue.ticket.ADOPT_ENV not in os.environ
+    assert otto_queue.ticket.LEASE_FD_ENV not in os.environ

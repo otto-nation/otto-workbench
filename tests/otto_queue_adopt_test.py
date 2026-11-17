@@ -1,8 +1,9 @@
-"""Tests for `otto_queue.ticket.adopt_job`: a waiter runs a queued job without making it a ticket.
+"""Tests for `otto_queue.ticket.adopt` and `adopt_job`.
 
-`adopt_job` installs signal handlers while its command runs, so it is called on the main thread.
+`adopt` / `adopt_job` install signal handlers while a command runs, so they are called on the main thread.
 """
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -10,6 +11,8 @@ import sys
 import threading
 import time
 from pathlib import Path
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -20,7 +23,8 @@ import otto_queue.lease  # noqa: E402
 import otto_queue.paths  # noqa: E402
 from otto_queue.ledger import Ledger  # noqa: E402
 from otto_queue.model import EntryKind, EntryState, NewEntry  # noqa: E402
-from otto_queue.ticket import AdoptOutcome, adopt_job  # noqa: E402
+from otto_queue.ticket import (  # noqa: E402
+    AdoptOutcome, AdoptRefused, TicketOutcome, TicketRequest, adopt, adopt_job)
 from otto_queue_support import Room, exit_argv, touch_argv  # noqa: E402
 
 # Waits for a slot that never comes, announcing itself once it is waiting.
@@ -44,6 +48,18 @@ def say(_message):
 ledger = Ledger.open()
 otto_queue.ticket.adopt_job(ledger, ledger.get(int(sys.argv[2])), Never(), wait_s=60, poll_s=0.05, notify=say)
 """
+
+
+def _claimed_ticket(argv):
+    ledger = Ledger.open()
+    res = ledger.resolve(
+        NewEntry(argv=tuple(argv), cwd=os.getcwd(), kind=EntryKind.TICKET),
+        force=False, pid=os.getpid())
+    return ledger, res
+
+
+def _request(argv):
+    return TicketRequest(argv=tuple(argv), cwd=os.getcwd())
 
 
 def _job(argv):
@@ -131,3 +147,49 @@ def test_a_waiter_killed_before_admission_leaves_a_queued_job(tmp_path):
     adoption = _adopt(ledger, row)
     assert adoption.outcome is AdoptOutcome.RAN
     assert ledger.get(entry.id).state is EntryState.DONE
+
+
+def test_adopt_runs_a_claimed_ticket_and_records_done(tmp_path):
+    marker = tmp_path / "ran"
+    argv = touch_argv(marker)
+    ledger, res = _claimed_ticket(argv)
+    result = adopt(res.entry.id, res.lease.fd, _request(argv), Room(),
+                   poll_s=0.05, notify=lambda _m: None)
+    row = ledger.get(res.entry.id)
+    assert (result.exit_status, result.outcome) == (0, TicketOutcome.RAN)
+    assert (row.state, row.exit_status) == (EntryState.DONE, 0)
+    assert marker.exists()
+
+
+def test_a_forged_lease_fd_is_refused_and_leaves_the_entry(tmp_path):
+    marker = tmp_path / "ran"
+    argv = touch_argv(marker)
+    ledger, res = _claimed_ticket(argv)
+    forged = os.open(str(tmp_path / "forged"), os.O_RDWR | os.O_CREAT)
+    try:
+        with pytest.raises(AdoptRefused):
+            adopt(res.entry.id, forged, _request(argv), Room(),
+                  poll_s=0.05, notify=lambda _m: None)
+        row = ledger.get(res.entry.id)
+        assert (row.state, row.exit_status) == (EntryState.QUEUED, None)
+        assert not marker.exists()
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(forged)
+        res.lease.release()
+
+
+def test_an_unknown_entry_id_is_refused():
+    with pytest.raises(AdoptRefused):
+        adopt(999, 0, _request(("true",)), Room(),
+              poll_s=0.05, notify=lambda _m: None)
+    assert Ledger.open().get(999) is None
+
+
+def test_closing_the_lease_before_admission_fails_the_entry_after_reap():
+    ledger, res = _claimed_ticket(("true",))
+    assert ledger.get(res.entry.id).state is EntryState.QUEUED
+    os.close(res.lease.fd)
+    assert ledger.reap_orphans() == [res.entry.id]
+    row = ledger.get(res.entry.id)
+    assert (row.state, row.exit_status) == (EntryState.FAILED, None)

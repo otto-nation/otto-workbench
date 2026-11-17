@@ -34,6 +34,10 @@ class LeaseHeld(RuntimeError):
     """The lease is already held: only possible if two rows claimed one id."""
 
 
+class LeaseMismatch(RuntimeError):
+    """*fd* is not an open flock on this entry's lease file."""
+
+
 @dataclass(frozen=True)
 class Lease:
     """A held lease. `release` once the entry's row is terminal."""
@@ -47,6 +51,25 @@ class Lease:
             self.path.unlink(missing_ok=True)
         with contextlib.suppress(OSError):
             os.close(self.fd)
+
+    @classmethod
+    def from_fd(cls, path: Path, fd: int) -> Lease:
+        """Wrap *fd* as a held lease on *path*; `LeaseMismatch` if it is not that file."""
+        try:
+            held = os.fstat(fd)
+            on_disk = os.stat(path)
+        except OSError as exc:
+            raise LeaseMismatch(f"{path} is not open on fd {fd}") from exc
+        if (held.st_ino, held.st_dev) != (on_disk.st_ino, on_disk.st_dev):
+            raise LeaseMismatch(f"fd {fd} is not {path}")
+        # `take` opens O_CLOEXEC; an inherited fd is not. The command must not
+        # hold the lease, or a killed ticket would leave it running untracked.
+        try:
+            flags = fcntl.fcntl(fd, fcntl.F_GETFD)
+            fcntl.fcntl(fd, fcntl.F_SETFD, flags | fcntl.FD_CLOEXEC)
+        except OSError as exc:
+            raise LeaseMismatch(f"fd {fd} cannot be made CLOEXEC") from exc
+        return cls(path, fd)
 
 
 def take(root: Path, entry_id: int) -> Lease:

@@ -1,5 +1,5 @@
 // Workflows: `pr batch` runs on every machine the board reads, shown from the Batch button and a PR's Batch tab.
-import { exec, watchFolder, run, panes, spaces } from "herdr";
+import { exec, watchFolder, run, panes, spaces, terminals } from "herdr";
 import {
   listArgv, statusArgv, reportArgv, logTailArgv, parseRunList, parseRunDoc, parseSessions,
   stateChanged, laneOf, STEP_ORDER, trailArgv,
@@ -338,7 +338,7 @@ export class Workflows {
     this.acx.spawn(async (cx) => {
       let res;
       try {
-        res = await openKindSession({ exec, run, panes, spaces }, kind, target);
+        res = await openKindSession({ exec, run, panes, spaces, terminals }, kind, target);
       } catch (err) {
         // openSession never rejects; a throwing host call still ends "Opening".
         res = { ok: false, message: String(err?.message ?? err) };

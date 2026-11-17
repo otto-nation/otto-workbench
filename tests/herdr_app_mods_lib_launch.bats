@@ -29,6 +29,12 @@ _js() {
   [ "$output" = '"otto.pr=o/n#7"' ]
 }
 
+@test "LABEL_WORKTREE is otto.worktree" {
+  _js 'm.LABEL_WORKTREE'
+  [ "$status" -eq 0 ]
+  [ "$output" = '"otto.worktree"' ]
+}
+
 @test "prKey and parsePrKey accept o/n#7 and reject o/n#x, #7, null" {
   _js '[m.prKey("o/n",7),m.parsePrKey("o/n#7"),m.parsePrKey("o/n#x"),m.parsePrKey("#7"),m.parsePrKey(null)]'
   [ "$status" -eq 0 ]

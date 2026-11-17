@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for ai/herdr/app/mods/_lib/space_prs.js — space checkout rows joined to open PRs.
+# Tests for ai/herdr/app/mods/_lib/space_prs.js — OPEN PRs with a worktree, grouped by repo.
 bats_require_minimum_version 1.5.0
 # select-on: ai/herdr/app/mods/_lib/*.js tests/fixtures/board_document.json
 
@@ -15,12 +15,12 @@ teardown() {
   common_teardown
 }
 
-# Print JSON of a JS expression. `spacePrs`, `rows` (fixture via rowToPr), `loaded` (docToState
-# shape), `friendlyError` are in scope.
+# Print JSON of a JS expression. `spaceWorktreePrs`, `WORKTREES_OUTDATED_TEXT`,
+# `rows` (fixture via rowToPr), `loaded` (docToState shape), `friendlyError` are in scope.
 _js() {
   run node --input-type=module -e "
     import fs from 'node:fs';
-    const { spacePrs } = await import('$LIB/space_prs.js');
+    const { spaceWorktreePrs, WORKTREES_OUTDATED_TEXT } = await import('$LIB/space_prs.js');
     const d = await import('$LIB/board_doc.js');
     const { friendlyError } = await import('$LIB/scope.js');
     const doc = JSON.parse(fs.readFileSync('$FIX', 'utf8'));
@@ -34,62 +34,68 @@ _js() {
 }
 
 
-@test "one OPEN PR on the pane branch is that number, more 0, ready" {
-  _js 'spacePrs({spaces:[{id:"s",name:"S",folder:"/r",branch:"other",tabs:[{id:"t1"}]}],panes:[{tab:"t1",cwd:"/r",branch:"me/fix/comments"}],stateOf:()=>loaded(rows)})'
+@test "two spaces on one repo yield one group named after the first" {
+  _js '(() => { const prs=[{...rows[0],worktree:"/wt/a"}]; return spaceWorktreePrs({spaces:[{id:"one",name:"One",folder:"/one",branch:"me/fix/comments"},{id:"two",name:"Two",folder:"/two",branch:"you/feat/wip"}],panes:[],stateOf:()=>loaded(prs)}); })()'
   [ "$status" -eq 0 ]
-  jq -e 'length==1 and .[0].pr.number==7 and .[0].more==0 and .[0].status=="ready" and .[0].spaceId=="s" and .[0].spaceName=="S" and .[0].branch=="me/fix/comments" and .[0].cwd=="/r" and .[0].on==null and .[0].message==null' <<<"$output"
+  jq -e 'length==1 and .[0].spaceId=="one" and .[0].spaceName=="One" and .[0].status=="ready" and .[0].rows[0].pr.number==7' <<<"$output"
 }
 
-@test "two OPEN PRs on the branch, higher number first in fixture order: lowest number, more 1" {
-  _js '(() => { const branch = "feat/two"; const prs = [{...rows[1], branch}, {...rows[0], branch}]; return spacePrs({spaces:[{id:"s",name:"S",folder:"/r",branch,tabs:[{id:"t1"}]}],panes:[{tab:"t1",cwd:"/r",branch}],stateOf:()=>loaded(prs)}); })()'
+@test "an OPEN PR with a worktree is a row; one without is none" {
+  _js '(() => { const spaces=[{id:"s",name:"S",folder:"/r",branch:"me/fix/comments"}]; const withWt=spaceWorktreePrs({spaces,panes:[],stateOf:()=>loaded([{...rows[0],worktree:"/wt/a"}])}); const without=spaceWorktreePrs({spaces,panes:[],stateOf:()=>loaded([rows[0]])}); return {withWt, without}; })()'
   [ "$status" -eq 0 ]
-  jq -e 'length==1 and .[0].pr.number==7 and .[0].more==1 and .[0].status=="ready"' <<<"$output"
+  jq -e '(.withWt|length)==1 and .withWt[0].rows[0].pr.number==7 and .withWt[0].rows[0].worktree=="/wt/a" and (.without|length)==0' <<<"$output"
 }
 
-@test "MERGED and CLOSED PRs on the branch yield no row" {
-  _js '(() => { const branch = rows[3].branch; const prs = [rows[3], {...rows[0], state:"CLOSED", branch}]; return spacePrs({spaces:[{id:"s",name:"S",folder:"/r",branch}],panes:[],stateOf:()=>loaded(prs)}); })()'
+@test "MERGED with a worktree yields no group" {
+  _js 'spaceWorktreePrs({spaces:[{id:"s",name:"S",folder:"/r",branch:"you/feat/landed"}],panes:[],stateOf:()=>loaded([{...rows[3],worktree:"/wt/m"}])})'
   [ "$status" -eq 0 ]
   jq -e 'length==0' <<<"$output"
 }
 
-@test "draft OPEN PR is kept with presentation.tags including Draft" {
-  _js 'spacePrs({spaces:[{id:"s",name:"S",folder:"/r",branch:"pat/feat/draft"}],panes:[],stateOf:()=>loaded(rows)})'
+@test "two OPEN PRs on one branch: lowest number, more 1" {
+  _js '(() => { const branch="feat/two"; const prs=[{...rows[1],branch,worktree:"/wt/x"},{...rows[0],branch,worktree:"/wt/x"}]; return spaceWorktreePrs({spaces:[{id:"s",name:"S",folder:"/r",branch}],panes:[],stateOf:()=>loaded(prs)}); })()'
   [ "$status" -eq 0 ]
-  jq -e 'length==1 and .[0].pr.number==10 and .[0].pr.isDraft==true and (.[0].pr.presentation.tags | index("Draft")) != null' <<<"$output"
+  jq -e 'length==1 and (.[0].rows|length)==1 and .[0].rows[0].pr.number==7 and .[0].rows[0].more==1' <<<"$output"
 }
 
-@test "a PR whose only CI is passing has empty presentation.row_badges" {
-  _js '(() => { const pr = {...rows[0], presentation:{...rows[0].presentation, issues:[], row_badges:[]}}; return {ci: pr.presentation.ci, out: spacePrs({spaces:[{id:"s",name:"S",folder:"/r",branch:pr.branch}],panes:[],stateOf:()=>loaded([pr])})}; })()'
+@test "worktree PR rows are ordered by number" {
+  _js '(() => { const prs=[{...rows[1],worktree:"/wt/b"},{...rows[0],worktree:"/wt/a"}]; return spaceWorktreePrs({spaces:[{id:"s",name:"S",folder:"/r",branch:"me/fix/comments"}],panes:[],stateOf:()=>loaded(prs)}); })()'
   [ "$status" -eq 0 ]
-  jq -e '.ci.status=="pass" and .ci.text=="CI passing" and (.out|length)==1 and .out[0].pr.presentation.row_badges==[]' <<<"$output"
+  jq -e '(.[0].rows|map(.pr.number))==[7,8] and (.[0].rows|map(.worktree))==["/wt/a","/wt/b"]' <<<"$output"
 }
 
-@test "two spaces in the same repo both resolve through stateOf" {
-  _js '(() => { const seen=[]; const st=loaded(rows); const out=spacePrs({spaces:[{id:"one",name:"One",folder:"/one",branch:"me/fix/comments"},{id:"two",name:"Two",folder:"/two",branch:"you/feat/wip"}],panes:[],stateOf:(t)=>{seen.push(t.cwd); return st;}}); return {ids:out.map((r)=>r.spaceId), nums:out.map((r)=>r.pr.number), seen}; })()'
+@test "owner from a labelled pane uses tab_name; another space prefixes space_name" {
+  _js '(() => { const prs=[{...rows[0],worktree:"/wt/x"}]; const spaces=[{id:"s",name:"S",folder:"/r",branch:"me/fix/comments"}]; const panes=[{terminal:"t7",tab:"tb",cwd:"main",branch:"me/fix/comments",status:"idle",focused:false,pane:"p1"}]; const terminals=[{address:"t7",labels:{"otto.worktree":"/wt/x"}}]; const same=spaceWorktreePrs({spaces,panes,terminals,agents:[{address:"t7",pane:"p1",space:"s",space_name:"S",tab:"tb",tab_name:"Fix comments",app:"pi"}],stateOf:()=>loaded(prs)}); const other=spaceWorktreePrs({spaces,panes,terminals,agents:[{address:"t7",pane:"p1",space:"o",space_name:"Other",tab:"tb",tab_name:"Fix comments",app:"pi"}],stateOf:()=>loaded(prs)}); return {same:same[0].rows[0].owner, other:other[0].rows[0].owner}; })()'
   [ "$status" -eq 0 ]
-  jq -e '.ids==["one","two"] and .nums==[7,8] and .seen==["/one","/two"]' <<<"$output"
+  jq -e '.same.terminal=="t7" and .same.pane=="p1" and .same.name=="Fix comments" and .other.name=="Other / Fix comments"' <<<"$output"
 }
 
-@test "pane cwd branch wins over space.branch; another space pane with the same cwd does not" {
-  _js 'spacePrs({spaces:[{id:"a",name:"A",folder:"/r",branch:"pat/feat/draft",tabs:[{id:"t1"}]},{id:"b",name:"B",folder:"/r",branch:"you/feat/wip",tabs:[{id:"t2"}]}],panes:[{tab:"t2",cwd:"/r",branch:"you/feat/wip"},{tab:"t1",cwd:"/r",branch:"me/fix/comments"}],stateOf:()=>loaded(rows)})'
+@test "a shell pane in the worktree is not an owner" {
+  _js '(() => { const prs=[{...rows[0],worktree:"/wt/x"}]; const panes=[{terminal:"t9",tab:"tb",cwd:"/wt/x",branch:"me/fix/comments",status:null,focused:false,pane:"zsh",app:"zsh"}]; return spaceWorktreePrs({spaces:[{id:"s",name:"S",folder:"/r",branch:"me/fix/comments"}],panes,terminals:[],agents:[],stateOf:()=>loaded(prs)}); })()'
   [ "$status" -eq 0 ]
-  jq -e 'length==1 and .[0].spaceId=="a" and .[0].branch=="me/fix/comments" and .[0].pr.number==7' <<<"$output"
+  jq -e 'length==1 and .[0].rows[0].owner==null' <<<"$output"
 }
 
-@test "detached pane branch is no row; a space with no panes uses space.folder and space.branch" {
-  _js '(() => { const st=loaded(rows); const detached=spacePrs({spaces:[{id:"d",name:"D",folder:"/r",branch:"me/fix/comments",tabs:[{id:"t1"}]}],panes:[{tab:"t1",cwd:"/r",branch:null}],stateOf:()=>st}); const fallback=spacePrs({spaces:[{id:"f",name:"F",folder:"/r",branch:"me/fix/comments"}],panes:[],stateOf:()=>st}); return {detached:detached.length, fallback:fallback.map((r)=>({id:r.spaceId,cwd:r.cwd,branch:r.branch,n:r.pr.number}))}; })()'
+@test "features without worktrees is outdated with WORKTREES_OUTDATED_TEXT" {
+  _js '(() => { const st={...loaded([{...rows[0],worktree:"/wt/a"}]),features:["prs"]}; return {out:spaceWorktreePrs({spaces:[{id:"s",name:"S",folder:"/r",branch:"me/fix/comments"}],panes:[],stateOf:()=>st}), text:WORKTREES_OUTDATED_TEXT}; })()'
   [ "$status" -eq 0 ]
-  jq -e '.detached==0 and (.fallback|length)==1 and .fallback[0].id=="f" and .fallback[0].cwd=="/r" and .fallback[0].branch=="me/fix/comments" and .fallback[0].n==7' <<<"$output"
+  jq -e '(.out|length)==1 and .out[0].status=="outdated" and .out[0].message==.text and .out[0].rows==[] and (.text|length)>0' <<<"$output"
 }
 
-@test "loading pulling with no rows; auth error message; skippable not-git drops the row" {
-  _js '(() => { const spaces=[{id:"s",name:"S",folder:"/r",branch:"me/fix/comments"}]; const loading=spacePrs({spaces,panes:[],stateOf:()=>({repo:{slug:"acme/box"},pulling:true,rows:undefined,error:null})}); const err={kind:"auth"}; const failed=spacePrs({spaces,panes:[],stateOf:()=>({repo:{slug:"acme/box"},error:err})}); const skip=spacePrs({spaces,panes:[],stateOf:()=>({repo:{slug:"acme/box"},error:{kind:"not-git"}})}); return {loading:loading.map((r)=>({status:r.status,pr:r.pr,more:r.more})), failed:failed.map((r)=>({status:r.status,pr:r.pr,message:r.message})), skip:skip.length, auth:friendlyError(err,null)}; })()'
+@test "features null is ready, not outdated" {
+  _js '(() => { const st={...loaded([{...rows[0],worktree:"/wt/a"}]),features:null}; return spaceWorktreePrs({spaces:[{id:"s",name:"S",folder:"/r",branch:"me/fix/comments"}],panes:[],stateOf:()=>st}); })()'
   [ "$status" -eq 0 ]
-  jq -e '.loading==[{"status":"loading","pr":null,"more":0}] and (.failed|length)==1 and .failed[0].status=="error" and .failed[0].pr==null and .failed[0].message==.auth and .auth=="run gh auth login on this Mac" and .skip==0' <<<"$output"
+  jq -e 'length==1 and .[0].status=="ready" and .[0].rows[0].pr.number==7' <<<"$output"
 }
 
-@test "spaces() order is preserved" {
-  _js 'spacePrs({spaces:[{id:"later",name:"Later",folder:"/b",branch:"me/fix/comments"},{id:"first",name:"First",folder:"/a",branch:"you/feat/wip"}],panes:[],stateOf:()=>loaded(rows)})'
+@test "a ready group with no rows is dropped" {
+  _js 'spaceWorktreePrs({spaces:[{id:"s",name:"S",folder:"/r",branch:"me/fix/comments"}],panes:[],stateOf:()=>loaded([])})'
   [ "$status" -eq 0 ]
-  jq -e 'length==2 and .[0].spaceId=="later" and .[0].pr.number==7 and .[1].spaceId=="first" and .[1].pr.number==8' <<<"$output"
+  jq -e 'length==0' <<<"$output"
+}
+
+@test "loading and error keep the group" {
+  _js '(() => { const spaces=[{id:"s",name:"S",folder:"/r",branch:"me/fix/comments"}]; const loading=spaceWorktreePrs({spaces,panes:[],stateOf:()=>({repo:{slug:"acme/box"},pulling:true,rows:undefined,error:null})}); const failed=spaceWorktreePrs({spaces,panes:[],stateOf:()=>({repo:{slug:"acme/box"},error:{kind:"auth"}})}); return {loading, failed, auth:friendlyError({kind:"auth"},null)}; })()'
+  [ "$status" -eq 0 ]
+  jq -e '(.loading|length)==1 and .loading[0].status=="loading" and .loading[0].rows==[] and (.failed|length)==1 and .failed[0].status=="error" and .failed[0].message==.auth' <<<"$output"
 }

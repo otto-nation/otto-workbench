@@ -30,6 +30,7 @@ import board.rows
 import core.serde
 import core.workbench_paths
 import git.client
+import git.topology
 import pr.target
 import review.listing
 from batch.model import Step
@@ -572,6 +573,7 @@ def _cached_rows(
     mine_only: bool = False,
     queue=None,
 ) -> list[dict]:
+    worktrees = git.topology.worktrees_by_branch(found.path)
     return board.rows.from_cache(
         found.key,
         found.slug,
@@ -581,6 +583,7 @@ def _cached_rows(
         only=only,
         mine_only=mine_only,
         queue=queue,
+        worktrees=worktrees,
     )
 
 

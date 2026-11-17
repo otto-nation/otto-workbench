@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Publish the worktree an agent is working in on its own herdr terminal.
+#
+# Called by both harnesses' hooks — Claude's PostToolUse (Bash, Edit|Write) and
+# SessionStart entries in ai/claude/settings.json, and ai/pi/extensions/
+# agent-worktree — because which worktree a tool call targeted is one answer,
+# and it needs git resolution (toplevel, `git worktree list` spelling, a `wt
+# switch` branch lookup) that two copies would get wrong differently. That
+# answer is ai/lib/pr/agent_worktree.py's, reached through ai/bin/agent-worktree;
+# this hook only decides whether a call is worth starting Python for.
+#
+# Cost: the prefilter below is the design, as in record-filed-issue. Almost no
+# tool call names another worktree, and those must pay bash start-up and a few
+# globs over the raw payload — not a Python interpreter on every edit in every
+# herdr session. The prefilter is a superset; Python decides.
+#
+# Usage: report-agent-worktree           (stdin: a post-tool hook payload)
+#        report-agent-worktree --clear   (session start: empty the label)
+#
+# Env: HC_TERMINAL_ID — the herdr terminal to label; unset or empty, nothing
+#      runs. CLAUDE_PROJECT_DIR — the agent's own checkout, under Claude.
+#
+# Always exits 0: a hook that fails would report a failure for a tool call that
+# already succeeded, and a stale label is harmless.
+
+set -e
+
+usage() {
+  cat <<EOF
+Usage: report-agent-worktree [--clear]
+
+Labels this herdr terminal (HC_TERMINAL_ID) with otto.worktree=<path> when a
+tool call worked in a worktree other than the agent's own. Reads a hook payload
+on stdin; --clear empties the label at session start. Always exits 0.
+EOF
+}
+
+[[ "${1:-}" == "-h" || "${1:-}" == "--help" ]] && { usage; exit 0; }
+
+# Outside a herdr terminal there is nothing to label, and nothing is read.
+[[ -n "${HC_TERMINAL_ID:-}" ]] || exit 0
+
+# The Python shim beside this file. Installed to ~/.local/bin as a symlink into
+# the checkout, so the link is followed first; ~/.local/bin/agent-worktree is
+# not guaranteed to exist.
+self="${BASH_SOURCE[0]}"
+if target=$(readlink "$self" 2>/dev/null); then
+  [[ "$target" == /* ]] || target="$(dirname "$self")/$target"
+  self="$target"
+fi
+shim="$(cd "$(dirname "$self")" 2>/dev/null && pwd)/agent-worktree" || exit 0
+[[ -f "$shim" ]] || exit 0
+
+# run_shim ACTION — run the shim, discarding its output and its status. Not
+# `exec`: exec hands this hook's exit status to Python, and a shim that cannot
+# start (a broken pin, a missing interpreter) would then fail the tool call.
+run_shim() {
+  python3 "$shim" "$1" >/dev/null 2>&1 || true
+}
+
+if [[ "${1:-}" == "--clear" ]]; then
+  run_shim clear </dev/null
+  exit 0
+fi
+
+payload=$(cat) || exit 0
+project="${CLAUDE_PROJECT_DIR:-}"
+
+# edit_elsewhere — 1 when the edit is inside the agent's own checkout, which
+# names nothing new; 0 otherwise.
+edit_elsewhere() {
+  [[ -n "$project" ]] || return 0
+  case "$payload" in
+    *"\"file_path\":\"$project/"* | *"\"file_path\": \"$project/"*) return 1 ;;
+  esac
+  return 0
+}
+
+# worth_reporting — 0 when the raw payload might name another worktree.
+#
+# Matched against the raw payload, not a parsed field: parsing is the cost
+# being avoided. Both JSON spellings (`"k":"v"` and `"k": "v"`) are matched.
+worth_reporting() {
+  case "$payload" in
+    *'"file_path"'*) edit_elsewhere; return ;;
+    *"-C "* | *"--repo-dir"* | *"--worktree"* | *"wt switch"* | *"cd "*) return 0 ;;
+  esac
+  # Claude keeps a `cd` across calls, so a payload cwd away from the project
+  # is a candidate on its own. Pi sets no CLAUDE_PROJECT_DIR and skips this.
+  if [[ -n "$project" && "$payload" == *'"cwd"'* ]]; then
+    case "$payload" in
+      *"\"cwd\":\"$project\""* | *"\"cwd\": \"$project\""*) return 1 ;;
+    esac
+    return 0
+  fi
+  return 1
+}
+
+worth_reporting || exit 0
+run_shim report <<<"$payload"
+exit 0

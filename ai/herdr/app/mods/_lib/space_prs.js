@@ -1,21 +1,27 @@
 /**
- * `spacePrs({spaces, panes, stateOf})` returns ordered rows
- * `{spaceId, spaceName, on, cwd, branch, pr, more, status, message}`: one
- * per space checkout that has a branch, joined to that repo's open PRs.
- * Targets from `spaceTargets`; spaceId/spaceName from the space that
- * produced the target; branch from the pane whose `cwd` equals the target
- * (else `space.branch`). No branch / detached / no cwd → no row. Open rows
- * (`state === 'OPEN'`, drafts included) whose `branch` matches; `pr` is the
- * lowest number with `presentation: presentationOf(pr)`; `more` is count − 1.
- * `status` is ready|loading|error from `repoPhase`; `message` from
- * `friendlyError`. Skippable errors drop the row. A ready repo with no
- * matching open PR drops the row. Loading/error rows stay (`pr` null) so
- * the view can show `…`/`×`. Order follows `spaces()`. Pure.
+ * `spaceWorktreePrs({spaces, panes, terminals, agents, stateOf})` returns
+ * ordered groups `{spaceId, spaceName, on, repo, status, message, rows}`:
+ * one per distinct repo among `spaceTargets`, named after the first space
+ * on that repo. Rows are the repo's OPEN PRs with a non-null `worktree`,
+ * grouped by branch (lowest number shown, `more` is the rest), sorted by
+ * number. Each row is `{branch, worktree, pr:{…, presentation:
+ * presentationOf(pr)}, more, owner}`. `owner` is `{terminal, pane, name}`
+ * from `agentPaneFor` (agent tiers only) or null; `name` is the agent's
+ * `tab_name`, prefixed `<space_name> / ` when that agent's space is not
+ * the group's, else `pane.app`. `status` is ready|loading|error|outdated;
+ * `outdated` when `features` is an array without `worktrees`. Skippable
+ * errors drop the group. A ready group with no rows is dropped.
+ * Loading/error/outdated groups stay so the view can show `…`/`×`/the
+ * update text. Order follows `spaces()`. Pure.
  */
 import { presentationOf } from './pr_status.js';
+import { agentPaneFor } from './run_session.js';
 import {
-  friendlyError, repoPhase, skippable, spaceFolders, spacePanes, spaceTargets,
+  friendlyError, repoId, repoPhase, skippable, spaceFolders, spaceTargets,
 } from './scope.js';
+
+export const WORKTREES_OUTDATED_TEXT =
+  'Update pr on this machine to list worktrees (otto-workbench sync)';
 
 const LOADING_PHASES = new Set(['queued', 'loading']);
 
@@ -31,59 +37,86 @@ function spaceOfTarget(spaces, panes, target) {
     && spaceFolders(s, panes).includes(target.cwd)) ?? null;
 }
 
-// The branch of the space's pane in the target folder, else the space's own branch.
-function branchOf(target, space, panes) {
-  const pane = spacePanes(space, panes).find((p) => p.cwd === target.cwd);
-  const branch = pane != null ? pane.branch : space.branch;
-  return branch == null || branch === '' ? null : branch;
+function openWorktreeBranches(rows) {
+  const byBranch = new Map();
+  for (const r of rows ?? []) {
+    if (r.state !== 'OPEN' || r.worktree == null) continue;
+    const list = byBranch.get(r.branch);
+    if (list) list.push(r);
+    else byBranch.set(r.branch, [r]);
+  }
+  const groups = [];
+  for (const [branch, list] of byBranch) {
+    list.sort((a, b) => a.number - b.number);
+    groups.push({
+      branch,
+      worktree: list[0].worktree,
+      pr: list[0],
+      more: list.length - 1,
+    });
+  }
+  groups.sort((a, b) => a.pr.number - b.pr.number);
+  return groups;
 }
 
-function openOnBranch(rows, branch) {
-  return (rows ?? [])
-    .filter((r) => r.state === 'OPEN' && r.branch === branch)
-    .slice()
-    .sort((a, b) => a.number - b.number);
+function ownerOf(pane, { agents, groupSpace }) {
+  if (!pane) return null;
+  const agent = (agents ?? []).find((a) => a.address === pane.terminal) ?? null;
+  let name = (typeof agent?.tab_name === 'string' && agent.tab_name !== '')
+    ? agent.tab_name
+    : (pane.app ?? null);
+  if (name != null && agent != null && agent.space !== groupSpace.id && agent.space_name) {
+    name = `${agent.space_name} / ${name}`;
+  }
+  return { terminal: pane.terminal, pane: pane.pane, name };
 }
 
-function rowOf({ space, target, branch, pr, more, status, message }) {
+function groupOf({ space, target, repo, status, message, rows }) {
   return {
     spaceId: space.id,
     spaceName: space.name,
     on: target.on,
-    cwd: target.cwd,
-    branch,
-    pr,
-    more,
+    repo,
     status,
     message,
+    rows,
   };
 }
 
-export function spacePrs({ spaces, panes, stateOf }) {
+export function spaceWorktreePrs({ spaces, panes, terminals, agents, stateOf }) {
+  const seen = new Set();
   const out = [];
   for (const target of spaceTargets(spaces, panes)) {
     const space = spaceOfTarget(spaces, panes, target);
     if (!space) continue;
-    const branch = branchOf(target, space, panes);
-    if (!branch) continue;
     const st = stateOf(target) ?? {};
     if (skippable(st.error)) continue;
-    const status = statusOfPhase(repoPhase(st));
-    const message = status === 'error' ? friendlyError(st.error, target.on) : null;
+    const id = st.repo ? repoId(st.repo) : null;
+    if (id != null) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+    }
+    const outdated = Array.isArray(st.features) && !st.features.includes('worktrees');
+    const status = outdated ? 'outdated' : statusOfPhase(repoPhase(st));
+    const message = status === 'outdated'
+      ? WORKTREES_OUTDATED_TEXT
+      : status === 'error' ? friendlyError(st.error, target.on) : null;
     if (status !== 'ready') {
-      out.push(rowOf({ space, target, branch, pr: null, more: 0, status, message }));
+      out.push(groupOf({ space, target, repo: st.repo ?? null, status, message, rows: [] }));
       continue;
     }
-    const matches = openOnBranch(st.rows, branch);
-    if (!matches.length) continue;
-    const pr = matches[0];
-    out.push(rowOf({
-      space, target, branch,
-      pr: { ...pr, presentation: presentationOf(pr) },
-      more: matches.length - 1,
-      status,
-      message,
+    const rows = openWorktreeBranches(st.rows).map((row) => ({
+      branch: row.branch,
+      worktree: row.worktree,
+      pr: { ...row.pr, presentation: presentationOf(row.pr) },
+      more: row.more,
+      owner: ownerOf(
+        agentPaneFor(panes, { on: target.on, cwd: row.worktree, terminals }),
+        { agents, groupSpace: space },
+      ),
     }));
+    if (!rows.length) continue;
+    out.push(groupOf({ space, target, repo: st.repo ?? null, status, message, rows }));
   }
   return out;
 }

@@ -30,7 +30,7 @@ _rs() {
 # the preamble itself shown as <P>. seen: [{line, on}], ran: [[name, args]].
 FAKE='
 const seen = []; const ran = [];
-const fake = (answer, { panes = [], spaces = [] } = {}) => ({
+const fake = (answer, { panes = [], spaces = [], terminals = [] } = {}) => ({
   exec: async (cmd, args, opts = {}) => {
     let c = cmd, a = args;
     if (c === "sh" && a[2] === "sh") { c = a[3]; a = a.slice(4); }
@@ -41,6 +41,7 @@ const fake = (answer, { panes = [], spaces = [] } = {}) => ({
   run: (name, args) => { ran.push([name, args]); return null; },
   panes: () => panes,
   spaces: () => spaces,
+  terminals: () => terminals,
 });
 const RECIPE = JSON.stringify({ schema_version: 1, session_id: "batch-R1", name: "batch o/n R1", cwd: "/w/n", argv: ["pi"], env: {} });
 const TARGET_RECIPE = JSON.stringify({ schema_version: 1, session_id: "target-abc", name: "target o/n", cwd: "/w/x", argv: ["pi"], env: {} });
@@ -169,6 +170,56 @@ const TARGET_RECIPE = JSON.stringify({ schema_version: 1, session_id: "target-ab
     ]);'
   [ "$status" -eq 0 ]
   [ "$output" = '[null,"cw","br","br",null]' ]
+}
+
+@test "agentPaneFor: a labelled agent pane with cwd main matches /wt/a" {
+  _rs 'const p = { pane: "lab", status: "idle", terminal: "t7", cwd: "main" };
+    const terminals = [{ address: "t7", labels: { "otto.worktree": "/wt/a" } }];
+    out(m.agentPaneFor([p], { on: null, cwd: "/wt/a", terminals })?.pane);'
+  [ "$status" -eq 0 ]
+  [ "$output" = '"lab"' ]
+}
+
+@test "agentPaneFor: a non-matching label falls through to the cwd tier" {
+  _rs 'const p = { pane: "lab", status: "idle", terminal: "t7", cwd: "main" };
+    const terminals = [{ address: "t7", labels: { "otto.worktree": "/wt/a" } }];
+    out(m.agentPaneFor([p], { on: null, cwd: "main", terminals })?.pane);'
+  [ "$status" -eq 0 ]
+  [ "$output" = '"lab"' ]
+}
+
+@test "agentPaneFor: a labelled agent beats a working blocked unlabelled pane in the same cwd" {
+  _rs 'const labelled = { pane: "lab", status: "idle", terminal: "t7", cwd: "main" };
+    const blocked = { pane: "block", status: "blocked", terminal: "t8", cwd: "/wt/a" };
+    const terminals = [{ address: "t7", labels: { "otto.worktree": "/wt/a" } }];
+    out(m.agentPaneFor([blocked, labelled], { on: null, cwd: "/wt/a", terminals })?.pane);'
+  [ "$status" -eq 0 ]
+  [ "$output" = '"lab"' ]
+}
+
+@test "agentPaneFor: shells:false ignores a zsh pane; shells:true returns it only when no agent matches" {
+  _rs 'const zsh = { pane: "zsh", status: null, terminal: "t9", cwd: "/wt/a" };
+    const agent = { pane: "ag", status: "idle", terminal: "t8", cwd: "/wt/a" };
+    out([
+      m.agentPaneFor([zsh], { on: null, cwd: "/wt/a" }),
+      m.agentPaneFor([zsh], { on: null, cwd: "/wt/a", shells: false }),
+      m.agentPaneFor([zsh], { on: null, cwd: "/wt/a", shells: true })?.pane,
+      m.agentPaneFor([zsh, agent], { on: null, cwd: "/wt/a", shells: true })?.pane,
+    ]);'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[null,null,"zsh","ag"]' ]
+}
+
+@test "agentPaneFor: a worktree label on another machine is ignored" {
+  _rs 'const local = { pane: "local", status: "idle", terminal: "t7", cwd: "main" };
+    const remote = { pane: "remote", status: "idle", terminal: "homelab/t7", cwd: "main" };
+    const remoteTerm = { address: "homelab/t7", labels: { "otto.worktree": "/wt/a" } };
+    out([
+      m.agentPaneFor([local], { on: null, cwd: "/wt/a", terminals: [remoteTerm] }),
+      m.agentPaneFor([remote], { on: null, cwd: "/wt/a", terminals: [remoteTerm] }),
+    ]);'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[null,null]' ]
 }
 
 @test "openSession: nothing open locally starts pr batch session through hc and keeps it as a tab" {
@@ -324,6 +375,23 @@ const TARGET_RECIPE = JSON.stringify({ schema_version: 1, session_id: "target-ab
     out({ res, hcRun: seen.filter((s) => s.line.startsWith("hc run")).length, seen, ran });'
   [ "$status" -eq 0 ]
   [ "$output" = '{"res":{"ok":true,"opened":"adopted"},"hcRun":0,"seen":[{"line":"pr --branch feat/x target session --json","on":null},{"line":"hc ls --json --label otto.session=target-abc","on":null}],"ran":[["space.select",{"id":"sp1"}],["tab.select",{"id":"tb2"}],["pane.focus",{"pane":"p4"}]]}' ]
+}
+
+@test "openSession: a labelled agent pane is adopted when the session has no live terminal" {
+  _rs "$FAKE"'
+    const deps = fake((line) => {
+      if (line === "pr --branch feat/x target session --json") return { code: 0, stdout: TARGET_RECIPE, stderr: "" };
+      if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };
+      if (line.startsWith("hc run ")) return { code: 0, stdout: "{\"address\":\"t9\"}", stderr: "" };
+    }, {
+      panes: [{ pane: "p4", tab: "tb2", terminal: "t8", status: "working", cwd: "main" }],
+      spaces: [{ id: "sp1", tabs: [{ id: "tb2" }] }],
+      terminals: [{ address: "t8", labels: { "otto.worktree": "/w/x" } }],
+    });
+    const res = await m.openSession(deps, "target", { on: null, branch: "feat/x", repo: "o/n", features: ["target-session"] });
+    out({ res, hcRun: seen.filter((s) => s.line.startsWith("hc run")).length, ran });'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"res":{"ok":true,"opened":"adopted"},"hcRun":0,"ran":[["space.select",{"id":"sp1"}],["tab.select",{"id":"tb2"}],["pane.focus",{"pane":"p4"}]]}' ]
 }
 
 @test "openSession: with no label and no matching pane a target session is started" {

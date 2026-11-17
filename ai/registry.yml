@@ -13,6 +13,16 @@ tools:
     visibility: hidden
     description: "Records an issue filed by hand in the branch's follow-up ledger — called by both harnesses' post-execution hooks"
 
+  - name: report-agent-worktree
+    permission: false
+    visibility: hidden
+    description: "Labels the agent's herdr terminal with the worktree a tool call targeted — called by both harnesses' post-tool and session-start hooks"
+
+  - name: agent-worktree
+    permission: false
+    visibility: hidden
+    description: "Decides and publishes an agent's worktree label on its herdr terminal — reached through report-agent-worktree"
+
   - name: pr
     parser: cli.pr:reference_shape
     permission: true

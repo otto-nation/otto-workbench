@@ -478,3 +478,12 @@ teardown() {
   ' "$MODS"
   [ "$status" -eq 0 ] || { echo "$output" >&3; return 1; }
 }
+
+@test "space-prs placeholders sit at the row inset" {
+  # Multi-line aware: every placeholder( call, through its closing paren, must
+  # be followed by .px( or .p(.
+  run grep -c 'placeholder(' "$MODS"/space-prs/main.js
+  [ "$status" -eq 0 ]
+  bad=$(perl -0777 -ne 'while (/placeholder\((?:[^()]|\([^()]*\))*\)(?!\s*\.(?:px|p)\()/g) { print "$ARGV: $&\n" }' "$MODS"/space-prs/*.js)
+  [ -z "$bad" ]
+}

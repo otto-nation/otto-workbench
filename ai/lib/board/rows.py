@@ -28,6 +28,7 @@ from board.model import (
     Row,
 )
 from board.reviews import JoinResult
+from git.topology import WorktreeIndex
 
 
 def from_cache(
@@ -40,6 +41,7 @@ def from_cache(
     only: list[int] | None = None,
     mine_only: bool = False,
     queue: Mapping[str, QueueWork] | None = None,
+    worktrees: WorktreeIndex | None = None,
 ) -> list[dict]:
     """Document rows for one checkout, joined from the board cache."""
     merged = board.cache.merged(repo_key)
@@ -55,6 +57,9 @@ def from_cache(
     work = {} if queue is None else queue
     out: list[dict] = []
     for number, raw in merged.items():
+        raw_branch = raw.get("branch") or ""
+        p = worktrees.for_branch(raw_branch) if worktrees is not None else None
+        worktree = str(p) if p else None
         row = _row_from_merged(
             raw,
             joined.get(number) or _empty_join(number, raw),
@@ -62,6 +67,7 @@ def from_cache(
             viewer=viewer,
             slug=slug,
             queue=work.get(f"{slug}#{number}"),
+            worktree=worktree,
         )
         if mine_only and not row.is_mine:
             continue
@@ -99,6 +105,7 @@ def _row_from_merged(
     viewer: str,
     slug: str,
     queue: QueueWork | None = None,
+    worktree: str | None = None,
 ) -> Row:
     author = raw.get("author") or ""
     is_mine = bool(viewer) and author.casefold() == viewer.casefold()
@@ -157,6 +164,7 @@ def _row_from_merged(
         owed=owed_reason,
         owed_known=owed_known,
         queue=queue,
+        worktree=worktree,
     )
 
 

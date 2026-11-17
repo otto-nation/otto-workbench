@@ -75,6 +75,29 @@ bash $bin_dir/claude-session-lock --refresh"
   [ "$(jq -r '.hooks.Stop[].hooks[].command' "$SETTINGS" | grep -c session-lock)" -eq 0 ]
 }
 
+@test "settings reports the agent's worktree after Bash and Edit|Write, and clears it at session start" {
+  # Both post-tool matchers, because an edit names a worktree as surely as a
+  # `git -C`. The clear is SessionStart so a new session in a reused herdr
+  # terminal does not inherit the last one's claim. Pi's twin is
+  # ai/pi/extensions/agent-worktree.
+  local bin_dir matcher cmds
+  bin_dir=$(sed -n 's/^LOCAL_BIN_DIR="\(.*\)"$/\1/p' "$REPO_ROOT/lib/constants.sh")
+  [ -n "$bin_dir" ]
+
+  for matcher in "Bash" "Edit|Write"; do
+    cmds=$(jq -r --arg m "$matcher" \
+      '.hooks.PostToolUse[] | select(.matcher == $m) | .hooks[].command' "$SETTINGS")
+    grep -qxF "bash $bin_dir/report-agent-worktree" <<<"$cmds" || {
+      echo "PostToolUse $matcher does not run report-agent-worktree:"; echo "$cmds"; return 1
+    }
+  done
+
+  cmds=$(jq -r '.hooks.SessionStart[].hooks[].command' "$SETTINGS")
+  grep -qxF "bash $bin_dir/report-agent-worktree --clear" <<<"$cmds" || {
+    echo "SessionStart does not clear the worktree label:"; echo "$cmds"; return 1
+  }
+}
+
 @test "guard: exits 0 on a payload with no command" {
   run _run_guard '{"tool_input":{}}'
   [ "$status" -eq 0 ]

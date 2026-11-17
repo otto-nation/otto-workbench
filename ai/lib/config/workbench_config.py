@@ -738,8 +738,8 @@ class ReaperMaxMinutesConfig:
     """How long a process may run before the reaper terminates it.
 
     One field per command family the reaper knows: ``lint`` (golangci-lint),
-    ``go`` (go test, vet and build), ``gh`` and ``tasks``. Each is a whole
-    number of minutes, 1 or more.
+    ``go`` (go test, vet and build), ``gh`` and ``tasks`` (including
+    ``python -m tasks`` runners). Each is a whole number of minutes, 1 or more.
     """
 
     lint: int = field(default=30, metadata={"scope": _REAPER_MACHINE_ONLY})

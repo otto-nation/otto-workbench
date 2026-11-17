@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for bin/host-health — load, memory, processes, heavy commands, queue.
 #
-# select-on: bin/host-health
+# select-on: bin/host-health lib/heavy_commands.sh
 
 bats_require_minimum_version 1.5.0
 
@@ -52,9 +52,15 @@ SwapFree:       1024000 kB
 EOF
 }
 
-# _stub_ps BODY — executable ps stub whose body is BODY.
+# _stub_ps BODY [ARGS_BODY] — executable ps stub. BODY answers the comm listing;
+# ARGS_BODY answers `ps -o pid=,args=` (empty success when omitted, so rows fall back to comm).
 _stub_ps() {
-  printf '#!/usr/bin/env bash\n%s\n' "$1" > "$STUB_BIN/ps"
+  {
+    printf '%s\n' '#!/usr/bin/env bash' 'if [[ "$*" == *args=* ]]; then'
+    printf '%s\n' "${2:-}"
+    printf '%s\n' 'exit 0' 'fi'
+    printf '%s\n' "$1"
+  } > "$STUB_BIN/ps"
   chmod +x "$STUB_BIN/ps"
 }
 
@@ -92,6 +98,22 @@ PS'
   [ "$status" -eq 0 ]
   local json="$output"
   run jq -e '.procs.count==3 and .procs.zombies==1 and .heavy["golangci-lint"]==1 and .heavy.go==1 and .procs.top_cpu[0].command=="golangci-lint" and .procs.top_mem[0].command=="go" and .procs.top_cpu[0].age_s==3723 and .procs.top_mem[0].age_s==172800' \
+    <<< "$json"
+  [ "$status" -eq 0 ]
+}
+
+@test "python -m tasks counts as tasks; python -m tasks_x does not" {
+  _stub_ps 'cat <<'\''PS'\''
+10 alice 00:01 1.0 1.0 R /opt/py/bin/python3
+11 bob 00:01 0.5 0.5 R python3
+PS' 'cat <<'\''ARGS'\''
+10 /opt/py/bin/python3 -m tasks lint go
+11 python3 -m tasks_x
+ARGS'
+  _run_hh --json
+  [ "$status" -eq 0 ]
+  local json="$output"
+  run jq -e '.heavy.tasks==1 and ([.procs.top_cpu[], .procs.top_mem[]] | map(has("heavy_name")) | any | not)' \
     <<< "$json"
   [ "$status" -eq 0 ]
 }
@@ -250,8 +272,9 @@ VM" > "$STUB_BIN/vm_stat"
 # host-health finds otto-log relative to its own location, so a PATH stub would not be used.
 _reaper_tree() {
   local wb="$BATS_TEST_TMPDIR/wb"
-  mkdir -p "$wb/bin" "$wb/ai/bin"
+  mkdir -p "$wb/bin" "$wb/ai/bin" "$wb/lib"
   cp "$HH" "$wb/bin/host-health"
+  cp "$REPO_ROOT/lib/heavy_commands.sh" "$wb/lib/heavy_commands.sh"
   printf '#!/usr/bin/env bash\n%s\n' "$1" > "$wb/ai/bin/otto-log"
   chmod +x "$wb/bin/host-health" "$wb/ai/bin/otto-log"
 }

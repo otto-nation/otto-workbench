@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for maintenance/bin/reap-hung — terminating processes past their limit.
 #
-# select-on: maintenance/bin/reap-hung lib/constants.sh ai/lib/config/workbench_config.py
+# select-on: maintenance/bin/reap-hung lib/heavy_commands.sh lib/constants.sh ai/lib/config/workbench_config.py
 
 bats_require_minimum_version 1.5.0
 
@@ -21,16 +21,27 @@ setup() {
   cat > "$STUB_BIN/ps" <<EOF2
 #!/usr/bin/env bash
 # Identity queries (-o comm= / -o etimes= -p PID) answer from the table, or from
-# the override file for comm; other -p queries are the real ps.
+# the override file for comm; other -p queries are the real ps. The args listing
+# is matched before the -p passthrough so -o pid=,args= is never swallowed.
 case "\$*" in
   "-o comm= -p "*)
     if [[ -f "$PS_TABLE.comm" ]]; then cat "$PS_TABLE.comm"; exit 0; fi
     awk -v p="\${@: -1}" '\$1 == p { print \$4 }' "$PS_TABLE" ;;
   "-o etimes= -p "*)
     awk -v p="\${@: -1}" '\$1 == p { print \$3 }' "$PS_TABLE" ;;
+  *"-o pid=,args="*)
+    awk '{
+      if (NF >= 5) {
+        printf "%s", \$1
+        for (i = 5; i <= NF; i++) printf " %s", \$i
+        printf "\\n"
+      } else {
+        print \$1, \$4
+      }
+    }' "$PS_TABLE" ;;
   *" -p "*)
     PATH="\${PATH#"$STUB_BIN:"}" exec ps "\$@" ;;
-  *) cat "$PS_TABLE" ;;
+  *) awk '{print \$1,\$2,\$3,\$4}' "$PS_TABLE" ;;
 esac
 EOF2
   chmod +x "$STUB_BIN/ps"
@@ -59,9 +70,16 @@ _spawn_deaf() {
   SPAWNED+=("$__pid")
 }
 
-# _row PID PPID AGE_S COMM
+# _row PID PPID AGE_S COMM [ARGS...]
 _row() {
-  printf '%s %s %s %s\n' "$1" "$2" "$3" "$4" >> "$PS_TABLE"
+  {
+    printf '%s %s %s %s' "$1" "$2" "$3" "$4"
+    if (($# > 4)); then
+      shift 4
+      printf ' %s' "$@"
+    fi
+    printf '\n'
+  } >> "$PS_TABLE"
 }
 
 _alive() {
@@ -185,6 +203,98 @@ _run_reap() {
   _run_reap
   [ "$status" -eq 0 ]
   [[ "$stderr" == *"no longer golangci-lint"* ]]
+  _alive "$pid"
+}
+
+@test "a python -m tasks runner past its limit takes its children, but never a git child" {
+  local parent child git_child
+  _spawn parent
+  _spawn child
+  _spawn git_child
+  _row "$parent" 99999 $(( 46 * 60 )) python3 /opt/py/bin/python3 -m tasks lint go --repo r
+  _row "$child" "$parent" $(( 20 * 60 )) golangci-lint
+  _row "$git_child" "$parent" $(( 20 * 60 )) git
+  _run_reap
+  [ "$status" -eq 0 ]
+  [ "$output" = "reaped=2" ]
+  run ! _alive "$parent"
+  run ! _alive "$child"
+  _alive "$git_child"
+}
+
+@test "a python -m tasks runner under its limit is left alone" {
+  local pid
+  _spawn pid
+  _row "$pid" 99999 $(( 40 * 60 )) python3 /opt/py/bin/python3 -m tasks lint go --repo r
+  _run_reap
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  _alive "$pid"
+}
+
+@test "python invocations that are not -m tasks are not matched" {
+  local other script cflag
+  _spawn other
+  _spawn script
+  _spawn cflag
+  _row "$other" 99999 $(( 600 * 60 )) python3 python3 -m tasks_other
+  _row "$script" 99999 $(( 600 * 60 )) python3 python3 /x/tasks/y.py
+  _row "$cflag" 99999 $(( 600 * 60 )) python3 python3 -c tasks
+  _run_reap
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  _alive "$other"
+  _alive "$script"
+  _alive "$cflag"
+}
+
+@test "a python3.12 -m tasks runner past its limit is reaped" {
+  local pid
+  _spawn pid
+  _row "$pid" 99999 $(( 46 * 60 )) python3.12 python3.12 -m tasks
+  _run_reap
+  [ "$status" -eq 0 ]
+  [ "$output" = "reaped=1" ]
+  run ! _alive "$pid"
+}
+
+@test "a python runner with leading options before -m tasks is reaped, a script's -m tasks is not" {
+  local opts script substr
+  _spawn opts
+  _spawn script
+  _spawn substr
+  _row "$opts" 99999 $(( 46 * 60 )) python3 python3 -u -X dev -m tasks lint go
+  _row "$script" 99999 $(( 600 * 60 )) python3 python3 x.py -m tasks
+  _row "$substr" 99999 $(( 600 * 60 )) python3 python3 -u -m tasksx
+  _run_reap
+  [ "$status" -eq 0 ]
+  [ "$output" = "reaped=1" ]
+  run ! _alive "$opts"
+  _alive "$script"
+  _alive "$substr"
+}
+
+@test "a deaf python -m tasks runner is killed after the grace period" {
+  local pid
+  _spawn_deaf pid
+  _row "$pid" 99999 $(( 46 * 60 )) python3 python3 -m tasks
+  _config $'reaper:\n  grace_s: 5\n'
+  _run_reap
+  [ "$status" -eq 0 ]
+  [ "$output" = "reaped=1" ]
+  [[ "$stderr" == *"SIGKILL $pid"* ]]
+  run ! _alive "$pid"
+}
+
+@test "a pid that is no longer the listed python -m tasks runner is not sent SIGKILL" {
+  local pid
+  _spawn_deaf pid
+  _row "$pid" 99999 $(( 46 * 60 )) python3 python3 -m tasks
+  printf 'unrelated\n' > "$PS_TABLE.comm"
+  _config $'reaper:\n  grace_s: 5\n'
+  _run_reap
+  [ "$status" -eq 0 ]
+  [[ "$stderr" == *"no longer tasks"* ]]
   _alive "$pid"
 }
 

@@ -118,8 +118,8 @@ export default class PrsBoard extends Board {
     const d = this.detail;
     return actionsFor({
       repo: d.repo, number: d.number, repoDir: d.cwd, run: (d.runs ?? [])[0] ?? null,
-      headMoved: d.headMoved, batchBusy: d.batchBusy || this.launching, live: this.launching ? null : (this.live ?? d.live),
-      finished: this.finishedId, features: d.features,
+      headMoved: d.headMoved, batchBusy: d.batchBusy || this.launching || (this.launcher.starting && Boolean(this.selectedPr) && this.launcher.involvesPr(this.selectedPr)), live: this.launching ? null : (this.live ?? d.live),
+      finished: this.finishedId, features: d.features, own: d.own,
     });
   }
 
@@ -390,6 +390,7 @@ export default class PrsBoard extends Board {
       const key = item.key;
       this.acx.spawn(async () => { this.workflows.openItem(key); });
     }
+    const mine = this.launcher.involvesPr(pr);
     return renderDetail(this.detail, {
       nowMs: Date.now(),
       openKey: this.openKey,
@@ -397,7 +398,11 @@ export default class PrsBoard extends Board {
       onToggle: (key) => this.onToggle(key),
       actionBar: renderActionBar(this.actions(), {
         confirm: this.confirm,
-        note: this.launching ? "Starting…" : this.note,
+        starting: this.launching || (mine && this.launcher.starting),
+        note: this.note ?? (mine ? this.launcher.note : null),
+        fixes: this.detail.fixes,
+        fixBusy: this.launcher.starting ? "A batch is starting" : (this.detail.batchBusy || this.launching || this.live ? "A batch is running on this PR" : null),
+        onFix: (f) => this.launcher.fixOne(pr, f),
         onAction: (a) => this.onAction(a, cx),
         onConfirm: () => { const a = this.confirm; this.confirm = null; this.launch(a, cx); this.acx.notify(); },
         onCancel: () => { this.confirm = null; this.acx.notify(); },

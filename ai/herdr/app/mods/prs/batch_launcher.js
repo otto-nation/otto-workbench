@@ -118,6 +118,12 @@ export class BatchLauncher {
     return this.launching || this.pending.size > 0;
   }
 
+  // True when the launch in flight, its pending runs or its note concern this PR (a detail view's scope).
+  involvesPr(pr) {
+    const key = prKey(pr.repoSlug, pr.number);
+    return this.isPending(key) || Boolean(this.scope?.has(key));
+  }
+
   isPending(key) {
     return [...this.pending.values()].some((p) => p.keys.includes(key));
   }
@@ -143,28 +149,30 @@ export class BatchLauncher {
     return hasClearable || (Boolean(this.note) && !this.starting);
   }
 
-  launch(prs) {
+  // The batch to start for the selection, from the Start form; `only` (a Set of keys) starts those PRs
+  // with `form` instead, ignoring the selection and the filters.
+  launch(prs, { form = this.currentForm(), only = null } = {}) {
     if (this.starting) return;
     this.launching = true;
+    this.scope = only;
     this.note = null;
     this.acx.notify();
     this.acx.spawn(async (cx) => {
       const errors = [];
       try {
-        const selectedPrs = this.shown(prs).filter((p) => {
+        const chosen = only ?? this.selected;
+        const selectedPrs = (only ? prs : this.shown(prs)).filter((p) => {
           const key = prKey(p.repoSlug, p.number);
-          return this.selected.has(key) && !this.isPending(key);
+          return chosen.has(key) && !this.isPending(key);
         });
         const { groups } = groupByRepo(selectedPrs);
+        if (!groups.length) errors.push("nothing to start: the PR is already running or has no checkout");
         for (const g of groups) {
           try {
             const argv = ["pr", ...runArgv({
               checkout: g.cwd,
               keys: g.keys,
-              steps: [...this.steps],
-              withAi: [...this.withAi],
-              autoPublish: this.autoPublish,
-              rebaseBehind: this.rebaseBehind,
+              ...form,
               phaseModels: phaseModelFlags(this.models.values(), BATCH_PHASES),
             })];
             const res = parseRunReply(await exec("hc", hcBatchArgv({
@@ -186,6 +194,24 @@ export class BatchLauncher {
       if (errors.length) this.addNote(errors.join("; "));
       cx.notify();
     });
+  }
+
+  currentForm() {
+    return {
+      steps: [...this.steps], withAi: [...this.withAi],
+      autoPublish: this.autoPublish, rebaseBehind: this.rebaseBehind,
+    };
+  }
+
+  // A fix button: one step for one PR (`fix` is _lib/pr_fixes.js fixesFor's), started at once. The Batch
+  // page's own form is left as it was. Returns false when a launch is already going.
+  fixOne(pr, fix) {
+    if (this.starting) return false;
+    this.launch([pr], {
+      form: { steps: fix.steps, withAi: fix.ai ? fix.steps : [], autoPublish: false, rebaseBehind: false },
+      only: new Set([prKey(pr.repoSlug, pr.number)]),
+    });
+    return true;
   }
 
   // A terminal starting is not the batch starting: `pr batch run` can still fail on GitHub or on

@@ -157,7 +157,6 @@ export const ACTION_LABEL = Object.freeze({
   closeout: 'Close out comments',
   push: 'Push',
   switch_branch: 'Switch branch',
-  undo_rebase: 'Undo rebase',
   file_threads_issue: 'File issue for threads',
   file_review_issue: 'File issues for findings',
 });

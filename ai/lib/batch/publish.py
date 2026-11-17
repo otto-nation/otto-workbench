@@ -15,7 +15,7 @@ still the head the batch planned from (`Item.remote_sha`):
 | local == origin, or only behind | nothing to push |
 | local is a fast-forward of origin | `pr push --expect <remote_sha>` |
 | diverged, from a batch rebase whose start holds neither `remote_sha` nor a patch-equivalent of each of its commits | refuse: `not_incorporated` |
-| diverged, a remote commit has no patch-equivalent locally and no recorded squash replay | refuse: `not_incorporated_remote` |
+| diverged, a remote commit has no patch-equivalent, recorded replay, or matching author/date/subject locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
 `read_tree` is the publish-time reader: it fetches into
@@ -119,44 +119,89 @@ def _cherry_plus(cwd: str, upstream: str, head: str, limit: str = "",
     return tuple(line[2:] for line in r.stdout.splitlines() if line.startswith("+ "))
 
 
+def _range_limit(item: Item, cwd: str) -> str:
+    """Merge-base of *item*'s planned remote head and its base; empty when unknown."""
+    if not item.base_ref:
+        return ""
+    return git.client.out("merge-base", f"refs/remotes/origin/{item.base_ref}",
+                          item.remote_sha, cwd=cwd)
+
+
+def _commit_signatures(cwd: str, *revs: str, no_walk: bool = False
+                       ) -> dict[str, tuple[str, str, str]]:
+    """Map each commit in *revs* to ``(author_email, author_timestamp, subject)``."""
+    if not revs:
+        return {}
+    cmd: tuple[str, ...] = ("log", "--format=%H%x00%ae%x00%at%x00%s")
+    if no_walk:
+        cmd += ("--no-walk",)
+    r = git.client.run(*cmd, *revs, cwd=cwd)
+    if not r.ok:
+        return {}
+    signatures: dict[str, tuple[str, str, str]] = {}
+    for line in r.stdout.splitlines():
+        parts = line.split("\0")
+        if len(parts) != 4:
+            continue
+        sha, ae, at, subj = parts
+        signatures[sha] = (ae, at, subj)
+    return signatures
+
+
+def _without_matching_signatures(
+    wt: str, found: tuple[str, ...], *, upstream: str, limit: str,
+) -> tuple[str, ...]:
+    """Drop cherry-plus labels whose (author, date, subject) appears on *upstream*."""
+    shas = tuple(label.split(None, 1)[0] for label in found)
+    cands = _commit_signatures(wt, *shas, no_walk=True)
+    spec = f"{limit}..{upstream}" if limit else upstream
+    seen = set(_commit_signatures(wt, spec).values())
+    kept: list[str] = []
+    for label in found:
+        sig = cands.get(label.split(None, 1)[0])
+        if sig is not None and sig in seen:
+            continue
+        kept.append(label)
+    return tuple(kept)
+
+
 def _unincorporated(item: Item, cwd: str, upstream: str = "") -> tuple[str, ...] | None:
     """Remote commits since the base with no patch-equivalent in *upstream*; None when unreadable.
 
-    *upstream* defaults to the local branch.
+    *upstream* defaults to the local branch. Commits that match an upstream
+    commit by author email, author timestamp, and subject are incorporated
+    even when the patch-id differs (a conflict-resolved replay).
     """
-    limit = git.client.out("merge-base", f"refs/remotes/origin/{item.base_ref}",
-                           item.remote_sha, cwd=cwd) if item.base_ref else ""
-    return _cherry_plus(cwd, upstream or f"refs/heads/{item.branch}", item.remote_sha,
-                        limit, verbose=True)
+    limit = _range_limit(item, cwd)
+    dest = upstream or f"refs/heads/{item.branch}"
+    found = _cherry_plus(cwd, dest, item.remote_sha, limit, verbose=True)
+    if not found:
+        return found
+    return _without_matching_signatures(cwd, found, upstream=dest, limit=limit)
 
 
 def _not_replayed(wt: str, found: tuple[str, ...],
-                  finder: git.replay.ReplayFinder) -> tuple[str, ...]:
-    """Remote cherry-plus labels whose rewrite chain did not pass through a squash.
+                  finder: git.replay.ReplayFinder, *,
+                  upstream: str, limit: str = "") -> tuple[str, ...]:
+    """Remote cherry-plus labels with no recorded replay and no matching author/date/subject.
 
-    A recorded squash is a SHA that two or more distinct original commits were
-    rewritten to (`git.rewrites.fold_targets`). A remote commit is incorporated
-    when its first rewrite hop lands on such a SHA and `ReplayFinder` then
-    reports FOUND or AMBIGUOUS on the local branch. A one-to-one rewrite — an
-    AI-resolved pick — is left listed, so publish still refuses it. UNKNOWN
-    stays listed and fails closed.
+    A recorded rewrite — one-to-one or a squash — is incorporated when
+    `ReplayFinder` reports FOUND or AMBIGUOUS on HEAD. UNKNOWN stays listed
+    and fails closed. Remaining labels match by (author email, author
+    timestamp, subject) against *limit*..*upstream*.
     """
-    targets = git.rewrites.fold_targets(Path(wt))
-    if not targets:
-        return found
     mapping = git.rewrites.load(Path(wt))
     kept: list[str] = []
     for label in found:
         sha = label.split(None, 1)[0]
-        hops = mapping.get(sha, [])
-        if not hops or hops[0] not in targets:
-            kept.append(label)
-            continue
-        status = finder.find(sha).status
-        if status in (git.replay.ReplayStatus.FOUND, git.replay.ReplayStatus.AMBIGUOUS):
+        if sha in mapping and finder.find(sha).status in (
+            git.replay.ReplayStatus.FOUND, git.replay.ReplayStatus.AMBIGUOUS,
+        ):
             continue
         kept.append(label)
-    return tuple(kept)
+    if not kept:
+        return ()
+    return _without_matching_signatures(wt, tuple(kept), upstream=upstream, limit=limit)
 
 
 def _start_incorporated(item: Item, cwd: str) -> bool:
@@ -264,7 +309,8 @@ def _tree_from(item: Item, remote_sha: str, fetched: bool) -> TreeState:
             divergence = RefDivergence()
         else:
             unincorporated = _not_replayed(
-                wt, found, git.replay.ReplayFinder(Path(wt)))
+                wt, found, git.replay.ReplayFinder(Path(wt)),
+                upstream=f"refs/heads/{branch}", limit=_range_limit(item, wt))
     dropped = _dropped(item, wt) if item.worktree else ()
     return TreeState(local, remote_sha, divergence, fetched, incorporated, unincorporated,
                      dropped, batch.steps.checked_out_branch(wt))
@@ -301,8 +347,21 @@ def peek_tree(item: Item) -> TreeState:
 
 
 def local_tree(item: Item) -> TreeState:
-    """Compare *item*'s local branch with its planned remote SHA; no network."""
-    return _tree_from(item, item.remote_sha, fetched=True)
+    """Compare *item*'s local branch with its planned remote SHA (or pushed tracking ref); no network."""
+    wt, branch = item.worktree, item.branch
+    local = git.client.out("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=wt)
+    tracking = git.client.out("rev-parse", "--verify", "--quiet",
+                              f"refs/remotes/origin/{branch}", cwd=wt)
+    remote = tracking if local and tracking == local else item.remote_sha
+    return _tree_from(item, remote, fetched=True)
+
+
+def already_published(item: Item, tree: TreeState) -> bool:
+    """Whether *tree* shows *item*'s local branch has already been pushed to origin."""
+    return bool(tree.local and tree.remote == tree.local
+                and tree.remote != item.remote_sha
+                and tree.divergence.comparable
+                and (not item.pre_rebase_head or tree.incorporated))
 
 
 def _has_staged(wt: str) -> bool:
@@ -350,7 +409,7 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
                        f"not {item.branch}")
     if not tree.fetched:
         return _refuse(Refusal.FETCH_FAILED, f"could not fetch {item.branch}")
-    if not item.remote_sha or tree.remote != item.remote_sha:
+    if not item.remote_sha or (tree.remote != item.remote_sha and not already_published(item, tree)):
         return _refuse(Refusal.REMOTE_MOVED,
                        f"origin/{item.branch} is {git.client.abbrev(tree.remote) or 'gone'}; "
                        f"the batch planned from {git.client.abbrev(item.remote_sha)}")

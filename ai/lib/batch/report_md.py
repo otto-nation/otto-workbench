@@ -54,6 +54,8 @@ def _finding_lines(findings: list[dict]) -> list[str]:
             lines.append(f"  - files: {', '.join(f['files'])}")
         if f.get("log"):
             lines.append(f"  - log: {f['log']}")
+        if commits := (f.get("data") or {}).get("commits"):
+            lines.append(f"  - commits: {', '.join(commits)}")
     return lines
 
 

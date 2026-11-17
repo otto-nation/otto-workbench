@@ -95,8 +95,14 @@ def _step_review(decision: Decision) -> Finding:
     kinds = {e.get("kind") for e in evidence}
     if EvidenceKind.ONE_SIDED.value in kinds or EvidenceKind.STALE.value in kinds:
         files = [f for e in evidence for f in e.get("files") or []]
-        return _finding(FindingReason.STALE_GENERATED, decision, files=files,
-                        data={"one_sided": EvidenceKind.ONE_SIDED.value in kinds})
+        data: dict = {"one_sided": EvidenceKind.ONE_SIDED.value in kinds}
+        regions = [r for e in evidence for r in e.get("regions") or []]
+        if regions:
+            data["regions"] = regions
+        rebase_head = next((str(e["rebase_head"]) for e in evidence if e.get("rebase_head")), "")
+        if rebase_head:
+            data["rebase_head"] = rebase_head
+        return _finding(FindingReason.STALE_GENERATED, decision, files=files, data=data)
     unverified = [e for e in evidence
                   if e.get("kind") == EvidenceKind.CHECKS_UNVERIFIED.value]
     extra = {"checks_unverified": unverified} if unverified else {}
@@ -126,9 +132,12 @@ def _failed(decision: Decision) -> Finding:
         return _finding(FindingReason.WRONG_BRANCH, decision,
                         detail=str(decision.payload.get("detail") or ""))
     if decision.step == "publish" and reason in _PUSH_REFUSALS:
+        data: dict = {"refusal": reason}
+        if decision.payload.get("commits"):
+            data["commits"] = list(decision.payload["commits"])
         return _finding(FindingReason.PUSH_REFUSED, decision,
                         detail=str(decision.payload.get("detail") or ""),
-                        data={"refusal": reason})
+                        data=data)
     if reason == FailureReason.WORKTREE_COLLISION.value:
         return _finding(FindingReason.WORKTREE_COLLISION, decision,
                         detail=str(decision.payload.get("detail") or ""))

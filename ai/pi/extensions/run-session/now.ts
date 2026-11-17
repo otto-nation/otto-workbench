@@ -13,6 +13,7 @@ export interface ReportFinding {
   detail?: string;
   files?: string[];
   log?: string | null;
+  data?: { commits?: string[] };
 }
 
 export interface ReportCommand {
@@ -66,7 +67,7 @@ export function renderNow(
   if (!sessions.length) {
     return `## Now — ${subject}\nNothing in the report: no PR has findings or commands.`;
   }
-  const waiting = sessions.filter((s) => s.state === "needs_session").length;
+  const waiting = sessions.filter((s) => s.state === "needs_session" || !(s.findings?.length) || s.findings.some((f) => !decisions.has(decisionKey(s.pr, `${f.reason}:${f.step}`)))).length;
   const out = [`## Now — ${subject}: ${waiting} of ${sessions.length} PRs waiting on you`];
   for (const s of sessions) {
     const base = s.base_ref ? ` → ${s.base_ref}` : "";
@@ -76,8 +77,9 @@ export function renderNow(
       const key = `${f.reason}:${f.step}`;
       const detail = f.detail ? ` — ${f.detail}` : "";
       const files = f.files?.length ? ` (files: ${f.files.join(", ")})` : "";
+      const commits = f.data?.commits?.length ? ` (commits: ${f.data.commits.join(", ")})` : "";
       const log = f.log ? ` log ${f.log}` : "";
-      out.push(`- finding \`${key}\`${detail}${files}${log}`);
+      out.push(`- finding \`${key}\`${detail}${files}${commits}${log}`);
       const decided = decisions.get(decisionKey(s.pr, key));
       if (decided) out.push(`  decided: ${String(decided.verdict)} — ${String(decided.reason)}`);
     }

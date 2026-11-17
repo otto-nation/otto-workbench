@@ -1,5 +1,6 @@
 """Tests for batch.publish: what a publish pushes, read from the tree, under which lease."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -46,6 +47,7 @@ WT = ["--repo-dir", "/wt"]
     (_tree(2, 0), [["pr", "push", "--expect", "r0", *WT]], None),
     (_tree(2, 3), [["pr", "rebase", "--push-only", "--expect", "r0", *WT]], None),
     (_tree(2, 0, remote="other"), [], Refusal.REMOTE_MOVED),
+    (_tree(0, 0, remote="l1"), [], None),
     (_tree(0, 0, comparable=False), [], Refusal.NOT_COMPARABLE),
     (_tree(2, 0, fetched=False), [], Refusal.FETCH_FAILED),
     (_tree(2, 3, incorporated=False), [], Refusal.NOT_INCORPORATED),
@@ -122,6 +124,34 @@ def test_a_hand_rebased_branch_publishes_with_expect(tmp_path):
     assert tree.unincorporated == ()
     assert batch.publish.plan(item, "pr", tree).commands == [
         ["pr", "rebase", "--push-only", "--expect", planned, "--repo-dir", str(pair.work)]]
+
+
+def test_already_pushed_branch_plans_clean_online_and_offline(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    planned = remote_tip(pair.origin, "feat")
+    item = _item(worktree=str(pair.work), remote=planned, base_ref="main")
+    advance(pair.seed, "main", "upstream")
+    git_in(pair.work, "fetch", "-q", "origin")
+    git_in(pair.work, "rebase", "-q", "origin/main")
+    tracking = git_out(pair.work, "rev-parse", "--verify", "--quiet",
+                       "refs/remotes/origin/feat").strip()
+    assert tracking == planned
+    before = batch.publish.local_tree(item)
+    assert before.remote == item.remote_sha == planned
+    git_in(pair.work, "push", "-q", "origin", "feat", "--force")
+    wt = ["--repo-dir", str(pair.work)]
+    for reader in (batch.publish.read_tree, batch.publish.peek_tree,
+                   batch.publish.local_tree):
+        plan = batch.publish.plan(item, "pr", reader(item))
+        assert plan.ok is True
+        assert plan.commands == []
+        assert plan.pushes is False
+    closeout = batch.publish.plan(
+        item, "pr", batch.publish.read_tree(item),
+        closeout=CloseoutDebt(summary=True),
+    )
+    assert closeout.ok is True and closeout.pushes is False
+    assert closeout.commands == [["pr", "comments", "--finish", "--post", *wt]]
 
 
 def test_a_stale_local_branch_missing_a_remote_commit_is_refused(tmp_path):
@@ -234,7 +264,7 @@ def test_a_squashed_replay_recorded_by_git_is_incorporated(tmp_path):
         ["pr", "rebase", "--push-only", "--expect", c, "--repo-dir", str(pair.work)]]
 
 
-def test_a_one_to_one_rewrite_is_still_refused(tmp_path):
+def test_a_recorded_one_to_one_rewrite_is_incorporated(tmp_path):
     pair = remote_and_clone(tmp_path)
     planned = advance(pair.seed, "feat", "elsewhere")
     item = _item(worktree=str(pair.work), remote=planned, base_ref="main")
@@ -246,8 +276,52 @@ def test_a_one_to_one_rewrite_is_still_refused(tmp_path):
     ])
     tree = batch.publish.read_tree(item)
     got = batch.publish.plan(item, "pr", tree)
-    assert got.refusal is Refusal.NOT_INCORPORATED_REMOTE
-    assert f"{planned} chore: elsewhere" in got.commits
+    assert tree.unincorporated == ()
+    assert got.ok
+    assert got.commands == [
+        ["pr", "rebase", "--push-only", "--expect", planned, "--repo-dir", str(pair.work)]]
+
+
+def test_conflict_replayed_commit_matches_by_author_date_subject_without_rewrite_log(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    planned = remote_tip(pair.origin, "feat")
+    author = git_out(pair.origin, "log", "-1", "--format=%an%x00%ae%x00%aD", planned).strip()
+    name, email, date = author.split("\0")
+    author_env = os.environ | {
+        "GIT_AUTHOR_NAME": name,
+        "GIT_AUTHOR_EMAIL": email,
+        "GIT_AUTHOR_DATE": date,
+    }
+    git_in(pair.seed, "checkout", "-q", "main")
+    (pair.seed / "feat.txt").write_text("main-side\n")
+    commit_all(pair.seed, "chore: adjacent")
+    git_in(pair.seed, "push", "-q", "origin", "main")
+    git_in(pair.work, "fetch", "-q", "origin")
+    run_checked(["git", "-C", str(pair.work), "rebase", "-q", "origin/main"], check=False)
+    (pair.work / "feat.txt").write_text("resolved-differently\n")
+    git_in(pair.work, "add", "feat.txt")
+    run_checked(
+        ["git", "-C", str(pair.work), "-c", "core.editor=true", "rebase", "--continue"],
+        env=author_env,
+    )
+    log = git.rewrites.common_dir(pair.work) / git.rewrites.LOG_NAME
+    log.unlink(missing_ok=True)
+    assert git.rewrites.load(pair.work) == {}
+    item = _item(worktree=str(pair.work), remote=planned, base_ref="main")
+    tree = batch.publish.read_tree(item)
+    assert tree.unincorporated == ()
+    got = batch.publish.plan(item, "pr", tree)
+    assert got.commands == [
+        ["pr", "rebase", "--push-only", "--expect", planned, "--repo-dir", str(pair.work)]]
+    start = git_out(pair.work, "rev-parse", "HEAD").strip()
+    started = _item(worktree=str(pair.work), remote=planned, base_ref="main",
+                    pre_rebase_head=start)
+    assert batch.publish._start_incorporated(started, str(pair.work)) is True
+    git_in(pair.work, "commit", "--amend", "-q", "--no-verify",
+           "-m", "feat: other subject")
+    renamed = batch.publish.read_tree(item)
+    assert renamed.unincorporated == (f"{planned} feat",)
+    assert batch.publish.plan(item, "pr", renamed).refusal is Refusal.NOT_INCORPORATED_REMOTE
 
 
 @pytest.mark.parametrize("start", ["planned", "none"])

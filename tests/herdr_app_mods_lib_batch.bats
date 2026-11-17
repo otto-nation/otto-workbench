@@ -195,9 +195,9 @@ _sessions() {
 }
 
 @test "actionLabel maps ids, reuses STEP_LABEL, falls back to Run" {
-  _js '[m.actionLabel({action:"ci"}),m.actionLabel({action:"comments"}),m.actionLabel({action:"rebase"}),m.actionLabel({action:"rebase_generated"}),m.actionLabel({action:"review"}),m.actionLabel({action:"closeout"}),m.actionLabel({action:"push"}),m.actionLabel({action:"switch_branch"}),m.actionLabel({action:"undo_rebase"}),m.actionLabel({action:"file_threads_issue"}),m.actionLabel({action:"file_review_issue"}),m.actionLabel({action:"mystery"}),m.actionLabel({}),m.ACTION_LABEL.ci===m.STEP_LABEL.ci,m.ACTION_LABEL.comments===m.STEP_LABEL.comments,Object.isFrozen(m.ACTION_LABEL)]'
+  _js '[m.actionLabel({action:"ci"}),m.actionLabel({action:"comments"}),m.actionLabel({action:"rebase"}),m.actionLabel({action:"rebase_generated"}),m.actionLabel({action:"review"}),m.actionLabel({action:"closeout"}),m.actionLabel({action:"push"}),m.actionLabel({action:"switch_branch"}),m.actionLabel({action:"file_threads_issue"}),m.actionLabel({action:"file_review_issue"}),m.actionLabel({action:"mystery"}),m.actionLabel({}),m.ACTION_LABEL.ci===m.STEP_LABEL.ci,m.ACTION_LABEL.comments===m.STEP_LABEL.comments,Object.isFrozen(m.ACTION_LABEL)]'
   [ "$status" -eq 0 ]
-  [ "$output" = '["Fix CI","Answer comments","Resolve conflicts","Rebuild generated files","Fix review findings","Close out comments","Push","Switch branch","Undo rebase","File issue for threads","File issues for findings","Run","Run",true,true,true]' ]
+  [ "$output" = '["Fix CI","Answer comments","Resolve conflicts","Rebuild generated files","Fix review findings","Close out comments","Push","Switch branch","File issue for threads","File issues for findings","Run","Run",true,true,true]' ]
 }
 
 @test "writesGitHub is true for push or --post" {

@@ -6,7 +6,7 @@ import {
 } from "./_lib/batch.js";
 import { cancelArgv, runProgress } from "./_lib/batch_launch.js";
 import { invoke, readJson } from "./_lib/board_data.js";
-import { parseRunReply } from "./_lib/launch.js";
+import { keepStarted, notShownText, parseRunReply } from "./_lib/launch.js";
 import {
   openSession as openKindSession, sessionGate, waitingText, SESSION_KINDS,
 } from "./_lib/run_session.js";
@@ -311,17 +311,13 @@ export class Workflows {
     });
     if (!argv) return;
     this.acx.spawn(async (cx) => {
-      let res;
+      // A throwing host call (exec, terminals) is reported as the trail error, not dropped.
       try {
-        res = parseRunReply(await exec("hc", argv, {}));
+        const res = parseRunReply(await exec("hc", argv, {}));
+        const kept = res.ok && await keepStarted({ run, terminals, sleep: (ms) => cx.sleep(ms) }, res.terminal);
+        this.trailError = res.ok ? (kept ? null : notShownText(res.terminal)) : (res.error?.message ?? "failed");
       } catch (err) {
-        res = { ok: false, error: { message: String(err?.message ?? err) } };
-      }
-      if (res.ok) {
-        this.trailError = null;
-        run("terminal.keep", { terminal: res.terminal });
-      } else {
-        this.trailError = res.error?.message ?? "failed";
+        this.trailError = String(err?.message ?? err);
       }
       cx.notify();
     });
@@ -338,7 +334,7 @@ export class Workflows {
     this.acx.spawn(async (cx) => {
       let res;
       try {
-        res = await openKindSession({ exec, run, panes, spaces, terminals }, kind, target);
+        res = await openKindSession({ exec, run, panes, spaces, terminals, sleep: (ms) => cx.sleep(ms) }, kind, target);
       } catch (err) {
         // openSession never rejects; a throwing host call still ends "Opening".
         res = { ok: false, message: String(err?.message ?? err) };

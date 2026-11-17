@@ -25,24 +25,33 @@ _rs() {
   "
 }
 
-# A stand-in for herdr's exec, run, panes and spaces. answer(line, opts) returns
-# {code, stdout, stderr}; line is the command with a remote preamble unwrapped and
-# the preamble itself shown as <P>. seen: [{line, on}], ran: [[name, args]].
+# A stand-in for herdr's exec, run, panes, spaces, terminals and the spawn's sleep.
+# answer(line, opts) returns {code, stdout, stderr}; line is the command with a remote
+# preamble unwrapped and the preamble itself shown as <P>. seen: [{line, on}],
+# ran: [[name, args]], slept: [ms]. Like herdr, terminals() lists a terminal `hc run`
+# started only after the next sleep; `shows: false` never lists it.
 FAKE='
-const seen = []; const ran = [];
-const fake = (answer, { panes = [], spaces = [], terminals = [] } = {}) => ({
-  exec: async (cmd, args, opts = {}) => {
-    let c = cmd, a = args;
-    if (c === "sh" && a[2] === "sh") { c = a[3]; a = a.slice(4); }
-    const line = [c, ...a].join(" ").replaceAll(d.REMOTE_PREAMBLE, "<P>");
-    seen.push({ line, on: opts.on ?? null });
-    return answer(line, opts) ?? { code: 1, stdout: "", stderr: "unexpected " + line };
-  },
-  run: (name, args) => { ran.push([name, args]); return null; },
-  panes: () => panes,
-  spaces: () => spaces,
-  terminals: () => terminals,
-});
+const seen = []; const ran = []; const slept = [];
+const fake = (answer, { panes = [], spaces = [], terminals = [], shows = true } = {}) => {
+  const listed = [...terminals]; let started = [];
+  return {
+    exec: async (cmd, args, opts = {}) => {
+      let c = cmd, a = args;
+      if (c === "sh" && a[2] === "sh") { c = a[3]; a = a.slice(4); }
+      const line = [c, ...a].join(" ").replaceAll(d.REMOTE_PREAMBLE, "<P>");
+      seen.push({ line, on: opts.on ?? null });
+      const res = answer(line, opts) ?? { code: 1, stdout: "", stderr: "unexpected " + line };
+      const address = line.startsWith("hc run ") && res.code === 0 ? JSON.parse(res.stdout).address : null;
+      if (address && shows) started.push({ address });
+      return res;
+    },
+    run: (name, args) => { ran.push([name, args]); return null; },
+    panes: () => panes,
+    spaces: () => spaces,
+    terminals: () => listed,
+    sleep: async (ms) => { slept.push(ms); listed.push(...started); started = []; },
+  };
+};
 const RECIPE = JSON.stringify({ schema_version: 1, session_id: "batch-R1", name: "batch o/n R1", cwd: "/w/n", argv: ["pi"], env: {} });
 const TARGET_RECIPE = JSON.stringify({ schema_version: 1, session_id: "target-abc", name: "target o/n", cwd: "/w/x", argv: ["pi"], env: {} });
 '
@@ -421,6 +430,35 @@ const TARGET_RECIPE = JSON.stringify({ schema_version: 1, session_id: "target-ab
     out({ res, hcRun: seen.filter((s) => s.line.startsWith("hc run")).length, ran });'
   [ "$status" -eq 0 ]
   [ "$output" = '{"res":{"ok":true,"opened":"started"},"hcRun":1,"ran":[["terminal.keep",{"terminal":"t9"}]]}' ]
+}
+
+@test "openSession: a started session is kept only once herdr lists its terminal" {
+  _rs "$FAKE"'
+    const deps = fake((line) => {
+      if (line === "pr batch session R1 --json") return { code: 0, stdout: RECIPE, stderr: "" };
+      if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };
+      if (line.startsWith("hc run ")) return { code: 0, stdout: "{\"address\":\"t9\"}", stderr: "" };
+    });
+    const run = deps.run;
+    deps.run = (name, args) => { run(name, args); ran.push(["listed", deps.terminals().map((t) => t.address)]); };
+    const res = await m.openSession(deps, "batch", { on: null, cwd: "/w/box", runId: "R1", repo: "o/n", features: ["batch-session"] });
+    out({ res, slept, ran });'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"res":{"ok":true,"opened":"started"},"slept":[100],"ran":[["terminal.keep",{"terminal":"t9"}],["listed",["t9"]]]}' ]
+}
+
+@test "openSession: a started session herdr never lists is an error that names it, with no keep" {
+  _rs "$FAKE"'
+    const l = await import("'"$REPO_ROOT"'/ai/herdr/app/mods/_lib/launch.js");
+    const deps = fake((line) => {
+      if (line === "pr batch session R1 --json") return { code: 0, stdout: RECIPE, stderr: "" };
+      if (line.startsWith("hc ls ")) return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };
+      if (line.startsWith("hc run ")) return { code: 0, stdout: "{\"address\":\"t9\"}", stderr: "" };
+    }, { shows: false });
+    const res = await m.openSession(deps, "batch", { on: null, cwd: "/w/box", runId: "R1", repo: "o/n", features: ["batch-session"] });
+    out({ res, waited: slept.reduce((a, b) => a + b, 0) === l.KEEP_WAIT_MS, ran });'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"res":{"ok":false,"outdated":false,"message":"started t9, but herdr did not show it within 3s (hc attach t9)"},"waited":true,"ran":[]}' ]
 }
 
 @test "run_session.js string literals name batch and target only inside SESSION_KINDS" {

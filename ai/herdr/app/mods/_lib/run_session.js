@@ -8,12 +8,14 @@
  * (its pane's space, tab and pane, or `terminal.keep` when no pane shows it); otherwise
  * a kind with `adoptPane` takes an agent pane in the checkout (`otto.worktree` label
  * over cwd) the same way; otherwise `hc run --bg` starts the kind's open argv (which
- * execs pi) in the checkout and `terminal.keep` gives it a tab. A machine whose
+ * execs pi) in the checkout and `keepStarted` gives it a tab once herdr lists it. A machine whose
  * `pr board` features lack the kind's feature gets OUTDATED_TEXT and no exec.
  */
 
 import { invoke, readJson } from './board_data.js';
-import { LABEL_SESSION, LABEL_WORKTREE, hcSessionArgv, machineOf, parseRunReply } from './launch.js';
+import {
+  LABEL_SESSION, LABEL_WORKTREE, hcSessionArgv, keepStarted, machineOf, notShownText, parseRunReply,
+} from './launch.js';
 
 export const SESSION_KINDS = {
   batch: {
@@ -175,7 +177,7 @@ function failed(message) {
 const OUTDATED = Object.freeze({ ok: false, outdated: true, message: OUTDATED_TEXT });
 
 /**
- * deps: {exec, run, panes, spaces, terminals?} (the herdr functions).
+ * deps: {exec, run, panes, spaces, terminals, sleep} (the herdr functions; sleep: the spawn's `cx.sleep`).
  * target: batch {on, cwd, runId, repo, features}; target {on, cwd, branch, repo, features}.
  * Resolves {ok:true, opened:'focused'|'adopted'|'started'} or {ok:false, outdated, message}; never rejects.
  */
@@ -221,6 +223,6 @@ export async function openSession(deps, kind, target) {
     res = { ok: false, error: { message: String(err?.message ?? err) } };
   }
   if (!res.ok) return failed(res.error.message);
-  run('terminal.keep', { terminal: res.terminal });
+  if (!(await keepStarted(deps, res.terminal))) return failed(notShownText(res.terminal));
   return { ok: true, opened: 'started' };
 }

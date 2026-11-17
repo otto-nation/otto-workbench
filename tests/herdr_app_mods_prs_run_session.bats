@@ -14,7 +14,8 @@ setup() {
 teardown() { common_teardown; }
 
 # One finished run R1 over o/n#7 (needs you) on machine `on`; its report has two sessions.
-# seen: [{line, on}] with a remote preamble unwrapped; ran: herdr run() calls.
+# seen: [{line, on}] with a remote preamble unwrapped; ran: herdr run() calls. Like herdr, a
+# terminal `hc run` started is listed by terminals() only after the next sleep (H.shows = false: never).
 RUNS="$(cat <<'RUNS_JS'
 const { Workflows } = await import(M + "/workflows.js");
 const seen = []; const ran = [];
@@ -34,10 +35,15 @@ const ANSWERS = [
   [(l) => l.startsWith("hc run "), json({ address: "t9" })],
 ];
 const unwrap = (cmd, args) => (cmd === "sh" && args[2] === "sh" ? [args[3], ...args.slice(4)] : [cmd, ...args]);
+let unlisted = [];
+H.shows = true;
+H.onSleep = () => { H.terminalsList.push(...unlisted); unlisted = []; };
 H.exec = async (cmd, args, opts = {}) => {
   const line = unwrap(cmd, args).join(" ");
   seen.push({ line, on: opts.on ?? null });
   const hit = ANSWERS.find(([match]) => match(line));
+  const shown = hit && line.startsWith("hc run ") && H.shows;
+  unlisted.push(...(shown ? [{ address: JSON.parse(hit[1].stdout).address }] : []));
   return hit ? hit[1] : { code: 1, stdout: "", stderr: "unexpected " + line };
 };
 H.run = (name, args) => { ran.push([name, args]); return null; };
@@ -64,6 +70,35 @@ RUNS_JS
       asked: seen.filter((x) => x.line.startsWith('pr batch session') || x.line.startsWith('hc ')).map((x) => x.line.split(' --label')[0]) });"
   [ "$status" -eq 0 ]
   [ "$output" = '{"before":{"gate":"unknown","waiting":"waiting on you: 2 PRs","opening":false},"during":true,"after":null,"ran":[["terminal.keep",{"terminal":"t9"}]],"asked":["pr batch session R1 --json","hc ls --json","hc run --bg --json --cwd /w/n"]}' ]
+}
+
+@test "open trail: the trail terminal is kept once herdr lists it" {
+  _host "$RUNS
+    const { w, settle } = await load();
+    w.openTrail({ on: null, id: 'R1', trailRoot: 'inv-1', repo: 'o/n', cwd: '/w/n' }); await settle();
+    out({ error: w.trailError, ran, listed: H.terminalsList.map((t) => t.address) });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"error":null,"ran":[["terminal.keep",{"terminal":"t9"}]],"listed":["t9"]}' ]
+}
+
+@test "open trail: a trail terminal herdr never lists is reported, with no keep" {
+  _host "$RUNS
+    H.shows = false;
+    const { w, settle } = await load();
+    w.openTrail({ on: null, id: 'R1', trailRoot: 'inv-1', repo: 'o/n', cwd: '/w/n' }); await settle();
+    out({ error: w.trailError, ran });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"error":"started t9, but herdr did not show it within 3s (hc attach t9)","ran":[]}' ]
+}
+
+@test "open trail: a throwing terminals() is reported as the trail error, with no keep" {
+  _host "$RUNS
+    H.terminals = () => { throw new Error('host gone'); };
+    const { w, settle } = await load();
+    w.openTrail({ on: null, id: 'R1', trailRoot: 'inv-1', repo: 'o/n', cwd: '/w/n' }); await settle();
+    out({ error: w.trailError, ran });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"error":"host gone","ran":[]}' ]
 }
 
 @test "run session: a remote run's session is asked of and started on its machine" {

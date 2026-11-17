@@ -99,6 +99,33 @@ export function hcSessionArgv({ repo, argv, sessionId, cwd, on }) {
   });
 }
 
+// How long keepStarted waits for herdr to list a terminal hc just started, and how often it looks.
+export const KEEP_WAIT_MS = 3000;
+export const KEEP_STEP_MS = 100;
+
+/**
+ * Give a terminal `hc run --bg` just started a tab. herdr hears of it a moment after hc
+ * replies and refuses `terminal.keep` until then ("no running terminal"), so this waits
+ * until herdr's `terminals()` lists `address` before keeping it.
+ * deps: {run, terminals, sleep(ms)} (sleep: the spawn's `cx.sleep`). Resolves true once
+ * kept, false when herdr has not listed it after KEEP_WAIT_MS (nothing is run then).
+ */
+export async function keepStarted({ run, terminals, sleep }, address) {
+  for (let waited = 0; ; waited += KEEP_STEP_MS) {
+    if ((terminals() ?? []).some((t) => t?.address === address)) {
+      run('terminal.keep', { terminal: address });
+      return true;
+    }
+    if (waited >= KEEP_WAIT_MS) return false;
+    await sleep(KEEP_STEP_MS);
+  }
+}
+
+// The error for a started terminal herdr never listed: it runs, so say where to find it.
+export function notShownText(address) {
+  return `started ${address}, but herdr did not show it within ${KEEP_WAIT_MS / 1000}s (hc attach ${address})`;
+}
+
 export function terminalCommand(name, id) {
   return { name, args: { terminal: id } };
 }

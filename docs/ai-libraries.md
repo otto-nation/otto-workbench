@@ -5337,6 +5337,17 @@ Listing is one paginated REST call per slug. Status is aliased GraphQL
 as variables. A pool of four runs those batches; a failed batch is partial
 and its numbers stay unhydrated.
 
+### board/locks.py
+
+Whether something is working on a PR right now, in the words its badge shows.
+
+``lock_of(repo_key, branch, worktree)`` is the board's one answer. A live ``pr``
+run on the branch's target (``core.run_lock.live_holder`` over
+``pr.target.target_dir``) wins and reads ``Locked · pr <subcommand>``; else a
+live interactive session in the branch's worktree (``core.session_lock.holders``)
+reads ``Locked · <Pi|Claude> session``; else None. Only the first two words of
+the run's recorded command are shown: the full argv carries paths and body text.
+
 ### board/model.py
 
 The PR board's vocabulary: schema version, lanes, badges, and row facts.

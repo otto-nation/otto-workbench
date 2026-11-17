@@ -311,17 +311,13 @@ export class Workflows {
     });
     if (!argv) return;
     this.acx.spawn(async (cx) => {
-      let res;
+      // A throwing host call (exec, terminals) is reported as the trail error, not dropped.
       try {
-        res = parseRunReply(await exec("hc", argv, {}));
+        const res = parseRunReply(await exec("hc", argv, {}));
+        const kept = res.ok && await keepStarted({ run, terminals, sleep: (ms) => cx.sleep(ms) }, res.terminal);
+        this.trailError = res.ok ? (kept ? null : notShownText(res.terminal)) : (res.error?.message ?? "failed");
       } catch (err) {
-        res = { ok: false, error: { message: String(err?.message ?? err) } };
-      }
-      if (res.ok) {
-        const kept = await keepStarted({ run, terminals, sleep: (ms) => cx.sleep(ms) }, res.terminal);
-        this.trailError = kept ? null : notShownText(res.terminal);
-      } else {
-        this.trailError = res.error?.message ?? "failed";
+        this.trailError = String(err?.message ?? err);
       }
       cx.notify();
     });

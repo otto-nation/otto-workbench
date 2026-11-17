@@ -91,6 +91,16 @@ RUNS_JS
   [ "$output" = '{"error":"started t9, but herdr did not show it within 3s (hc attach t9)","ran":[]}' ]
 }
 
+@test "open trail: a throwing terminals() is reported as the trail error, with no keep" {
+  _host "$RUNS
+    H.terminals = () => { throw new Error('host gone'); };
+    const { w, settle } = await load();
+    w.openTrail({ on: null, id: 'R1', trailRoot: 'inv-1', repo: 'o/n', cwd: '/w/n' }); await settle();
+    out({ error: w.trailError, ran });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"error":"host gone","ran":[]}' ]
+}
+
 @test "run session: a remote run's session is asked of and started on its machine" {
   _host "$RUNS
     const { w, settle } = await load('homelab');

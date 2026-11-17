@@ -150,6 +150,40 @@ they edit. agent-worktree uses the same predicate before putting the session on
 the hook env. A target session's system note forbids direct file edits, since
 the exemption removes the guard against a fix pass committing over them.
 
+## session-brief
+
+Keeps a title and a short TL;DR on every interactive (`tui`) pi session, with the
+worktrees and PRs it touched, so a session can be closed and found again from the
+Sessions herdr panel. json/print (subagents, `pr` pipeline runs) and rpc sessions
+are left alone (`shouldBrief`).
+
+- **When.** `agent_settled` arms a 2-minute timer that `input` and `agent_start`
+  cancel; when it fires, and on a `session_shutdown` other than `reload`, a brief is
+  written — but only when an assistant message follows the last brief
+  (`needsBrief`). A killed session keeps its last idle brief. A clean exit waits up
+  to 20 s for the final one.
+- **What.** The recent turns (user and assistant text, bash commands, newest
+  12 000 characters) go to the `light` tier from `config models` through
+  `ctx.modelRegistry.complete`, which answers `{title, tldr}`. Worktrees and PRs
+  are mechanical, from `pi-sessions facts` (`ai/lib/pi_sessions/facts.py` over the
+  session file, `pr.agent_worktree` for worktrees, the cached `pr board` listing
+  for each worktree branch's open PR, plus PRs its `pr` / `gh pr` commands named).
+- **Where.** A `session-brief` custom entry `{title_set, name, tldr, worktrees, prs,
+  at}` in the session file; custom entries never reach the model. The title goes
+  through `pi.setSessionName()` only when the session is unnamed or still carries
+  the title this extension last set (`title_set`); a name a person chose is never
+  touched, and the TL;DR always refreshes.
+- **Live marker.** `session_start` runs `pi-sessions live --pid … --session-file …`
+  (marker under `<state>/pi-sessions/live/`, and `otto.session=<id>` on the herdr
+  terminal); `session_shutdown` clears it. `pi-sessions list` reads RSS and idle
+  for live sessions through it.
+
+`detect.ts` imports node built-ins only; `wire.ts` holds the handlers with SDK
+types only, so `tests/pi_extensions_session_brief.bats` drives them with a
+stand-in `pi` (`tests/pi_session_brief_fake.mjs`). It is a feature, not a guard;
+its Claude Code twin is deferred by a `ceiling:` in `index.ts` until Claude Code
+sessions run on the agent hosts.
+
 ## Overriding one
 
 `~/.config/workbench/overrides/ai/pi/extensions/<name>/` replaces the extension

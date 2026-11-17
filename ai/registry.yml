@@ -23,6 +23,11 @@ tools:
     visibility: hidden
     description: "Decides and publishes an agent's worktree label on its herdr terminal — reached through report-agent-worktree"
 
+  - name: pi-sessions
+    permission: true
+    visibility: brief
+    description: "Lists pi sessions with their title, TL;DR, worktrees, PRs and live RSS/idle, and closes a live one — read by the Sessions herdr panel and written to by the session-brief Pi extension"
+
   - name: pr
     parser: cli.pr:reference_shape
     permission: true

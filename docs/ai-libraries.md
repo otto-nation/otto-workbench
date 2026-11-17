@@ -8569,6 +8569,74 @@ bodies are included differ.
 Not: the store (`core.memory`), argument parsing, or the report layout
 each scan owns.
 
+### pi_sessions/facts.py
+
+Which worktrees and PRs a pi session touched, read from its own entries.
+
+``tool_calls(entries, cwd)`` turns pi's assistant ``toolCall`` blocks (bash,
+edit, write) into ``pr.agent_worktree.ToolCall``s — the payload shape the
+agent-worktree hook reads — pairing each bash call with its ``toolResult`` text
+as stdout, so which worktree a call targeted stays ``pr.agent_worktree``'s
+answer. ``worktrees_of(calls, cwd)`` is the session checkout's worktree, then
+every other worktree a call targeted, first seen first. ``prs_in_command(command,
+stdout, default_repo, host)`` reads PR references from one ``pr …`` / ``gh pr …``
+command and its output: PR URLs, ``gh pr <view|checkout|…> N`` (``--repo`` /
+``-R`` naming the repo), ``pr <review|comments|…> N`` and ``--pr N``; a bare number
+needs a repo and is dropped without one. ``collect(path)`` does all of it for one
+session file and returns ``Facts``. ``pr_from_board_row`` reads a cached
+``pr board`` listing row; ``merge_prs(seen, board)`` keeps one ``PrRef`` per
+(repo, number), board rows first, so their titles win.
+
+### pi_sessions/listing.py
+
+The session list: which pi sessions to show and what each row says.
+
+``list_sessions(root, now=, since_days=, live=, include_all=)`` lists session
+files under *root* active (by mtime) in the last *since_days* days that carry a
+brief, a name or a live process — every one of them with *include_all* — plus
+any older session that is live (*live*, keyed by session file, from
+``pi_sessions.live.running``) or named by a person (a name other than the auto
+title its last brief recorded), newest first. ``show(root, key, live=)``
+is one session by id or path, whatever its age. A ``SessionRow`` carries the
+header, the tail's name and brief (``title_set``, ``tldr``, ``worktrees``,
+``prs``) and the ``Live`` facts; ``to_json()`` is the row ``pi-sessions list
+--json`` prints.
+
+### pi_sessions/live.py
+
+Which pi sessions are running here: markers the session-brief extension writes, read back.
+
+A marker is ``<state>/pi-sessions/live/<pid>.json`` holding a ``Marker``: the
+pid, session id and file, cwd, herdr terminal, and when it started.
+``record(pid, session_file, header, env)`` writes it and, in a herdr terminal
+(``HC_TERMINAL_ID``), labels that terminal ``otto.session=<id>`` — the label the
+herdr mods find a live session's terminal by. ``clear(pid)`` removes it;
+``markers()`` lists them by pid; ``marker_for(session_file)`` finds one.
+``state(marker, now)`` asks ``ps`` for the pid's RSS and command name and returns
+a ``Live`` — RSS in MB, idle seconds as *now* minus the session file's mtime
+(pi appends every message), the terminal — or None when the pid is gone or is
+not ``pi``. ``running(now)`` is every live marker keyed by session file.
+``Live.close_candidate`` is idle over ``CLOSE_IDLE_S`` (16 h) and RSS over
+``CLOSE_RSS_MB`` (200 MB). ``close(marker)`` sends SIGTERM to a live pi, whose
+session_shutdown handlers run before it exits; the session file stays.
+
+### pi_sessions/session_file.py
+
+Reading pi's session files: the header, the tail, every entry, and lookup by id.
+
+A session is ``<root>/<cwd-slug>/<timestamp>_<id>.jsonl``. Its first line is the
+header (``type: session``, ``id``, ``cwd``, ``timestamp``); every other line is
+an entry. ``sessions_root(env)`` is ``$PI_CODING_AGENT_SESSION_DIR`` when set and
+non-empty, else ``~/.pi/agent/sessions``. ``session_files(root)`` lists every
+session file, sorted. ``read_header(path)`` returns a ``Header`` or None.
+``read_tail(path, limit=)`` scans backwards from the end, at most *limit* bytes,
+to the last ``session-brief`` custom entry and returns a ``Tail``: that entry's
+data, and the session name — a ``session_info`` after the brief wins (a cleared
+one is None), else the name the brief recorded; with no brief in reach, the
+latest ``session_info`` seen. ``iter_entries(path)`` yields every entry, skipping
+the header and lines that do not parse. ``find_session(root, key)`` takes an
+absolute path or a session id.
+
 ### pr/push_intent.py
 
 What every push on this machine was about to do, and whether it did it.
@@ -9425,6 +9493,30 @@ three exit 0 to allow, 2 to refuse, and 3 when the check could not run. A conten
 with a warning on stderr.
 
 ``WORKBENCH_ALLOW_UPSTREAM`` is not read here — see ``gh.owners``.
+
+### cli/pi_sessions.py
+
+``pi-sessions`` — list pi sessions with their briefs, and act on live ones.
+
+Usage:
+  pi-sessions list [--since DAYS] [--all] [--json]
+  pi-sessions show ID [--json]
+  pi-sessions facts SESSION_FILE [--json]
+  pi-sessions live --pid PID (--session-file FILE | --clear)
+  pi-sessions close ID
+
+``list`` prints sessions active in the last DAYS days (default 9) that carry a
+brief, a name or a live process (``--all``: every one in the window), plus older
+named and live ones (``pi_sessions.listing``); ``--json`` prints ``{"schema": 1,
+"since_days", "now", "sessions": [row…]}``. ``show`` prints one row. ``facts``
+prints ``{"worktrees", "prs"}`` for one session file: its worktrees
+(``pi_sessions.facts``) and its PRs — open PRs on each worktree's branch from the
+cached ``pr board`` listing (``board.cache``, no GitHub call) merged with those
+its ``pr`` / ``gh pr`` commands named. ``live`` records or clears a pi process's
+live marker (``pi_sessions.live``); the session-brief Pi extension calls it.
+``close`` sends SIGTERM to the session's live pi; the file stays.
+
+Exit codes: 0 done; 1 no such session, or not running here; 2 usage.
 
 ### cli/pr.py
 

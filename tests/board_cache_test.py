@@ -8,6 +8,7 @@ import time
 from board.cache import (
     VIEWER_TTL_S,
     merged,
+    open_prs_on_branch,
     path_for,
     read,
     read_viewer,
@@ -161,3 +162,19 @@ def test_viewer_offline_missing_is_empty(tmp_path, monkeypatch):
 
     monkeypatch.setattr("gh.client.login", boom)
     assert viewer(refresh=False) == ""
+
+
+def test_open_prs_on_branch_reads_open_listing_rows_for_the_branch(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
+    write("acme-widget-abcd", Phase.LISTING, {"rows": [
+        {"number": 9, "branch": "feat", "state": "OPEN"},
+        {"number": 4, "branch": "feat", "state": "OPEN"},
+        {"number": 5, "branch": "feat", "state": "MERGED"},
+        {"number": 6, "branch": "other", "state": "OPEN"},
+    ]})
+    assert [r["number"] for r in open_prs_on_branch("acme-widget-abcd", "feat")] == [4, 9]
+
+
+def test_open_prs_on_branch_is_empty_without_a_cache(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path))
+    assert open_prs_on_branch("acme-widget-abcd", "feat") == []

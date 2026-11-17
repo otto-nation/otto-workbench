@@ -24,6 +24,7 @@
     "command:otto-mcp-server",
     "command:otto-queue",
     "command:owners-check",
+    "command:pi-sessions",
     "command:pr",
     "command:pr-describe",
     "command:pr-rebase",

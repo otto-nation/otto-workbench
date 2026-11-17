@@ -1,5 +1,83 @@
 # Changelog
 
+## [2.0.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.42.0...otto-ai-tools-v2.0.0) (2026-11-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **review:** pr review --submit and --event are removed; --post always posts a draft and --publish comment|approve|request_changes publishes
+* **ai:** workbench-rules project add and the review preflight no longer read or write a repo's CLAUDE.md; only AGENTS.md is used.
+* **packages:** component brew is renamed to packages; install.yml state migrates
+* **ai:** task commit, commit:reword, review, pr:review and ai:setup are removed, AI_COMMAND is no longer read, and the ci-cd agent is deleted; use pr create, pr describe and pr review, and ai/setup.sh to scaffold the GH_TOKEN file
+* **review:** the `claude-review` command is now `review`. Invocations of `claude-review` fail once the symlink is removed; use `review` or `pr review`.
+* **mcp:** `bin/local/validate-tool-schema` is removed. Nothing invokes it but `validate-all`, which discovers validators by glob.
+
+### Features
+
+* **agent:** pass each phase's thinking level to claude as --effort ([#1784](https://github.com/otto-nation/otto-workbench/issues/1784)) ([3ed52d3](https://github.com/otto-nation/otto-workbench/commit/3ed52d3658079124dd7d3b0ec01d392448208b11))
+* **agents:** make AGENTS.md the project instructions file ([#1688](https://github.com/otto-nation/otto-workbench/issues/1688)) ([529b70c](https://github.com/otto-nation/otto-workbench/commit/529b70ce5cc973d0603cc6671776a6cad863d0c2))
+* **ai:** context.compact_at caps where every harness compacts ([#1785](https://github.com/otto-nation/otto-workbench/issues/1785)) ([36acc70](https://github.com/otto-nation/otto-workbench/commit/36acc7057284c9f57a8f79f9fd702fc3e572d938))
+* **ai:** install rtk and worktrunk through mise when Homebrew is absent ([#1664](https://github.com/otto-nation/otto-workbench/issues/1664)) ([2b0e2b4](https://github.com/otto-nation/otto-workbench/commit/2b0e2b4aed416a044d8e4b3906777598555e39e8))
+* **ai:** make AGENTS.md the only agent-guidance filename ([#1982](https://github.com/otto-nation/otto-workbench/issues/1982)) ([25a8c0c](https://github.com/otto-nation/otto-workbench/commit/25a8c0c1f898379f29d2664034b207e420879541))
+* **ai:** refuse issue filing and PR writes from subagents ([#1756](https://github.com/otto-nation/otto-workbench/issues/1756)) ([5224863](https://github.com/otto-nation/otto-workbench/commit/522486342b2d5f4a79c834fa3bee4aa3b1f3cca6))
+* **batch:** add pr-batch skill and pr batch resume --steps ([#1820](https://github.com/otto-nation/otto-workbench/issues/1820)) ([32f0ed2](https://github.com/otto-nation/otto-workbench/commit/32f0ed265ff6780421899d2871b249c48546a268))
+* **claude:** agents declare a tier; sync installs its model and effort ([#1786](https://github.com/otto-nation/otto-workbench/issues/1786)) ([a54a8b3](https://github.com/otto-nation/otto-workbench/commit/a54a8b3d3dc74195bb483d02dc847c747ec19ff8))
+* **docs:** render tool docs from their owners; root agents in worktrees ([#1609](https://github.com/otto-nation/otto-workbench/issues/1609)) ([7d4e3b5](https://github.com/otto-nation/otto-workbench/commit/7d4e3b5c11f3ebf3fd50e90f2cf8cae1f95ed7b7))
+* **gh:** refuse cross-group references in published text ([#1822](https://github.com/otto-nation/otto-workbench/issues/1822)) ([0848ec3](https://github.com/otto-nation/otto-workbench/commit/0848ec346855bdfcccd55359f072e838c5445edb))
+* **guards:** refuse GitHub writes outside github.owners ([#1773](https://github.com/otto-nation/otto-workbench/issues/1773)) ([1c76eb7](https://github.com/otto-nation/otto-workbench/commit/1c76eb73e112369d25829a0da4e9312eac6d5798))
+* **herdr:** space-prs lists PR worktrees and the agent in each ([#2106](https://github.com/otto-nation/otto-workbench/issues/2106)) ([ac7f36d](https://github.com/otto-nation/otto-workbench/commit/ac7f36d929a2008be81992168da893840b1f0e22))
+* **maintenance:** reap hung heavy processes; queue-guard agents ([#2067](https://github.com/otto-nation/otto-workbench/issues/2067)) ([d26a538](https://github.com/otto-nation/otto-workbench/commit/d26a53831236815b3cef71b8c0a14e5668bb453b))
+* **mcp:** honour per-command ok exit codes from contracts ([#2030](https://github.com/otto-nation/otto-workbench/issues/2030)) ([ccd5ee5](https://github.com/otto-nation/otto-workbench/commit/ccd5ee52a64a4ea3752ec317df28f292a19fbe87))
+* **mcp:** serve every contracted tool, not only pr ([#2037](https://github.com/otto-nation/otto-workbench/issues/2037)) ([9a7db0c](https://github.com/otto-nation/otto-workbench/commit/9a7db0c66f00ad269cfe85ce9c4c112805373d1c))
+* **queue:** introduce otto_queue ledger system and CLI ([#2004](https://github.com/otto-nation/otto-workbench/issues/2004)) ([0279ef1](https://github.com/otto-nation/otto-workbench/commit/0279ef14b7e277d83ff78c8a37b6376ae81e7ae7))
+* **queue:** run jobs with an on-demand worker inside workbench.slice ([#2031](https://github.com/otto-nation/otto-workbench/issues/2031)) ([c810350](https://github.com/otto-nation/otto-workbench/commit/c81035017472c62b66afbd3c6f6d4f5bc3f29458))
+* **review:** a bad PR claim becomes a should-fix finding ([#1836](https://github.com/otto-nation/otto-workbench/issues/1836)) ([bf00c22](https://github.com/otto-nation/otto-workbench/commit/bf00c225f021c3497d4e87f98c2f7ce25f4894f7))
+* **review:** behaviours cite tests; an advisory test hint ([#1887](https://github.com/otto-nation/otto-workbench/issues/1887)) ([500ca02](https://github.com/otto-nation/otto-workbench/commit/500ca02a21dc48ef02eeb8fc4c5308198ab471f7))
+* **review:** one --publish flag decides whether a post is published ([#2041](https://github.com/otto-nation/otto-workbench/issues/2041)) ([bf48ff4](https://github.com/otto-nation/otto-workbench/commit/bf48ff445f6d680b4827e1e136923430b418b40c))
+* **review:** per-PR focus areas; fix the --issue section ([#1807](https://github.com/otto-nation/otto-workbench/issues/1807)) ([de315e2](https://github.com/otto-nation/otto-workbench/commit/de315e2adc6b103074b55481cb120c5de7fad2ad))
+* **review:** questions, verified notes, and an assessing summary ([#1915](https://github.com/otto-nation/otto-workbench/issues/1915)) ([f09013d](https://github.com/otto-nation/otto-workbench/commit/f09013dc6d539133b7d7f63a26da7cb0d3b0f843))
+* **review:** record what the PR description and ticket claim ([#1819](https://github.com/otto-nation/otto-workbench/issues/1819)) ([076d790](https://github.com/otto-nation/otto-workbench/commit/076d79001e1a35f3e311a9d1342e53ec97fbd6e0))
+* **review:** the harness states the verdict; Disapprove retired ([#1927](https://github.com/otto-nation/otto-workbench/issues/1927)) ([90d205c](https://github.com/otto-nation/otto-workbench/commit/90d205c399f50f8fa45b0cd5ec7b1e5339438c62))
+* **skills:** add /diverge, an opt-in isolated-branch ideation skill ([#1891](https://github.com/otto-nation/otto-workbench/issues/1891)) ([92974fb](https://github.com/otto-nation/otto-workbench/commit/92974fbbc06d76755a902425d56b793961d903d9))
+* **workbench:** draw down the follow-up backlog ([#1548](https://github.com/otto-nation/otto-workbench/issues/1548)) ([cca0570](https://github.com/otto-nation/otto-workbench/commit/cca057031bfbd1e80bcad36a687eaabe130efd18))
+* **workspace:** keep plans and specs at the container ([#1564](https://github.com/otto-nation/otto-workbench/issues/1564)) ([0f2db4b](https://github.com/otto-nation/otto-workbench/commit/0f2db4b6b9fba9a32431b37c2ecdd807dba18422))
+
+
+### Bug Fixes
+
+* **ai:** regenerate git and tool rules on every sync ([#1648](https://github.com/otto-nation/otto-workbench/issues/1648)) ([bbb7736](https://github.com/otto-nation/otto-workbench/commit/bbb7736d5bc53475790172766ecbb8de9219ab73))
+* **ai:** steer one-shot sessions and subagents off background work ([#1749](https://github.com/otto-nation/otto-workbench/issues/1749)) ([43b2719](https://github.com/otto-nation/otto-workbench/commit/43b27197e1544e6b6cd7ce91afd0f30212a91ad6))
+* **bin:** reject head, grep -q and sed q pipeline consumers ([#1762](https://github.com/otto-nation/otto-workbench/issues/1762)) ([f0ab03e](https://github.com/otto-nation/otto-workbench/commit/f0ab03ec98d4c0fe440297b30f2b456c0227856e))
+* **gh:** read shell commands the way bash runs them ([#1839](https://github.com/otto-nation/otto-workbench/issues/1839)) ([4752cac](https://github.com/otto-nation/otto-workbench/commit/4752cac827c012d0a2aab1185eaf6147d988e25f))
+* **git:** drain awk so worktree lookups cannot die of SIGPIPE ([#1753](https://github.com/otto-nation/otto-workbench/issues/1753)) ([28ab3df](https://github.com/otto-nation/otto-workbench/commit/28ab3df61a6bc84f335cc0857dbe68500c6482ec))
+* **guards:** keep sessions out of the installed copy ([#1823](https://github.com/otto-nation/otto-workbench/issues/1823)) ([720acbe](https://github.com/otto-nation/otto-workbench/commit/720acbe93a1d83ac2580a692c4f389fb5523cc3e))
+* **mcp:** pass the command as a positional, not --command ([#2035](https://github.com/otto-nation/otto-workbench/issues/2035)) ([5bd672c](https://github.com/otto-nation/otto-workbench/commit/5bd672c736de3da2dd68396c8a45018e3979cda2))
+* **migrations:** park memory no repo keys instead of retrying forever ([#1647](https://github.com/otto-nation/otto-workbench/issues/1647)) ([b565ce6](https://github.com/otto-nation/otto-workbench/commit/b565ce6e1810c0b76bb7528d6e0a917f269baefd))
+* **migrations:** treat an empty memory directory as nothing to carry ([#1554](https://github.com/otto-nation/otto-workbench/issues/1554)) ([c0800d2](https://github.com/otto-nation/otto-workbench/commit/c0800d264e67946fc81dd0547b72e5489d2cac67))
+* **review:** one rule for reading omitted files ([#2023](https://github.com/otto-nation/otto-workbench/issues/2023)) ([4333b2f](https://github.com/otto-nation/otto-workbench/commit/4333b2f0a5aff07d37f324a29b152276a02f437a))
+* **review:** post via pr review --post; validate prose CLI refs ([#1670](https://github.com/otto-nation/otto-workbench/issues/1670)) ([bb16d74](https://github.com/otto-nation/otto-workbench/commit/bb16d742debdb6aaee04110cc73d28adf84c8455))
+* **tests:** stop a stubbed registry scan costing pre-push minutes ([#1583](https://github.com/otto-nation/otto-workbench/issues/1583)) ([51e0c6c](https://github.com/otto-nation/otto-workbench/commit/51e0c6cbd165627fcc5ce6e567e97c56400ed238))
+* **tree-lock:** tell a broken probe apart from a free tree ([#1673](https://github.com/otto-nation/otto-workbench/issues/1673)) ([144d97b](https://github.com/otto-nation/otto-workbench/commit/144d97bf0dc5790e080175093dc584910f4c6e7e))
+
+
+### Performance Improvements
+
+* **guard:** one statement scan, six fewer forks ([#1545](https://github.com/otto-nation/otto-workbench/issues/1545)) ([0376b04](https://github.com/otto-nation/otto-workbench/commit/0376b049d219af1c8d5f0965bd3ab450b520b8d5))
+
+
+### Code Refactoring
+
+* **ai:** harness syncs read models from config.yml ([#1783](https://github.com/otto-nation/otto-workbench/issues/1783)) ([bb872a6](https://github.com/otto-nation/otto-workbench/commit/bb872a6dd4e74269a610aa71ff20578246bb36a0))
+* **ai:** name every ai/lib module through its package ([#1569](https://github.com/otto-nation/otto-workbench/issues/1569)) ([5a71453](https://github.com/otto-nation/otto-workbench/commit/5a714532902b0a112c2b32ffdb18c60831af2fe7))
+* **ai:** rename guidelines source off CLAUDE.md; fix export test ([#1985](https://github.com/otto-nation/otto-workbench/issues/1985)) ([ff893bb](https://github.com/otto-nation/otto-workbench/commit/ff893bb17967ef35589ef042183f175ab2d302d3))
+* **ai:** retire the go-task AI targets and lib/ai shell layer ([#1659](https://github.com/otto-nation/otto-workbench/issues/1659)) ([5b3ab9f](https://github.com/otto-nation/otto-workbench/commit/5b3ab9f6eab12766e6d98676e2c7d7a1c9200bdd))
+* **claude:** convert the four Claude hooks to shims ([#1616](https://github.com/otto-nation/otto-workbench/issues/1616)) ([5a2ce76](https://github.com/otto-nation/otto-workbench/commit/5a2ce763a6805d8eb497a72a8fef942c99f9812b))
+* **claude:** move project scaffolding out of steps.sh ([#1603](https://github.com/otto-nation/otto-workbench/issues/1603)) ([0525121](https://github.com/otto-nation/otto-workbench/commit/0525121adf1e5e4fd0f1615982caf35c8a2aa57e))
+* **mcp:** discover tools from the registry, not by probing scripts ([#1559](https://github.com/otto-nation/otto-workbench/issues/1559)) ([eb2b8cc](https://github.com/otto-nation/otto-workbench/commit/eb2b8cc72493b2f6d9f4b7e208d00134df5f065b))
+* **packages:** install package stacks on linux via mise ([#1708](https://github.com/otto-nation/otto-workbench/issues/1708)) ([bec72db](https://github.com/otto-nation/otto-workbench/commit/bec72db45d3f221a4cc9ab68e029c2619eb74a74))
+* **review:** agents write JSON artifacts ([#1769](https://github.com/otto-nation/otto-workbench/issues/1769)) ([0ef6331](https://github.com/otto-nation/otto-workbench/commit/0ef633135303cace3f5f8b6aa9e07edd574cc61b))
+* **review:** harness-owned frontmatter; rename claude-review ([#1560](https://github.com/otto-nation/otto-workbench/issues/1560)) ([847cedd](https://github.com/otto-nation/otto-workbench/commit/847ceddb44be721c81b8655b72ac4cd610f76b04))
+
 ## [1.42.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.41.1...otto-ai-tools-v1.42.0) (2026-08-03)
 
 

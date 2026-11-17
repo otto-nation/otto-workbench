@@ -126,8 +126,13 @@ export class BatchLauncher {
     this.note = this.note ? `${this.note}; ${message}` : message;
   }
 
-  reset() {
+  // Drops every selected PR not already launching; notifies nothing, so a render may call it.
+  clearSelection() {
     for (const k of [...this.selected]) if (!this.isPending(k)) this.selected.delete(k);
+  }
+
+  reset() {
+    this.clearSelection();
     if (!this.starting) this.note = null;
     this.acx.notify();
   }

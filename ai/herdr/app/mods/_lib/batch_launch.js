@@ -87,14 +87,11 @@ export function columnPreset(col) {
  * `lanes` are the board's shown lanes `{items, batch}`; `keys` are the selected PR keys; `keyOf` names a PR's.
  */
 export function selectionPreset(lanes, keys, keyOf) {
-  const want = new Set(keys);
-  if (want.size === 0) return null;
-  const holding = (lanes ?? []).filter((l) => (l.items ?? []).some((p) => want.has(keyOf(p))));
-  if (holding.length !== 1) return null;
-  const [lane] = holding;
+  const [first] = keys;
+  const lane = (lanes ?? []).find((l) => (l.items ?? []).some((p) => keyOf(p) === first));
+  if (!lane) return null;
   const inLane = new Set(lane.items.map(keyOf));
-  if (![...want].every((k) => inLane.has(k))) return null;
-  return lane.batch ?? null;
+  return keys.every((k) => inLane.has(k)) ? (lane.batch ?? null) : null;
 }
 
 /**

@@ -215,7 +215,7 @@ export default class PrsBoard extends View {
   }
 
   render(cx) {
-    if (tabOf() !== "mine" && this.selecting) this.stopSelecting();
+    if (tabOf() !== "mine" && this.selecting) this.endSelecting();
     this.workflows.show();
     const t = theme();
     const targets = this.activeTargets();
@@ -308,21 +308,29 @@ export default class PrsBoard extends View {
   }
 
   startSelecting() {
-    this.launcher.reset();
+    this.launcher.clearSelection();
     this.selecting = true;
     this.acx.notify();
   }
 
-  stopSelecting() {
-    this.launcher.reset();
+  // Leaves selecting and drops what was picked; notifies nothing, so render may call it.
+  endSelecting() {
+    this.launcher.clearSelection();
     this.selecting = false;
+  }
+
+  stopSelecting() {
+    this.endSelecting();
     this.acx.notify();
   }
 
-  // Opens the Batch page with the selection; one lane's step set carries over when the selection is that lane's.
+  // Opens the Batch page with the selection that is still on the board (a PR a filter has since hidden
+  // is dropped, not sent unseen); one lane's step set carries over when the selection is that lane's.
   continueBatch(lanes) {
     const key = (p) => prKey(p.repoSlug, p.number);
-    const keys = [...this.launcher.selected];
+    const onBoard = new Set(lanes.flatMap((l) => l.items.map(key)));
+    const keys = [...this.launcher.selected].filter((k) => onBoard.has(k));
+    this.launcher.selected = new Set(keys);
     const preset = selectionPreset(lanes, keys, key);
     if (preset) this.launcher.applyPreset(keys, preset);
     this.selecting = false;

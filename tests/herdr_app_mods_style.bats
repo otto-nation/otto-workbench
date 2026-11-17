@@ -176,7 +176,8 @@ teardown() {
   grep -Fq 'machineCard(`queue-machine-${block.key || "local"}`' "$view"
   grep -q 'title: block.title' "$view"
   grep -q 'counts: hide ? null : block.counts' "$view"
-  grep -q 'statusText("warn", block.hostNote)' "$view"
+  grep -q 'hostNote: block.hostNote' "$view"
+  grep -q 'statusText("warn", m.hostNote)' "$MODS/_ui/ui.js"
   grep -Fq 'children((opts.cards ?? []).map((block) => renderHomeCard(block, opts)))' "$view"
   run grep -nE 'homeModel|toggleCollapsed|slotGauge' "$view"
   [ "$status" -eq 1 ]
@@ -200,7 +201,7 @@ teardown() {
   grep -q 'opts.page == null ? renderHome(opts) : renderMachine(opts)' "$view"
   grep -q 'page.summary' "$view"
   grep -q 'page.lanes' "$view"
-  grep -q 'statusText("warn", summary.hostNote)' "$view"
+  grep -q 'hostNote: summary.hostNote' "$view"
   run grep -nF 'heavy waits:' "$view"
   [ "$status" -eq 1 ]
 }

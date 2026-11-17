@@ -1,5 +1,6 @@
 /**
- * Host health model: severity, meters, staleness, process list. Pure.
+ * Host health model: severity, meters, staleness, process list.
+ * Neutral machine model for the shared UI, home cards and the host page. Pure.
  *
  * ceiling: fixed thresholds (LOADED_MEM_FREE, STRAINED_MEM_FREE, LOADED_DISK_USED,
  * STRAINED_DISK_USED); upgrade if a host with a different size profile needs its own.
@@ -204,12 +205,6 @@ function countsOf(health) {
   return parts.join(' · ');
 }
 
-function noteOf(health) {
-  const swap = health?.mem?.swap_used_mb;
-  if (!Number.isFinite(swap) || !(swap > 1024)) return null;
-  return `swap ${swap} MB`;
-}
-
 function statusOf(staleness, health) {
   if (staleness.kind === 'loading') return { kind: 'running', word: 'loading' };
   if (staleness.kind === 'unreachable') return { kind: 'warn', word: 'unreachable' };
@@ -221,50 +216,120 @@ function statusOf(staleness, health) {
   return { kind: 'pass', word: 'ok' };
 }
 
-/** Title, status, staleness, gauges, counts and swap note for one host entry. */
+function lastHealth(entry) {
+  return entry.result?.ok ? entry.result.health : entry.health;
+}
+
+function gb(mb) {
+  return (mb / 1024).toFixed(1);
+}
+
+function detailRows(health) {
+  const rows = [];
+  if (health.cores > 0) rows.push({ key: 'cores', value: String(health.cores) });
+  const load = health.load;
+  if (load != null) {
+    const parts = ['m1', 'm5', 'm15'].filter((k) => Number.isFinite(load[k])).map((k) => load[k].toFixed(1));
+    if (parts.length) rows.push({ key: 'load', value: parts.join(' · ') });
+  }
+  const mem = health.mem;
+  if (mem != null && Number.isFinite(mem.total_mb) && Number.isFinite(mem.available_mb)) {
+    rows.push({
+      key: 'memory',
+      value: `${gb(mem.total_mb - mem.available_mb)} of ${gb(mem.total_mb)} GB used`,
+    });
+  }
+  if (mem != null && Number.isFinite(mem.swap_used_mb)) {
+    rows.push({ key: 'swap', value: `${gb(mem.swap_used_mb)} GB` });
+  }
+  for (const [key, part] of [['disk home', health.disk?.home], ['disk docker', health.disk?.docker]]) {
+    const usedFrac = diskUsedOf(part);
+    if (usedFrac == null) continue;
+    rows.push({
+      key,
+      value: `${gb(part.used_mb)} of ${gb(part.size_mb)} GB (${Math.round(usedFrac * 100)}%)`,
+    });
+  }
+  if (health.procs != null) rows.push({ key: 'zombies', value: String(health.procs.zombies ?? 0) });
+  const heavy = health.heavy;
+  if (heavy != null) {
+    const bits = HEAVY_NAMES.filter((name) => heavy[name] > 0).map((name) => `${name} ${heavy[name]}`);
+    rows.push({ key: 'heavy', value: bits.length ? bits.join(', ') : 'none' });
+  }
+  const queue = health.queue;
+  if (queue != null) {
+    rows.push({
+      key: 'queue',
+      value: queue.busy === true ? 'busy' : `${queue.running ?? 0} running, ${queue.queued ?? 0} waiting`,
+    });
+  }
+  return rows;
+}
+
+/** Title, status, staleness, gauges and counts for one host entry. */
 export function hostSummary(entry, nowMs) {
   const staleness = hostStaleness(entry, nowMs);
-  const health = entry.result?.ok ? entry.result.health : entry.health;
+  const health = lastHealth(entry);
   return {
     title: hostTitle(entry),
     status: statusOf(staleness, health),
     staleness,
     gauges: health != null ? gaugesOf(health) : [],
     counts: health != null ? countsOf(health) : '',
-    note: health != null ? noteOf(health) : null,
   };
 }
 
-/**
- * The collapse map after a click on a block whose visible state is `open`: the stored value is
- * true when collapsed, so an open block becomes collapsed and the reverse. Returns a new map.
- */
-export function toggleCollapsed(map, key, open) {
-  return { ...(map ?? {}), [key]: Boolean(open) };
+/** Neutral machine model for the shared card and header. No hostNote. */
+export function machineModel(summary) {
+  const kind = summary.staleness?.kind;
+  const model = {
+    title: summary.title,
+    status: summary.status,
+    meters: (summary.gauges ?? []).map((g) => ({ label: g.label, model: g.meter, glyph: g.kind })),
+    counts: summary.counts,
+    muted: ['stale', 'unreachable', 'outdated'].includes(kind),
+  };
+  if (summary.staleness != null) {
+    model.staleness = {
+      words: summary.staleness.words,
+      warn: !['fresh', 'loading'].includes(kind),
+    };
+  }
+  return model;
 }
 
-/** `health.procs.top_cpu` or `top_mem` as rows with key, command, meta and right. */
-export function topProcesses(health, by) {
+/** `health.procs.top_cpu` or `top_mem` as rows with key, command, meta and right, capped at `limit`. */
+export function topProcesses(health, by, limit = 5) {
   const list = by === 'mem' ? health?.procs?.top_mem : health?.procs?.top_cpu;
   if (!Array.isArray(list) || health?.procs == null) return [];
+  if (!Number.isFinite(limit) || limit <= 0) return [];
   return list.filter((p) => Number.isFinite(p?.cpu) && Number.isFinite(p?.mem)).map((p) => ({
     key: `${p.pid}`,
     command: p.command,
     meta: `${p.user} · ${Number.isFinite(p.age_s) ? spanText(p.age_s) : '?'}`,
     right: `${p.cpu.toFixed(0)}% cpu · ${p.mem.toFixed(0)}% mem`,
-  }));
+  })).slice(0, limit);
 }
 
-/** One block per host, in the given order: summary, collapse, last good health. */
-export function hostsModel(entries, nowMs, collapsed) {
+/** Home cards in the given order: key, neutral model. */
+export function hostsModel(entries, nowMs) {
   return (entries ?? []).map((entry) => {
     const on = entry.on;
     const key = entry.key ?? (on == null || on === '' ? '' : String(on));
-    const summary = hostSummary(entry, nowMs);
-    const health = entry.result?.ok ? entry.result.health : entry.health;
-    const map = collapsed ?? {};
-    const forced = Object.prototype.hasOwnProperty.call(map, key) ? Boolean(map[key]) : null;
-    const open = forced == null ? summary.status.kind !== 'pass' : !forced;
-    return { key, summary, open, health };
+    return {
+      key,
+      model: machineModel(hostSummary(entry, nowMs)),
+    };
   });
+}
+
+/** Machine page: header model, last good health, process rows and detail rows. */
+export function hostPage(entry, nowMs, by) {
+  const health = lastHealth(entry) ?? null;
+  return {
+    model: machineModel(hostSummary(entry, nowMs)),
+    health,
+    processes: topProcesses(health, by),
+    details: health == null ? [] : detailRows(health),
+  };
 }

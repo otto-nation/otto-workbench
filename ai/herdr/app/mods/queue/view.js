@@ -8,9 +8,9 @@ import { tailLines } from "./_lib/output.js";
 import { friendlyError } from "./_lib/scope.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import {
-  pane, paneBar, scrollBody, sectionLabel, laneTitle, hoverRow, text, type, statusText, button,
-  dangerButton, iconButton, placeholder, errorLine, caption, meter, scrollInset, selectableCode,
-  keyValue, card,
+  pane, scrollBody, sectionLabel, laneTitle, hoverRow, text, type, statusText, button,
+  dangerButton, placeholder, errorLine, caption, scrollInset, selectableCode,
+  keyValue, card, machineCard, machineHeader, paneHeader,
 } from "./_ui/ui.js";
 
 function headline(row) {
@@ -163,38 +163,26 @@ function renderLaneRow(on, row, opts) {
   return out.concat(row.members.flatMap((m) => renderOne(on, m, opts, { member: true })));
 }
 
-function staleLine(stale) {
-  if (stale == null) return null;
-  return stale.warn ? statusText("warn", stale.words) : caption(stale.words);
-}
-
 function hideMeters(kind) {
   return kind === "outdated" || kind === "notInstalled";
 }
 
-function renderMeters(gauges, { muted = false } = {}) {
-  return h_flex().gap(SP.sm).items_center().flex_wrap()
-    .children((gauges ?? []).map((g) => meter(g, { muted, label: g.class })));
-}
-
 function renderHomeCard(block, opts) {
-  const t = opts.t;
   const kind = block.staleness?.kind;
-  const stale = staleLine(block.staleness && {
-    words: block.staleness.words,
-    warn: kind != null && kind !== "fresh",
-  });
   const muted = kind === "stale" || kind === "unreachable";
   const hide = hideMeters(kind);
-  return card(`queue-machine-${block.key || "local"}`)
-    .gap(SP.xs)
-    .on_click(() => opts.onSelectMachine(block.key))
-    .child(h_flex().gap(SP.sm).items_center()
-      .child(sectionLabel(block.title))
-      .when(stale != null, (e) => e.child(stale)))
-    .when(!hide, (e) => e.child(renderMeters(block.gauges, { muted })))
-    .when(!hide, (e) => e.child(caption(block.counts, muted ? t.muted : undefined)))
-    .when(block.hostNote != null, (e) => e.child(statusText("warn", block.hostNote)));
+  const model = {
+    title: block.title,
+    staleness: block.staleness && {
+      words: block.staleness.words,
+      warn: kind != null && kind !== "fresh",
+    },
+    meters: hide ? [] : (block.gauges ?? []).map((g) => ({ label: g.class, model: g })),
+    counts: hide ? null : block.counts,
+    hostNote: block.hostNote,
+    muted,
+  };
+  return machineCard(`queue-machine-${block.key || "local"}`, model, () => opts.onSelectMachine(block.key));
 }
 
 function renderMore(lane, opts) {
@@ -229,23 +217,23 @@ function renderMachine(opts) {
   const page = opts.page;
   const summary = page.summary;
   const kind = summary.staleness?.kind;
-  const stale = staleLine(summary.staleness && {
-    words: summary.staleness.words,
-    warn: kind != null && kind !== "fresh",
-  });
   const muted = opts.muted;
   const hide = hideMeters(kind);
-  const t = opts.t;
+  const model = {
+    title: summary.title,
+    staleness: summary.staleness && {
+      words: summary.staleness.words,
+      warn: kind != null && kind !== "fresh",
+    },
+    meters: hide ? [] : (summary.gauges ?? []).map((g) => ({ label: g.class, model: g })),
+    counts: hide ? null : summary.counts,
+    hostNote: summary.hostNote,
+    muted,
+  };
   const body = v_flex().gap(SP.md);
   body.child(h_flex().items_center().gap(SP.xs)
     .child(button("queue-back", "‹ Machines", () => opts.onBack())));
-  body.child(v_flex().gap(SP.xxs)
-    .child(h_flex().gap(SP.sm).items_center()
-      .child(text("title", summary.title))
-      .when(stale != null, (e) => e.child(stale)))
-    .when(!hide, (e) => e.child(renderMeters(summary.gauges, { muted })))
-    .when(!hide, (e) => e.child(caption(summary.counts, muted ? t.muted : undefined)))
-    .when(summary.hostNote != null, (e) => e.child(statusText("warn", summary.hostNote))));
+  body.child(machineHeader(model));
   if (opts.loading) return scrollBody().p(SP.md).gap(SP.md).child(body).child(placeholder("Loading…"));
   if (opts.busy) return scrollBody().p(SP.md).gap(SP.md).child(body).child(caption("busy"));
   if (opts.cancelError != null) {
@@ -262,11 +250,6 @@ export function renderQueue(props) {
   const opts = { ...props, t, openGroups: props.openGroups ?? {} };
   const body = opts.page == null ? renderHome(opts) : renderMachine(opts);
   return pane("queue")
-    .child(paneBar()
-      .child(h_flex().items_center().gap(SP.sm)
-        .child(div().flex_1().child(text("title", "Queue")))
-        .child(iconButton("queue-refresh", "mods/queue/refresh.svg",
-          props.spinning ? "Refreshing…" : "Refresh", () => props.onRefresh(),
-          { spinning: props.spinning }))))
+    .child(paneHeader("Queue", { spinning: props.spinning, onRefresh: () => props.onRefresh(), id: "queue-refresh" }))
     .child(body);
 }

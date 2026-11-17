@@ -2,13 +2,16 @@
 import { View } from "gpui-kit";
 import { exec, shared, setShared, layout } from "herdr";
 import { eachByMachine, machineOf } from "./_lib/board_pull.js";
-import { hostsModel, toggleCollapsed } from "./_lib/hosts.js";
+import { hostPage, hostsModel } from "./_lib/hosts.js";
 import { loadHealth } from "./_lib/hosts_load.js";
 import { LOAD_DELAY_MS } from "./_lib/load_state.js";
+import { clearMachine, navStateOf, pageOf, selectMachine } from "./_lib/machine_nav.js";
 import { panelOn } from "./_lib/panel_toggle.js";
 import { remoteOns } from "./_lib/machines.js";
 import { refreshSpinning } from "./_lib/queue_lanes.js";
 import { renderHosts } from "./view.js";
+
+const navState = () => navStateOf(shared("hosts.machine"));
 
 export default class Hosts extends View {
   // Handlers run after the render that built them; a redraw or task requested through that render's
@@ -73,8 +76,13 @@ export default class Hosts extends View {
     });
   }
 
-  toggleMachine(key, open) {
-    setShared("hosts.collapsed", toggleCollapsed(shared("hosts.collapsed"), key, open));
+  openMachine(key) {
+    setShared("hosts.machine", selectMachine(navState(), key).machine);
+    this.acx.notify();
+  }
+
+  closeMachine() {
+    setShared("hosts.machine", clearMachine(navState()).machine);
     this.acx.notify();
   }
 
@@ -83,8 +91,8 @@ export default class Hosts extends View {
     this.acx.notify();
   }
 
-  model(nowMs) {
-    const entries = this.targets().map((t) => {
+  entries() {
+    return this.targets().map((t) => {
       const key = machineOf(t.on);
       const rec = this.byOn.get(key);
       return {
@@ -96,16 +104,27 @@ export default class Hosts extends View {
         health: rec?.health,
       };
     });
-    return hostsModel(entries, nowMs, shared("hosts.collapsed") ?? {});
+  }
+
+  model(nowMs) {
+    const entries = this.entries();
+    const current = pageOf(navState(), entries);
+    return {
+      cards: hostsModel(entries, nowMs),
+      page: current == null ? null : hostPage(current, nowMs, this.by),
+      key: current == null ? "" : current.key,
+    };
   }
 
   render(_cx) {
     const nowMs = Date.now();
+    const model = this.model(nowMs);
     return renderHosts({
-      blocks: this.model(nowMs),
+      ...model,
       by: this.by,
       spinning: refreshSpinning(this.refreshSince, nowMs),
-      onToggleMachine: (key, open) => this.toggleMachine(key, open),
+      onSelectMachine: (key) => this.openMachine(key),
+      onBack: () => this.closeMachine(),
       onBy: (by) => this.setBy(by),
       onRefresh: () => this.refreshNow(),
     });

@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for herdr-app queue home model (pure: meters, overview, machine pages).
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/app/mods/_lib/*.js
+# select-on: ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/_lib/machine_nav.js
 
 setup() {
   load 'test_helper'
@@ -15,6 +15,7 @@ teardown() {
 
 _js() {
   run node --input-type=module -e "
+    import * as n from '$REPO_ROOT/ai/herdr/app/mods/_lib/machine_nav.js';
     import * as h from '$REPO_ROOT/ai/herdr/app/mods/_lib/queue_home.js';
     import { RECENT_TERMINAL, staleness } from '$REPO_ROOT/ai/herdr/app/mods/_lib/queue_lanes.js';
     $1
@@ -182,8 +183,8 @@ _js() {
 @test "selectMachine and clearMachine are immutable; pageOf falls back when the machine is gone" {
   _js '
     const orig = {machine: null};
-    const selected = h.selectMachine(orig, "mini");
-    const cleared = h.clearMachine(selected);
+    const selected = n.selectMachine(orig, "mini");
+    const cleared = n.clearMachine(selected);
     const machines = [
       {on:null, key:""},
       {on:"mini", key:"mini"},
@@ -193,10 +194,10 @@ _js() {
       selected,
       cleared,
       same: orig === selected,
-      hit: h.pageOf(selected, machines)?.key ?? null,
-      miss: h.pageOf({machine: "gone"}, machines),
-      home: h.pageOf({machine: null}, machines),
-      local: h.pageOf({machine: ""}, machines)?.key ?? null,
+      hit: n.pageOf(selected, machines)?.key ?? null,
+      miss: n.pageOf({machine: "gone"}, machines),
+      home: n.pageOf({machine: null}, machines),
+      local: n.pageOf({machine: ""}, machines)?.key ?? null,
     }));
   '
   [ "$status" -eq 0 ]

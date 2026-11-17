@@ -1,6 +1,6 @@
 // Shared pieces for the mods, each one a DESIGN.md component: buttons (outline, solid,
 // icon), checkbox, checkRow, popover surface, tag, status glyph, section label, segmented control,
-// card, list row, keyValue, meter. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
+// card, list row, keyValue, meter, machine card, pane header. Sizes come from _lib/tokens.js; colours come from the active theme, never from here.
 import { div, svg } from "gpui-kit";
 import { h_flex, v_flex, TextView, Checkbox, Input } from "gpui-base";
 import { theme, settings } from "herdr";
@@ -217,6 +217,57 @@ function meterTrack(model, fill, hair) {
       .child(div().w(Math.round(METER.w * ratio)).h(METER.h).bg(fill));
   }
   return null;
+}
+
+// Stacked meter rows: a fixed-width label cell, the meter, then an optional warn/fail glyph.
+export function meterRows(meters, { muted = false } = {}) {
+  return v_flex().gap(SP.xs).children((meters ?? []).map((mt) => {
+    const row = h_flex().flex_none().gap(SP.xs).items_center()
+      .child(div().flex_none().w(LAYOUT.meterLabelW).child(text("section", mt.label, theme().muted)))
+      .child(meter(mt.model, { muted }));
+    if (mt.glyph === "warn" || mt.glyph === "fail") {
+      row.child(statusText(mt.glyph, null, { aria: `${mt.label} ${mt.glyph}` }));
+    }
+    return row;
+  }));
+}
+
+function machineTitleRow(m, role) {
+  const row = h_flex().gap(SP.sm).items_center()
+    .child(role === "title" ? text("title", m.title) : sectionLabel(m.title));
+  if (m.status) row.child(statusText(m.status.kind, m.status.word));
+  if (m.staleness) {
+    row.child(m.staleness.warn ? statusText("warn", m.staleness.words) : caption(m.staleness.words));
+  }
+  return row;
+}
+
+function machineBody(m) {
+  const children = [];
+  if (m.meters?.length) children.push(meterRows(m.meters, { muted: m.muted }));
+  if (typeof m.counts === "string" && m.counts !== "") {
+    children.push(caption(m.counts, m.muted ? theme().muted : undefined));
+  }
+  if (m.hostNote != null) children.push(statusText("warn", m.hostNote));
+  return children;
+}
+
+export function machineCard(id, m, onClick) {
+  const el = card(id).gap(SP.xs).on_click(onClick).child(machineTitleRow(m, "section"));
+  for (const child of machineBody(m)) el.child(child);
+  return el;
+}
+
+export function machineHeader(m) {
+  const el = v_flex().gap(SP.xxs).child(machineTitleRow(m, "title"));
+  for (const child of machineBody(m)) el.child(child);
+  return el;
+}
+
+export function paneHeader(title, { spinning = false, onRefresh, id = "refresh", icon = "mods/queue/refresh.svg" } = {}) {
+  return paneBar().child(h_flex().items_center().gap(SP.sm)
+    .child(div().flex_1().child(text("title", title)))
+    .child(iconButton(id, icon, spinning ? "Refreshing…" : "Refresh", () => onRefresh(), { spinning })));
 }
 
 // The centred, padded pane for an empty or error state.

@@ -57,13 +57,13 @@ _should() {
 }
 
 @test "shouldReport: every interactive session, herdr or not" {
-  _should tui t-1
+  _should tui
   [ "$output" = true ]
   _should tui
   [ "$output" = true ]
   local mode
   for mode in json print rpc; do
-    _should "$mode" t-1
+    _should "$mode"
     [ "$output" = false ] || { echo "$mode reported"; return 1; }
   done
 }

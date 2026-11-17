@@ -230,6 +230,18 @@ class TestReachedClaim:
         assert core.session_lock.claim_reached(worktree, pid=proc.pid, harness="pi")
         assert _pids(worktree) == [proc.pid]
 
+    def test_claiming_the_same_worktree_twice_is_a_noop(
+        self, worktree, sleeper, monkeypatch
+    ):
+        proc = sleeper()
+        assert core.session_lock.claim_reached(worktree, pid=proc.pid, harness="pi")
+
+        def boom(*_args, **_kwargs):
+            pytest.fail("acquire called again")
+
+        monkeypatch.setattr(core.session_lock, "acquire", boom)
+        assert core.session_lock.claim_reached(worktree, pid=proc.pid, harness="pi")
+
     def test_a_claim_elsewhere_releases_the_first(self, worktree, other, sleeper):
         proc = sleeper()
         core.session_lock.claim_reached(worktree, pid=proc.pid, harness="pi")

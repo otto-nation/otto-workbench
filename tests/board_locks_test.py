@@ -67,6 +67,7 @@ def test_nothing_held_is_none(worktree):
 def test_a_held_run_is_labelled_by_its_subcommand_only(held_run, worktree):
     held_run("k", "feat/a", "pr review --repo-dir /Users/me/secret 7")
     assert board.locks.lock_of("k", "feat/a", str(worktree)) == "Locked · pr review"
+    assert board.locks.lock_of("k", "feat/a", None) == "Locked · pr review"
 
 
 def test_a_live_session_is_labelled_by_harness(worktree, sleeper):
@@ -88,5 +89,8 @@ def test_a_run_beats_a_session(held_run, worktree, sleeper):
     assert board.locks.lock_of("k", "feat/a", str(worktree)) == "Locked · pr comments"
 
 
-def test_no_worktree_skips_the_session_probe(held_run):
+def test_no_worktree_skips_the_session_probe(monkeypatch):
+    monkeypatch.setattr(
+        core.session_lock, "holders", lambda *_a, **_k: pytest.fail("session probe ran")
+    )
     assert board.locks.lock_of("k", "feat/a", None) is None

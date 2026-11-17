@@ -345,6 +345,7 @@ def claim_reached(
     try:
         core.serde.write_json(state, {"pid": pid, "started": started, "worktree": str(worktree)})
     except OSError:
+        release(worktree, pid)
         return False
     return True
 

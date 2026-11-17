@@ -114,10 +114,10 @@ export function blockReason({ starting = false, busy = false, live = null, lock 
   return null;
 }
 
-function prReason(id, { run, repoDir, headMoved, batchBusy, live, lock, features }) {
+function prReason(id, { run, repoDir, headMoved, batchBusy, live, lock, features, starting }) {
   const unknown = unknownReason(run, repoDir);
   if (unknown) return unknown;
-  const block = blockReason({ busy: batchBusy, live, lock });
+  const block = blockReason({ starting, busy: batchBusy, live, lock });
   if (block) return block;
   if (id === 'review') {
     return run === null ? null : 'Already reviewed — use Re-run';

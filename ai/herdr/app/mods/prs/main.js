@@ -119,7 +119,8 @@ export default class PrsBoard extends Board {
     const d = this.detail;
     return actionsFor({
       repo: d.repo, number: d.number, repoDir: d.cwd, run: (d.runs ?? [])[0] ?? null,
-      headMoved: d.headMoved, batchBusy: d.batchBusy || this.launching || (this.launcher.starting && Boolean(this.selectedPr) && this.launcher.involvesPr(this.selectedPr)), live: this.launching ? null : (this.live ?? d.live),
+      headMoved: d.headMoved, batchBusy: d.batchBusy || this.launching, live: this.launching ? null : (this.live ?? d.live),
+      starting: this.launcher.starting && Boolean(this.selectedPr) && this.launcher.involvesPr(this.selectedPr),
       finished: this.finishedId, features: d.features, own: d.own, lock: d.lock,
     });
   }

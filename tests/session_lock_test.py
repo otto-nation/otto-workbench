@@ -45,6 +45,23 @@ def sleeper():
             proc.wait()
 
 
+@pytest.fixture
+def other(tmp_path: Path) -> Path:
+    repo = tmp_path / "other"
+    repo.mkdir()
+    subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
+    return repo
+
+
+@pytest.fixture(autouse=True)
+def _state(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+
+
+def _pids(tree: Path) -> list[int]:
+    return [h.pid for h in core.session_lock.holders(tree)]
+
+
 class TestTheRecord:
     def test_a_lock_path_is_inside_the_worktrees_git_dir(self, worktree: Path):
         path = core.session_lock.lock_path(worktree)
@@ -205,3 +222,48 @@ class TestTheRefusalMessage:
         assert str(proc.pid) in described
         assert "pi --resume" in described
         assert core.session_lock.holders(worktree)[0].started in described
+
+
+class TestReachedClaim:
+    def test_a_claim_records_the_session(self, worktree, sleeper):
+        proc = sleeper()
+        assert core.session_lock.claim_reached(worktree, pid=proc.pid, harness="pi")
+        assert _pids(worktree) == [proc.pid]
+
+    def test_a_claim_elsewhere_releases_the_first(self, worktree, other, sleeper):
+        proc = sleeper()
+        core.session_lock.claim_reached(worktree, pid=proc.pid, harness="pi")
+        core.session_lock.claim_reached(other, pid=proc.pid, harness="pi")
+        assert _pids(worktree) == []
+        assert _pids(other) == [proc.pid]
+
+    def test_the_home_record_is_never_touched(self, worktree, other, sleeper):
+        proc = sleeper()
+        core.session_lock.acquire(worktree, pid=proc.pid, harness="pi")
+        core.session_lock.claim_reached(other, pid=proc.pid, harness="pi")
+        core.session_lock.drop_reached(proc.pid)
+        assert _pids(worktree) == [proc.pid]
+        assert _pids(other) == []
+
+    def test_drop_releases_and_forgets(self, worktree, sleeper, tmp_path):
+        proc = sleeper()
+        core.session_lock.claim_reached(worktree, pid=proc.pid, harness="pi")
+        core.session_lock.drop_reached(proc.pid)
+        assert _pids(worktree) == []
+        assert not (tmp_path / "state" / "session-reach" / f"{proc.pid}.json").exists()
+
+    def test_a_dead_sessions_state_is_pruned_on_the_next_claim(
+        self, worktree, other, sleeper, tmp_path
+    ):
+        dead = sleeper()
+        core.session_lock.claim_reached(worktree, pid=dead.pid, harness="pi")
+        dead.kill()
+        dead.wait()
+        live = sleeper()
+        core.session_lock.claim_reached(other, pid=live.pid, harness="pi")
+        assert not (tmp_path / "state" / "session-reach" / f"{dead.pid}.json").exists()
+
+    def test_a_dead_pid_claims_nothing(self, worktree):
+        assert not core.session_lock.claim_reached(
+            worktree, pid=2**22 + 1, harness="pi"
+        )

@@ -7097,6 +7097,10 @@ only names a holder in a diagnostic. Here the record *is* the verdict.
 Several sessions in one worktree are legitimate, so the file is JSONL with one
 object per holder, as ``tree_lock``'s is.
 
+A session also holds at most one *reached* tree (``claim_reached``), the one
+it most recently worked in from elsewhere; the per-pid state under
+``session-reach/`` names it so the next claim can release it.
+
 ### core/session_lock_cli.py
 
 Command-line face of the interactive session lock.

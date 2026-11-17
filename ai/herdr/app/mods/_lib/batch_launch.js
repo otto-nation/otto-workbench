@@ -82,6 +82,19 @@ export function columnPreset(col) {
 }
 
 /**
+ * The preset a selection carries: the one lane's, when every selected PR sits in that single lane
+ * and the lane has one (a lane still loading has none); otherwise null and the form keeps its steps.
+ * `lanes` are the board's shown lanes `{items, batch}`; `keys` are the selected PR keys; `keyOf` names a PR's.
+ */
+export function selectionPreset(lanes, keys, keyOf) {
+  const [first] = keys;
+  const lane = (lanes ?? []).find((l) => (l.items ?? []).some((p) => keyOf(p) === first));
+  if (!lane) return null;
+  const inLane = new Set(lane.items.map(keyOf));
+  return keys.every((k) => inLane.has(k)) ? (lane.batch ?? null) : null;
+}
+
+/**
  * The Start form after a shortcut: exactly `keys` selected (none still launching, per
  * `pending`), only the preset's steps on, AI for those steps as the preset says and for
  * every other step as `withAi` had it, and rebase-behind as the preset says.

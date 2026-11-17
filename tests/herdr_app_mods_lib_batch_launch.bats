@@ -154,6 +154,12 @@ _throws() {
   [ "$output" = '["rebase:ai","ci","comments:ai",null,null,"rebase:behind",null,null,null,null]' ]
 }
 
+@test "selectionPreset: the lane's preset only when the selection is that one lane's" {
+  _js '(() => { const k = (p) => p.k; const conf = { items: [{k:"a"},{k:"b"}], batch: m.COLUMN_BATCH["has-conflicts"] }; const ci = { items: [{k:"c"}], batch: m.COLUMN_BATCH["ci-failing"] }; const plain = { items: [{k:"d"}], batch: null }; const lanes = [conf, ci, plain]; const name = (p) => p ? p.steps.join("+") : null; return [name(m.selectionPreset(lanes, ["a","b"], k)), name(m.selectionPreset(lanes, ["a"], k)), name(m.selectionPreset(lanes, ["a","c"], k)), name(m.selectionPreset(lanes, ["d"], k)), name(m.selectionPreset(lanes, [], k)), name(m.selectionPreset(lanes, ["a","zz"], k))]; })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["rebase","rebase",null,null,null,null]' ]
+}
+
 @test "presetForm selects exactly the column, turns on only its steps, and leaves other steps' AI alone" {
   _js '[m.presetForm({ keys: ["o/r#1","o/r#2"], preset: m.COLUMN_BATCH["has-conflicts"], withAi: ["comments"], pending: (k) => k === "o/r#2" }), m.presetForm({ keys: ["o/r#3"], preset: m.COLUMN_BATCH["ci-failing"], withAi: ["ci","rebase"] }), m.presetForm({ keys: [], preset: m.COLUMN_BATCH.approved })]'
   [ "$status" -eq 0 ]

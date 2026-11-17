@@ -497,3 +497,18 @@ teardown() {
   [ -n "$header" ]
   [[ "$header" != *"ROW_H.sidebar"* ]]
 }
+
+@test "batching starts from Select for batch: no lane draws its own Batch button, board and compact share laneSelect" {
+  run grep -rnE 'batchAction|onBatch|batchFor' "$MODS"/prs/*.js
+  [ "$status" -eq 1 ]
+  grep -q 'export function laneSelect' "$MODS/prs/board.js"
+  grep -q 'laneSelect(s, select)' "$MODS/prs/compact.js"
+  grep -q '"Select for batch"' "$MODS/prs/board_view.js"
+}
+
+@test "render leaves selecting without notifying: endSelecting is the silent one" {
+  grep -q 'this.endSelecting();' "$MODS/prs/board_view.js"
+  run grep -n 'if (tabOf() !== "mine" && this.selecting) this.stopSelecting' "$MODS/prs/board_view.js"
+  [ "$status" -eq 1 ]
+  grep -q '  clearSelection() {' "$MODS/prs/batch_launcher.js"
+}

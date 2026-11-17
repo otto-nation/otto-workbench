@@ -76,6 +76,7 @@ from pathlib import Path
 import core.log
 import core.proc
 import core.signal_relay
+import otto_queue.job
 import otto_queue.lease
 import otto_queue.ledger
 import otto_queue.slots
@@ -247,6 +248,52 @@ def _run_unstarted(ledger: otto_queue.ledger.Ledger, entry: Entry, request: Tick
     notify(f"otto-queue: no worker is running; running entry {entry.id} here")
     return run_claimed(ledger, claimed, claimed_request(claimed.entry, request), policy,
                        poll_s=poll_s, notify=notify)
+
+
+class AdoptOutcome(StrEnum):
+    RAN = "ran"
+    RETRY = "retry"
+    TAKEN = "taken"
+    TIMED_OUT = "timed_out"
+    LEFT_QUEUE = "left_queue"
+
+
+@dataclass(frozen=True)
+class Adoption:
+    """How `adopt_job` ended; *exit_status* is the command's, set when it ran here."""
+
+    outcome: AdoptOutcome
+    exit_status: int | None = None
+
+
+def adopt_job(ledger: otto_queue.ledger.Ledger, entry: Entry, policy: otto_queue.slots.Policy,
+              *, wait_s: float, poll_s: float = POLL_S,
+              notify: Callable[[str], None] = core.log.info,
+              clock: Callable[[], float] = time.time) -> Adoption:
+    """Run queued job *entry* in this process without making it a ticket.
+
+    Waits for a slot holding no lease, so a waiter killed meanwhile leaves the
+    row a queued job and nothing reaps it. Once admitted it takes the job's own
+    lease and runs the command in this process group, output to the job's log.
+    TIMED_OUT leaves the row untouched; LEFT_QUEUE means it stopped being queued
+    while waiting; TAKEN means another runner holds the lease.
+    """
+    request = TicketRequest(argv=entry.argv, cwd=entry.cwd, entry_class=entry.entry_class,
+                            wait_s=wait_s)
+    wait = _wait_for_slot(ledger, entry.id, request, policy, poll_s, notify)
+    try:
+        if wait.end is _WaitEnd.TIMED_OUT:
+            return Adoption(AdoptOutcome.TIMED_OUT)
+        if wait.end is _WaitEnd.CANCELLED:
+            return Adoption(AdoptOutcome.LEFT_QUEUE)
+        result = otto_queue.job.run_leased(ledger, entry.id, clock, foreground=True)
+    finally:
+        _release_slot(wait.slot)
+    if result.outcome is otto_queue.job.JobOutcome.NOT_CLAIMED:
+        return Adoption(AdoptOutcome.TAKEN)
+    if result.outcome is otto_queue.job.JobOutcome.RETRY:
+        return Adoption(AdoptOutcome.RETRY, result.exit_status)
+    return Adoption(AdoptOutcome.RAN, result.exit_status)
 
 
 def _record_crash(ledger: otto_queue.ledger.Ledger, entry_id: int, exc: BaseException) -> None:

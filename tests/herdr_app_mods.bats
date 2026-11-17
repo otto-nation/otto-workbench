@@ -1,7 +1,7 @@
 #!/usr/bin/env bats
 # Tests for _herdr_app_install_mods — copy herdr-app mods with a per-file manifest.
 bats_require_minimum_version 1.5.0
-# select-on: ai/herdr/mods_install.sh ai/herdr/steps.sh ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/* ai/herdr/app/mods/prs-button/* ai/herdr/app/mods/queue/* ai/herdr/app/mods/queue-button/* ai/herdr/app/mods/hosts/* ai/herdr/app/mods/hosts-button/* lib/constants.sh lib/files.sh
+# select-on: ai/herdr/mods_install.sh ai/herdr/steps.sh ai/herdr/app/mods/_lib/*.js ai/herdr/app/mods/_ui/*.js ai/herdr/app/mods/prs/* ai/herdr/app/mods/prs-button/* ai/herdr/app/mods/queue/* ai/herdr/app/mods/queue-button/* ai/herdr/app/mods/hosts/* ai/herdr/app/mods/hosts-button/* ai/herdr/app/mods/sessions/* ai/herdr/app/mods/sessions-button/* lib/constants.sh lib/files.sh
 
 setup() {
   load 'test_helper'
@@ -90,6 +90,13 @@ _cksum() {
   cmp -s "$SRC/hosts/main.js" "$APP/mods/hosts/main.js"
   [ -f "$APP/mods/hosts-button/main.js" ]
   cmp -s "$SRC/hosts-button/main.js" "$APP/mods/hosts-button/main.js"
+  [ -f "$APP/mods/sessions/main.js" ]
+  [ -f "$APP/mods/sessions/view.js" ]
+  [ -f "$APP/mods/sessions/_lib/sessions.js" ]
+  [ -f "$APP/mods/sessions/_lib/sessions_open.js" ]
+  cmp -s "$SRC/sessions/main.js" "$APP/mods/sessions/main.js"
+  [ -f "$APP/mods/sessions-button/main.js" ]
+  cmp -s "$SRC/sessions-button/main.js" "$APP/mods/sessions-button/main.js"
 }
 
 # herdr docks a mod the first time it sees the folder, reading mod.json for where;

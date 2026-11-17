@@ -124,6 +124,17 @@ def merged(repo_key: str) -> dict[int, dict]:
     return by_number
 
 
+def open_prs_on_branch(repo_key: str, branch: str) -> list[dict]:
+    """Open PRs in *repo_key*'s cached listing whose head branch is *branch*, lowest number first.
+
+    Reads the cache only — no GitHub call — so the answer is as fresh as the
+    last `pr board` listing on this machine, and empty where none ran.
+    """
+    rows = [row for row in _rows(read(repo_key, Phase.LISTING))
+            if row.get("state") == "OPEN" and row.get("branch") == branch]
+    return sorted(rows, key=lambda row: row["number"])
+
+
 def viewer_path() -> Path:
     return core.workbench_paths.cache_dir("board") / "viewer.json"
 

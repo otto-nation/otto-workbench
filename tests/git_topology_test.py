@@ -48,6 +48,15 @@ def test_worktree_entries_names_its_fields(mock_run):
     assert [e.branch for e in entries] == ["main", "feat/x"]
 
 
+def test_worktree_entries_warns_when_git_exits_nonzero(tmp_path, capsys):
+    empty = tmp_path / "not-a-repo"
+    empty.mkdir()
+    assert git.topology.worktree_entries(str(empty)) == []
+    err = capsys.readouterr().err
+    assert str(empty) in err
+    assert "not a git repository" in err
+
+
 @patch("git.topology.subprocess.run")
 def test_worktree_entries_drops_the_bare_repo(mock_run):
     mock_run.return_value = MagicMock(returncode=0, stdout=_porcelain(

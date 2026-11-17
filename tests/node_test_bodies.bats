@@ -14,6 +14,7 @@ teardown() {
 
 @test "no suite compiles code taken from argv" {
   # eval / Function / AsyncFunction over process.argv, outside node_body_read.
+  # Heuristic: same-line only; a split-line or variable-mediated compile is not caught.
   run grep -nE "(eval\(|Function\(|constructor\()[^;]*process\.argv\[" \
     "$REPO_ROOT"/tests/*.bats "$REPO_ROOT"/tests/*.bash
   [ "$status" -eq 1 ]

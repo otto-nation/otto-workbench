@@ -15,7 +15,7 @@
 #   fakePr(doc, answer?) an exec answering the tools check, hc ls and `pr board` from `doc`;
 #                answer(label, opts) may return {code, stdout, stderr} (or a promise of one) first
 #   fakeCx()     {cx, timers, settle()} — cx.timer.every/after record, cx.spawn runs and is awaited by settle
-# The JS is passed as argv, never interpolated, so it needs no shell escaping.
+# The JS is passed as a file path (node_body), never interpolated, so it needs no shell escaping.
 
 HOST_HOOKS='
 import fs from "node:fs";
@@ -109,7 +109,7 @@ _host_setup() {
 
 _host() {
   # The prelude's quotes cannot sit inside a shell -e string (plan's _host interpolates
-  # HOST_PRELUDE into double quotes). Same names, argv body, and register() hooks; the
+  # HOST_PRELUDE into double quotes). Same names, file body, and register() hooks; the
   # runner file is the equivalent of that -e script. --no-deprecation: node 26 prints
   # DEP0205 for module.register on stderr, and bats run merges stderr into $output.
   {

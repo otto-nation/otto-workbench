@@ -23,7 +23,7 @@ import core.proc  # noqa: E402
 import core.timeouts  # noqa: E402
 import otto_queue.paths  # noqa: E402
 import otto_queue.ticket  # noqa: E402
-from otto_queue.ledger import Ledger  # noqa: E402
+from otto_queue.ledger import Ledger, LedgerBusy  # noqa: E402
 from otto_queue.model import EntryClass, EntryKind, EntryState, NewEntry  # noqa: E402
 
 SHIM = REPO_ROOT / "ai" / "bin" / "otto-queue"
@@ -271,6 +271,31 @@ def test_submit_without_a_supervisor_adds_and_prints_only_the_id(tmp_path):
     assert (entry.kind, entry.state) == (EntryKind.JOB, EntryState.QUEUED)
     assert not ran.exists()
     assert "otto-queue wait" in result.stderr
+
+
+def test_submit_then_wait_runs_it_and_exits_with_its_status(tmp_path):
+    env = _no_supervisor_env(tmp_path)
+    submitted = _shim_env(["submit", "--", PY, "-c", "raise SystemExit(3)"], env)
+    entry_id = int(submitted.stdout.strip())
+    waited = _shim_env(["wait", str(entry_id)], env)
+    assert submitted.returncode == 0
+    assert waited.returncode == 3
+    assert f"logs/{entry_id}.log" in waited.stderr
+
+
+def test_wait_on_an_unknown_id_exits_1(tmp_path):
+    Ledger.open()
+    result = _shim_env(["wait", "999"], _no_supervisor_env(tmp_path))
+    assert result.returncode == 1
+    assert "no entry 999" in result.stderr
+
+
+def test_submit_on_a_busy_ledger_exits_75_and_records_nothing(monkeypatch):
+    def busy(*_a, **_k):
+        raise LedgerBusy("busy")
+
+    monkeypatch.setattr(Ledger, "open", classmethod(busy))
+    assert cli.otto_queue.main(["submit", "--", "true"]) == 75
 
 
 def test_submit_run_here_without_a_supervisor_runs_here(tmp_path):

@@ -13,6 +13,9 @@ setup() {
   mkdir -p "$TEST_HOME"
   export HOME="$TEST_HOME"
   gate_sandbox
+  # The docker endpoint comes from the stubbed `docker context inspect`; a developer's own
+  # DOCKER_HOST would override it and make every case here read not-own.
+  unset DOCKER_HOST
 
   # shellcheck disable=SC2034  # read by _run_prune in maintenance_prune_helper.bash
   SCRIPT="$REPO_ROOT/maintenance/bin/prune-caches"

@@ -25,6 +25,7 @@ import batch.queue_wait
 import batch.store
 import batch.targets
 import git.client
+import otto_queue.admission
 import otto_queue.model
 import pr.ci_need
 import rebase.inspect
@@ -198,7 +199,7 @@ class _Live:
 
 class Scheduler:
     def __init__(self, session: batch.store.Session, *, pr_bin: str, cfg: BatchConfig,
-                 host: Callable[[], batch.admission.HostSample] = batch.admission.read_host,
+                 host: Callable[[], otto_queue.admission.HostSample] = otto_queue.admission.read_host,
                  spawn: Callable[..., object] = StepProcess.start,
                  replan: Callable[[PlanRow], PlanRow | None] | None = None,
                  worktrees: Callable[[str, str], WorktreeResult] = ensure_worktree,
@@ -528,14 +529,14 @@ class Scheduler:
                                        live.peak)
                 for live in self._non_ai_live()]
 
-    def _host_for_admit(self) -> batch.admission.HostSample:
+    def _host_for_admit(self) -> otto_queue.admission.HostSample:
         sample = self._host()
         own = sum(s.pending for s in self._live_steps())
         pending = own + self._peers.pending
         if sample.mem_available is None or not pending:
             return sample
-        return batch.admission.HostSample(max(0, sample.mem_available - pending),
-                                          sample.cpu_some_avg10, sample.mem_some_avg10)
+        return otto_queue.admission.HostSample(max(0, sample.mem_available - pending),
+                                               sample.cpu_some_avg10, sample.mem_some_avg10)
 
     def _tree_blocks(self, item: Item, rec: StepRecord) -> bool:
         """Whether *item*'s worktree may not take *rec* now, deciding when it may not.
@@ -591,13 +592,13 @@ class Scheduler:
                 emit=self._emit)
         return True
 
-    def _verdict(self, item: Item, rec: StepRecord) -> batch.admission.Verdict:
+    def _verdict(self, item: Item, rec: StepRecord) -> otto_queue.admission.Verdict:
         """The host's answer for a non-AI *rec*, and the floor slot's when the host
         refuses a driver with no non-AI step running. A driver that queued first
         goes first. AI steps never call this: the otto-queue owns their machine
         admission (memory, pressure, floor, peers, macOS pool_default)."""
         running = len(self._non_ai_live())
-        def ask(floor: bool) -> batch.admission.Verdict:
+        def ask(floor: bool) -> otto_queue.admission.Verdict:
             return batch.admission.decide(
                 self._host_for_admit(), running=running, limit=max(1, self.run.pool),
                 estimate=self._estimates.get(item.repo, rec.step), cfg=self.cfg,
@@ -605,7 +606,7 @@ class Scheduler:
         if ahead := self._machine.ahead():
             if not running:
                 self._machine.queue()
-            return batch.admission.Verdict(
+            return otto_queue.admission.Verdict(
                 False, f"waiting behind batch run {ahead}, which queued for the machine first")
         verdict = ask(False)
         if verdict.admit or running or not self._machine.take_floor():

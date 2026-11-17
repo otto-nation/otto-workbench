@@ -6,7 +6,7 @@ and the kernel drops it when the holder exits, SIGKILL included, so a crashed
 ticket cannot strand capacity.
 
 Whether there is room is not decided here. The caller passes a `Policy`
-(`batch.admission.QueuePolicy`), which owns the limits and the host check;
+(`otto_queue.admission.QueuePolicy`), which owns the limits and the host check;
 this module only counts and holds. `try_admit` runs under `admit.lock`, taken
 through `core.flock_wait`, so sampling the host and claiming a slot are one
 step machine-wide. The lock serialises samples but does not account for
@@ -36,7 +36,7 @@ ADMIT_LOCK_WAIT_S = 5.0
 
 
 class Decision(Protocol):
-    """An admission answer; `batch.admission.Verdict` is one."""
+    """An admission answer; `otto_queue.admission.Verdict` is one."""
 
     @property
     def admit(self) -> bool: ...
@@ -46,7 +46,7 @@ class Decision(Protocol):
 
 
 class Policy(Protocol):
-    """Who decides whether there is room: `batch.admission.QueuePolicy` in production."""
+    """Who decides whether there is room: `otto_queue.admission.QueuePolicy` in production."""
 
     def limit(self, entry_class: EntryClass) -> int: ...
 

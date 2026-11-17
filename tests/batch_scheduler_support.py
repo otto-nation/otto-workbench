@@ -24,6 +24,7 @@ import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
+import otto_queue.admission  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
@@ -37,7 +38,7 @@ GiB = 1024 ** 3
 NEED = StepNeed(True, "x")
 NO = StepNeed(False, "y")
 ALL = {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NEED, batch.model.Step.REVIEW: NEED}
-HEALTHY = batch.admission.HostSample(8 * GiB, 1.0, 0.0)
+HEALTHY = otto_queue.admission.HostSample(8 * GiB, 1.0, 0.0)
 
 _OPEN = []
 

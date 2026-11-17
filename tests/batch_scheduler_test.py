@@ -16,6 +16,7 @@ import batch.model  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 import batch.targets  # noqa: E402
+import otto_queue.admission  # noqa: E402
 import otto_queue.ticket  # noqa: E402
 from batch.requests import Cancel, Envelope, Malformed, Release  # noqa: E402
 from batch.plan import PlanError  # noqa: E402
@@ -138,7 +139,7 @@ def test_cancel_before_start_runs_nothing():
 
 def test_unrealised_headroom_blocks_a_second_admit_in_the_same_tick():
     estimate = batch.admission.DEFAULT_ESTIMATES[batch.model.Step.REBASE]
-    host = batch.admission.HostSample(2 * GiB + estimate, 1.0, 0.0)
+    host = otto_queue.admission.HostSample(2 * GiB + estimate, 1.0, 0.0)
     h = Harness([row(1), row(2)], host=host, pool=2, with_ai=[])
     h.sched._sleep = lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
     with pytest.raises(KeyboardInterrupt):
@@ -147,7 +148,7 @@ def test_unrealised_headroom_blocks_a_second_admit_in_the_same_tick():
 
 
 def test_admission_wait_is_reported_and_the_floor_still_progresses():
-    short = batch.admission.HostSample(2 * GiB, 1.0, 0.0)
+    short = otto_queue.admission.HostSample(2 * GiB, 1.0, 0.0)
     # Two repos, so the one-fetcher-per-repo rule cannot be what holds row 2 back.
     h = Harness([row(1, _ONLY_REBASE), row(2, _ONLY_REBASE, repo="o/s", repo_dir="/s")],
                 host=short, with_ai=[])
@@ -547,13 +548,13 @@ _ONLY_REBASE = {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NO,
 
 
 def test_an_ai_step_starts_on_a_host_admission_would_refuse():
-    h = Harness([row(1, _ONLY_REVIEW)], host=batch.admission.HostSample(0, 99.0, 99.0))
+    h = Harness([row(1, _ONLY_REVIEW)], host=otto_queue.admission.HostSample(0, 99.0, 99.0))
     h.sched._once()
     assert len(h.spawned) == 1
 
 
 def test_the_pool_cap_still_counts_steps_waiting_on_a_ticket():
-    starved = batch.admission.HostSample(0, 99.0, 99.0)
+    starved = otto_queue.admission.HostSample(0, 99.0, 99.0)
     h = Harness([row(1, _ONLY_REVIEW), row(2, _ONLY_REVIEW)], pool=1, host=starved)
     h.sched._once()
     assert len(h.spawned) == 1
@@ -600,7 +601,7 @@ def test_an_ai_step_gets_subject_and_action():
 
 
 def test_a_waiting_ai_step_does_not_reserve_memory_for_a_plain_step():
-    host = batch.admission.HostSample(3 * GiB, 1.0, 0.0)
+    host = otto_queue.admission.HostSample(3 * GiB, 1.0, 0.0)
     h = Harness(
         [row(1, _ONLY_REVIEW), row(2, _ONLY_REBASE, repo="o/s", repo_dir="/s")],
         with_ai=[batch.model.Step.REVIEW], host=host, pool=2)

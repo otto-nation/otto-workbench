@@ -289,7 +289,8 @@ import gh.owners; print(gh.owners.ALLOW_CROSS_REF_ENV)
     'linear_add_comment {"id":"E-1","body":"see me/lib#12"}' \
     'linear_create_project {"name":"p","teams":["E"],"content":"see me/lib#12"}' \
     'linear_update_initiative {"id":"i","description":"see me/lib#12"}' \
-    'linear_create_release {"pipeline":"p","name":"r","description":"see me/lib#12"}'; do
+    'linear_create_release {"pipeline":"p","name":"r","description":"see me/lib#12"}' \
+    'linear_update_release {"id":"r","version":"see me/lib#12"}'; do
     _tool_refusal "$TMPDIR/repo" "${call%% *}" "${call#* }"
     [[ "$output" == *"me/lib#12"* ]] || { echo "not scanned: $call -> $output"; return 1; }
   done

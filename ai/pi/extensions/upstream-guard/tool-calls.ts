@@ -20,7 +20,8 @@ import { runOwnersCheck } from "../_shared/github-writes.ts";
  *
  * ceiling: the tool names are a list. A publishing tool added upstream under
  * another name is unguarded until it is listed here. Upgrade trigger: when a
- * new publishing tool appears in usemaximum/pi-extensions.
+ * new publishing tool, or a new text parameter on a listed tool, appears in
+ * usemaximum/pi-extensions.
  *
  * The Linear write tools are held to the cross-group rule the same way: their
  * text goes to `owners-check --text`, judged against the checkout's group.
@@ -59,8 +60,8 @@ export const LINEAR_TEXT_TOOLS: Record<string, string[]> = {
   linear_update_initiative: LINEAR_NAMED,
   linear_create_cycle: ["name", "description"],
   linear_update_cycle: ["name", "description"],
-  linear_create_release: ["name", "description"],
-  linear_update_release: ["name", "description"],
+  linear_create_release: ["name", "description", "version"],
+  linear_update_release: ["name", "description", "version"],
 };
 
 /** The text a Linear write tool INPUT would publish, joined for one scan. */

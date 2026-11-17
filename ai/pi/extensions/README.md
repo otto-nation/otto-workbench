@@ -82,7 +82,7 @@ writes each body to a temporary file and asks `owners-check` about the
 equivalent `gh api` call run from the session's directory, so every remote there
 must be in one group and every body must stay inside it. The tool names are a
 list in `tool-calls.ts`; a new publishing tool upstream is unguarded until listed.
-The Linear write tools' text fields (`LINEAR_TEXT_TOOLS`) go to `owners-check --text`,
+The Linear write tools' text fields (`LINEAR_TEXT_TOOLS`, including a release `version`) go to `owners-check --text`,
 judged against the group of the session's checkout. oneshot-publish-guard refuses
 both sets in one-shot sessions.
 

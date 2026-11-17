@@ -5,7 +5,7 @@
  * Agents on one host start `golangci-lint` and `go test` at the same moment and
  * oversubscribe its cores; the repo they work in may not adopt otto-queue
  * itself, so the admission is asked of the agent's harness instead. The refusal
- * names the exact `otto-queue run --ticket --class heavy -- …` to re-issue.
+ * names the `otto-queue submit … -- …` then `otto-queue wait <id>` to re-issue.
  * Claude Code gets the same rule from ai/claude/bin/claude-bash-guard, against
  * the same checker (bin/local/queue-guard-check). With the list empty, which is
  * the default, this does nothing.

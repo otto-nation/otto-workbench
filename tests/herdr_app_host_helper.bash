@@ -12,13 +12,15 @@
 #   when the test set it, else is a no-op.
 # _host JS — runs JS (top-level await allowed) as an ES module with:
 #   M  the assembled mod dir       out(v)  print JSON.stringify(v)
-#   H  herdr state: H.state (shared keys), H.spacesList, H.panesList, H.focusedPane, and any herdr
-#      function to override (H.exec, H.watchFolder, …)
+#   H  herdr state: H.state (shared keys), H.spacesList, H.panesList, H.terminalsList, H.focusedPane,
+#      and any herdr function to override (H.exec, H.watchFolder, …). H.onSleep(ms), when set, runs
+#      on each cx.sleep — where a test makes herdr list a terminal it was slow to hear of
 #   calls        every exec call: {label, cwd, on}
 #   label(c, a)  pr:<phase>[:offline][:stamp] | tools | hc:<sub>[:label] — a remote call is unwrapped
 #   fakePr(doc, answer?) an exec answering the tools check, hc ls and `pr board` from `doc`;
 #                answer(label, opts) may return {code, stdout, stderr} (or a promise of one) first
-#   fakeCx()     {cx, timers, settle()} — cx.timer.every/after record, cx.spawn runs and is awaited by settle
+#   fakeCx()     {cx, timers, settle()} — cx.timer.every/after record, cx.spawn runs and is awaited by settle,
+#                cx.sleep resolves at once after H.onSleep
 # The JS is passed as a file path (node_body), never interpolated, so it needs no shell escaping.
 
 HOST_HOOKS='
@@ -53,9 +55,10 @@ export async function load(url, ctx, next) {
 
 HOST_PRELUDE='
 const H = (globalThis.__herdr = {
-  state: {}, spacesList: [], panesList: [], focusedPane: null,
+  state: {}, spacesList: [], panesList: [], terminalsList: [], focusedPane: null,
   shared: (k) => H.state[k], setShared: (k, v) => { H.state[k] = v; },
-  spaces: () => H.spacesList, panes: () => H.panesList, focused: () => H.focusedPane,
+  spaces: () => H.spacesList, panes: () => H.panesList, terminals: () => H.terminalsList,
+  focused: () => H.focusedPane,
   props: () => ({}), layout: () => ({}), watchFolder: () => Promise.reject(new Error("no watch in tests")),
 });
 const calls = [];
@@ -89,6 +92,7 @@ const fakeCx = () => {
   const cx = {
     timer: { every: (ms, fn) => timers.push({ kind: "every", ms, fn }), after: (ms, fn) => timers.push({ kind: "after", ms, fn }) },
     spawn: (fn) => { const p = Promise.resolve().then(() => fn(cx)); tasks.push(p); return p; },
+    sleep: async (ms) => { H.onSleep?.(ms); },
     notify: () => {},
   };
   return { cx, timers, settle: async () => { while (tasks.length) await tasks.shift(); } };

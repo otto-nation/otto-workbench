@@ -106,3 +106,15 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = '["otto.action=session","otto.app=pr","otto.session=batch-R1"]' ]
 }
+
+@test "keepStarted keeps a terminal herdr already lists without waiting, and only that address" {
+  _js 'await (async () => {
+    const ran = []; const slept = [];
+    const deps = { run: (n, a) => ran.push([n, a]), terminals: () => [{ address: "homelab/t3" }], sleep: async (ms) => slept.push(ms) };
+    const kept = await m.keepStarted(deps, "homelab/t3");
+    const other = await m.keepStarted({ ...deps, terminals: () => [{ address: "t3" }] }, "homelab/t3");
+    return { kept, other, ran, sleeps: slept.length, steps: m.KEEP_WAIT_MS / m.KEEP_STEP_MS };
+  })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"kept":true,"other":false,"ran":[["terminal.keep",{"terminal":"homelab/t3"}]],"sleeps":30,"steps":30}' ]
+}

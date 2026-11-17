@@ -112,7 +112,7 @@ export default class SpacePrs extends View {
     this.acx.spawn(async (cx) => {
       let res;
       try {
-        res = await openSession({ exec, run, panes, spaces, terminals }, "target", {
+        res = await openSession({ exec, run, panes, spaces, terminals, sleep: (ms) => cx.sleep(ms) }, "target", {
           on: row.on,
           cwd: row.worktree,
           branch: row.branch,

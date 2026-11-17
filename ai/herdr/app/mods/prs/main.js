@@ -119,7 +119,7 @@ export default class PrsBoard extends Board {
     return actionsFor({
       repo: d.repo, number: d.number, repoDir: d.cwd, run: (d.runs ?? [])[0] ?? null,
       headMoved: d.headMoved, batchBusy: d.batchBusy || this.launching, live: this.launching ? null : (this.live ?? d.live),
-      finished: this.finishedId, features: d.features,
+      finished: this.finishedId, features: d.features, own: d.own,
     });
   }
 
@@ -397,7 +397,10 @@ export default class PrsBoard extends Board {
       onToggle: (key) => this.onToggle(key),
       actionBar: renderActionBar(this.actions(), {
         confirm: this.confirm,
-        note: this.launching ? "Starting…" : this.note,
+        note: this.launching || this.launcher.starting ? "Starting…" : (this.note ?? this.launcher.note),
+        fixes: this.detail.fixes,
+        fixBusy: this.launcher.starting ? "A batch is starting" : (this.detail.batchBusy ? "A batch is running on this PR" : null),
+        onFix: (f) => this.launcher.fixOne(pr, f),
         onAction: (a) => this.onAction(a, cx),
         onConfirm: () => { const a = this.confirm; this.confirm = null; this.launch(a, cx); this.acx.notify(); },
         onCancel: () => { this.confirm = null; this.acx.notify(); },

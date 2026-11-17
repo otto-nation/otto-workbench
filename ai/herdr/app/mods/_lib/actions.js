@@ -145,9 +145,12 @@ function terminalReason(id, { batchBusy, live, finished }) {
   return (live ?? finished) ? null : 'No terminal';
 }
 
+// GitHub refuses a review's approval or change request on one's own PR, so an own PR is not offered them.
+const NOT_ON_OWN = /-(approve|request-changes)$/;
+
 export function actionsFor(ctx) {
-  const { repo, number, repoDir, run, live, finished } = ctx;
-  return ACTION_IDS.map((id) => {
+  const { repo, number, repoDir, run, live, finished, own = false } = ctx;
+  return ACTION_IDS.filter((id) => !(own && NOT_ON_OWN.test(id))).map((id) => {
     const isPr = id !== 'cancel' && id !== 'watch';
     const reason = isPr ? prReason(id, ctx) : terminalReason(id, ctx);
     const action = { id, label: LABELS[id], enabled: reason == null, reason };

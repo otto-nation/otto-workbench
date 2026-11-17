@@ -49,13 +49,15 @@ log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*"; }
 # Linux, counted against the machine's heavy budget, and never two at once —
 # the `maintenance` key joins a run already queued or running, and --no-reuse
 # lets the next cycle run again once one has finished. So the timer or launchd
-# agent only submits. `otto-workbench maintenance run` passes --ticket to run it
+# agent only submits, with --run-here: nobody waits on a scheduled run, so
+# where no worker can start, the run happens in this process instead of sitting
+# queued. `otto-workbench maintenance run` passes --ticket to run it
 # here, in the terminal, under the same key. OTTO_QUEUE_ENTRY marks a run the
 # queue started; _WB_MAINTENANCE_QUEUED marks one the queue ran unqueued (its
 # ledger could not be opened), which would otherwise submit itself again.
 OTTO_QUEUE_BIN="${OTTO_QUEUE_BIN:-$WORKBENCH_DIR/ai/bin/otto-queue}"
 if [[ -z "${OTTO_QUEUE_ENTRY:-}" && -z "${_WB_MAINTENANCE_QUEUED:-}" && -x "$OTTO_QUEUE_BIN" ]]; then
-  queue_command=(submit)
+  queue_command=(submit --run-here)
   if [[ "${1:-}" == "--ticket" ]]; then
     queue_command=(run --ticket)
   fi

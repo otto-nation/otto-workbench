@@ -1,4 +1,4 @@
-"""`otto-queue`: run a command through this machine's queue, see what it holds, cancel an entry.
+"""`otto-queue`: run a command through this machine's queue, see what it holds, wait for or cancel an entry.
 
 The library is `otto_queue`; this module is the parser, the output and the exit
 codes. Flags, exit codes and examples are `CONTRACT` below. Admission is
@@ -33,6 +33,7 @@ import otto_queue.ledger
 import otto_queue.submit
 import otto_queue.supervisor
 import otto_queue.ticket
+import otto_queue.waiter
 import otto_queue.worker
 from core.exit_codes import ExitCode
 from otto_queue.model import Entry, EntryClass, EntryState
@@ -45,7 +46,7 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.FlagGroup(
             "run", ("--ticket", "--class", "--label", "--key", "--force", "--no-reuse", "--wait", "argv")),
         core.command_contract.FlagGroup(
-            "submit", ("--queue-only",)),
+            "submit", ("--run-here", "--queue-only")),
         core.command_contract.FlagGroup("worker", ("--idle",)),
         core.command_contract.FlagGroup("status", ("--json", "--slots")),
         core.command_contract.FlagGroup("cancel", ("id",)),
@@ -54,12 +55,12 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.ExitOutcome(
             ExitCode.OK,
             "status listed the ledger; cancel stopped a waiting or running entry; "
-            "run's command succeeded; submit queued or joined the job, or ran it here "
-            "and it succeeded"),
+            "run's command succeeded; submit queued or joined the job (its id on stdout), "
+            "or with --run-here ran it here and it succeeded; wait's entry ended 0"),
         core.command_contract.ExitOutcome(
             ExitCode.FAILURE,
-            "cancel named no live entry (unknown id, or already finished); the "
-            "ledger could not be opened",
+            "cancel named no live entry (unknown id, or already finished); wait named "
+            "no entry, or the entry ended without a status; the ledger could not be opened",
             (core.command_contract.NextStep(
                 "", ("otto-queue status", "cancel a live id from that list")),)),
         core.command_contract.ExitOutcome(
@@ -68,17 +69,19 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.ExitOutcome(
             ExitCode.UNAVAILABLE,
             "submit --queue-only: no worker could take the job, so it was withdrawn "
-            "and nothing ran",
+            "and nothing ran; or the ledger could not be opened, so nothing was queued",
             (core.command_contract.NextStep(
                 "", ("run the command yourself", "or retry once a worker is up")),)),
         core.command_contract.ExitOutcome(
             ExitCode.TEMPFAIL,
-            "no slot before --wait, or another process holds the ledger; retry",
+            "no slot before --wait, or another process holds the ledger; retry; wait: the "
+            "entry did not end before --wait and stays queued, so run `otto-queue wait ID` again",
             (core.command_contract.NextStep(
                 "", ("otto-queue status", "retry once a slot or the ledger is free")),)),
         core.command_contract.ExitOutcome(
             ExitCode.CANCELLED,
-            "the entry was cancelled before it ran, or Ctrl-C interrupted the CLI"),
+            "the entry was cancelled before it ran, or Ctrl-C interrupted the CLI (a "
+            "waited-on entry is left as it was)"),
     ),
     examples=(
         core.command_contract.Example(
@@ -92,7 +95,13 @@ CONTRACT = core.command_contract.CommandContract(
             "join a live review with that key, or reuse a done one's status"),
         core.command_contract.Example(
             "otto-queue submit --key nightly -- pr gc",
-            "queue pr gc for the worker and return; runs here if no worker starts"),
+            "queue pr gc and print its entry id; never runs it here"),
+        core.command_contract.Example(
+            "otto-queue submit --run-here --key nightly -- pr gc",
+            "the same, but run it here when no worker can start"),
+        core.command_contract.Example(
+            "otto-queue wait 12",
+            "wait for entry 12 and exit with its status; runs it here when no worker is alive"),
         core.command_contract.Example(
             "otto-queue status", "list live entries and recent finished ones"),
         core.command_contract.Example(
@@ -104,7 +113,7 @@ CONTRACT = core.command_contract.CommandContract(
             "otto-queue cancel 12", "stop waiting entry 12, or SIGTERM a running one"),
     ),
     notes=(
-        "run, and submit when it ran the job here, also exit with COMMAND's own status.",
+        "run, submit --run-here when it ran the job here, and wait also exit with COMMAND's own status.",
         "--key is idempotent: a live match is joined, a done match returns its "
         "status, --force runs regardless.",
         "Admission is machine-wide `batch.admission.QueuePolicy` (`batch.*` in "
@@ -116,9 +125,9 @@ CONTRACT = core.command_contract.CommandContract(
     # MCP's flag-only mapping cannot express remainder argv or a required
     # positional, and worker is a long-running supervisor process:
     #   run, submit — nargs=REMAINDER after -- (`--argv` is not a flag)
-    #   cancel — required positional id (`--id` is unrecognized)
+    #   cancel, wait — required positional id (`--id` is unrecognized)
     #   worker — started by the supervisor, not a request/response call
-    mcp_exclude=("run", "submit", "worker", "cancel"),
+    mcp_exclude=("run", "submit", "worker", "cancel", "wait"),
 )
 
 
@@ -154,10 +163,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--wait", type=_seconds, default=otto_queue.ticket.DEFAULT_WAIT_S,
                      help="Seconds to wait for a slot before exiting 75 (default: %(default)g)")
     run.add_argument("argv", nargs=argparse.REMAINDER, help="-- and the command to run")
-    submit = sub.add_parser("submit", help="Queue a command for the worker and return")
+    submit = sub.add_parser("submit", help="Queue a command durably and print its entry id (not when it runs here: stdout is the job's); `otto-queue wait ID` waits for it")
     _add_entry_flags(submit)
-    submit.add_argument("--queue-only", dest="run_here", action="store_false",
-                        help="When no worker can start, withdraw the job and exit 69 instead of running it here")
+    modes = submit.add_mutually_exclusive_group()
+    modes.add_argument("--run-here", dest="mode", action="store_const", const=otto_queue.submit.SubmitMode.RUN_HERE.value,
+                       help="When no worker can start, run the job in this process (unattended callers such as scheduled maintenance)")
+    modes.add_argument("--queue-only", dest="mode", action="store_const", const=otto_queue.submit.SubmitMode.QUEUE_ONLY.value,
+                       help="When no worker can start, withdraw the job and exit 69 instead of running it here")
+    submit.set_defaults(mode=otto_queue.submit.SubmitMode.ADD.value)
     submit.add_argument("argv", nargs=argparse.REMAINDER, help="-- and the command to run")
     worker = sub.add_parser("worker", help="Run queued jobs until idle; started by the supervisor")
     worker.add_argument("--idle", type=_seconds, default=otto_queue.worker.IDLE_S,
@@ -169,6 +182,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help="With --json, a leading line of slot counts, the host verdict, and the 24 h failure count")
     cancel = sub.add_parser("cancel", help="Cancel a waiting or running entry")
     cancel.add_argument("id", type=int, help="The entry's id, from status")
+    wait = sub.add_parser("wait", help="Wait for an entry to end and exit with its status")
+    wait.add_argument("id", type=int, help="The entry's id, as `submit` printed it")
+    wait.add_argument("--wait", type=_seconds, default=otto_queue.ticket.DEFAULT_WAIT_S,
+                      help="Seconds to wait before exiting 75 and leaving the entry queued (default: %(default)g)")
     core.command_contract.attach_help(parser, CONTRACT)
     # Subcommand flags live on the subparsers; regrouping would leave empty
     # titled sections on the top-level help.
@@ -207,9 +224,13 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 def _submit(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     request = otto_queue.submit.SubmitRequest(
         argv=_command(args, parser), cwd=os.getcwd(), entry_class=EntryClass(args.entry_class),
-        idem_key=args.key, force=args.force, reuse=args.reuse, run_here=args.run_here,
+        idem_key=args.key, force=args.force, reuse=args.reuse, mode=otto_queue.submit.SubmitMode(args.mode),
         label=args.label)
-    return otto_queue.submit.submit(request, machine_policy()).exit_status
+    result = otto_queue.submit.submit(request, machine_policy())
+    if result.entry_id is not None and result.outcome in (
+            otto_queue.submit.SubmitOutcome.QUEUED, otto_queue.submit.SubmitOutcome.JOINED):
+        print(result.entry_id)
+    return result.exit_status
 
 
 def _shim() -> Path:
@@ -333,6 +354,10 @@ def _job_exec(args: argparse.Namespace) -> int:
     return otto_queue.job.run_job(args.id, args.slot_fd).exit_status
 
 
+def _wait(args: argparse.Namespace) -> int:
+    return otto_queue.waiter.wait_entry(args.id, machine_policy(), wait_s=args.wait).exit_status
+
+
 def _cancel(args: argparse.Namespace) -> int:
     result = otto_queue.ticket.cancel_entry(otto_queue.ledger.Ledger.open(), args.id)
     if result.outcome is CancelOutcome.NOT_FOUND:
@@ -364,6 +389,7 @@ def main(argv: list[str] | None = None) -> int:
             "submit": lambda: _submit(args, parser),
             "status": lambda: _status(args),
             "cancel": lambda: _cancel(args),
+            "wait": lambda: _wait(args),
             "worker": lambda: _worker(args),
         }
         return handlers[args.command]()

@@ -21,7 +21,7 @@ import otto_queue.supervisor  # noqa: E402
 import otto_queue.ticket  # noqa: E402
 from otto_queue.ledger import Ledger, LedgerBusy  # noqa: E402
 from otto_queue.model import EntryClass, EntryKind, EntryState, NewEntry  # noqa: E402
-from otto_queue.submit import SubmitOutcome, SubmitRequest  # noqa: E402
+from otto_queue.submit import SubmitMode, SubmitOutcome, SubmitRequest  # noqa: E402
 from otto_queue_support import Room, touch_argv  # noqa: E402
 
 PY = sys.executable
@@ -57,12 +57,15 @@ def _down(_root):
 
 
 def _submit(argv, wake, messages=None, **kw):
+    # Pinned: these suites exercise run-here unless a test names another mode.
+    kw.setdefault("mode", SubmitMode.RUN_HERE)
     sink = messages if messages is not None else []
     request = SubmitRequest(argv=tuple(argv), cwd=os.getcwd(), **kw)
     return otto_queue.submit.submit(request, Room(), wake=wake, notify=sink.append)
 
 
 def _submit_with(policy, argv, wake, **kw):
+    kw.setdefault("mode", SubmitMode.RUN_HERE)
     request = SubmitRequest(argv=tuple(argv), cwd=os.getcwd(), **kw)
     return otto_queue.submit.submit(request, policy, wake=wake, notify=lambda _m: None)
 
@@ -105,7 +108,8 @@ def say(message):
     if "running entry" in message:
         open(sys.argv[2], "w").write("waiting")
 
-request = otto_queue.submit.SubmitRequest(argv=("true",), cwd=os.getcwd())
+request = otto_queue.submit.SubmitRequest(
+    argv=("true",), cwd=os.getcwd(), mode=otto_queue.submit.SubmitMode.RUN_HERE)
 otto_queue.submit.submit(request, Never(), wake=lambda _r: otto_queue.supervisor.Wake(False, "none"), notify=say)
 """
 
@@ -188,7 +192,7 @@ def test_a_live_key_is_joined():
 def test_an_unopenable_ledger_runs_the_command_unqueued(tmp_path):
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("")
-    request = SubmitRequest(argv=touch_argv(tmp_path / "ran"), cwd=os.getcwd())
+    request = SubmitRequest(argv=touch_argv(tmp_path / "ran"), cwd=os.getcwd(), mode=SubmitMode.RUN_HERE)
     result = otto_queue.submit.submit(request, Room(), root=blocker / "queue", wake=_alive, notify=lambda _m: None)
     assert (result.exit_status, result.outcome, (tmp_path / "ran").exists()) == (0, SubmitOutcome.UNQUEUED, True)
 
@@ -278,7 +282,7 @@ def test_reuse_false_runs_a_done_key_again(tmp_path):
 
 def test_queue_only_without_a_worker_withdraws_the_job_and_runs_nothing(tmp_path):
     messages = []
-    result = _submit(touch_argv(tmp_path / "ran"), _down, messages, run_here=False)
+    result = _submit(touch_argv(tmp_path / "ran"), _down, messages, mode=SubmitMode.QUEUE_ONLY)
     entry = Ledger.open().get(result.entry_id)
     assert (result.exit_status, result.outcome) == (os.EX_UNAVAILABLE, SubmitOutcome.NO_WORKER)
     assert entry.state is EntryState.CANCELLED
@@ -291,7 +295,7 @@ def test_queue_only_without_a_worker_leaves_a_job_another_submitter_queued(tmp_p
     first = _submit(touch_argv(tmp_path / "ran"), _alive, idem_key="K")
     assert first.outcome is SubmitOutcome.QUEUED
     messages = []
-    second = _submit(touch_argv(tmp_path / "ran"), _down, messages, idem_key="K", run_here=False)
+    second = _submit(touch_argv(tmp_path / "ran"), _down, messages, idem_key="K", mode=SubmitMode.QUEUE_ONLY)
     entry = Ledger.open().get(second.entry_id)
     assert (second.exit_status, second.outcome) == (0, SubmitOutcome.JOINED)
     assert second.entry_id == first.entry_id
@@ -307,14 +311,14 @@ def test_queue_only_leaves_a_job_a_worker_took_meanwhile(tmp_path):
         ledger.mark_running(queued.id, 1)
         return _down(root)
 
-    result = _submit(touch_argv(tmp_path / "ran"), wake_late, run_here=False)
+    result = _submit(touch_argv(tmp_path / "ran"), wake_late, mode=SubmitMode.QUEUE_ONLY)
     assert (result.exit_status, result.outcome) == (0, SubmitOutcome.JOINED)
     assert Ledger.open().get(result.entry_id).state is EntryState.RUNNING
 
 
 def test_a_withdrawn_key_is_queued_afresh_next_time():
-    first = _submit(("true",), _down, idem_key="auto-task:dream:20261112", run_here=False)
-    second = _submit(("true",), _alive, idem_key="auto-task:dream:20261112", run_here=False)
+    first = _submit(("true",), _down, idem_key="auto-task:dream:20261112", mode=SubmitMode.QUEUE_ONLY)
+    second = _submit(("true",), _alive, idem_key="auto-task:dream:20261112", mode=SubmitMode.QUEUE_ONLY)
     assert second.outcome is SubmitOutcome.QUEUED and second.entry_id != first.entry_id
 
 
@@ -322,12 +326,57 @@ def test_queue_only_with_an_unopenable_ledger_runs_nothing(tmp_path):
     blocker = tmp_path / "not-a-dir"
     blocker.write_text("")
     messages = []
-    request = SubmitRequest(argv=touch_argv(tmp_path / "ran"), cwd=os.getcwd(), run_here=False)
+    request = SubmitRequest(argv=touch_argv(tmp_path / "ran"), cwd=os.getcwd(), mode=SubmitMode.QUEUE_ONLY)
     result = otto_queue.submit.submit(
         request, Room(), root=blocker / "queue", wake=_alive, notify=messages.append)
     assert (result.exit_status, result.outcome) == (os.EX_UNAVAILABLE, SubmitOutcome.NO_WORKER)
     assert not (tmp_path / "ran").exists()
     assert any("queue unavailable" in m and "ran nothing" in m for m in messages)
+
+
+def test_add_without_a_worker_returns_at_once_and_leaves_it_queued(tmp_path):
+    messages = []
+    t0 = time.monotonic()
+    result = _submit(touch_argv(tmp_path / "ran"), _down, messages, mode=SubmitMode.ADD)
+    entry = Ledger.open().get(result.entry_id)
+    assert time.monotonic() - t0 < 5
+    assert (result.exit_status, result.outcome) == (0, SubmitOutcome.QUEUED)
+    assert (entry.kind, entry.state) == (EntryKind.JOB, EntryState.QUEUED)
+    assert not (tmp_path / "ran").exists()
+    assert any(f"otto-queue wait {entry.id}" in m for m in messages)
+
+
+def test_the_default_mode_adds_only(tmp_path):
+    request = SubmitRequest(argv=touch_argv(tmp_path / "ran"), cwd=os.getcwd())
+    result = otto_queue.submit.submit(request, Room(), wake=_down, notify=lambda _m: None)
+    assert (result.exit_status, result.outcome) == (0, SubmitOutcome.QUEUED)
+    assert not (tmp_path / "ran").exists()
+
+
+def test_add_joins_a_live_ticket_without_waiting(tmp_path):
+    started = tmp_path / "started"
+    proc = subprocess.Popen([PY, "-c", TICKET_HOLD, str(LIB_DIR), str(started), "k"])
+    try:
+        _await_path(started)
+        t0 = time.monotonic()
+        result = _submit(touch_argv(tmp_path / "ran"), _down, idem_key="k", mode=SubmitMode.ADD)
+        assert time.monotonic() - t0 < 5
+        entry = Ledger.open().get(result.entry_id)
+        assert (result.exit_status, result.outcome) == (0, SubmitOutcome.JOINED)
+        assert entry.state.live and entry.state is not EntryState.CANCELLED
+        assert not (tmp_path / "ran").exists()
+    finally:
+        proc.kill()
+        proc.wait(timeout=10)
+
+
+def test_add_with_an_unopenable_ledger_runs_nothing(tmp_path):
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    request = SubmitRequest(argv=touch_argv(tmp_path / "ran"), cwd=os.getcwd(), mode=SubmitMode.ADD)
+    result = otto_queue.submit.submit(request, Room(), root=blocker / "queue", wake=_alive, notify=lambda _m: None)
+    assert (result.exit_status, result.outcome) == (os.EX_UNAVAILABLE, SubmitOutcome.NO_WORKER)
+    assert not (tmp_path / "ran").exists()
 
 
 def test_queue_only_joins_a_live_ticket_without_waiting(tmp_path):
@@ -337,7 +386,7 @@ def test_queue_only_joins_a_live_ticket_without_waiting(tmp_path):
     try:
         _await_path(started)
         t0 = time.monotonic()
-        result = _submit(touch_argv(ran), _down, idem_key="k", run_here=False)
+        result = _submit(touch_argv(ran), _down, idem_key="k", mode=SubmitMode.QUEUE_ONLY)
         assert time.monotonic() - t0 < 5
         entry = Ledger.open().get(result.entry_id)
         assert (result.exit_status, result.outcome) == (0, SubmitOutcome.JOINED)
@@ -356,7 +405,7 @@ def test_queue_only_with_a_worker_joins_a_live_ticket_without_waiting(tmp_path):
     try:
         _await_path(started)
         t0 = time.monotonic()
-        result = _submit(touch_argv(ran), _alive, idem_key="k", run_here=False)
+        result = _submit(touch_argv(ran), _alive, idem_key="k", mode=SubmitMode.QUEUE_ONLY)
         assert time.monotonic() - t0 < 5
         entry = Ledger.open().get(result.entry_id)
         assert (result.exit_status, result.outcome) == (0, SubmitOutcome.JOINED)
@@ -380,7 +429,7 @@ def test_queue_only_missed_claim_on_a_live_ticket_returns_joined(tmp_path):
         return _down(root)
 
     try:
-        result = _submit(touch_argv(tmp_path / "ran"), wake_claim, run_here=False, idem_key="race")
+        result = _submit(touch_argv(tmp_path / "ran"), wake_claim, mode=SubmitMode.QUEUE_ONLY, idem_key="race")
         entry = Ledger.open().get(result.entry_id)
         assert (result.exit_status, result.outcome) == (0, SubmitOutcome.JOINED)
         assert not (tmp_path / "ran").exists()
@@ -399,7 +448,7 @@ def test_queue_only_missed_claim_on_a_done_entry_returns_its_status(tmp_path):
         claimed.lease.release()
         return _down(root)
 
-    result = _submit(touch_argv(tmp_path / "ran"), wake_done, run_here=False)
+    result = _submit(touch_argv(tmp_path / "ran"), wake_done, mode=SubmitMode.QUEUE_ONLY)
     entry = Ledger.open().get(result.entry_id)
     assert (result.exit_status, result.outcome) == (0, SubmitOutcome.REUSED)
     assert entry.state is EntryState.DONE

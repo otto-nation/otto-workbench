@@ -44,10 +44,10 @@ _maint() {
     "${extra[@]}" "$SCRIPT" "$@"
 }
 
-@test "a scheduled run submits itself to the queue and does nothing else" {
+@test "a scheduled run submits itself to the queue with --run-here and does nothing else" {
   _maint
   [ "$status" -eq 0 ]
-  [ "$(cat "$QUEUE_CALLS")" = "submit --class heavy --key maintenance --no-reuse --label maintenance -- $SCRIPT" ]
+  [ "$(cat "$QUEUE_CALLS")" = "submit --run-here --class heavy --key maintenance --no-reuse --label maintenance -- $SCRIPT" ]
   [[ "$output" != *"Fetching"* ]]
 }
 

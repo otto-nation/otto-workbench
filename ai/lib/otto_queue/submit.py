@@ -1,33 +1,34 @@
-"""Submit: hand a command to the worker as a job, or run it here when no worker can be started.
+"""Submit: record a command as a durable queued job and return its entry id.
 
-`otto-queue submit` returns as soon as the job is queued: unattended work
-(scheduled maintenance and its auto-tasks) outlives the process that
-asked for it.
+`otto-queue submit` returns as soon as the job is queued and never runs the
+command here unless asked (`--run-here`): unattended work (scheduled
+maintenance and its auto-tasks) outlives the process that asked for it, and a
+caller that wants the result follows up with `otto-queue wait ID`.
 
 1. `Ledger.resolve` records a `queued` job, or answers from an entry with the
    same key as a ticket would: a `done` one is reused (unless `reuse` is off), a
    live one joined.
-2. `otto_queue.supervisor.wake` starts the worker and confirms it.
-3. When no worker comes up (no supervisor installed, no user bus), the job is
-   run here by `otto_queue.ticket.adopt_job`, which keeps it a job until it
-   starts, and the caller is told so. No slot within `DEFAULT_WAIT_S` returns
-   75 and leaves the job queued. A job a worker
-   took in the meantime is left to it. Joining a live ticket waits for its
-   status, and re-runs the work if that ticket ends without one. The queue's
-   absence degrades to today's behaviour, never to work waiting for a worker
-   that will not come. With `run_here` off (`--queue-only`) a live entry is
-   joined at 0 without waiting or cancelling, a `done` entry's status is
-   returned, and a job this process created (`NEW`) is cancelled instead —
-   `submit` then returns 69 (EX_UNAVAILABLE) having run nothing. A job it only
-   joined stays queued for the next supervisor start. That is for a caller
-   that has its own way to run the command when there is no worker and must not
-   block on it, such as maintenance's auto-task agents
-   (`maintenance/bin/run-due-auto-tasks`). An unopenable ledger, or an entry
-   that ended without a result, answers such a caller the same way.
+2. `otto_queue.supervisor.wake` starts the worker and confirms it. With a
+   worker the job is handed over: queued, or a joined live entry left running.
+3. With no worker (no supervisor installed, no user bus) the mode decides.
+   `SubmitMode.ADD` (the default) leaves the job queued and says so, so it
+   stays queued until a worker starts or someone waits on it. `RUN_HERE`
+   (`--run-here`) runs it here by `otto_queue.ticket.adopt_job`, which keeps it
+   a job until it starts; no slot within `DEFAULT_WAIT_S` returns 75 and leaves
+   it queued. A job a worker took in the meantime is left to it, and joining a
+   live ticket waits for its status, re-running the work if that ticket ends
+   without one. `QUEUE_ONLY` (`--queue-only`) joins a live entry at 0 without
+   waiting or cancelling, returns a `done` entry's status, and cancels a job
+   this process created (`NEW`) instead; `submit` then returns 69
+   (EX_UNAVAILABLE) having run nothing. A job it only joined stays queued for
+   the next supervisor start. That is for a caller that has its own way to run
+   the command when there is no worker and must not block on it, such as
+   maintenance's auto-task agents (`maintenance/bin/run-due-auto-tasks`).
 
-A ledger that cannot be opened runs the command unqueued, as a ticket does; one
-that stays busy returns 75. Exit 75 from a command run here is returned, not
-retried: there is no worker to retry it.
+A ledger that cannot be opened runs nothing under `ADD` or `QUEUE_ONLY` (69);
+under `RUN_HERE` it runs the command unqueued, as a ticket does. One that stays
+busy returns 75. Exit 75 from a command run here is returned, not retried:
+there is no worker to retry it.
 """
 
 # doc-group: queue
@@ -51,6 +52,14 @@ from core.proc import INTERRUPT_RETURNCODE
 from otto_queue.model import Entry, EntryClass, EntryKind, EntryState, NewEntry
 
 
+class SubmitMode(StrEnum):
+    """What submit does with the job once it is queued and no worker comes up."""
+
+    ADD = "add"
+    RUN_HERE = "run_here"
+    QUEUE_ONLY = "queue_only"
+
+
 class SubmitOutcome(StrEnum):
     QUEUED = "queued"
     JOINED = "joined"
@@ -71,7 +80,7 @@ class SubmitRequest:
     idem_key: str | None = None
     force: bool = False
     reuse: bool = True
-    run_here: bool = True
+    mode: SubmitMode = SubmitMode.ADD
     label: str | None = None
 
     def entry(self) -> NewEntry:
@@ -122,7 +131,7 @@ def _handed_over(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolu
         notify(f"otto-queue: queued entry {res.entry.id}; "
                "`otto-queue status` shows it")
         return SubmitResult(0, SubmitOutcome.QUEUED, res.entry.id)
-    if res.entry.kind is EntryKind.JOB or not request.run_here:
+    if res.entry.kind is EntryKind.JOB or request.mode is not SubmitMode.RUN_HERE:
         notify(f"otto-queue: joined entry {res.entry.id}; "
                "`otto-queue status` shows it")
         return SubmitResult(0, SubmitOutcome.JOINED, res.entry.id)
@@ -132,11 +141,16 @@ def _handed_over(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolu
 def _run_here(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolution,
               request: SubmitRequest, policy: otto_queue.slots.Policy, reason: str,
               notify: Callable[[str], None]) -> SubmitResult:
-    if not request.run_here and res.outcome is not otto_queue.ledger.Outcome.NEW:
+    if request.mode is SubmitMode.ADD:
+        notify(f"otto-queue: no worker ({reason}); entry {res.entry.id} stays queued; "
+               f"`otto-queue wait {res.entry.id}` runs it here")
+        joined = res.outcome is not otto_queue.ledger.Outcome.NEW
+        return SubmitResult(0, SubmitOutcome.JOINED if joined else SubmitOutcome.QUEUED, res.entry.id)
+    if request.mode is SubmitMode.QUEUE_ONLY and res.outcome is not otto_queue.ledger.Outcome.NEW:
         notify(f"otto-queue: joined entry {res.entry.id}; "
                "`otto-queue status` shows it")
         return SubmitResult(0, SubmitOutcome.JOINED, res.entry.id)
-    if not request.run_here:
+    if request.mode is SubmitMode.QUEUE_ONLY:
         claimed = ledger.claim_as_ticket(res.entry.id, os.getpid())
         if claimed is None:
             return _after_missed_claim(ledger, res.entry.id, request, policy, notify)
@@ -186,8 +200,8 @@ def _withdraw(ledger: otto_queue.ledger.Ledger, claimed: otto_queue.ledger.Resol
 
 def _unqueued(request: SubmitRequest, policy: otto_queue.slots.Policy, root: Path | None,
               reason: str, notify: Callable[[str], None]) -> SubmitResult:
-    """The ledger cannot be opened: run the command here unqueued, as a ticket would, unless *run_here* is off."""
-    if not request.run_here:
+    """The ledger cannot be opened: run the command here unqueued, as a ticket would, unless the mode is `ADD` or `QUEUE_ONLY`."""
+    if request.mode is not SubmitMode.RUN_HERE:
         notify(f"otto-queue: queue unavailable ({reason}); ran nothing")
         return SubmitResult(ExitCode.UNAVAILABLE, SubmitOutcome.NO_WORKER)
     result = otto_queue.ticket.run_ticket(request.ticket(), policy, root=root, notify=notify)
@@ -201,7 +215,7 @@ def _after_missed_claim(ledger: otto_queue.ledger.Ledger, entry_id: int,
     if entry is not None and entry.kind is EntryKind.JOB and entry.state.live:
         notify(f"otto-queue: entry {entry_id} is with the worker; leaving it to that run")
         return SubmitResult(0, SubmitOutcome.JOINED, entry_id)
-    if request.run_here:
+    if request.mode is SubmitMode.RUN_HERE:
         return _wait_on_ticket(request, policy, ledger.root, notify)
     return _queue_only_miss(entry, entry_id, notify)
 

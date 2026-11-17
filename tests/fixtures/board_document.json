@@ -194,7 +194,6 @@
       "is_mine": true,
       "owed": "2 unresolved threads",
       "owed_known": true,
-      "worktree": null,
       "lock": null,
       "lanes": {
         "team": "reviewed",
@@ -304,7 +303,6 @@
       "is_mine": false,
       "owed": null,
       "owed_known": false,
-      "worktree": null,
       "lock": null,
       "lanes": {
         "team": "open",
@@ -398,7 +396,6 @@
       "is_mine": false,
       "owed": null,
       "owed_known": false,
-      "worktree": null,
       "lock": null,
       "lanes": {
         "team": "open",
@@ -483,7 +480,6 @@
       "is_mine": false,
       "owed": null,
       "owed_known": false,
-      "worktree": null,
       "lock": null,
       "lanes": {
         "team": "landed",
@@ -532,8 +528,7 @@
     "batch-session",
     "target-session",
     "queue-lanes",
-    "cache-age",
-    "worktrees"
+    "cache-age"
   ],
   "stamp": ""
 }

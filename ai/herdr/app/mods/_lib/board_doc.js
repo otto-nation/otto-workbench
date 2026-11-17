@@ -29,7 +29,7 @@ export function rowToPr(row) {
     hasNewChangesSinceReview: row.has_new_changes_since_review,
     reviewRuns: (row.review_runs ?? []).map((run) => ({ postedEvent: run.posted_event ?? null, run })),
     lanes: row.lanes, issues: row.issues, presentation: row.presentation,
-    queue: row.queue ?? null, worktree: row.worktree ?? null,
+    queue: row.queue ?? null,
   };
 }
 

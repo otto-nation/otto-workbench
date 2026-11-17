@@ -16,7 +16,6 @@ const fromEnv = (process.env.PARITY_ROOTS || "").split("\n").filter(Boolean);
 const defaultRoots = [
   process.env.WEB,
   process.env.MODS ? path.join(process.env.MODS, "prs") : "",
-  process.env.MODS ? path.join(process.env.MODS, "space-prs") : "",
 ].filter(Boolean);
 const targets = given.length ? given : (fromEnv.length ? fromEnv : defaultRoots);
 if (!targets.length) {

@@ -19,7 +19,7 @@ SCHEMA_VERSIONS = (1,)
 # What this build's `pr` accepts that a board consumer drives; add one when a
 # consumer must tell a newer `pr` from an older one; never remove one without
 # a schema bump.
-FEATURES = ("review-publish", "batch-session", "target-session", "queue-lanes", "cache-age", "worktrees")
+FEATURES = ("review-publish", "batch-session", "target-session", "queue-lanes", "cache-age")
 
 
 class Phase(StrEnum):
@@ -283,6 +283,3 @@ class Row:
     # board.locks.lock_of's label for an OPEN row something is working on, read at
     # read time; None when nothing holds it.
     lock: str | None = None
-    # The worktree on this row's branch, as `git worktree list` spells it, read at read
-    # time; None when no checkout holds the branch.
-    worktree: str | None = None

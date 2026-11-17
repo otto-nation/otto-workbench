@@ -62,25 +62,6 @@ _run_step() {
   ' _ "$REPO_ROOT" "$SRC" "$UNTRUSTED" "$MANIFEST"
 }
 
-@test "jq appends space-prs after herdr's sidebar-lists children" {
-  run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
-  [ "$status" -eq 0 ]
-  expected=$(jq '[.. | objects | select(.id? == "sidebar-lists") | .children | map(.id)] | map(. + ["space-prs"])' "$FIXTURE")
-  actual=$(jq '[.. | objects | select(.id? == "sidebar-lists") | .children | map(.id)]' <<< "$output")
-  [ "$expected" = "$actual" ]
-  orig=$(jq '[.. | objects | select(.id? == "sidebar-lists") | .children]' "$FIXTURE")
-  prefix=$(jq '[.. | objects | select(.id? == "sidebar-lists") | .children[:-1]]' <<< "$output")
-  [ "$orig" = "$prefix" ]
-  jq -e '[.. | objects | select(.id? == "space-prs")] == [{"id":"space-prs","type":"block","size":{"weight":1},"min":60,"content":{"mod":"space-prs"}}]' <<< "$output"
-}
-
-@test "jq twice yields one space-prs" {
-  once=$(jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE")
-  twice=$(jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" <<< "$once")
-  jq -e '[.. | objects | select(.id? == "space-prs")] | length == 1' <<< "$once"
-  jq -e '[.. | objects | select(.id? == "space-prs")] | length == 1' <<< "$twice"
-}
-
 @test "jq adds the board to panel-body after files and changes" {
   run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
   [ "$status" -eq 0 ]
@@ -124,11 +105,10 @@ _run_step() {
   [ "$status" -ne 0 ]
 }
 
-@test "jq without sidebar-lists still builds the layout, with no space-prs block" {
+@test "jq without sidebar-lists still builds the layout" {
   input=$(jq 'walk(if type == "object" and has("children") then .children |= map(select(.id? != "sidebar-lists")) else . end)' "$FIXTURE")
   run jq -c -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" <<< "$input"
   [ "$status" -eq 0 ]
-  [ "$(jq '[.. | objects | select(.id? == "space-prs")] | length' <<< "$output")" -eq 0 ]
   [ "$(jq '[.. | objects | select(.id? == "prs-panel")] | length' <<< "$output")" -eq 1 ]
 }
 
@@ -308,7 +288,7 @@ _run_step() {
   _seed_main
   run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *'herdr-app: show the workbench layout (PRs, Queue and Hosts toggles beside Files/Changes open those panels; space-prs under the sidebar lists) with: herdr-app do layout.switch --name workbench'* ]]
+  [[ "$output" == *'herdr-app: show the workbench layout (PRs, Queue and Hosts toggles beside Files/Changes open those panels) with: herdr-app do layout.switch --name workbench'* ]]
   run _run_step
   [ "$status" -eq 0 ]
   [[ "$output" != *'layout.switch --name workbench'* ]]

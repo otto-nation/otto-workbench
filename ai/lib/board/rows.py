@@ -70,7 +70,6 @@ def from_cache(
             viewer=viewer,
             slug=slug,
             queue=work.get(f"{slug}#{number}"),
-            worktree=worktree,
             lock=lock,
         )
         if mine_only and not row.is_mine:
@@ -109,7 +108,6 @@ def _row_from_merged(
     viewer: str,
     slug: str,
     queue: QueueWork | None = None,
-    worktree: str | None = None,
     lock: str | None = None,
 ) -> Row:
     author = raw.get("author") or ""
@@ -169,7 +167,6 @@ def _row_from_merged(
         owed=owed_reason,
         owed_known=owed_known,
         queue=queue,
-        worktree=worktree,
         lock=lock,
     )
 

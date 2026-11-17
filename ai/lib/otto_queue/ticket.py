@@ -69,7 +69,7 @@ import random
 import signal
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
 
@@ -134,12 +134,6 @@ class TicketRequest:
                         idem_key=self.idem_key, label=self.label,
                         subject=self.subject, action=self.action,
                         terminal=os.environ.get(TERMINAL_ENV) or None)
-
-
-def claimed_request(entry: Entry, request: TicketRequest) -> TicketRequest:
-    """*request* running the claimed *entry*'s own command, so the ledger and the run agree."""
-    return replace(request, argv=entry.argv, cwd=entry.cwd, entry_class=entry.entry_class,
-                   label=entry.label, subject=entry.subject, action=entry.action)
 
 
 @dataclass(frozen=True)
@@ -326,8 +320,7 @@ def run_claimed(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolut
                 poll_s: float = POLL_S, notify: Callable[[str], None] = core.log.info) -> TicketResult:
     """Wait for a slot and run *request* for the NEW entry *res* this process holds the lease of.
 
-    `run_ticket` calls it for a ticket it recorded; `otto_queue.submit` for a job
-    it claimed back with `Ledger.claim_as_ticket` when no worker could start.
+    Only `run_ticket` calls it, for a ticket it recorded.
     """
     entry_id = res.entry.id
     try:

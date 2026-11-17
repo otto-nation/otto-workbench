@@ -426,27 +426,3 @@ def test_a_ticket_records_hc_terminal_id_when_set(monkeypatch):
 def test_a_ticket_leaves_terminal_blank_without_hc_terminal_id():
     result = _run(exit_argv(0))
     assert Ledger.open().get(result.entry_id).terminal is None
-
-
-def test_claimed_request_keeps_the_entrys_label():
-    held = Ledger.open().resolve(NewEntry(argv=("true",), cwd="/", label="L"),
-                                 force=False, pid=os.getpid())
-    try:
-        claimed = otto_queue.ticket.claimed_request(
-            held.entry, TicketRequest(argv=("other",), cwd="/tmp"))
-        assert claimed.label == "L"
-        assert claimed.argv == ("true",)
-    finally:
-        held.lease.release()
-
-
-def test_claimed_request_keeps_the_entrys_subject_and_action():
-    held = Ledger.open().resolve(
-        NewEntry(argv=("true",), cwd="/", subject="o/r#1", action="review"),
-        force=False, pid=os.getpid())
-    try:
-        claimed = otto_queue.ticket.claimed_request(
-            held.entry, TicketRequest(argv=("other",), cwd="/tmp"))
-        assert (claimed.subject, claimed.action) == ("o/r#1", "review")
-    finally:
-        held.lease.release()

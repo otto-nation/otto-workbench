@@ -70,6 +70,19 @@ def test_a_held_run_is_labelled_by_its_subcommand_only(held_run, worktree):
     assert board.locks.lock_of("k", "feat/a", None) == "Locked · pr review"
 
 
+def test_an_unreadable_held_record_falls_back_to_pr(worktree):
+    target = pr.target.target_dir("k", "feat/u")
+    target.mkdir(parents=True, exist_ok=True)
+    lock = target / core.run_lock.LOCK_FILE
+    lock.write_text("not json")
+    handle = open(lock, "a+")
+    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        assert board.locks.lock_of("k", "feat/u", None) == "Locked · pr"
+    finally:
+        handle.close()
+
+
 def test_a_live_session_is_labelled_by_harness(worktree, sleeper):
     proc = sleeper()
     assert core.session_lock.acquire(worktree, pid=proc.pid, harness="pi")

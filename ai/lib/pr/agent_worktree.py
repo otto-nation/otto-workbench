@@ -55,6 +55,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from datetime import datetime, timezone
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -415,10 +416,12 @@ def report(call: ToolCall, env: Mapping[str, str], *, run=subprocess.run) -> Rep
         return ReportOutcome.SKIPPED
     session = session_of(env)
     if session is not None:
-        core.session_lock.claim_reached(
+        command = call.command or call.file_path or session.harness
+        if not core.session_lock.claim_reached(
             target, pid=session.pid, harness=session.harness,
-            session_id=session.session_id, command=session.harness,
-        )
+            session_id=session.session_id, command=command,
+        ):
+            print(f"agent-worktree: could not record session lock for {target}", file=sys.stderr)
     return _publish(target, env, run)
 
 

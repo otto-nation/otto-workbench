@@ -46,6 +46,8 @@ it most recently worked in from elsewhere; the per-pid state under
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import subprocess
@@ -303,6 +305,21 @@ def _read_reach(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+@contextlib.contextmanager
+def _reach_guard(pid: int):
+    """Serialise one pid's reach read-modify-write across parallel hooks."""
+    path = _reach_path(pid).with_suffix(".lock")
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "a")
+    except OSError:
+        yield
+        return
+    with handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+
+
 def _prune_reach() -> None:
     """Forget reached claims whose session is gone; their records already read as dead."""
     root = core.workbench_paths.state_dir() / _REACH_DIR
@@ -332,9 +349,15 @@ def claim_reached(
     started = process_start(pid)
     if not started:
         return False
-    _prune_reach()
+    with _reach_guard(pid):
+        return _claim_reached_locked(worktree, pid, harness, session_id, command, started)
+
+
+def _claim_reached_locked(worktree, pid, harness, session_id, command, started) -> bool:
     state = _reach_path(pid)
     previous = _read_reach(state)
+    if not previous:
+        _prune_reach()  # only a pid's first claim pays for the sweep
     if previous.get("started") == started and previous.get("worktree") == str(worktree):
         return True
     if previous.get("started") == started and previous.get("worktree"):
@@ -353,10 +376,11 @@ def claim_reached(
 def drop_reached(pid: int) -> None:
     """Release ``pid``'s reached claim, if any, and forget it."""
     state = _reach_path(pid)
-    worktree = _read_reach(state).get("worktree")
-    if isinstance(worktree, str) and worktree:
-        release(Path(worktree), pid)
-    state.unlink(missing_ok=True)
+    with _reach_guard(pid):
+        worktree = _read_reach(state).get("worktree")
+        if isinstance(worktree, str) and worktree:
+            release(Path(worktree), pid)
+        state.unlink(missing_ok=True)
 
 
 def _write(path: Path, lines: list[str]) -> bool:

@@ -210,4 +210,3 @@ _throws() {
   [ "$status" -eq 0 ]
   [ "$output" = '{"groups":[],"unrunnable":[{"key":"a/one#3","reason":"Locked · pr review"}]}' ]
 }
-

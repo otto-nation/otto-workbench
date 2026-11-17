@@ -20,8 +20,8 @@ _js() {
       status: 'complete', cost_usd: 0.42, input_tokens: 20000, output_tokens: 11000,
       post: {event:'comment', posted_at:'', review_id:1, sha_drifted:false}, ...over,
     });
-    process.stdout.write(JSON.stringify(eval(process.argv[1])));
-  " -- "$1"
+    process.stdout.write(JSON.stringify(eval($(node_body_read 1))));
+  " -- "$(node_body "$1")"
 }
 
 @test "post labels: pending, comment, approve, requested_changes, dismissed, unposted, unknown, empty" {

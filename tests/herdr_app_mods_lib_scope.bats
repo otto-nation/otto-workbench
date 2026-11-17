@@ -11,8 +11,8 @@ _js() {
   run node --input-type=module -e "
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/scope.js');
     const { friendlyError, spaceTargets, spacePanes, spaceFolders, mergeStates, skippable, boardState, repoId, representatives, staleKeys, cardId, REPO_PHASES, repoPhase } = m;
-    process.stdout.write(JSON.stringify(eval(process.argv[1])));
-  " -- "$1"
+    process.stdout.write(JSON.stringify(eval($(node_body_read 1))));
+  " -- "$(node_body "$1")"
 }
 
 @test "friendlyError: null, auth, timeout, exec" {

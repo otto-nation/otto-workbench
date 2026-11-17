@@ -29,8 +29,8 @@ _js() {
       repo: { slug: doc.repos[0].slug, host: doc.repos[0].host },
       phase: 'loaded', rows: prs, error: null,
     });
-    process.stdout.write(JSON.stringify(eval(process.argv[1])));
-  " -- "$1"
+    process.stdout.write(JSON.stringify(eval($(node_body_read 1))));
+  " -- "$(node_body "$1")"
 }
 
 

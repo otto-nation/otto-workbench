@@ -118,8 +118,8 @@ _host() {
     printf '%s\n' 'const out = (v) => process.stdout.write(JSON.stringify(v));'
     cat "$HOST_DIR/prelude.js"
     printf '%s\n' \
-      "const body = new (async () => {}).constructor('M', 'FIX', 'out', 'H', 'calls', 'label', 'fakePr', 'fakeCx', process.argv[2]);" \
+      "const body = new (async () => {}).constructor('M', 'FIX', 'out', 'H', 'calls', 'label', 'fakePr', 'fakeCx', $(node_body_read 2));" \
       "await body(M, FIX, out, H, calls, label, fakePr, fakeCx);"
   } > "$HOST_DIR/run.mjs"
-  run node --no-deprecation --import "file://$HOST_DIR/register.mjs" "$HOST_DIR/run.mjs" "$1"
+  run node --no-deprecation --import "file://$HOST_DIR/register.mjs" "$HOST_DIR/run.mjs" "$(node_body "$1")"
 }

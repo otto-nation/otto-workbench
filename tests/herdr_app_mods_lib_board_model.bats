@@ -30,10 +30,10 @@ _model() {
       'const rows = doc.rows.map(d.rowToPr).map((p) => ({ ...p, repoSlug: "acme/box", viewer: doc.viewer }));' \
       'const kit = rows.map((p) => ({ ...p, repoSlug: "acme/kit", number: p.number + 100, labels: ["infra"], author: p.number === 8 ? "dependabot[bot]" : p.author }));' \
       'const view = { prs: [...rows, ...kit], me: doc.viewer, repoSlugs: ["acme/kit", "acme/box"], columns: doc.columns };' \
-      "const body = new (async () => {}).constructor('m', 'c', 'f', 'cm', 'bl', 'd', 'doc', 'rows', 'kit', 'view', process.argv[2]);" \
+      "const body = new (async () => {}).constructor('m', 'c', 'f', 'cm', 'bl', 'd', 'doc', 'rows', 'kit', 'view', $(node_body_read 2));" \
       'await body(m, c, f, cm, bl, d, doc, rows, kit, view);'
   } > "$runjs"
-  run node --no-deprecation "$runjs" "$1"
+  run node --no-deprecation "$runjs" "$(node_body "$1")"
 }
 
 @test "board model: equals today's mod derivation for every tab, scope and filter set" {

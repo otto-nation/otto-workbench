@@ -32,10 +32,10 @@ _store() {
       '  if (l === "hc") return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };' \
       '  return docAs("acme/box", l.split(":")[1].replace(":offline", ""));' \
       '};' \
-      "const body = new (async () => {}).constructor('s', 'doc', 'calls', 'fake', 'docAs', process.argv[2]);" \
+      "const body = new (async () => {}).constructor('s', 'doc', 'calls', 'fake', 'docAs', $(node_body_read 2));" \
       'await body(s, doc, calls, fake, docAs);'
   } > "$runjs"
-  run node --no-deprecation "$runjs" "$1"
+  run node --no-deprecation "$runjs" "$(node_body "$1")"
 }
 
 @test "store: a pull checks tools, reads terminals once, runs the phases and reports each change" {

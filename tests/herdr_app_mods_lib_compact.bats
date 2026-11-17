@@ -12,8 +12,8 @@ _js() {
     const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/compact.js');
     const { groupColumns } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
     const { viewOf, compactSections } = m;
-    process.stdout.write(JSON.stringify(eval(process.argv[1])));
-  " -- "$1"
+    process.stdout.write(JSON.stringify(eval($(node_body_read 1))));
+  " -- "$(node_body "$1")"
 }
 
 @test "viewOf: narrow is compact, wide is board" {

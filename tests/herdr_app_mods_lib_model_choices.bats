@@ -51,8 +51,8 @@ _js() {
       },
     };
     const { choicesArgv, parseChoices, phaseOptions, defaultLabel, refBlocked, SECTION_CONFIGURED, SECTION_TIERS, SECTION_ENABLED, FLOOR_REASON } = m;
-    process.stdout.write(JSON.stringify(eval(process.argv[1])));
-  " -- "$1"
+    process.stdout.write(JSON.stringify(eval($(node_body_read 1))));
+  " -- "$(node_body "$1")"
 }
 
 @test "choicesArgv is pr models --json, with --repo-dir when given" {

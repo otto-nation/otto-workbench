@@ -95,6 +95,28 @@ pin_mise_to_real_home() {
   export MISE_AUTO_INSTALL="${MISE_AUTO_INSTALL:-false}"
 }
 
+# node_body JS — writes JS (code a node test runner compiles: an async function
+# body or an eval'd expression) to a file in this test's scratch dir and prints
+# its path. Pass that path to node in place of the code, and read it in the
+# runner with $(node_body_read N), where N is its process.argv index.
+#
+# Code is never compiled from argv: an endpoint-security agent on some machines
+# SIGKILLs node (exit 137, no output) when it compiles a string of about a
+# kilobyte or more taken from the command line, so a test that grows past that
+# fails locally while CI stays green. tests/node_test_bodies.bats holds every
+# suite to this.
+node_body() {
+  local file
+  file=$(mktemp "$BATS_TEST_TMPDIR/node-body.XXXXXX")
+  printf '%s' "$1" > "$file"
+  printf '%s' "$file"
+}
+
+# node_body_read N — the JS expression reading the node_body file at process.argv[N].
+node_body_read() {
+  printf "(await import('node:fs')).readFileSync(process.argv[%s], 'utf8')" "$1"
+}
+
 common_setup() {
   # Clear git env vars inherited from hooks (pre-push sets GIT_DIR which
   # causes git commands in tests to target the real repo instead of temp repos)

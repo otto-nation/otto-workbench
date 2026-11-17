@@ -19,8 +19,8 @@ _js() {
     const {
       locate, stripMachine, addr, remoteSlug, hostOf,
     } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/location.js');
-    process.stdout.write(JSON.stringify(eval(process.argv[1])));
-  " -- "$1"
+    process.stdout.write(JSON.stringify(eval($(node_body_read 1))));
+  " -- "$(node_body "$1")"
 }
 
 @test "locate: local space" {

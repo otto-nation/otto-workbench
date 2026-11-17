@@ -4,7 +4,11 @@
 # _host_setup [MOD] — assembles $BATS_TEST_TMPDIR/host/<mod> the way _herdr_app_install_mods lays a
 #   mod out (mod/*.js, mod/_lib, mod/_ui). MOD defaults to prs so existing suites stay unchanged.
 #   Writes node loader hooks that resolve `gpui-kit`, `gpui-base` and `herdr` to generated stubs:
-#   every gpui name is a chainable no-op (`View` a class); a herdr name calls globalThis.__herdr[name]
+#   every gpui name is a chainable no-op (`View` a class). When globalThis.__gpuiRecord is an array at
+#   call time, each gpui factory (div(), h_flex(), v_flex(), svg(), Input.new(), TextView.markdown(), …)
+#   pushes { id: null, click: null, children: [] }; .id(x) records x, .on_click(fn) records fn,
+#   .child/.children append, .when(c, b) returns c ? b(el) : el, every other method returns the element.
+#   With the global unset, behaviour is unchanged. A herdr name calls globalThis.__herdr[name]
 #   when the test set it, else is a no-op.
 # _host JS — runs JS (top-level await allowed) as an ES module with:
 #   M  the assembled mod dir       out(v)  print JSON.stringify(v)
@@ -34,10 +38,11 @@ export async function initialize({ root }) {
   }
 }
 const CHAIN = "const chain = () => { const f = new Proxy(function () {}, { get: (t, k) => (k === \"then\" ? undefined : k === \"prototype\" ? t.prototype : () => f), apply: () => f, construct: () => f }); return f; };\n";
+const GPUI = CHAIN + "const rec = () => { const recs = globalThis.__gpuiRecord; if (!Array.isArray(recs)) return chain(); const el = { id: null, click: null, children: [] }; recs.push(el); const wrap = new Proxy(function () {}, { get: (t, k) => { if (k === \"then\") return undefined; if (k === \"prototype\") return t.prototype; if (k === \"id\") return (x) => { el.id = x; return wrap; }; if (k === \"on_click\") return (fn) => { el.click = fn; return wrap; }; if (k === \"child\") return (c) => { el.children.push(c); return wrap; }; if (k === \"children\") return (...cs) => { el.children.push(...cs.flat()); return wrap; }; if (k === \"when\") return (c, b) => (c ? b(wrap) : wrap); return () => wrap; }, apply: () => wrap, construct: () => wrap }); return wrap; };\nconst gpui = () => new Proxy(function () {}, { apply: () => rec(), construct: () => rec(), get: (t, k) => (k === \"then\" ? undefined : k === \"prototype\" ? t.prototype : () => rec()) });\n";
 function source(spec) {
   const list = [...(names[spec] ?? [])];
   if (spec === "herdr") return CHAIN + list.map((n) => `export const ${n} = (...a) => (globalThis.__herdr?.${n} ? globalThis.__herdr.${n}(...a) : chain());`).join("\n");
-  return CHAIN + list.map((n) => (n === "View" ? "export class View {}" : `export const ${n} = chain();`)).join("\n");
+  return GPUI + list.map((n) => (n === "View" ? "export class View {}" : `export const ${n} = gpui();`)).join("\n");
 }
 export async function resolve(spec, ctx, next) {
   return HOST.has(spec) ? { url: `stub:///${spec}`, shortCircuit: true } : next(spec, ctx);

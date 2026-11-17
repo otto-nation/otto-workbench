@@ -257,9 +257,20 @@ def test_job_exec_runs_a_queued_job():
 
 
 def test_submit_without_a_supervisor_runs_here_and_says_so(tmp_path):
-    result = _shim_env(["submit", "--", PY, "-c", "raise SystemExit(3)"], _no_supervisor_env(tmp_path))
+    result = _shim_env(["submit", "--run-here", "--", PY, "-c", "raise SystemExit(3)"], _no_supervisor_env(tmp_path))
     assert result.returncode == 3
     assert "running entry" in result.stderr and "here" in result.stderr and "Could not find service" in result.stderr
+
+
+def test_submit_without_a_supervisor_adds_and_prints_only_the_id(tmp_path):
+    ran = tmp_path / "ran"
+    result = _shim_env(["submit", "--", PY, "-c", f"open({str(ran)!r}, 'w')"], _no_supervisor_env(tmp_path))
+    entry_id = int(result.stdout.strip())
+    entry = Ledger.open().get(entry_id)
+    assert result.returncode == 0
+    assert (entry.kind, entry.state) == (EntryKind.JOB, EntryState.QUEUED)
+    assert not ran.exists()
+    assert "otto-queue wait" in result.stderr
 
 
 def test_submit_run_here_without_a_supervisor_runs_here(tmp_path):

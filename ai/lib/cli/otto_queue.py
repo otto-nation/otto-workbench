@@ -54,8 +54,8 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.ExitOutcome(
             ExitCode.OK,
             "status listed the ledger; cancel stopped a waiting or running entry; "
-            "run's command succeeded; submit queued or joined the job, or ran it here "
-            "and it succeeded"),
+            "run's command succeeded; submit queued or joined the job (its id on stdout), "
+            "or with --run-here ran it here and it succeeded"),
         core.command_contract.ExitOutcome(
             ExitCode.FAILURE,
             "cancel named no live entry (unknown id, or already finished); the "
@@ -68,7 +68,7 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.ExitOutcome(
             ExitCode.UNAVAILABLE,
             "submit --queue-only: no worker could take the job, so it was withdrawn "
-            "and nothing ran",
+            "and nothing ran; or the ledger could not be opened, so nothing was queued",
             (core.command_contract.NextStep(
                 "", ("run the command yourself", "or retry once a worker is up")),)),
         core.command_contract.ExitOutcome(
@@ -92,7 +92,10 @@ CONTRACT = core.command_contract.CommandContract(
             "join a live review with that key, or reuse a done one's status"),
         core.command_contract.Example(
             "otto-queue submit --key nightly -- pr gc",
-            "queue pr gc for the worker and return; runs here if no worker starts"),
+            "queue pr gc and print its entry id; never runs it here"),
+        core.command_contract.Example(
+            "otto-queue submit --run-here --key nightly -- pr gc",
+            "the same, but run it here when no worker can start"),
         core.command_contract.Example(
             "otto-queue status", "list live entries and recent finished ones"),
         core.command_contract.Example(
@@ -104,7 +107,7 @@ CONTRACT = core.command_contract.CommandContract(
             "otto-queue cancel 12", "stop waiting entry 12, or SIGTERM a running one"),
     ),
     notes=(
-        "run, and submit when it ran the job here, also exit with COMMAND's own status.",
+        "run, and submit --run-here when it ran the job here, also exit with COMMAND's own status.",
         "--key is idempotent: a live match is joined, a done match returns its "
         "status, --force runs regardless.",
         "Admission is machine-wide `batch.admission.QueuePolicy` (`batch.*` in "
@@ -154,14 +157,14 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--wait", type=_seconds, default=otto_queue.ticket.DEFAULT_WAIT_S,
                      help="Seconds to wait for a slot before exiting 75 (default: %(default)g)")
     run.add_argument("argv", nargs=argparse.REMAINDER, help="-- and the command to run")
-    submit = sub.add_parser("submit", help="Queue a command for the worker and return")
+    submit = sub.add_parser("submit", help="Queue a command durably and print its entry id; `otto-queue wait ID` waits for it")
     _add_entry_flags(submit)
     modes = submit.add_mutually_exclusive_group()
     modes.add_argument("--run-here", dest="mode", action="store_const", const=otto_queue.submit.SubmitMode.RUN_HERE.value,
                        help="When no worker can start, run the job in this process (unattended callers such as scheduled maintenance)")
     modes.add_argument("--queue-only", dest="mode", action="store_const", const=otto_queue.submit.SubmitMode.QUEUE_ONLY.value,
                        help="When no worker can start, withdraw the job and exit 69 instead of running it here")
-    submit.set_defaults(mode=otto_queue.submit.SubmitMode.RUN_HERE.value)
+    submit.set_defaults(mode=otto_queue.submit.SubmitMode.ADD.value)
     submit.add_argument("argv", nargs=argparse.REMAINDER, help="-- and the command to run")
     worker = sub.add_parser("worker", help="Run queued jobs until idle; started by the supervisor")
     worker.add_argument("--idle", type=_seconds, default=otto_queue.worker.IDLE_S,
@@ -213,7 +216,11 @@ def _submit(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         argv=_command(args, parser), cwd=os.getcwd(), entry_class=EntryClass(args.entry_class),
         idem_key=args.key, force=args.force, reuse=args.reuse, mode=otto_queue.submit.SubmitMode(args.mode),
         label=args.label)
-    return otto_queue.submit.submit(request, machine_policy()).exit_status
+    result = otto_queue.submit.submit(request, machine_policy())
+    if result.entry_id is not None and result.outcome in (
+            otto_queue.submit.SubmitOutcome.QUEUED, otto_queue.submit.SubmitOutcome.JOINED):
+        print(result.entry_id)
+    return result.exit_status
 
 
 def _shim() -> Path:

@@ -346,6 +346,13 @@ def test_add_without_a_worker_returns_at_once_and_leaves_it_queued(tmp_path):
     assert any(f"otto-queue wait {entry.id}" in m for m in messages)
 
 
+def test_the_default_mode_adds_only(tmp_path):
+    request = SubmitRequest(argv=touch_argv(tmp_path / "ran"), cwd=os.getcwd())
+    result = otto_queue.submit.submit(request, Room(), wake=_down, notify=lambda _m: None)
+    assert (result.exit_status, result.outcome) == (0, SubmitOutcome.QUEUED)
+    assert not (tmp_path / "ran").exists()
+
+
 def test_add_joins_a_live_ticket_without_waiting(tmp_path):
     started = tmp_path / "started"
     proc = subprocess.Popen([PY, "-c", TICKET_HOLD, str(LIB_DIR), str(started), "k"])

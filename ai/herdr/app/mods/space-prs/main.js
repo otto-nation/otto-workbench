@@ -9,6 +9,8 @@ import { spaceTargets } from "./_lib/scope.js";
 import { spaceWorktreePrs } from "./_lib/space_prs.js";
 import { openSession, agentPaneFor, focusSteps } from "./_lib/run_session.js";
 import { createLoadGate, execLoadReader } from "./_lib/load_backoff.js";
+import { LOAD_DELAY_MS } from "./_lib/load_state.js";
+import { refreshSpinning } from "./_lib/queue_lanes.js";
 import { BRAND } from "./_lib/brand.generated.js";
 import { SP, ROW_H } from "./_lib/tokens.js";
 import {
@@ -33,6 +35,7 @@ export default class SpacePrs extends View {
     this.acx = cx;
     this.store = createBoardStore({ exec });
     this.inflight = this.again = false;
+    this.refreshSince = null;
     this.key = null;
     this.size = null;
     this.sessionUi = new Map();
@@ -49,10 +52,13 @@ export default class SpacePrs extends View {
       return;
     }
     this.inflight = true;
+    this.refreshSince = Date.now();
+    cx.timer.after(LOAD_DELAY_MS, (cx) => { if (this.refreshSince != null) cx.notify(); });
     cx.spawn(async (cx) => {
       try { await this.pull(cx); }
       finally {
         this.inflight = false;
+        this.refreshSince = null;
         cx.notify();
         if (this.again) {
           this.again = false;
@@ -236,7 +242,7 @@ export default class SpacePrs extends View {
     const header = rail
       ? pinned(v_flex().px(SP.xs).py(SP.xxs).child(text("section", "PRs", t.muted)))
       : paneHeader("Space PRs", {
-          spinning: this.inflight,
+          spinning: refreshSpinning(this.refreshSince, Date.now()),
           onRefresh: () => this.refresh(this.acx),
           id: "space-prs-refresh",
         });

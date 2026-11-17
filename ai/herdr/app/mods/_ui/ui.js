@@ -6,6 +6,7 @@ import { h_flex, v_flex, TextView, Checkbox, Input } from "gpui-base";
 import { theme, settings } from "herdr";
 import { SP, TYPE, RADIUS, CONTROL, LAYOUT, ROW_H, METER } from "../_lib/tokens.js";
 import { STATUS, DIFF, statusOf } from "../_lib/status.js";
+import { COPIED_TEXT } from "../_lib/pr_link.js";
 
 export function mono() {
   return settings().font_family ?? "Menlo";
@@ -96,6 +97,18 @@ export function tag(content) {
   const t = theme();
   return type(div(), "label").flex_none().px(SP.xs).rounded(RADIUS.tag).border_1().border_color(t.border)
     .text_color(t.muted).child(content);
+}
+
+// A value that copies on click: the shown element reads "Copied" for a moment after (the caller owns
+// when, via `copied`, so a redraw cannot lose it). `field` is _lib/pr_link.js copyFields' entry.
+export function copyable(id, field, shown, { copied = false, onCopy }) {
+  if (copied) return statusText("pass", COPIED_TEXT);
+  return h_flex().id(id).flex_none().cursor_pointer().rounded(RADIUS.control)
+    .tooltip(`Copy ${field.label.toLowerCase()}`)
+    .hover((e) => e.bg(theme().hover))
+    .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+    .on_click(() => onCopy(field))
+    .child(shown);
 }
 
 // Status is coloured text plus a glyph, never a pill. Without `label` the glyph stands alone and

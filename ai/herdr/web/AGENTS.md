@@ -7,7 +7,7 @@ The web view of the `prs` board (`ai/herdr/app/mods/prs`). Spec and deploy contr
 - Transport: `GET /api/events?view=team|mine` (the page's tab; anything else is 400). A probe without `view` is Team. Lanes draw `boardModel()` lanes' `status`/`message` (loading, error) as the mod does.
 - Snapshot privacy: `lib/snapshot.js` strips checkout paths (`hasCheckout` only), whitelist-copies review runs (`PUBLIC_RUN_KEYS`), and puts errors in words (`friendlyError`).
 - Cards and detail draw `_lib/pr_status.js` `presentationOf` slots (`public/board_view.js card`, `public/detail_view.js header`); the compact list draws `public/board_view.js compactRow` from `row_badges` (prs/compact.js's row), and the header's load-error status is `_lib/load_state.js errorsStatus`.
-  A draft keeps its real CI status.
+  A draft keeps its real CI status. The detail header's ref, branch, short commit and Copy link are `public/dom.js` `copyable`, over `_lib/pr_link.js` `copyFields`, the list the mod's header copies too.
 - Import `_lib` as `../../app/mods/_lib/<file>.js`. Static URLs mirror `ai/herdr/`, so the same spelling works in the
   browser; the release tree (`bin/pr-board-release`) keeps the same paths.
 - Only `server/main.js` touches `Bun`. Everything else is node-testable: `tests/herdr_web_*.bats` drive it with

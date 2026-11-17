@@ -25,38 +25,8 @@ export function toggleFilter(ui, name) {
   return next === ui.filters ? ui : { ...ui, filters: next };
 }
 
-// The PR's GitHub page; only a credential-free https URL is ever put in an href.
-function httpsUrl(raw) {
-  if (typeof raw !== 'string' || /\s/.test(raw)) return '';
-  try {
-    const u = new URL(raw);
-    if (u.protocol !== 'https:' || u.username || u.password) return '';
-    return raw;
-  } catch {
-    return '';
-  }
-}
-
-function hostName(host) {
-  const raw = String(host || 'github.com');
-  try {
-    const u = new URL(`https://${raw}`);
-    if (u.username || u.password || u.port || u.pathname !== '/' || u.search || u.hash) return 'github.com';
-    if (u.hostname !== raw.toLowerCase()) return 'github.com';
-    return u.hostname;
-  } catch {
-    return 'github.com';
-  }
-}
-
-export function prUrl(pr) {
-  if (typeof pr.url === 'string') {
-    const ok = httpsUrl(pr.url);
-    if (ok) return ok;
-  }
-  if (!pr.repoSlug || !pr.number) return '';
-  return `https://${hostName(pr.host)}/${pr.repoSlug}/pull/${pr.number}`;
-}
+// The PR's GitHub page is the shared _lib/pr_link.js; re-exported for the page's callers.
+export { prUrl } from '../../app/mods/_lib/pr_link.js';
 
 // prs/files_view.js order: people's files first, generated ones after.
 export function sortedFiles(files) {

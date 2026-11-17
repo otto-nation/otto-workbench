@@ -50,7 +50,7 @@ _pi() {
 @test "Claude Code refuses a heavy command in a listed repo and names the queued form" {
   _claude "$LISTED" "golangci-lint run ./..."
   [ "$status" -eq 2 ]
-  [[ "$stderr" == *"otto-queue run --ticket --class heavy -- golangci-lint run ./..."* ]]
+  [[ "$stderr" == *"otto-queue submit --class heavy -- golangci-lint run ./..."* ]]
 }
 
 @test "Pi refuses the same command with the same reason" {
@@ -76,5 +76,13 @@ _pi() {
   _claude "$LISTED" "otto-queue run --ticket --class heavy -- go test ./..."
   [ "$status" -eq 0 ]
   _pi "$LISTED" "otto-queue run --ticket --class heavy -- go test ./..."
+  [ -z "$output" ]
+  _claude "$LISTED" "otto-queue submit --class heavy -- go test ./..."
+  [ "$status" -eq 0 ]
+  _pi "$LISTED" "otto-queue submit --class heavy -- go test ./..."
+  [ -z "$output" ]
+  _claude "$LISTED" "otto-queue wait 12"
+  [ "$status" -eq 0 ]
+  _pi "$LISTED" "otto-queue wait 12"
   [ -z "$output" ]
 }

@@ -15,8 +15,8 @@ setup() {
     "$REPO_ROOT/ai/registry.yml")"
 
   [[ "$visibility" == "full" ]]
-  [[ "$when_to_use" == *"otto-queue run --ticket --class heavy -- CMD"* ]]
-  [[ "$when_to_use" == *"Never use \`submit\` for interactive work"* ]]
+  [[ "$when_to_use" == *"otto-queue submit --class heavy -- CMD"* ]]
+  [[ "$when_to_use" == *"otto-queue wait <id>"* ]]
   [[ "$when_to_use" == *"Do not pass \`--key\`"* ]]
   [[ "$when_to_use" == *"OTTO_QUEUE_ENTRY"* ]]
   [[ "$when_to_use" == *"Exit 75"* ]]
@@ -27,8 +27,8 @@ setup() {
   "$REPO_ROOT/bin/local/generate-tool-context"
 
   grep -qF '### otto-queue' "$TOOL_CONTEXT_OUTPUT"
-  grep -qF 'otto-queue run --ticket --class heavy -- CMD' "$TOOL_CONTEXT_OUTPUT"
-  grep -qF 'Never use `submit` for interactive work' "$TOOL_CONTEXT_OUTPUT"
+  grep -qF 'otto-queue submit --class heavy -- CMD' "$TOOL_CONTEXT_OUTPUT"
+  grep -qF 'otto-queue wait <id>' "$TOOL_CONTEXT_OUTPUT"
 }
 
 @test "Waiting on Background Work says a harness job is not admission" {
@@ -39,5 +39,6 @@ setup() {
   [[ "$section" == *'job_start'* ]]
   [[ "$section" == *'run_in_background'* ]]
   [[ "$section" == *'not admission'* ]]
-  [[ "$section" == *'otto-queue run --ticket --class heavy -- CMD'* ]]
+  [[ "$section" == *'otto-queue submit --class heavy -- CMD'* ]]
+  [[ "$section" == *'otto-queue wait <id>'* ]]
 }

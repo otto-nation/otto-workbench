@@ -117,5 +117,5 @@ if [[ "$found" == no ]]; then
   exit "$EXIT_NO"
 fi
 
-echo "This repo (${repo}) is listed in queue.heavy_repos, so a heavy command is admitted through otto-queue: run \`otto-queue run --ticket --class heavy -- ${statement}\` instead."
+echo "This repo (${repo}) is listed in queue.heavy_repos, so a heavy command goes through otto-queue: run \`otto-queue submit --class heavy -- ${statement}\`, which prints an entry id and returns, then \`otto-queue wait <id>\`, which exits with the command's status (75: still queued, wait again). Run the wait as a background job in an interactive session, in the foreground in a one-shot one."
 exit 0

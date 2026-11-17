@@ -7,7 +7,7 @@ line. Admission after a wait prints how long it took. Output is append-only
 even on a TTY: an in-place `\r` status is skipped so the reporter stays a
 pure, testable clock-and-notify object.
 
-`reason_kind` classifies the wording `otto_queue.admission`, `batch.admission` and the slot/queue
+`reason_kind` classifies the wording `otto_queue.admission` and the slot/queue
 gates produce; those strings remain the owner of why a wait happened.
 """
 

@@ -4,6 +4,8 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -14,23 +16,26 @@ import core.log  # noqa: E402
 import otto_queue.lease  # noqa: E402
 import otto_queue.paths  # noqa: E402
 from otto_queue.ledger import Ledger  # noqa: E402
-from otto_queue.model import EntryKind, EntryState  # noqa: E402
+from otto_queue.model import EntryClass, EntryKind, EntryState  # noqa: E402
 
 
-def _accept(root, **kw):
+def _accept(root, *, entry_class=EntryClass.HEAVY, **kw):
     q = batch.queue_entries.QueueEntries(root)
     accepted = q.accept(argv=("true",), cwd="/", label="L",
-                        subject="o/r#1", action="batch:review", **kw)
+                        subject="o/r#1", action="batch:review",
+                        entry_class=entry_class, **kw)
     return q, accepted
 
 
-def test_accept_creates_a_queued_ticket_holding_its_lease(tmp_path):
-    q, accepted = _accept(tmp_path)
+@pytest.mark.parametrize("entry_class", [EntryClass.LIGHT, EntryClass.HEAVY])
+def test_accept_creates_a_queued_ticket_holding_its_lease(tmp_path, entry_class):
+    q, accepted = _accept(tmp_path, entry_class=entry_class)
     assert accepted is not None
     try:
         entry = Ledger.open(tmp_path).get(accepted.entry_id)
         assert entry is not None
         assert entry.kind is EntryKind.TICKET
+        assert entry.entry_class is entry_class
         assert entry.state is EntryState.QUEUED
         assert entry.pid == os.getpid()
         assert entry.subject == "o/r#1"
@@ -47,7 +52,8 @@ def test_accept_creates_a_queued_ticket_holding_its_lease(tmp_path):
 def test_cancel_moves_a_queued_entry_to_cancelled_and_leaves_a_running_one(tmp_path):
     q, queued = _accept(tmp_path)
     running = q.accept(argv=("true",), cwd="/", label="R",
-                       subject="o/r#2", action="batch:review")
+                       subject="o/r#2", action="batch:review",
+                       entry_class=EntryClass.HEAVY)
     assert queued is not None and running is not None
     try:
         ledger = Ledger.open(tmp_path)
@@ -69,11 +75,13 @@ def test_an_unopenable_ledger_gives_none_empty_and_a_noop_cancel(tmp_path, monke
     blocked.write_text("x")
     q = batch.queue_entries.QueueEntries(blocked)
     assert q.accept(argv=("true",), cwd="/", label="L",
-                    subject="s", action="a") is None
+                    subject="s", action="a",
+                    entry_class=EntryClass.LIGHT) is None
     assert q.states([1]) == {}
     q.cancel(1)
     assert len(seen) == 1
     assert q.accept(argv=("true",), cwd="/", label="L",
-                    subject="s", action="a") is None
+                    subject="s", action="a",
+                    entry_class=EntryClass.HEAVY) is None
     assert q.states([1]) == {}
     assert len(seen) == 1

@@ -13,14 +13,11 @@ if str(LIB_DIR) not in sys.path:
 from otto_queue.wait_report import (  # noqa: E402
     WaitKind, WaitReporter, format_duration, reason_kind)
 
-# Every Verdict.reason batch.admission and otto_queue.admission can produce, plus the two wait strings
-# the queue itself adds (slots taken, behind an older entry).
+# Every Verdict.reason otto_queue.admission can produce, plus the wait strings
+# the queue itself adds (slots taken, behind an older entry) and the scheduler's
+# per-run concurrency-limit wording reason_kind still classifies.
 KIND_CASES = (
     ("at the concurrency limit (4)", WaitKind.SLOTS),
-    ("holding the floor slot; one step is always admitted", WaitKind.OTHER),
-    ("no host metrics; within batch.pool_default machine-wide", WaitKind.OTHER),
-    ("no host metrics; 3 step(s) running machine-wide, "
-     "at batch.pool_default (1)", WaitKind.OTHER),
     ("batch.mem_reserve is not a size: 'bogus'", WaitKind.OTHER),
     ("waiting for memory: 0.3 of 1.5 GB", WaitKind.MEMORY),
     ("CPU pressure 31.4% >= 30%", WaitKind.CPU),

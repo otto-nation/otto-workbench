@@ -338,11 +338,16 @@ def comments_queue(argv: Sequence[str]) -> EntryClass | None:
 
 
 def rebase_queue(argv: Sequence[str]) -> EntryClass | None:
-    """`rebase`'s queue class: `--fix` is heavy unless it is `--abort` or `--push-only`."""
-    if has_flag(argv, "--fix") and not (
-            has_flag(argv, "--abort") or has_flag(argv, "--push-only")):
+    """`rebase`'s queue class: LIGHT unless `--abort` or `--push-only`; `--fix` is heavy.
+
+    `--abort` and `--push-only` take no ticket even with `--fix`. A plain rebase
+    (no `--fix`) takes a light ticket.
+    """
+    if has_flag(argv, "--abort") or has_flag(argv, "--push-only"):
+        return None
+    if has_flag(argv, "--fix"):
         return EntryClass.HEAVY
-    return None
+    return EntryClass.LIGHT
 
 
 def create_queue(argv: Sequence[str]) -> EntryClass | None:

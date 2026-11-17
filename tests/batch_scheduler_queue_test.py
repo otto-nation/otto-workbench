@@ -40,16 +40,48 @@ def test_an_ai_step_is_spawned_with_the_accepted_fd_then_the_scheduler_closes_it
         os.fstat(adopted.fd)
 
 
-def test_a_non_ai_step_does_not_accept_a_ticket():
+def test_a_plain_rebase_accepts_a_light_ticket():
     q = FakeQueueEntries()
     h = Harness([row(1, _ONLY_REBASE)], with_ai=[], queue_entries=q)
+    h.sched._once()
+    assert h.spawned
+    assert len(q.accept_calls) == 1
+    call = q.accept_calls[0]
+    assert call["entry_class"] is otto_queue.model.EntryClass.LIGHT
+    assert call["label"] == "pr batch · rebase · o/r#1"
+    assert call["subject"] == "o/r#1"
+    assert call["action"] == "batch:rebase"
+    adopted = q.accepted[0]
+    env = h.envs[0]
+    assert env[otto_queue.model.ADOPT_ENV] == str(adopted.entry_id)
+    assert env[otto_queue.model.LEASE_FD_ENV] == str(adopted.fd)
+    assert env[otto_queue.model.LABEL_ENV] == "pr batch · rebase · o/r#1"
+    assert env[otto_queue.model.WAIT_ENV] == "inf"
+    assert env[otto_queue.model.SUBJECT_ENV] == "o/r#1"
+    assert env[otto_queue.model.ACTION_ENV] == "batch:rebase"
+    assert h.pass_fds == [(adopted.fd,)]
+
+
+def test_plain_ci_does_not_accept_a_ticket():
+    q = FakeQueueEntries()
+    h = Harness([row(1, {batch.model.Step.CI: NEED})], with_ai=[], queue_entries=q)
     h.sched._once()
     assert h.spawned
     assert q.accept_calls == []
     assert q.accepted == []
     assert otto_queue.model.ADOPT_ENV not in h.envs[0]
     assert otto_queue.model.LEASE_FD_ENV not in h.envs[0]
+    assert otto_queue.model.LABEL_ENV not in h.envs[0]
+    assert otto_queue.model.WAIT_ENV not in h.envs[0]
     assert h.pass_fds == [()]
+
+
+def test_an_ai_step_accepts_a_heavy_ticket():
+    q = FakeQueueEntries()
+    h = Harness([row(1, _ONLY_REVIEW)], queue_entries=q)
+    h.sched._once()
+    assert len(q.accept_calls) == 1
+    assert q.accept_calls[0]["entry_class"] is otto_queue.model.EntryClass.HEAVY
 
 
 def test_ledger_busy_refuses_the_tick_then_succeeds_on_the_next():

@@ -1,6 +1,6 @@
 """Accept otto-queue tickets for batch steps, read their states, and cancel waiters.
 
-The scheduler creates each AI step's ticket, holds the lease, and hands the
+The scheduler creates each queued step's ticket, holds the lease, and hands the
 child the entry id and lease fd. A pid match against ticket rows is not used.
 """
 
@@ -15,7 +15,6 @@ from pathlib import Path
 
 import core.log
 import otto_queue.ledger
-import otto_queue.ticket
 from otto_queue.model import EntryClass, EntryKind, EntryState, NewEntry
 
 
@@ -36,7 +35,7 @@ class QueueEntries:
         self._disabled = False
 
     def accept(self, *, argv: Sequence[str], cwd: str, label: str, subject: str,
-               action: str) -> Accepted | None:
+               action: str, entry_class: EntryClass) -> Accepted | None:
         """Record a new ticket and return its id and held lease fd.
 
         `None` when the ledger cannot be opened: the caller spawns without
@@ -47,7 +46,7 @@ class QueueEntries:
             return None
         try:
             resolution = ledger.resolve(
-                NewEntry(kind=EntryKind.TICKET, entry_class=EntryClass.HEAVY,
+                NewEntry(kind=EntryKind.TICKET, entry_class=entry_class,
                          argv=tuple(argv), cwd=cwd, label=label, subject=subject,
                          action=action),
                 force=True, pid=os.getpid())
@@ -75,6 +74,8 @@ class QueueEntries:
         ledger = self._open_or_none()
         if ledger is None:
             return
+        # Imported here so `pr --help`, which loads batch for its registry, stays light.
+        import otto_queue.ticket
         try:
             otto_queue.ticket.cancel_entry(ledger, entry_id)
         except otto_queue.ledger.LedgerError:

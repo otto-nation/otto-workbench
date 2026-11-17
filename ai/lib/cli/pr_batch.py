@@ -31,11 +31,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import batch.admission
 import batch.events
 import batch.findings
 import batch.inbox
-import batch.machine
 import batch.plan
 import batch.report
 import batch.scheduler
@@ -357,13 +355,12 @@ def _drive(session: batch.store.Session, reporter: _Reporter, holds: batch.targe
     so publishes that the final drain applies stay narrowed to their items.
     Returns the status the scheduler stopped at.
     """
-    with batch.machine.register(session.run.id) as machine:
-        scheduler = batch.scheduler.Scheduler(session, pr_bin=str(bin_dir / "pr"), cfg=cfg,
-                                              verbose=verbose, release=holds.release_finished,
-                                              machine=machine, hold_tree=_tree_holder(holds))
-        reporter.counting = False
-        stopped = scheduler.run_until_blocked()
-        reporter.counting = True
+    scheduler = batch.scheduler.Scheduler(session, pr_bin=str(bin_dir / "pr"), cfg=cfg,
+                                          verbose=verbose, release=holds.release_finished,
+                                          hold_tree=_tree_holder(holds))
+    reporter.counting = False
+    stopped = scheduler.run_until_blocked()
+    reporter.counting = True
     session.finish()
     return stopped
 
@@ -523,6 +520,11 @@ def _checkouts(checkout: list[str] | None, rows: list[batch.plan.PlanRow],
             or sorted({os.path.abspath(d) for d in ref_dirs}))
 
 
+# The run's --pool width: at least 1, at most cfg.pool_max.
+def ceiling(requested: int | None, cfg: config.workbench_config.BatchConfig) -> int:
+    return max(1, min(requested if requested is not None else cfg.pool_max, cfg.pool_max))
+
+
 def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox, *, focus) -> _Started:
     """Mint the run from *plan*, open it with `batch.store.create` on *held*, hold its items, commit.
 
@@ -541,7 +543,7 @@ def _start_run(held: contextlib.ExitStack, args, plan, inbox: batch.inbox.Inbox,
         checkouts = _checkouts(args.checkout, rows, plan.ref_dirs)
         cfg = _cfg(dirs)
         run = batch.scheduler.new_run(rows, steps=args.steps, selected=selected,
-                                      pool=batch.admission.ceiling(args.pool, cfg),
+                                      pool=ceiling(args.pool, cfg),
                                       now=datetime.now(timezone.utc),
                                       ref_namespace=plan.ref_namespace, ref_dirs=plan.ref_dirs,
                                       no_verify=args.no_verify, focus=focus,

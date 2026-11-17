@@ -341,6 +341,14 @@ def test_ci_and_rebase_queue_are_heavy_only_for_fix():
     assert rebase_queue(["--fix", "--push-only"]) is None
 
 
+def test_rebase_queue_is_light_unless_abort_push_only_or_fix():
+    assert rebase_queue([]) is EntryClass.LIGHT
+    assert rebase_queue(["--fix"]) is EntryClass.HEAVY
+    assert rebase_queue(["--abort"]) is None
+    assert rebase_queue(["--push-only"]) is None
+    assert rebase_queue(["--fix", "--abort"]) is None
+
+
 def test_review_queue_skips_local_handlers():
     assert review_queue(["--post"], MODES) is None
     assert review_queue(["--recover"], MODES) is EntryClass.HEAVY

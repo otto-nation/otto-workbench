@@ -345,7 +345,7 @@ export default class PrsBoard extends View {
     return pinned(h_flex().gap(SP.sm).items_center().flex_wrap().px(SP.lg).py(SP.sm)
       .child(text("meta", n === 0 ? "Select PRs to batch" : `${n} selected`, theme().muted))
       .child(div().flex_1())
-      .child(button("select-clear", "Clear", () => this.launcher.reset(), { disabled: n === 0 }))
+      .child(button("select-clear", "Clear", () => { this.launcher.clearSelection(); this.acx.notify(); }, { disabled: n === 0 }))
       .child(button("select-cancel", "Cancel", () => this.stopSelecting()))
       .child(solidButton("select-continue", "Continue", () => this.continueBatch(lanes), { disabled: n === 0 })));
   }

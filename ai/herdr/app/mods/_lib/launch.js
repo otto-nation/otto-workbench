@@ -103,6 +103,15 @@ export function hcSessionArgv({ repo, argv, sessionId, cwd, on }) {
 export const KEEP_WAIT_MS = 3000;
 export const KEEP_STEP_MS = 100;
 
+// A throwing `terminals()` counts as not listed yet, so keepStarted never rejects on it.
+function listed(terminals, address) {
+  try {
+    return (terminals() ?? []).some((t) => t?.address === address);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Give a terminal `hc run --bg` just started a tab. herdr hears of it a moment after hc
  * replies and refuses `terminal.keep` until then ("no running terminal"), so this waits
@@ -112,7 +121,7 @@ export const KEEP_STEP_MS = 100;
  */
 export async function keepStarted({ run, terminals, sleep }, address) {
   for (let waited = 0; ; waited += KEEP_STEP_MS) {
-    if ((terminals() ?? []).some((t) => t?.address === address)) {
+    if (listed(terminals, address)) {
       run('terminal.keep', { terminal: address });
       return true;
     }

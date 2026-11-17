@@ -258,6 +258,22 @@ _run_reap() {
   run ! _alive "$pid"
 }
 
+@test "a python runner with leading options before -m tasks is reaped, a script's -m tasks is not" {
+  local opts script substr
+  _spawn opts
+  _spawn script
+  _spawn substr
+  _row "$opts" 99999 $(( 46 * 60 )) python3 python3 -u -X dev -m tasks lint go
+  _row "$script" 99999 $(( 600 * 60 )) python3 python3 x.py -m tasks
+  _row "$substr" 99999 $(( 600 * 60 )) python3 python3 -u -m tasksx
+  _run_reap
+  [ "$status" -eq 0 ]
+  [ "$output" = "reaped=1" ]
+  run ! _alive "$opts"
+  _alive "$script"
+  _alive "$substr"
+}
+
 @test "a deaf python -m tasks runner is killed after the grace period" {
   local pid
   _spawn_deaf pid

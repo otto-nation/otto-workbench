@@ -26,9 +26,10 @@ HEAVY_COMMANDS=(golangci-lint go gh tasks)
 # heavy_command_name COMM ARGS — the heavy command name, or nothing.
 #
 # COMM is treated as a basename. ARGS is the process argument vector as one
-# string (ps `args=`). A Python interpreter run with `-m tasks` (after any leading
-# options such as `-u` or `-X dev`), `tasks` being a whole argument, classifies as `tasks`; a substring of either
-# token does not.
+# string (ps `args=`). A Python interpreter run with `-m tasks` classifies as
+# `tasks`, after any leading interpreter options such as `-u` or `-X dev`.
+# `tasks` must be a whole argument; a substring of it does not match, and
+# neither does `-m tasks` appearing after a script path.
 heavy_command_name() {
   local comm="${1##*/}"
   local args="${2:-}"

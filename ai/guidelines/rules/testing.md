@@ -53,6 +53,15 @@ it: a fixture that stubs out the very function the fix changed, an assertion on
 what the caller passed rather than on what the callee did with it. The fix is
 right, the test passes, and deleting the fix leaves it passing.
 
+A fixture that breaks two rules masks both. A refusal test whose input violates
+the assert under test *and* a neighbouring one passes with the first assert
+deleted, because the second still refuses it. Observed 2026-11 (grok through
+pi's `subagent` tool, an Ansible role's validation asserts): deleting a CPU
+quota assert left its test green because the same fixture also failed the Docker
+quota assert, and a plan that predicted which test each deletion would fail was
+wrong twice. Give each assert a fixture whose only violation is that one, and
+read the revert output rather than trusting the prediction.
+
 A filter is the other way to fool yourself here: `-k`, a `grep`, a subset path.
 A revert whose test was deselected reports no failures and reads as proof. Run
 the whole file.
@@ -128,6 +137,11 @@ A test that legitimately passes at base takes a marker, in the grammar
 A marker with no reason after the colon declares nothing and does not suppress
 the finding, for the same reason a bare `ceiling:` does not satisfy its gate.
 
+- A hand-run drill is a test, and fails the same way. An OOM drill whose command
+  streamed its data (`head -c 400m /dev/zero | tail -c 1`) never held the memory
+  it was meant to exhaust, exited 0 and killed nothing. Check the counter the drill
+  exists to move (`oom_kill`, a request count) before and after, and treat an
+  unmoved counter as the drill not having run
 - Do not add tests that simply assert constant values
 - The assertion cannot be satisfied incidentally. An `or` arm that is always true (`assert x in content or " " in text`) makes the whole assertion a tautology, and it passes on any input. Two narrower forms recur: a bare `err != nil` (the test is named for one failure and passes on any other, including one thrown by a field it forgot to set before the branch was ever reached), and a membership check against the value's own enum or allow-list (which passes when two entries are swapped). Assert the sentinel, the error type, or the exact mapped value
 - The patch target is the name the code under test actually looks up. Patching `mod.subprocess.run` proves nothing once the function was migrated to call `gh_client.api` — the test keeps passing against code it no longer touches

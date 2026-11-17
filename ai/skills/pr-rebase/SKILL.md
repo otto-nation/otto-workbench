@@ -222,6 +222,16 @@ null.
   dropped three upstream behaviours (a per-machine serialization helper, a
   fall-through throttle and a doc-budget line) while reporting `status:
   completed`.
+- An encrypted file (an `ansible-vault` `vault.yml`) cannot be merged by any
+  resolver: its ciphertext is opaque, so a "one side" resolution keeps the
+  branch's older blob and silently drops every key the target added since.
+  Observed 2026-11 (through `pr rebase --fix`): the rebase kept the branch's
+  `vault.yml`, which would have deleted two keys main had added; the push hold
+  caught it. Rebuild the file from the target branch instead — decrypt the
+  target's version, re-apply only the branch's own change, re-encrypt — and
+  compare the key *names* of the result against both sides before publishing.
+  The password has to come from a terminal; an agent without a TTY asks the user
+  to run the rebuild.
 - When `squashed_commits` is non-null, the resulting commit keeps the first
   squashed commit's message, which describes one step of the work (observed: a
   branch of 24 commits ended as a single commit titled for its first, a
@@ -437,7 +447,10 @@ re-run a bare `pr rebase` to push: it re-fetches and replays again if the
 base moved. After a conflict stop, resolve, `git rebase --continue`, then
 `pr rebase --push-only` — the stop saved the lease. `pr rebase --fix` still
 resumes. `--push-only --expect <full SHA>` is only for a rebase not started
-by `pr` (no state). This is how the skill ends. Never run
+by `pr` (no state), and `<full SHA>` is the commit **origin currently holds**
+(what the lease must match), never the commit being pushed: passing your new
+HEAD is refused as `stale info` with nothing written. After a recorded rebase,
+plain `--push-only` already has the right lease. This is how the skill ends. Never run
 `git push --force-with-lease` yourself, and never hand it to the user as the
 remaining step: `pr rebase` prints a
 `Resume: git -C '<worktree>' push --force-with-lease` line when a push is refused,

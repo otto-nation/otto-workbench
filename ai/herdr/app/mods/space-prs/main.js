@@ -195,7 +195,7 @@ export default class SpacePrs extends View {
   renderGroup(group, rail) {
     const header = hoverRow(`space-prs-${group.spaceId}`)
       .flex_none().px(rail ? SP.xs : SP.md).mx(rail ? 0 : SP.xs)
-      .when(rail, (e) => e.min_h(ROW_H.sidebar).justify_center())
+      .when(rail, (e) => e.min_h(ROW_H.listDense).justify_center())
       .when(!rail, (e) => e.pt(SP.md).pb(SP.xs))
       .on_click(() => this.selectSpace(group))
       .child(sectionLabel(group.spaceName));

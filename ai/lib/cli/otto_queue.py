@@ -163,7 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--wait", type=_seconds, default=otto_queue.ticket.DEFAULT_WAIT_S,
                      help="Seconds to wait for a slot before exiting 75 (default: %(default)g)")
     run.add_argument("argv", nargs=argparse.REMAINDER, help="-- and the command to run")
-    submit = sub.add_parser("submit", help="Queue a command durably and print its entry id; `otto-queue wait ID` waits for it")
+    submit = sub.add_parser("submit", help="Queue a command durably and print its entry id (not when it runs here: stdout is the job's); `otto-queue wait ID` waits for it")
     _add_entry_flags(submit)
     modes = submit.add_mutually_exclusive_group()
     modes.add_argument("--run-here", dest="mode", action="store_const", const=otto_queue.submit.SubmitMode.RUN_HERE.value,

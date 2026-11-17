@@ -24,7 +24,7 @@ import batch.model  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
-import otto_queue.admission # noqa: E402
+import otto_queue.admission  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402

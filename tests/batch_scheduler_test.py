@@ -16,7 +16,7 @@ import batch.model  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 import batch.targets  # noqa: E402
-import otto_queue.admission # noqa: E402
+import otto_queue.admission  # noqa: E402
 import otto_queue.ticket  # noqa: E402
 from batch.requests import Cancel, Envelope, Malformed, Release  # noqa: E402
 from batch.plan import PlanError  # noqa: E402

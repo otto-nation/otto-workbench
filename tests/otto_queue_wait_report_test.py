@@ -13,7 +13,7 @@ if str(LIB_DIR) not in sys.path:
 from otto_queue.wait_report import (  # noqa: E402
     WaitKind, WaitReporter, format_duration, reason_kind)
 
-# Every Verdict.reason batch.admission can produce, plus the two wait strings
+# Every Verdict.reason batch.admission and otto_queue.admission can produce, plus the two wait strings
 # the queue itself adds (slots taken, behind an older entry).
 KIND_CASES = (
     ("at the concurrency limit (4)", WaitKind.SLOTS),

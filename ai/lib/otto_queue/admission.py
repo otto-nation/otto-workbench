@@ -17,8 +17,7 @@ user slice: the root cgroup has no limit file there, so a 6.5 GiB `MemoryMax`
 was invisible to admission.
 
 On macOS free memory comes from `vm_stat` (free, inactive and speculative
-pages); there is no pressure reading, so batch's `decide` still takes its
-`pool_default` path there.
+pages); there is no pressure reading there.
 
 `core.job_slots` is a different concern and stays apart: it bounds how wide one
 already-started run may go (a `pr` command's own parallelism), not whether the
@@ -214,8 +213,8 @@ HEAVY_LIMITS = {"linux": 2, "darwin": 4}
 DEFAULT_HEAVY_LIMIT = min(HEAVY_LIMITS.values())
 
 
-# What one heavy entry is expected to claim: a review, the heaviest step batch
-# has an estimate for.
+# What one heavy entry is expected to claim: a review-sized step. The queue owns
+# this number; batch's `DEFAULT_ESTIMATES[Step.REVIEW]` borrows it.
 QUEUE_HEAVY_ESTIMATE = int(1.5 * GB)
 
 

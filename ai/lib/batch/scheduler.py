@@ -536,7 +536,7 @@ class Scheduler:
         if sample.mem_available is None or not pending:
             return sample
         return otto_queue.admission.HostSample(max(0, sample.mem_available - pending),
-                                          sample.cpu_some_avg10, sample.mem_some_avg10)
+                                               sample.cpu_some_avg10, sample.mem_some_avg10)
 
     def _tree_blocks(self, item: Item, rec: StepRecord) -> bool:
         """Whether *item*'s worktree may not take *rec* now, deciding when it may not.

@@ -18,7 +18,7 @@ import otto_queue.admission  # noqa: E402
 from config.workbench_config import BatchConfig  # noqa: E402
 from otto_queue.model import EntryClass  # noqa: E402
 
-GiB = 1024 ** 3
+from admission_support import BUSY, CFG, GiB, HEALTHY  # noqa: E402
 
 
 def _proc(root, *, mem_kb=7_000_000, cpu=0.7, mem_psi=0.0, cg_max=None, cg_cur=None):
@@ -57,15 +57,6 @@ def test_read_host_without_psi_does_not_support_admission(tmp_path):
     (tmp_path / "proc").mkdir()
     (tmp_path / "proc" / "meminfo").write_text("MemAvailable: 100 kB\n")
     assert otto_queue.admission.read_host(tmp_path).supports_admission is False
-
-
-CFG = BatchConfig(pool_max=3, mem_reserve="2G", cpu_pressure_max=30.0, mem_pressure_max=5.0)
-
-
-HEALTHY = otto_queue.admission.HostSample(mem_available=8 * GiB, cpu_some_avg10=1.0, mem_some_avg10=0.0)
-
-
-BUSY = otto_queue.admission.HostSample(mem_available=1 * GiB, cpu_some_avg10=99.0, mem_some_avg10=50.0)
 
 
 USER_SCOPE = "/user.slice/user-1000.slice/user@1000.service/app.slice/otto.scope"

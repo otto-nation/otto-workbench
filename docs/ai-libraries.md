@@ -4989,8 +4989,7 @@ user slice: the root cgroup has no limit file there, so a 6.5 GiB `MemoryMax`
 was invisible to admission.
 
 On macOS free memory comes from `vm_stat` (free, inactive and speculative
-pages); there is no pressure reading, so batch's `decide` still takes its
-`pool_default` path there.
+pages); there is no pressure reading there.
 
 `core.job_slots` is a different concern and stays apart: it bounds how wide one
 already-started run may go (a `pr` command's own parallelism), not whether the

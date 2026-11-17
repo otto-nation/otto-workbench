@@ -16,6 +16,8 @@
 import { homedir } from "node:os";
 import { resolve } from "node:path";
 
+export { claimsWorktree } from "../_shared/run-dir.ts";
+
 /** The installed hook both harnesses run (ai/bin/report-agent-worktree). */
 export const HOOK_PATH = `${homedir()}/.local/bin/report-agent-worktree`;
 
@@ -82,25 +84,33 @@ export function payloadFor(event: ToolResultEvent, cwd: string): HookPayload | n
   return null;
 }
 
+/** The session the hook claims for, or null when this session claims no trees. */
+export interface HookSession { pid: number; sessionId: string }
+
 /**
- * True when this session should publish its worktree: an interactive (`tui`)
- * session inside a herdr terminal.
- *
- * json/print are subagents and `pr` pipeline runs, which must not claim the
- * terminal of the session that started them; rpc has no terminal of its own.
- * An empty HC_TERMINAL_ID counts as unset, as it does in the hook.
- */
-/**
- * The hook's environment: ENV with CLAUDE_PROJECT_DIR set to CWD. Pi sets no
- * CLAUDE_PROJECT_DIR, and the session cwd is the agent's own checkout, so the
- * hook's prefilter can skip an edit inside it without starting Python.
+ * The hook's environment: ENV with CLAUDE_PROJECT_DIR set to CWD (Pi sets none,
+ * and the session cwd is the agent's own checkout), WORKBENCH_SESSION_HARNESS=pi
+ * always — so the hook never falls through to an inherited CLAUDE_PID — and the
+ * session pid and id only when SESSION is given.
  */
 export function hookEnv(
-  env: Record<string, string | undefined>, cwd: string,
+  env: Record<string, string | undefined>, cwd: string, session: HookSession | null,
 ): Record<string, string | undefined> {
-  return cwd ? { ...env, CLAUDE_PROJECT_DIR: cwd } : env;
+  const out: Record<string, string | undefined> = { ...env, WORKBENCH_SESSION_HARNESS: "pi" };
+  if (cwd) out.CLAUDE_PROJECT_DIR = cwd;
+  if (session) {
+    out.WORKBENCH_SESSION_PID = String(session.pid);
+    out.PI_SESSION_ID = session.sessionId;
+  }
+  return out;
 }
 
-export function shouldReport(mode: string, env: Record<string, string | undefined>): boolean {
-  return mode === "tui" && Boolean(env.HC_TERMINAL_ID);
+/**
+ * True for an interactive (`tui`) session. json/print are subagents and `pr`
+ * pipeline runs, which must neither claim trees nor label the terminal of the
+ * session that started them; rpc has no terminal. Herdr is no longer required:
+ * the claim matters outside herdr, and the hook skips labelling without one.
+ */
+export function shouldReport(mode: string): boolean {
+  return mode === "tui";
 }

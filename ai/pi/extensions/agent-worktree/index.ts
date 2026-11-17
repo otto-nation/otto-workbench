@@ -1,7 +1,7 @@
 /**
  * Publishes the worktree an interactive Pi session works in on its herdr
- * terminal (`hc label <terminal> otto.worktree=<path>`), so the PR board can
- * show which agent is on which PR.
+ * terminal (`hc label <terminal> otto.worktree=<path>`), and claims the reached
+ * worktree through the same hook, in every interactive session.
  *
  * Claude Code gets the same from ai/claude/settings.json's PostToolUse and
  * SessionStart entries; those hooks do not run under Pi. Both harnesses run
@@ -16,7 +16,9 @@
 
 import { type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { execFile } from "node:child_process";
-import { HOOK_PATH, hookEnv, payloadFor, shouldReport } from "./detect.ts";
+import {
+  HOOK_PATH, claimsWorktree, hookEnv, payloadFor, shouldReport, type HookSession,
+} from "./detect.ts";
 
 /**
  * Run the hook with ARGS, writing STDIN to it. Unawaited: the turn must not
@@ -28,8 +30,10 @@ import { HOOK_PATH, hookEnv, payloadFor, shouldReport } from "./detect.ts";
  * does, outside a herdr terminal), which would otherwise be an unhandled
  * error event. `timeout` is the backstop for a hook that blocks.
  */
-function runHook(args: string[], stdin: string, cwd: string): void {
-  const env = hookEnv(process.env, cwd);
+function runHook(
+  args: string[], stdin: string, cwd: string, session: HookSession | null,
+): void {
+  const env = hookEnv(process.env, cwd, session);
   const child = execFile("bash", [HOOK_PATH, ...args], { timeout: 10_000, env }, () => {});
   child.stdin?.on("error", () => {});
   child.stdin?.end(stdin);
@@ -38,14 +42,22 @@ function runHook(args: string[], stdin: string, cwd: string): void {
 export default function (pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     // A new session in a reused terminal must not inherit the last one's claim.
-    if (!shouldReport(ctx.mode, process.env)) return;
-    runHook(["--clear"], "", ctx.cwd);
+    if (!shouldReport(ctx.mode)) return;
+    const sessionId = ctx.sessionManager?.getSessionId() ?? "";
+    const session = claimsWorktree(process.env, sessionId)
+      ? { pid: process.pid, sessionId }
+      : null;
+    runHook(["--clear"], "", ctx.cwd, session);
   });
 
   pi.on("tool_result", async (event, ctx) => {
-    if (event.isError || !shouldReport(ctx.mode, process.env)) return;
+    if (event.isError || !shouldReport(ctx.mode)) return;
     const payload = payloadFor(event, ctx.cwd);
     if (payload === null) return;
-    runHook([], JSON.stringify(payload), ctx.cwd);
+    const sessionId = ctx.sessionManager?.getSessionId() ?? "";
+    const session = claimsWorktree(process.env, sessionId)
+      ? { pid: process.pid, sessionId }
+      : null;
+    runHook([], JSON.stringify(payload), ctx.cwd, session);
   });
 }

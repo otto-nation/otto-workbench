@@ -59,18 +59,16 @@ _should() {
   [ "$output" = null ]
 }
 
-@test "shouldReport: only an interactive session in a herdr terminal" {
+@test "shouldReport: every interactive session, herdr or not" {
   _should tui t-1
+  [ "$output" = true ]
+  _should tui
   [ "$output" = true ]
   local mode
   for mode in json print rpc; do
     _should "$mode" t-1
     [ "$output" = false ] || { echo "$mode reported"; return 1; }
   done
-  _should tui
-  [ "$output" = false ]
-  _should tui ""
-  [ "$output" = false ]
 }
 
 @test "detect.ts imports node built-ins only" {
@@ -142,6 +140,18 @@ EOF
   [ "$(cat "$TMPDIR/pi.hc")" = "$(cat "$TMPDIR/claude.hc")" ]
 }
 
+@test "hookEnv carries the session only when claiming" {
+  run node --input-type=module -e "
+    const { hookEnv } = await import('$DETECT');
+    process.stdout.write(JSON.stringify([
+      hookEnv({}, '/w', {pid: 12, sessionId: 's'}),
+      hookEnv({}, '/w', null),
+    ]));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"WORKBENCH_SESSION_HARNESS":"pi","CLAUDE_PROJECT_DIR":"/w","WORKBENCH_SESSION_PID":"12","PI_SESSION_ID":"s"},{"WORKBENCH_SESSION_HARNESS":"pi","CLAUDE_PROJECT_DIR":"/w"}]' ]
+}
+
 @test "hookEnv: the session cwd becomes CLAUDE_PROJECT_DIR; an empty cwd leaves env alone" {
   run node --input-type=module -e "
     const { hookEnv } = await import('$DETECT');
@@ -149,11 +159,11 @@ EOF
     process.stdout.write(JSON.stringify([hookEnv(env, '/w/main'), hookEnv(env, ''), env]));
   "
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"HOME":"/h","CLAUDE_PROJECT_DIR":"/w/main"},{"HOME":"/h","CLAUDE_PROJECT_DIR":"/old"},{"HOME":"/h","CLAUDE_PROJECT_DIR":"/old"}]' ]
+  [ "$output" = '[{"HOME":"/h","CLAUDE_PROJECT_DIR":"/w/main","WORKBENCH_SESSION_HARNESS":"pi"},{"HOME":"/h","CLAUDE_PROJECT_DIR":"/old","WORKBENCH_SESSION_HARNESS":"pi"},{"HOME":"/h","CLAUDE_PROJECT_DIR":"/old"}]' ]
 }
 
 @test "index.ts runs the hook with hookEnv's environment" {
-  run grep -c 'const env = hookEnv(process.env, cwd);' "$REPO_ROOT/ai/pi/extensions/agent-worktree/index.ts"
+  run grep -c 'const env = hookEnv(process.env, cwd, session);' "$REPO_ROOT/ai/pi/extensions/agent-worktree/index.ts"
   [ "$status" -eq 0 ]
   [ "$output" = "1" ]
   run grep -c 'timeout: 10_000, env }' "$REPO_ROOT/ai/pi/extensions/agent-worktree/index.ts"

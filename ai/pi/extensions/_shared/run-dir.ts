@@ -120,3 +120,21 @@ export function sessionOf(
   }
   return null;
 }
+
+/**
+ * Whether a session started with `env` and `sessionId` claims its worktree.
+ *
+ * A batch run's own session and a PR target's own session do not
+ * (../_shared/run-dir.ts says which those are). Batch: cwd is the run's
+ * checkout, and batch reuses whichever worktree already holds an item's
+ * branch (ai/lib/batch/steps.py ensure_worktree), so a claim there would make
+ * that item's later `--fix` steps refuse. Target: cwd is the branch's own
+ * worktree, where `pr … --fix` passes edit, so a claim would refuse them.
+ * No Claude Code twin: only pi is ever started as an orchestrator session.
+ */
+export function claimsWorktree(
+  env: Record<string, string | undefined>,
+  sessionId: string,
+): boolean {
+  return sessionOf(env, sessionId) === null;
+}

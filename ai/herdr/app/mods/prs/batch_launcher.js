@@ -118,6 +118,12 @@ export class BatchLauncher {
     return this.launching || this.pending.size > 0;
   }
 
+  // True when the launch in flight, its pending runs or its note concern this PR (a detail view's scope).
+  involvesPr(pr) {
+    const key = prKey(pr.repoSlug, pr.number);
+    return this.isPending(key) || Boolean(this.scope?.has(key));
+  }
+
   isPending(key) {
     return [...this.pending.values()].some((p) => p.keys.includes(key));
   }
@@ -148,6 +154,7 @@ export class BatchLauncher {
   launch(prs, { form = this.currentForm(), only = null } = {}) {
     if (this.starting) return;
     this.launching = true;
+    this.scope = only;
     this.note = null;
     this.acx.notify();
     this.acx.spawn(async (cx) => {

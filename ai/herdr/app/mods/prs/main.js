@@ -390,6 +390,7 @@ export default class PrsBoard extends Board {
       const key = item.key;
       this.acx.spawn(async () => { this.workflows.openItem(key); });
     }
+    const mine = this.launcher.involvesPr(pr);
     return renderDetail(this.detail, {
       nowMs: Date.now(),
       openKey: this.openKey,
@@ -397,10 +398,10 @@ export default class PrsBoard extends Board {
       onToggle: (key) => this.onToggle(key),
       actionBar: renderActionBar(this.actions(), {
         confirm: this.confirm,
-        starting: this.launching || this.launcher.starting,
-        note: this.note ?? this.launcher.note,
+        starting: this.launching || (mine && this.launcher.starting),
+        note: this.note ?? (mine ? this.launcher.note : null),
         fixes: this.detail.fixes,
-        fixBusy: this.launcher.starting ? "A batch is starting" : (this.detail.batchBusy ? "A batch is running on this PR" : null),
+        fixBusy: this.launcher.starting ? "A batch is starting" : (this.detail.batchBusy || this.launching || this.live ? "A batch is running on this PR" : null),
         onFix: (f) => this.launcher.fixOne(pr, f),
         onAction: (a) => this.onAction(a, cx),
         onConfirm: () => { const a = this.confirm; this.confirm = null; this.launch(a, cx); this.acx.notify(); },

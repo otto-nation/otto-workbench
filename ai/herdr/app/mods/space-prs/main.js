@@ -144,18 +144,25 @@ export default class SpacePrs extends View {
     return h_flex().flex_none().gap(SP.xs).items_center().child(ref).child(extra);
   }
 
+  // Wide: the branch with its #N on the right, then a meta line of problem text, `+N` and the
+  // owning agent. Rail: only the #N.
   rowBody(group, row, rail) {
     const t = theme();
     const ui = this.sessionUi.get(uiKey(row)) ?? {};
     if (rail) return row.pr ? this.refControl(group, row, ui) : null;
     const p = row.pr?.presentation;
-    return h_flex().gap(SP.sm).items_center().flex_wrap().min_w(0)
-      .child(text("code", row.branch, t.muted).min_w(0).truncate())
-      .when(Boolean(row.pr), (e) => e.child(this.refControl(group, row, ui)))
-      .children((p?.tags ?? []).map(tag))
-      .children((p?.row_badges ?? []).map(badge))
-      .when(row.more > 0, (e) => e.child(text("meta", `+${row.more}`, t.muted).flex_none()))
-      .when(Boolean(row.owner?.name), (e) => e.child(text("meta", row.owner.name, t.muted).min_w(0).truncate()));
+    const details = [
+      ...(p?.tags ?? []).map(tag),
+      ...(p?.row_badges ?? []).map(badge),
+      ...(row.more > 0 ? [text("meta", `+${row.more}`, t.muted).flex_none()] : []),
+      ...(row.owner?.name ? [text("meta", row.owner.name, t.muted).min_w(0).truncate()] : []),
+    ];
+    return v_flex().min_w(0)
+      .child(h_flex().gap(SP.sm).items_center().min_w(0)
+        .child(text("code", row.branch, t.muted).min_w(0).flex_1().truncate())
+        .when(Boolean(row.pr), (e) => e.child(this.refControl(group, row, ui))))
+      .when(details.length > 0, (e) => e.child(
+        h_flex().gap(SP.sm).items_center().flex_wrap().min_w(0).children(details)));
   }
 
   renderRow(group, row, rail) {
@@ -163,7 +170,7 @@ export default class SpacePrs extends View {
     return h_flex()
       .id(`space-prs-${group.spaceId}-${view.pr?.number ?? view.branch}`)
       .min_h(rail ? ROW_H.listDense : ROW_H.sidebar)
-      .flex_none().px(rail ? SP.xs : SP.md).items_center()
+      .flex_none().px(rail ? SP.xs : SP.md).mx(rail ? 0 : SP.xs).items_center()
       .child(this.rowBody(group, view, rail));
   }
 
@@ -187,15 +194,16 @@ export default class SpacePrs extends View {
 
   renderGroup(group, rail) {
     const header = hoverRow(`space-prs-${group.spaceId}`)
-      .min_h(rail ? ROW_H.listDense : ROW_H.sidebar)
-      .flex_none().px(rail ? SP.xs : SP.md).justify_center()
+      .flex_none().px(rail ? SP.xs : SP.md).mx(rail ? 0 : SP.xs)
+      .when(rail, (e) => e.min_h(ROW_H.listDense).justify_center())
+      .when(!rail, (e) => e.pt(SP.md).pb(SP.xs))
       .on_click(() => this.selectSpace(group))
       .child(sectionLabel(group.spaceName));
     const status = this.groupStatus(group, rail);
     return v_flex().flex_none()
       .child(header)
       .when(status != null, (e) => e.child(
-        h_flex().flex_none().px(rail ? SP.xs : SP.md).min_h(ROW_H.listDense).items_center().child(status),
+        h_flex().flex_none().px(rail ? SP.xs : SP.md).mx(rail ? 0 : SP.xs).min_h(ROW_H.listDense).items_center().child(status),
       ))
       .children((group.rows ?? []).map((row) => this.renderRow(group, row, rail)));
   }
@@ -221,9 +229,11 @@ export default class SpacePrs extends View {
     });
     const rail = (this.size?.width ?? Infinity) < BRAND.pane.compact;
     const body = !groups.length
-      ? placeholder("No PR worktrees in these spaces").px(SP.md).py(SP.sm)
+      ? placeholder("No PR worktrees in these spaces").px(SP.md).mx(SP.xs).py(SP.sm)
       : scrollBody().children(groups.map((group) => this.renderGroup(group, rail)));
+    // herdr draws its sidebars on `chrome`, not the terminals' background.
     return pane("space-prs")
+      .bg(theme().chrome)
       .on_size_change((size, cx) => this.onSize(size, cx))
       .child(v_flex().size_full().min_h(0).child(body));
   }

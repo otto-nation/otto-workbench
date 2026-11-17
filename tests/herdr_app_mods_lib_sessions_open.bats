@@ -103,6 +103,16 @@ _js() {
   [ "$output" = '[{"ok":false,"message":"could not look for an open session: no socket"},1]' ]
 }
 
+@test "openPiSession: a second open of the same file while one is pending starts nothing" {
+  _js '
+    const f = fake();
+    const [a, b] = await Promise.all([o.openPiSession(f.d, row()), o.openPiSession(f.d, row())]);
+    out([a.ok, b.ok, f.calls.exec.filter((c) => c[1] === "run").length]);
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[true,false,1]' ]
+}
+
 @test "closePiSession: asks pi-sessions close on the session's machine and reports a refusal" {
   _js '
     const ok = fake();

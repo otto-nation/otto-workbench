@@ -116,8 +116,10 @@ def markers() -> list[Marker]:
     return sorted((m for m in found if m is not None), key=lambda m: m.pid)
 
 
-def marker_for(session_file: str) -> Marker | None:
-    return next((m for m in markers() if m.session_file == session_file), None)
+def marker_for(session_file: str, *, run: Callable = subprocess.run) -> Marker | None:
+    """The marker for *session_file*, preferring one whose pid is a running pi over a stale one."""
+    found = [m for m in markers() if m.session_file == session_file]
+    return next((m for m in found if _rss_kb_if_pi(m.pid, run) is not None), found[0] if found else None)
 
 
 def _rss_kb_if_pi(pid: int, run: Callable) -> int | None:

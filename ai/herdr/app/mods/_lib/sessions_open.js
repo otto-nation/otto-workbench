@@ -29,7 +29,21 @@ function failed(message) {
   return { ok: false, message: String(message ?? 'failed') };
 }
 
-export async function openPiSession(deps, row, { name = null } = {}) {
+// Session files being opened: lookup-then-start is not atomic, so a second open of the same
+// file while one is pending would start a second pi on it.
+const opening = new Set();
+
+export async function openPiSession(deps, row, opts = {}) {
+  if (opening.has(row.file)) return failed('already opening this session');
+  opening.add(row.file);
+  try {
+    return await openOnce(deps, row, opts);
+  } finally {
+    opening.delete(row.file);
+  }
+}
+
+async function openOnce(deps, row, { name = null } = {}) {
   const { exec, run, panes, spaces } = deps;
   let ls;
   try {

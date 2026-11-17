@@ -103,3 +103,16 @@ def test_close_sends_sigterm_only_to_a_live_pi(tmp_path):
     assert sent == [(7, signal.SIGTERM)]
     assert not pi_sessions.live.close(_marker(f), run=_Ps(code=1), kill=lambda pid, sig: sent.append((pid, sig)))
     assert len(sent) == 1
+
+
+def test_marker_for_prefers_the_marker_whose_pid_is_a_running_pi(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
+    f = _session(tmp_path)
+    pi_sessions.live.record(1, f, H, {}, run=_Ps())
+    pi_sessions.live.record(2, f, H, {}, run=_Ps())
+
+    def ps(argv, **_kw):
+        alive = argv[-1] == "2"
+        return subprocess.CompletedProcess(argv, 0 if alive else 1, stdout="2048 pi\n" if alive else "", stderr="")
+
+    assert pi_sessions.live.marker_for(str(f), run=ps).pid == 2

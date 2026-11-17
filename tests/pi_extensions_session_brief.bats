@@ -298,3 +298,16 @@ _wired() {
   run grep -nE "^import .*from \"\.\./" "$EXT/index.ts"
   [ "$status" -eq 1 ]
 }
+
+@test "wire: a shutdown while an idle brief is in flight still briefs afterwards" {
+  _wired '
+    const f = fakePi({ entries: [...turn()] }); wire(f.pi, f.deps);
+    await f.calls.handlers.agent_settled({ aborted: false }, f.ctx);
+    const idle = f.calls.timers[0].fn();
+    const down = f.calls.handlers.session_shutdown({ reason: "quit" }, f.ctx);
+    await Promise.all([idle, down]);
+    out(ofType(f.entries, m.BRIEF_TYPE).length);
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+}

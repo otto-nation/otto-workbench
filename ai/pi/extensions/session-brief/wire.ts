@@ -50,6 +50,7 @@ const FAILED = { stdout: "", stderr: "", code: 1, killed: false };
 export function wire(pi: ExtensionAPI, deps: Deps): void {
   let timer: unknown = null;
   let busy = false;
+  let inflight: Promise<void> | null = null;
 
   const cancel = () => {
     if (timer !== null) {
@@ -61,7 +62,16 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
   const piSessions = (args: string[], timeout: number, signal?: AbortSignal) =>
     pi.exec("python3", args, { timeout, signal }).catch(() => FAILED);
 
-  async function refresh(ctx: ExtensionContext, signal?: AbortSignal): Promise<void> {
+  function refresh(ctx: ExtensionContext, signal?: AbortSignal): Promise<void> {
+    const run = write(ctx, signal);
+    const tracked: Promise<void> = run.finally(() => {
+      if (inflight === tracked) inflight = null;
+    });
+    inflight = tracked;
+    return run;
+  }
+
+  async function write(ctx: ExtensionContext, signal?: AbortSignal): Promise<void> {
     const file = ctx.sessionManager.getSessionFile();
     const entries = ctx.sessionManager.getBranch();
     if (busy || !file || !needsBrief(entries)) return;
@@ -123,7 +133,15 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
     cancel();
     if (!shouldBrief(ctx.mode)) return;
     // reload keeps the same session running; every other reason ends it here (T3-a).
-    if (event.reason !== "reload") await refresh(ctx, AbortSignal.timeout(SHUTDOWN_BRIEF_MS));
+    if (event.reason !== "reload") {
+      // An idle brief already in flight would make refresh skip on busy: wait for it
+      // (bounded), then brief whatever it left unbriefed.
+      const signal = AbortSignal.timeout(SHUTDOWN_BRIEF_MS);
+      if (inflight) {
+        await Promise.race([inflight, new Promise((r) => signal.addEventListener("abort", r, { once: true }))]);
+      }
+      await refresh(ctx, signal);
+    }
     await piSessions(clearArgv(deps.pid), LIVE_TIMEOUT_MS);
   });
 }

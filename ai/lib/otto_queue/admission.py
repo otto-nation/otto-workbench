@@ -1,8 +1,7 @@
 """The queue's admission policy: host room, class limits, and what a queue entry may start.
 
 `QueuePolicy` is what `otto_queue.slots` asks, so "is there room" has one owner
-(`room`) whether the asker is a queue entry or a batch step (`batch.admission`
-calls it too). A queue entry is admitted by `admit_entry`: light work on count
+(`room`). A queue entry is admitted by `admit_entry`: light work on count
 alone, heavy work on `room` beyond the first. The class limits are
 `class_limit`: heavy entries per platform (`HEAVY_LIMITS`), light ones every
 core but one.
@@ -213,8 +212,7 @@ HEAVY_LIMITS = {"linux": 2, "darwin": 4}
 DEFAULT_HEAVY_LIMIT = min(HEAVY_LIMITS.values())
 
 
-# What one heavy entry is expected to claim: a review-sized step. The queue owns
-# this number; batch's `DEFAULT_ESTIMATES[Step.REVIEW]` borrows it.
+# What one heavy entry is expected to claim: a review-sized step.
 QUEUE_HEAVY_ESTIMATE = int(1.5 * GB)
 
 
@@ -236,16 +234,12 @@ def admit_entry(sample: HostSample, *, entry_class: EntryClass, running: int,
     """Whether one more queue entry may start, with *running* of its class already running.
 
     Light entries are admitted on count alone: refusing a board read for memory a
-    review is using would stall the board, not save the host. A heavy entry with
-    no other heavy one running is always admitted — the floor, so a starved host
-    still makes progress one entry at a time, as `decide`'s floor slot does for
-    batch. Otherwise `room` decides.
+    review is using would stall the board, not save the host. Plain rebase takes
+    a light ticket and is bounded the same way. A heavy entry with no other
+    heavy one running is always admitted — the floor, so a starved host still
+    makes progress one entry at a time. Otherwise `room` decides.
     """
-    # ceiling: batch's non-AI steps keep batch's own floor and memory check, so
-    # a starved host can still run one plain step beside one heavy queue entry.
-    # Upgrade trigger: once plain steps are seen overcommitting a host
-    # alongside heavy entries, move them onto light tickets and retire
-    # batch.machine.
+    # Light work (board reads, plain rebase) is bounded by count alone.
     if entry_class is EntryClass.LIGHT:
         return Verdict(True, "light work is bounded by count alone")
     if running == 0:

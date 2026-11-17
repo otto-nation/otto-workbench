@@ -34,12 +34,15 @@ from pathlib import Path
 
 import core.run_lock
 import git.client
+import otto_queue.model
 import pr.target
 from batch.model import Item, Run
 
 # The markers a child must not inherit from the batch: it holds every item's
-# target, and no checkout lock a step could use.
-_MARKERS = (core.run_lock.LOCK_ENV, core.run_lock.TREE_LOCK_ENV)
+# target, no checkout lock a step could use, and a parent ticket that would
+# make the child's gate skip the queue.
+_MARKERS = (core.run_lock.LOCK_ENV, core.run_lock.TREE_LOCK_ENV,
+            otto_queue.model.ENTRY_ENV)
 
 
 def origin_key(directory: str) -> str:

@@ -3,7 +3,7 @@
 Every step is its own process so concurrent steps share no interpreter state,
 and each gets a new session with stdin closed: no prompt in any child can
 reach a terminal, whether the batch runs under a server or in a shell.
-AI steps wait on their own otto-queue ticket rather than batch's host admission.
+Queued steps wait on their own otto-queue ticket rather than batch's host admission.
 """
 
 # doc-group: batch
@@ -81,11 +81,12 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
 def queues_itself(step: Step, ai: bool) -> bool:
     """Whether the child takes an otto-queue ticket.
 
-    Must agree with `cli.registry`'s `queue=` for the argv `step_argv` builds
-    — held by a test.
+    True for review, comments, and rebase (any); CI only when *ai*. Must agree
+    with `cli.registry`'s `queue=` for the argv `step_argv` builds — held by a
+    test.
     """
-    return step in (Step.REVIEW, Step.COMMENTS) or (
-        ai and step in (Step.REBASE, Step.CI))
+    return step in (Step.REVIEW, Step.COMMENTS, Step.REBASE) or (
+        ai and step is Step.CI)
 
 
 @dataclass(frozen=True)
@@ -319,14 +320,16 @@ class StepProcess:
 
     @classmethod
     def start(cls, argv: list[str], *, log_path: Path, trail_root: str,
-              env: dict[str, str] | None = None) -> StepProcess:
+              env: dict[str, str] | None = None,
+              pass_fds: Sequence[int] = ()) -> StepProcess:
         """Spawn *argv* as a step. *env* is its environment — this process's when None —
-        and the trail root is set on it either way."""
+        and the trail root is set on it either way. *pass_fds* stay open in the child
+        (close-on-exec cleared) so it can adopt an otto-queue lease."""
         env = dict(os.environ if env is None else env)
         env[core.trail.TRAIL_ROOT_ENV] = trail_root
         popen = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, text=True, env=env,
-                                 start_new_session=True)
+                                 start_new_session=True, pass_fds=pass_fds)
         return cls(popen, log_path)
 
     def _close_log(self) -> None:

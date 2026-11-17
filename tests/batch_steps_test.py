@@ -24,7 +24,7 @@ from conftest import add_self_origin, commit_all, git_in, init_repo, seed_repo  
     (Step.COMMENTS, True, True),
     (Step.COMMENTS, False, True),
     (Step.REBASE, True, True),
-    (Step.REBASE, False, False),
+    (Step.REBASE, False, True),
     (Step.CI, True, True),
     (Step.CI, False, False),
 ])

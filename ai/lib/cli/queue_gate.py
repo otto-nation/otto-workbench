@@ -20,7 +20,7 @@ import core.log
 import git.client
 import pr.target
 from cli.registry import COMMANDS, queue_for
-from otto_queue.model import ACTION_ENV, SUBJECT_ENV, EntryClass
+from otto_queue.model import ACTION_ENV, ADOPT_ENV, LEASE_FD_ENV, SUBJECT_ENV, EntryClass
 
 NO_QUEUE_ENV = "WORKBENCH_PR_NO_QUEUE"
 QUEUED_MARKER = "_WB_PR_QUEUED"
@@ -62,13 +62,19 @@ def gate(command: str, argv: Sequence[str], *, reexec: Sequence[str],
     re-exec'd child (`_WB_PR_QUEUED`). An int is the ticket's exit status.
     Subject is `owner/repo#N` only when a number is known (or `OTTO_QUEUE_SUBJECT`
     is set); action is the `pr` subcommand then, or `OTTO_QUEUE_ACTION`.
+    When `OTTO_QUEUE_ADOPT` and `OTTO_QUEUE_LEASE_FD` are set, this process runs
+    under that entry instead of recording its own; a refused adoption falls
+    through to a new ticket. Both variables are removed from the environment
+    before any re-exec.
     """
-    if entry_class is None or no_queue or os.environ.get(NO_QUEUE_ENV) == "1":
-        return None
-    if os.environ.get(QUEUED_MARKER):
-        return None
+    # Pop before any return or re-exec so a grandchild never inherits the fd.
+    adopt_raw = os.environ.pop(ADOPT_ENV, None)
+    fd_raw = os.environ.pop(LEASE_FD_ENV, None)
     import otto_queue.ticket
-    if os.environ.get(otto_queue.ticket.ENTRY_ENV):
+    if (entry_class is None or no_queue or os.environ.get(NO_QUEUE_ENV) == "1"
+            or os.environ.get(QUEUED_MARKER)
+            or os.environ.get(otto_queue.ticket.ENTRY_ENV)):
+        _close_fd(fd_raw)
         return None
     # This process only waits and then exits, so mutating its environment is
     # safe: the marker is how the re-exec'd child knows not to gate again.
@@ -79,8 +85,26 @@ def gate(command: str, argv: Sequence[str], *, reexec: Sequence[str],
         argv=tuple(reexec), cwd=os.getcwd(), entry_class=entry_class,
         label=label, wait_s=_wait_s(), subject=subject,
         action=_action(command, subject))
-    return otto_queue.ticket.run_ticket(
-        request, cli.otto_queue.machine_policy()).exit_status
+    policy = cli.otto_queue.machine_policy()
+    if adopt_raw is not None and fd_raw is not None:
+        try:
+            return otto_queue.ticket.adopt(
+                int(adopt_raw), int(fd_raw), request, policy).exit_status
+        except (ValueError, otto_queue.ticket.AdoptRefused):
+            _close_fd(fd_raw)
+    else:
+        _close_fd(fd_raw)
+    return otto_queue.ticket.run_ticket(request, policy).exit_status
+
+
+def _close_fd(fd_raw: str | None) -> None:
+    """Close an inherited lease fd that was not adopted, so its flock is released."""
+    if fd_raw is None:
+        return
+    try:
+        os.close(int(fd_raw))
+    except (ValueError, OSError):
+        pass
 
 
 def _wait_s() -> float:

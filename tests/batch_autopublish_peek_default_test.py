@@ -25,7 +25,7 @@ def test_scheduler_defaults_tree_to_peek_tree():
     h = Harness([row(1, {Step.CI: NEED})], with_ai=[Step.CI])
     sched = batch.scheduler.Scheduler(
         h.session, pr_bin="pr", cfg=BatchConfig(pool_max=4),
-        host=lambda: None, spawn=lambda *a, **k: None,
+        spawn=lambda *a, **k: None,
         sleep=lambda s: None, emit=h._record,
     )
     assert sched._tree is batch.publish.peek_tree

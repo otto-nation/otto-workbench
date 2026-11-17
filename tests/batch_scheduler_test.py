@@ -10,19 +10,18 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import batch.admission  # noqa: E402
 import batch.events  # noqa: E402
 import batch.model  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 import batch.targets  # noqa: E402
-import otto_queue.admission  # noqa: E402
 import otto_queue.ticket  # noqa: E402
 from batch.requests import Cancel, Envelope, Malformed, Release  # noqa: E402
 from batch.plan import PlanError  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
-from batch_scheduler_support import (ALL, GiB, HEALTHY, NEED, NO, Harness,  # noqa: F401,E402
-                                     _close_open_sessions, _even, _quiet_outcomes, row)
+from batch_scheduler_support import (ALL, NEED, NO, FakeQueueEntries,  # noqa: F401,E402
+                                     Harness, _close_open_sessions, _even, _quiet_outcomes, row)
+from otto_queue.model import EntryClass, EntryState  # noqa: E402
 from pr.comments_fix import CloseoutDebt  # noqa: E402
 
 
@@ -135,27 +134,6 @@ def test_cancel_before_start_runs_nothing():
     batch.store.write_request(h.run.id, Cancel())
     assert h.sched.run_until_blocked() is batch.model.RunStatus.CANCELLED
     assert h.spawned == []
-
-
-def test_unrealised_headroom_blocks_a_second_admit_in_the_same_tick():
-    estimate = batch.admission.DEFAULT_ESTIMATES[batch.model.Step.REBASE]
-    host = otto_queue.admission.HostSample(2 * GiB + estimate, 1.0, 0.0)
-    h = Harness([row(1), row(2)], host=host, pool=2, with_ai=[])
-    h.sched._sleep = lambda _: (_ for _ in ()).throw(KeyboardInterrupt())
-    with pytest.raises(KeyboardInterrupt):
-        h.sched.run_until_blocked()
-    assert len(h.spawned) == 1
-
-
-def test_admission_wait_is_reported_and_the_floor_still_progresses():
-    short = otto_queue.admission.HostSample(2 * GiB, 1.0, 0.0)
-    # Two repos, so the one-fetcher-per-repo rule cannot be what holds row 2 back.
-    h = Harness([row(1, _ONLY_REBASE), row(2, _ONLY_REBASE, repo="o/s", repo_dir="/s")],
-                host=short, with_ai=[])
-    assert h.sched.run_until_blocked() is batch.model.RunStatus.DONE
-    waits = [f for k, f in h.events if k == "admission_wait"]
-    assert waits and waits[0]["reason"].startswith("waiting for memory")
-    assert h.max_live == 1
 
 
 def test_mid_loop_drains_a_queued_request_written_to_disk():
@@ -547,34 +525,25 @@ _ONLY_REBASE = {batch.model.Step.REBASE: NEED, batch.model.Step.COMMENTS: NO,
                 batch.model.Step.REVIEW: NO}
 
 
-def test_an_ai_step_starts_on_a_host_admission_would_refuse():
-    h = Harness([row(1, _ONLY_REVIEW)], host=otto_queue.admission.HostSample(0, 99.0, 99.0))
-    h.sched._once()
-    assert len(h.spawned) == 1
-
-
 def test_the_pool_cap_still_counts_steps_waiting_on_a_ticket():
-    starved = otto_queue.admission.HostSample(0, 99.0, 99.0)
-    h = Harness([row(1, _ONLY_REVIEW), row(2, _ONLY_REVIEW)], pool=1, host=starved)
+    h = Harness([row(1, _ONLY_REVIEW), row(2, _ONLY_REVIEW)], pool=1)
     h.sched._once()
     assert len(h.spawned) == 1
     assert h.run.items[1].wait_reason == "at the concurrency limit (1)"
 
 
 def test_a_step_waiting_on_its_ticket_reports_why():
-    box = {"on": True}
-
-    def queue_waits(pids):
-        return {pid: 9 for pid in pids} if box["on"] else {}
-
-    h = Harness([row(1, _ONLY_REVIEW)], queue_waits=queue_waits)
+    q = FakeQueueEntries()
+    q.states_map[1] = EntryState.QUEUED
+    h = Harness([row(1, _ONLY_REVIEW)], queue_entries=q)
     h.sched._once()
     item = h.run.items[0]
-    assert "entry 9" in item.wait_reason
+    assert q.accepted and q.accepted[0].entry_id == 1
+    assert "entry 1" in item.wait_reason
     assert item.status is batch.model.ItemStatus.RUNNING
     waits = [f for k, f in h.events if k == "admission_wait"]
-    assert waits and waits[-1]["queue_entry"] == 9
-    box["on"] = False
+    assert waits and waits[-1]["queue_entry"] == 1
+    q.states_map[1] = EntryState.RUNNING
     h.sched._once()
     assert h.run.items[0].wait_reason == ""
     assert h.run.items[0].status is batch.model.ItemStatus.RUNNING
@@ -586,8 +555,10 @@ def test_an_ai_step_gets_its_label_and_unbounded_wait():
     h.sched._once()
     assert h.envs[0][otto_queue.ticket.LABEL_ENV] == "pr batch · review · o/r#1"
     assert h.envs[0][otto_queue.ticket.WAIT_ENV] == "inf"
-    assert otto_queue.ticket.LABEL_ENV not in h.envs[1]
-    assert otto_queue.ticket.WAIT_ENV not in h.envs[1]
+    assert h.envs[1][otto_queue.ticket.LABEL_ENV] == "pr batch · rebase · o/r#2"
+    assert h.envs[1][otto_queue.ticket.WAIT_ENV] == "inf"
+    assert h.queue.accept_calls[0]["entry_class"] is EntryClass.HEAVY
+    assert h.queue.accept_calls[1]["entry_class"] is EntryClass.LIGHT
 
 
 def test_an_ai_step_gets_subject_and_action():
@@ -596,17 +567,11 @@ def test_an_ai_step_gets_subject_and_action():
     h.sched._once()
     assert h.envs[0][otto_queue.ticket.SUBJECT_ENV] == "o/r#1"
     assert h.envs[0][otto_queue.ticket.ACTION_ENV] == "batch:review"
-    assert otto_queue.ticket.SUBJECT_ENV not in h.envs[1]
-    assert otto_queue.ticket.ACTION_ENV not in h.envs[1]
-
-
-def test_a_waiting_ai_step_does_not_reserve_memory_for_a_plain_step():
-    host = otto_queue.admission.HostSample(3 * GiB, 1.0, 0.0)
-    h = Harness(
-        [row(1, _ONLY_REVIEW), row(2, _ONLY_REBASE, repo="o/s", repo_dir="/s")],
-        with_ai=[batch.model.Step.REVIEW], host=host, pool=2)
-    h.sched._once()
-    assert len(h.spawned) == 2
+    assert h.envs[1][otto_queue.ticket.SUBJECT_ENV] == "o/r#2"
+    assert h.envs[1][otto_queue.ticket.ACTION_ENV] == "batch:rebase"
+    env = h.envs[1]
+    assert env[otto_queue.ticket.ADOPT_ENV]
+    assert env[otto_queue.ticket.LEASE_FD_ENV]
 
 
 def _exits_on_kill(h, code=143):
@@ -634,36 +599,40 @@ def _exits_on_kill(h, code=143):
 
 
 def test_plain_cancel_kills_a_step_waiting_on_a_ticket():
-    h = Harness([row(1, _ONLY_REVIEW)],
-                queue_waits=lambda pids: {pid: 9 for pid in pids})
+    q = FakeQueueEntries()
+    q.states_map[1] = EntryState.QUEUED
+    h = Harness([row(1, _ONLY_REVIEW)], queue_entries=q)
     killed = _exits_on_kill(h)
     h.sched._once()
     assert h.spawned
     batch.store.write_request(h.run.id, Cancel())
-    status = h.sched._once()
-    assert killed == [(1, False)]
+    h.sched._once()
+    assert q.cancelled == [1]
+    assert killed == []
+    assert h.run.items[0].status is batch.model.ItemStatus.RUNNING
     rec = h.run.items[0].step(batch.model.Step.REVIEW)
-    assert rec.status is batch.model.StepStatus.INTERRUPTED
-    assert rec.exit_code == 143
-    assert h.run.items[0].findings == []
-    assert status is batch.model.RunStatus.CANCELLED
+    assert rec.status is batch.model.StepStatus.RUNNING
 
 
 def test_plain_cancel_leaves_a_running_step():
-    h = Harness([row(1, _ONLY_REVIEW)], queue_waits=lambda pids: {})
+    q = FakeQueueEntries()
+    q.states_map[1] = EntryState.RUNNING
+    h = Harness([row(1, _ONLY_REVIEW)], queue_entries=q)
     killed = _exits_on_kill(h)
     h.sched._once()
     assert h.spawned
     batch.store.write_request(h.run.id, Cancel())
     assert h.sched._once() is None
+    assert q.cancelled == []
     assert killed == []
     assert h.run.items[0].status is batch.model.ItemStatus.RUNNING
     assert h.run.items[0].step(batch.model.Step.REVIEW).status is batch.model.StepStatus.RUNNING
 
 
 def test_release_of_a_waiting_step_stops_it():
-    h = Harness([row(1, _ONLY_REVIEW)],
-                queue_waits=lambda pids: {pid: 9 for pid in pids})
+    q = FakeQueueEntries()
+    q.states_map[1] = EntryState.QUEUED
+    h = Harness([row(1, _ONLY_REVIEW)], queue_entries=q)
     killed = _exits_on_kill(h)
     h.sched._once()
     assert h.spawned

@@ -655,13 +655,14 @@ class RebaseConfig:
 class BatchConfig:
     """How `pr batch` sizes a run on this host.
 
-    `pool_max` caps whatever a caller asks for. The rest feed admission
-    control, which decides actual concurrency from host pressure;
-    `pool_default` is the fixed concurrency, counted across every batch
-    driver on the machine, used where the host exposes no pressure metrics.
+    `pool_max` caps whatever a caller asks for (`--pool`). `mem_reserve`,
+    `cpu_pressure_max`, and `mem_pressure_max` feed otto-queue admission for
+    heavy tickets. `pool_default` is accepted but ignored: batch no longer
+    admits steps against a machine-wide pool.
     """
 
     pool_max: int = 2
+    # Deprecated and ignored. Kept so existing config.yml values still load.
     pool_default: int = 1
     mem_reserve: str = "2G"
     cpu_pressure_max: float = 30.0

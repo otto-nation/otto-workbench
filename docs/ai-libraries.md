@@ -4406,29 +4406,7 @@ target on stderr and never fails the command.
 
 ## Batch
 
-Running rebase, CI fixes, comments and self-review across many open PRs at once: admission, scheduling, step processes, publishing, and the decisions a run waits on.
-
-### batch/admission.py
-
-Decide whether the host can take one more batch step right now.
-
-Concurrency is not a number chosen up front. A step starts only when free
-memory, minus a reserve kept for every other service on the host, covers what
-that step has been seen to need, and neither CPU nor memory is under pressure.
-Running steps are never paused or killed; admission only gates the next start.
-
-Host reading, `room` and the queue's own policy are `otto_queue.admission`;
-this module is what batch adds on top: the pool (`decide`), the step estimates
-(`Estimates`) and the process-tree RSS that feeds them (`tree_rss`).
-
-The host is shared by every batch driver on it for the steps batch still
-admits itself (non-AI: plain rebase, and CI without `--fix`). AI steps are
-queue entries. The caller passes in what the others are running
-(`batch.machine`): their pending memory comes off the sample, and their live
-non-AI steps count against `batch.pool_default` where there are no host
-metrics. Whether a driver may start a step regardless — the floor slot — is
-the caller's to establish and pass as `floor`; `decide` no longer infers it
-from this run having nothing running.
+Running rebase, CI fixes, comments and self-review across many open PRs at once: otto-queue tickets for every queued step, scheduling, step processes, publishing, and the decisions a run waits on. Plain rebase is a light ticket; plain CI is unqueued.
 
 ### batch/autopublish.py
 
@@ -4575,63 +4553,6 @@ directory. Either one counts only when its `origin` names the item's repo,
 because a relative `repo_dir` saved by an older run resolves against whatever
 directory the reader happens to be in.
 
-### batch/machine.py
-
-What every batch driver on this machine is running, so admission sees all of them.
-
-The registry counts the steps batch admits itself (non-AI); AI steps are
-admitted by the otto-queue.
-
-Each driver decides alone whether the host can take one more step
-(`batch.admission.decide`), but memory and CPU are the machine's, not the
-run's. Counting only its own steps, and always admitting a run's first one,
-let N concurrent batches start N steps whatever memory said. This module is
-the shared view that closes that.
-
-`<state>/batch/admission/` holds, per live driver:
-
-| File | Held / written | Read as |
-|---|---|---|
-| `<run>.lock` | `LOCK_EX`, blocking, for the driver's life | live while a non-blocking probe of it fails |
-| `<run>.json` | replaced atomically at the end of every admission pass | `pid`, `updated_at`, `waiting_since`, `live[]` |
-| `floor.lock` | `LOCK_EX`, by at most one driver at a time | the machine-wide floor slot |
-
-A peer counts only while its lock is held, so a driver killed with SIGKILL
-drops out the moment the kernel releases it; its JSON is removed by whichever
-peer next finds the lock free. Machine-wide pending memory is the sum, over
-live peers, of each running step's estimate less the peak it has reached.
-
-A driver refused with nothing running joins a queue, ordered by
-`waiting_since`. While a driver ahead of it is still waiting, every other
-driver defers — normal admission included — so the next step the host has
-room for goes to the longest waiter rather than to whichever driver happened
-to look first. Without that, a plain shared slot starves: whoever finishes
-first wins it again.
-
-The floor slot replaces the per-run "nothing running, so one step is always
-admitted" rule. The head of the queue may start one step whatever the host
-says, but only while it holds `floor.lock` and only while nothing is running
-anywhere on the machine: a starved host gets one step, not one per driver.
-The holder gives the slot back once its own running count returns to zero and
-joins the back of the queue, so under sustained pressure every waiting driver
-gets a turn within about (N-1) times the longest step. Only fresh entries
-queue: one not rewritten for `FRESH_SECONDS` belongs to a driver blocked in an
-inline publish, which still holds its lock but is not taking steps.
-
-A registry write or read that fails mid-run (a full disk, a removed directory)
-drops the driver to per-run admission with one warning, rather than raising
-out of the scheduler and killing the steps it has live.
-
-`PerRun` is the same interface with no peers and the old per-run floor. It is
-what a scheduler uses when nothing else is supplied, and what `register`
-returns, after logging, on a filesystem where `flock` is unsupported.
-
-ceiling: admissions are not serialized across drivers — a step a peer started
-is invisible until that peer's next JSON write, at most one pass later, so two
-drivers can each admit against the same headroom in that window. Upgrade
-trigger: if hosts are seen overcommitting by one step per concurrent driver,
-hold a machine-wide `admit.lock` across read-peers, decide, start, write.
-
 ### batch/model.py
 
 The persisted shape of a `pr batch` run.
@@ -4719,17 +4640,12 @@ spawn a publish child: `--auto-publish ff` runs `commands[0]` when it is a
 plain `pr push --expect`, and `session_report` prints the planned argv.
 Closeout is a `closeout_owed` finding, not a post from this module.
 
-### batch/queue_wait.py
+### batch/queue_entries.py
 
-Match live batch steps to otto-queue tickets they are waiting on.
+Accept otto-queue tickets for batch steps, read their states, and cancel waiters.
 
-A step's process is the ticket process: `StepProcess.start` Popens the `pr`
-or `ci-check` shim, which execs Python in place, and the gate calls
-`run_ticket` in-process. The ticket row's `pid` is written in the same
-transaction that creates it, and a queued ticket holds its lease, so the pid
-is live and cannot have been reused. Matching `StepProcess.pid` against
-queued tickets is how the scheduler reports `wait_reason` without parsing
-log prose or adding a side protocol.
+The scheduler creates each queued step's ticket, holds the lease, and hands the
+child the entry id and lease fd. A pid match against ticket rows is not used.
 
 ### batch/report.py
 
@@ -4835,7 +4751,7 @@ The child processes a batch run spawns — `pr`, or `ci-check` for CI — and th
 Every step is its own process so concurrent steps share no interpreter state,
 and each gets a new session with stdin closed: no prompt in any child can
 reach a terminal, whether the batch runs under a server or in a shell.
-AI steps wait on their own otto-queue ticket rather than batch's host admission.
+Queued steps wait on their own otto-queue ticket rather than batch's host admission.
 
 ### batch/store.py
 
@@ -4973,8 +4889,7 @@ The machine-wide queue for background work: the ledger that records every entry,
 The queue's admission policy: host room, class limits, and what a queue entry may start.
 
 `QueuePolicy` is what `otto_queue.slots` asks, so "is there room" has one owner
-(`room`) whether the asker is a queue entry or a batch step (`batch.admission`
-calls it too). A queue entry is admitted by `admit_entry`: light work on count
+(`room`). A queue entry is admitted by `admit_entry`: light work on count
 alone, heavy work on `room` beyond the first. The class limits are
 `class_limit`: heavy entries per platform (`HEAVY_LIMITS`), light ones every
 core but one.
@@ -5303,11 +5218,14 @@ command in this process group, output to the job's log.
 
 The command sees `OTTO_QUEUE_ENTRY`, its entry id. A ticket started under that
 variable runs its command directly: a nested heavy ticket would otherwise wait
-for a slot its own parent holds. When the ledger stays busy past the open
-deadline, or stays unreachable for the whole wait, the ticket returns 75
-without running. When the ledger cannot be opened at all, the command runs
-unqueued with a warning. The queue's absence degrades to today's behaviour,
-never to work not done.
+for a slot its own parent holds. A parent that already holds the lease can hand
+it to this process by fd: `adopt` verifies the fd is that entry's flock and then
+takes the same `run_claimed` path. `cli.queue_gate` does this when `ADOPT_ENV`
+and `LEASE_FD_ENV` are set; a refused adoption records a new ticket instead.
+When the ledger stays busy past the open deadline, or stays unreachable for the
+whole wait, the ticket returns 75 without running. When the ledger cannot be
+opened at all, the command runs unqueued with a warning. The queue's absence
+degrades to today's behaviour, never to work not done.
 
 ceiling: the ticket process, not its command, holds the lease and the slot, so
 a ticket killed with SIGKILL while its command runs leaves the command running
@@ -5325,7 +5243,7 @@ line. Admission after a wait prints how long it took. Output is append-only
 even on a TTY: an in-place `\r` status is skipped so the reporter stays a
 pure, testable clock-and-notify object.
 
-`reason_kind` classifies the wording `otto_queue.admission`, `batch.admission` and the slot/queue
+`reason_kind` classifies the wording `otto_queue.admission` and the slot/queue
 gates produce; those strings remain the owner of why a wait happened.
 
 ### otto_queue/waiter.py

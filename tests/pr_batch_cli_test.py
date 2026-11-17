@@ -27,6 +27,7 @@ import pr.target  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from batch_session_support import holding, open_session, seed, stops_at  # noqa: E402
 from cli.registry import COMMANDS  # noqa: E402
+from config.workbench_config import BatchConfig  # noqa: E402
 
 BIN_DIR = REPO_ROOT / "ai" / "bin"
 GLOBAL_FLAGS = ("--repo-dir", "--worktree", "--branch", "--pr", "--schema-version", "--debug")
@@ -37,6 +38,12 @@ def _main(argv):
         return cli.pr.main(list(argv), bin_dir=BIN_DIR)
     except SystemExit as exc:
         return exc.code
+
+
+def test_ceiling_clamps_to_pool_max_with_a_floor_of_one():
+    cfg = BatchConfig(pool_max=2)
+    assert (cli.pr_batch.ceiling(5, cfg), cli.pr_batch.ceiling(None, cfg),
+            cli.pr_batch.ceiling(0, cfg)) == (2, 2, 1)
 
 
 def test_batch_is_registered_and_takes_no_target():

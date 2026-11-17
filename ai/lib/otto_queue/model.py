@@ -49,6 +49,10 @@ SUBJECT_ENV = "OTTO_QUEUE_SUBJECT"
 ACTION_ENV = "OTTO_QUEUE_ACTION"
 # The entry id a running command sees; `ticket` re-exports it.
 ENTRY_ENV = "OTTO_QUEUE_ENTRY"
+# A parent hands a child an already-held lease: the entry id and the inherited
+# fd. `cli.queue_gate` pops both before any re-exec so grandchildren never see them.
+ADOPT_ENV = "OTTO_QUEUE_ADOPT"
+LEASE_FD_ENV = "OTTO_QUEUE_LEASE_FD"
 
 
 class EntryState(StrEnum):

@@ -6,26 +6,25 @@ from __future__ import annotations
 
 import collections
 import functools
+import os
 import shlex
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from typing import Callable
 
-import batch.admission
 import batch.autopublish
 import batch.events
 import batch.findings
-import batch.machine
 import batch.outcomes
 import batch.plan
 import batch.publish
-import batch.queue_wait
+import batch.queue_entries
 import batch.store
 import batch.targets
 import git.client
-import otto_queue.admission
+import otto_queue.ledger
 import otto_queue.model
 import pr.ci_need
 import rebase.inspect
@@ -189,7 +188,6 @@ class _Live:
     head_before: str
     # Started with --wait: it spends minutes polling GitHub, not fetching.
     waits: bool = False
-    peak: int = 0
     # True until the child leaves the otto-queue (or never queued itself).
     queued: bool = False
     queue_entry: int | None = None
@@ -199,13 +197,10 @@ class _Live:
 
 class Scheduler:
     def __init__(self, session: batch.store.Session, *, pr_bin: str, cfg: BatchConfig,
-                 host: Callable[[], otto_queue.admission.HostSample] = otto_queue.admission.read_host,
                  spawn: Callable[..., object] = StepProcess.start,
                  replan: Callable[[PlanRow], PlanRow | None] | None = None,
                  worktrees: Callable[[str, str], WorktreeResult] = ensure_worktree,
                  head: Callable[[str], str] = _local_head,
-                 rss: Callable[[int], int] = batch.admission.tree_rss,
-                 estimates: batch.admission.Estimates | None = None,
                  emit: Callable[..., None] = batch.events.emit,
                  sleep: Callable[[float], None] = time.sleep, tick: float = 0.5,
                  contains: Callable[[str, str], bool] = _contains_commit,
@@ -217,12 +212,11 @@ class Scheduler:
                  verbose: bool = False,
                  closeout: Callable[[str, str], CloseoutDebt] | None = None,
                  release: Callable[[Run, frozenset[str]], object] | None = None,
-                 machine: batch.machine.Machine | batch.machine.PerRun | None = None,
                  hold_tree: Callable[[Item], str] | None = None,
                  branch: Callable[[str], str] = checked_out_branch,
                  tree: Callable[[Item], batch.publish.TreeState] | None = None,
                  push: Callable[..., int] | None = None,
-                 queue_waits: Callable[[Collection[int]], dict[int, int]] | None = None):
+                 queue_entries: batch.queue_entries.QueueEntries | None = None):
         self.session, self.pr_bin, self.cfg = session, pr_bin, cfg
         # Called with the run and the items whose step is still live after
         # every commit a tick makes, so the driver can give back the target
@@ -232,34 +226,26 @@ class Scheduler:
         self._verbose = verbose
         # Looked up at construction, not bound as a default, so a patched
         # batch.plan.replan_row is the one used.
-        self._host, self._spawn = host, spawn
+        self._spawn = spawn
         self._replan = replan or batch.plan.replan_row
         # Read by _close for auto-publish debt only. Requests, drained or
         # synthesized, are applied by the session's inbox with its own seams.
         self._closeout = closeout or batch.plan.closeout_debt
-        self._worktrees, self._head, self._rss = worktrees, head, rss
-        self._estimates = estimates or batch.admission.Estimates.load()
+        self._worktrees, self._head = worktrees, head
         self._emit, self._sleep, self._tick = emit, sleep, tick
         self._live: dict[str, _Live] = {}
         self._contains = contains
         self._dirty, self._rebasing = dirty, rebasing
         self._unpublished = unpublished
-        # What other drivers on the machine are running, and the floor slot.
-        # Without one the scheduler sees only itself (`PerRun`), as before.
-        self._machine = machine or batch.machine.PerRun()
         # Holds an item's worktree for the run once it is assigned; returns
         # who holds it instead when it is busy. Supplied by the driver, which
         # holds the item targets; without one no checkout is held.
         self._hold_tree = hold_tree or (lambda item: "")
         self._branch = branch
-        self._peers = batch.machine.Peers()
-        # Whether this pass refused a step on the host's say: the driver is
-        # waiting, and with nothing running it queues for the floor slot.
-        self._refused = False
         self._descends, self._commits = descends, commits
         self._tree = tree or batch.publish.peek_tree
         self._push = push
-        self._queue_waits = queue_waits or batch.queue_wait.QueueWaits()
+        self._queue = queue_entries or batch.queue_entries.QueueEntries()
 
     @property
     def run(self) -> Run:
@@ -282,7 +268,6 @@ class Scheduler:
     def _reap(self, kill: bool = False) -> None:
         for key, live in list(self._live.items()):
             self._drain(key, live)
-            live.peak = max(live.peak, self._rss(live.proc.pid))
             code = live.proc.poll()
             if code is None:
                 continue
@@ -337,7 +322,6 @@ class Scheduler:
                     and item.step(Step.REVIEW).status in (
                         StepStatus.SKIPPED, StepStatus.DONE)):
                 item.step(Step.REVIEW).status = StepStatus.PENDING
-        self._estimates.observe(item.repo, rec.step, live.peak)
         item.status = ItemStatus.QUEUED
         for draft in result.decisions:
             _decide(self.run, item, rec.step.value, draft.kind, draft.payload, emit=self._emit)
@@ -515,29 +499,6 @@ class Scheduler:
                        step=rec.step.value, reason=reason)
         item.status, item.wait_reason = ItemStatus.WAITING_ADMISSION, reason
 
-    def _ai(self, rec: StepRecord) -> bool:
-        return queues_itself(rec.step, self.run.uses_ai(rec.step))
-
-    def _non_ai_live(self) -> list[_Live]:
-        return [live for live in self._live.values() if not self._ai(live.rec)]
-
-    def _live_steps(self) -> list[batch.machine.LiveStep]:
-        # AI children wait on a ticket; counting them here would reserve a
-        # phantom 1–1.5 GB and block plain steps on this driver and its peers.
-        return [batch.machine.LiveStep(live.item.key, live.rec.step.value, live.item.repo,
-                                       self._estimates.get(live.item.repo, live.rec.step),
-                                       live.peak)
-                for live in self._non_ai_live()]
-
-    def _host_for_admit(self) -> otto_queue.admission.HostSample:
-        sample = self._host()
-        own = sum(s.pending for s in self._live_steps())
-        pending = own + self._peers.pending
-        if sample.mem_available is None or not pending:
-            return sample
-        return otto_queue.admission.HostSample(max(0, sample.mem_available - pending),
-                                               sample.cpu_some_avg10, sample.mem_some_avg10)
-
     def _tree_blocks(self, item: Item, rec: StepRecord) -> bool:
         """Whether *item*'s worktree may not take *rec* now, deciding when it may not.
 
@@ -592,36 +553,10 @@ class Scheduler:
                 emit=self._emit)
         return True
 
-    def _verdict(self, item: Item, rec: StepRecord) -> otto_queue.admission.Verdict:
-        """The host's answer for a non-AI *rec*, and the floor slot's when the host
-        refuses a driver with no non-AI step running. A driver that queued first
-        goes first. AI steps never call this: the otto-queue owns their machine
-        admission (memory, pressure, floor, peers, macOS pool_default)."""
-        running = len(self._non_ai_live())
-        def ask(floor: bool) -> otto_queue.admission.Verdict:
-            return batch.admission.decide(
-                self._host_for_admit(), running=running, limit=max(1, self.run.pool),
-                estimate=self._estimates.get(item.repo, rec.step), cfg=self.cfg,
-                floor=floor, elsewhere=self._peers.live)
-        if ahead := self._machine.ahead():
-            if not running:
-                self._machine.queue()
-            return otto_queue.admission.Verdict(
-                False, f"waiting behind batch run {ahead}, which queued for the machine first")
-        verdict = ask(False)
-        if verdict.admit or running or not self._machine.take_floor():
-            return verdict
-        return ask(True)
-
     def _admit(self) -> None:
-        self._peers = self._machine.sync(self._live_steps())
         self._admit_items()
-        # Waiting for the floor means refused with no non-AI step running; AI
-        # children waiting on a ticket do not hold the floor queue.
-        self._machine.settle(self._live_steps(), waiting=self._refused and not self._non_ai_live())
 
     def _admit_items(self) -> None:
-        self._refused = False
         for item in self.run.items:
             if not self._ready(item) or not self._ensure_worktree(item):
                 continue
@@ -643,68 +578,90 @@ class Scheduler:
             self._admit_one(item, rec)
 
     def _admit_one(self, item: Item, rec: StepRecord) -> None:
-        # Kept for every step (not machine admission): the per-run --pool
-        # cap, counting children waiting on a ticket. A pool-full refusal
-        # must not queue this driver for the machine floor.
+        # The per-run --pool cap, counting children waiting on a ticket.
         limit = max(1, self.run.pool)
         if len(self._live) >= limit:
             self._refuse(item, rec, f"at the concurrency limit ({limit})")
             return
-        # Non-AI steps keep decide unchanged (floor, peers, memory,
-        # pressure, macOS pool_default). AI steps skip it.
-        if not self._ai(rec):
-            verdict = self._verdict(item, rec)
-            if not verdict.admit:
-                self._refused = True
-                self._refuse(item, rec, verdict.reason)
-                return
         fresh = self._confirm(item, rec)
         if fresh is not None:
             self._start(item, rec, fresh)
+
+    def _accept(self, item: Item, rec: StepRecord, argv: list[str]
+                ) -> batch.queue_entries.Accepted | None:
+        # AI -> HEAVY else LIGHT. Matches cli.needs.rebase_queue and
+        # test_queues_itself_matches_the_cli_registry; batch cannot import cli.
+        entry_class = (
+            otto_queue.model.EntryClass.HEAVY if self.run.uses_ai(rec.step)
+            else otto_queue.model.EntryClass.LIGHT)
+        return self._queue.accept(
+            argv=tuple(argv), cwd=item.worktree,
+            label=f"pr batch · {rec.step.value} · {item.key}",
+            subject=item.key, action=f"batch:{rec.step.value}",
+            entry_class=entry_class)
 
     def _start(self, item: Item, rec: StepRecord, fresh: PlanRow) -> None:
         log = batch.store.attempt_log_path(self.run.id, item.repo, item.pr, rec.step.value)
         wait = rec.step is Step.CI and fresh.ci_state in pr.ci_need.RUNNING
         argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha,
                          wait=wait, focus=self.run.focus, ai=self.run.uses_ai(rec.step))
+        queued = queues_itself(rec.step, self.run.uses_ai(rec.step))
+        adopted = None
+        if queued:
+            try:
+                adopted = self._accept(item, rec, argv)
+            except otto_queue.ledger.LedgerBusy:
+                self._refuse(item, rec, "otto-queue ledger busy")
+                return
         # Sample HEAD before spawn: the harness mutates it inside `_spawn`.
         head_before = self._head(item.worktree)
-        rec.start_head = rec.start_head or head_before
         env = batch.targets.child_env(item)
-        if self._ai(rec):
+        spawn_kw = {}
+        if queued:
             env[otto_queue.model.LABEL_ENV] = f"pr batch · {rec.step.value} · {item.key}"
             env[otto_queue.model.SUBJECT_ENV] = item.key
             env[otto_queue.model.ACTION_ENV] = f"batch:{rec.step.value}"
             env[otto_queue.model.WAIT_ENV] = "inf"
-        proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root, env=env)
+            if adopted is not None:
+                env[otto_queue.model.ADOPT_ENV] = str(adopted.entry_id)
+                env[otto_queue.model.LEASE_FD_ENV] = str(adopted.fd)
+                spawn_kw["pass_fds"] = (adopted.fd,)
+        try:
+            proc = self._spawn(argv, log_path=log, trail_root=self.run.trail_root, env=env,
+                               **spawn_kw)
+        finally:
+            if adopted is not None:
+                os.close(adopted.fd)
+        rec.start_head = rec.start_head or head_before
         rec.status, rec.started_at, rec.log_path = StepStatus.RUNNING, batch.store.now_iso(), str(log)
         item.status, item.wait_reason = ItemStatus.RUNNING, ""
         self._live[item.key] = _Live(item, rec, proc, head_before, waits=wait,
-                                     queued=self._ai(rec))
+                                     queued=adopted is not None,
+                                     queue_entry=None if adopted is None else adopted.entry_id)
         self._emit("step_started", run=self.run.id, item=item.key, step=rec.step.value,
                    argv=argv, log_path=str(log))
 
-    def _note_queue_waits(self) -> None:
-        lives = [live for live in self._live.values() if self._ai(live.rec)]
+    def _note_queue_states(self) -> None:
+        lives = [live for live in self._live.values() if live.queue_entry is not None]
         if not lives:
             return
-        waits = self._queue_waits({live.proc.pid for live in lives})
+        states = self._queue.states([live.queue_entry for live in lives])
         for live in lives:
-            self._note_wait(live, waits.get(live.proc.pid))
+            self._note_queue_state(live, states.get(live.queue_entry))
 
-    def _note_wait(self, live: _Live, entry_id: int | None) -> None:
-        if entry_id is None:
-            if live.queued:
-                live.item.wait_reason = ""
-                live.queued = False
-                live.queue_entry = None
+    def _note_queue_state(self, live: _Live, state: otto_queue.model.EntryState | None) -> None:
+        if state is None:
             return
-        reason = f"waiting for an otto-queue slot (entry {entry_id})"
-        if live.queue_entry != entry_id or live.item.wait_reason != reason:
-            self._emit("admission_wait", run=self.run.id, item=live.item.key,
-                       step=live.rec.step.value, reason=reason, queue_entry=entry_id)
-        live.item.wait_reason = reason
-        live.queue_entry = entry_id
+        if state is otto_queue.model.EntryState.QUEUED:
+            reason = f"waiting for an otto-queue slot (entry {live.queue_entry})"
+            if live.item.wait_reason != reason:
+                self._emit("admission_wait", run=self.run.id, item=live.item.key,
+                           step=live.rec.step.value, reason=reason,
+                           queue_entry=live.queue_entry)
+            live.item.wait_reason = reason
+            return
+        live.item.wait_reason = ""
+        live.queued = False
 
     # ── loop ─────────────────────────────────────────────────────────────
 
@@ -718,11 +675,20 @@ class Scheduler:
         self._emit("run_finished", run=self.run.id, status=status.value)
         return status
 
-    def _kill_live(self, waiting: Collection[int] | None = None) -> None:
-        """SIGTERM live steps. *waiting* limits the set to those pids (queue waiters)."""
+    def _kill_live(self) -> None:
+        """SIGTERM every live step (cancel --kill, interrupt)."""
         for live in self._live.values():
-            if waiting is None or live.proc.pid in waiting:
-                live.proc.kill()
+            live.proc.kill()
+
+    def _cancel_queued(self) -> None:
+        """Cancel still-queued tickets. A running entry is never touched."""
+        ids = [live.queue_entry for live in self._live.values()
+               if live.queue_entry is not None]
+        states = self._queue.states(ids)
+        for live in self._live.values():
+            entry_id = live.queue_entry
+            if entry_id is not None and states.get(entry_id) is otto_queue.model.EntryState.QUEUED:
+                self._queue.cancel(entry_id)
 
     def _kill_terminal_live(self) -> None:
         """SIGTERM the live step of every item that is now terminal (a release)."""
@@ -760,14 +726,11 @@ class Scheduler:
         if kill:
             self._kill_live()
         elif cancel is not None:
-            # Plain cancel: queue waiters are stopped; running steps finish. A waiter
-            # admitted since the read may be stopped as it starts: same as --kill.
-            self._kill_live(waiting=self._queue_waits(
-                {live.proc.pid for live in self._live.values()}))
+            self._cancel_queued()
         self._reap(kill)
         if cancel is None:
             self._admit()
-        self._note_queue_waits()
+        self._note_queue_states()
         self.session.commit()
         self._release(self.run, frozenset(self._live))
         return self._blocked_status(cancel)

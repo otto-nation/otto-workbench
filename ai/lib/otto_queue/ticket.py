@@ -52,11 +52,14 @@ command in this process group, output to the job's log.
 
 The command sees `OTTO_QUEUE_ENTRY`, its entry id. A ticket started under that
 variable runs its command directly: a nested heavy ticket would otherwise wait
-for a slot its own parent holds. When the ledger stays busy past the open
-deadline, or stays unreachable for the whole wait, the ticket returns 75
-without running. When the ledger cannot be opened at all, the command runs
-unqueued with a warning. The queue's absence degrades to today's behaviour,
-never to work not done.
+for a slot its own parent holds. A parent that already holds the lease can hand
+it to this process by fd: `adopt` verifies the fd is that entry's flock and then
+takes the same `run_claimed` path. `cli.queue_gate` does this when `ADOPT_ENV`
+and `LEASE_FD_ENV` are set; a refused adoption records a new ticket instead.
+When the ledger stays busy past the open deadline, or stays unreachable for the
+whole wait, the ticket returns 75 without running. When the ledger cannot be
+opened at all, the command runs unqueued with a warning. The queue's absence
+degrades to today's behaviour, never to work not done.
 
 ceiling: the ticket process, not its command, holds the lease and the slot, so
 a ticket killed with SIGKILL while its command runs leaves the command running
@@ -88,8 +91,8 @@ import otto_queue.paths
 import otto_queue.slots
 import otto_queue.wait_report
 from otto_queue.model import (  # noqa: F401  env names are re-exported for callers
-    ACTION_ENV, ENTRY_ENV, LABEL_ENV, SUBJECT_ENV, WAIT_ENV, Entry, EntryClass, EntryKind,
-    EntryState, NewEntry)
+    ACTION_ENV, ADOPT_ENV, ENTRY_ENV, LABEL_ENV, LEASE_FD_ENV, SUBJECT_ENV, WAIT_ENV, Entry,
+    EntryClass, EntryKind, EntryState, NewEntry)
 
 # How long a ticket waits for a slot before ending as `tempfail`. A review takes
 # about ten minutes, so an hour is several heavy entries deep: long enough that
@@ -189,6 +192,35 @@ def run_ticket(request: TicketRequest, policy: otto_queue.slots.Policy, *,
         if joined is not None:
             return joined
         notify(f"otto-queue: entry {res.entry.id} ended without a result; queuing again")
+
+
+class AdoptRefused(RuntimeError):
+    """The fd is not this entry's lease, or the entry is gone."""
+
+
+def adopt(entry_id: int, fd: int, request: TicketRequest, policy: otto_queue.slots.Policy,
+          *, root: Path | None = None, poll_s: float = POLL_S,
+          notify: Callable[[str], None] = core.log.info) -> TicketResult:
+    """Run *request* under an already-held lease *fd* for *entry_id*.
+
+    *fd* must be an open flock on this entry's lease file. `AdoptRefused` when
+    it is not, or when the entry is gone: the caller then records its own ticket.
+    """
+    try:
+        ledger = otto_queue.ledger.Ledger.open(root)
+        entry = ledger.get(entry_id)
+    except otto_queue.ledger.LedgerError as exc:
+        raise AdoptRefused(f"cannot open ledger for entry {entry_id}: {exc}") from exc
+    if entry is None:
+        raise AdoptRefused(f"entry {entry_id} is gone")
+    try:
+        lease = otto_queue.lease.Lease.from_fd(
+            otto_queue.paths.lease_path(ledger.root, entry_id), fd)
+    except otto_queue.lease.LeaseMismatch as exc:
+        raise AdoptRefused(str(exc)) from exc
+    res = otto_queue.ledger.Resolution(
+        otto_queue.ledger.Outcome.NEW, entry, lease)
+    return run_claimed(ledger, res, request, policy, poll_s=poll_s, notify=notify)
 
 
 def join(ledger: otto_queue.ledger.Ledger, entry: Entry, *, wait_s: float,
@@ -326,7 +358,7 @@ def run_claimed(ledger: otto_queue.ledger.Ledger, res: otto_queue.ledger.Resolut
                 poll_s: float = POLL_S, notify: Callable[[str], None] = core.log.info) -> TicketResult:
     """Wait for a slot and run *request* for the NEW entry *res* this process holds the lease of.
 
-    Only `run_ticket` calls it, for a ticket it recorded.
+    `run_ticket` and `adopt` call it, for a ticket whose lease this process holds.
     """
     entry_id = res.entry.id
     try:

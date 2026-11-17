@@ -63,7 +63,7 @@ import json
 import random
 import sqlite3
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -464,6 +464,26 @@ class Ledger:
 
     def get(self, entry_id: int) -> Entry | None:
         return _run(self.root, lambda conn: _entry(_row(conn, entry_id)))
+
+    def states(self, ids: Sequence[int]) -> dict[int, EntryState]:
+        """Each known id's current state, one connection; missing ids are omitted."""
+        wanted = tuple(ids)
+        if not wanted:
+            return {}
+        placeholders = "(" + ", ".join("?" for _ in wanted) + ")"
+
+        def read(conn):
+            rows = conn.execute(
+                f"SELECT id, state FROM entries WHERE id IN {placeholders}", wanted)
+            found = {}
+            for row in rows:
+                try:
+                    found[row["id"]] = EntryState(row["state"])
+                except ValueError:
+                    continue
+            return found
+
+        return _run(self.root, read)
 
     def entries(self, *, recent: int = RECENT_TERMINAL) -> list[Entry]:
         """Every live entry and the *recent* newest finished ones, oldest first."""

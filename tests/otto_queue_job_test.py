@@ -40,6 +40,18 @@ def test_a_job_runs_records_done_and_logs_its_output():
     assert "hello from the job" in Path(entry.log_path).read_text()
 
 
+def test_a_foreground_run_stays_in_the_callers_process_group_and_still_logs():
+    pgrp_argv = (PY, "-c", "import os; print('pgrp', os.getpgrp())")
+    ledger, fg_id = _job(pgrp_argv)
+    result = otto_queue.job.run_leased(ledger, fg_id, lambda: 1000.0, foreground=True)
+    entry = ledger.get(fg_id)
+    assert (result.outcome, entry.state) == (JobOutcome.FINISHED, EntryState.DONE)
+    assert f"pgrp {os.getpgrp()}\n" in Path(entry.log_path).read_text()
+    ledger, bg_id = _job(pgrp_argv)
+    otto_queue.job.run_leased(ledger, bg_id, lambda: 1000.0, foreground=False)
+    assert f"pgrp {os.getpgrp()}\n" not in Path(ledger.get(bg_id).log_path).read_text()
+
+
 def test_exit_75_requeues_with_backoff_and_the_attempt_count_rises():
     ledger, entry_id = _job(exit_argv(75))
     first = otto_queue.job.run_job(entry_id, None, clock=lambda: 1000.0)
@@ -130,7 +142,7 @@ def test_a_closed_slot_fd_warns_and_the_job_still_runs(tmp_path, monkeypatch):
 def test_an_execute_failure_keeps_its_exception_when_fail_is_busy(monkeypatch):
     _, entry_id = _job(exit_argv(0))
 
-    def boom_execute(entry, log):
+    def boom_execute(entry, log, **_kw):
         raise RuntimeError("command died")
 
     def boom_fail(self, entry_id):

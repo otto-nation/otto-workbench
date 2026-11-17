@@ -74,7 +74,7 @@ def run_job(entry_id: int, slot_fd: int | None, *, root: Path | None = None,
                 f"otto-queue: job {entry_id} was handed no slot descriptor (fd {slot_fd}): "
                 "admission is not holding its slot")
     try:
-        return _run_leased(otto_queue.ledger.Ledger.open(root), entry_id, clock)
+        return run_leased(otto_queue.ledger.Ledger.open(root), entry_id, clock)
     finally:
         _close(slot_fd)
 
@@ -86,26 +86,31 @@ def _close(fd: int | None) -> None:
         os.close(fd)
 
 
-def _run_leased(ledger: otto_queue.ledger.Ledger, entry_id: int,
-                clock: Callable[[], float]) -> JobResult:
+def run_leased(ledger: otto_queue.ledger.Ledger, entry_id: int,
+               clock: Callable[[], float], *, foreground: bool = False) -> JobResult:
+    """Take *entry_id*'s lease, move it to running and run it; NOT_CLAIMED when another runner has it.
+
+    *foreground* keeps the command in this process's group (a waiter running a
+    job), so it dies with the waiter instead of outliving it.
+    """
     try:
         lease = otto_queue.lease.take(ledger.root, entry_id)
     except otto_queue.lease.LeaseHeld:
         return JobResult(JobOutcome.NOT_CLAIMED)
     try:
-        return _run_claimed(ledger, entry_id, clock)
+        return _run_claimed(ledger, entry_id, clock, foreground)
     finally:
         lease.release()
 
 
 def _run_claimed(ledger: otto_queue.ledger.Ledger, entry_id: int,
-                 clock: Callable[[], float]) -> JobResult:
+                 clock: Callable[[], float], foreground: bool) -> JobResult:
     log = otto_queue.paths.log_path(ledger.root, entry_id)
     if not ledger.mark_running(entry_id, os.getpid(), log_path=str(log)):
         return JobResult(JobOutcome.NOT_CLAIMED)
     entry = ledger.get(entry_id)
     try:
-        code = _execute(entry, log)
+        code = _execute(entry, log, foreground=foreground)
     except BaseException:
         # Terminal before the lease is released, or the reaper re-queues it.
         with contextlib.suppress(BaseException):
@@ -119,7 +124,7 @@ def _run_claimed(ledger: otto_queue.ledger.Ledger, entry_id: int,
         raise
 
 
-def _execute(entry: Entry, log: Path) -> int:
+def _execute(entry: Entry, log: Path, *, foreground: bool = False) -> int:
     log.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env[ENTRY_ENV] = str(entry.id)
@@ -127,7 +132,7 @@ def _execute(entry: Entry, log: Path) -> int:
         out.write(f"otto-queue: entry {entry.id}, attempt {entry.attempts}: {shlex.join(entry.argv)}\n".encode())
         out.flush()
         code = core.signal_relay.run_child(list(entry.argv), env=env, cwd=entry.cwd,
-                                           origin="otto-queue", output=out)
+                                           origin="otto-queue", output=out, foreground=foreground)
         out.write(f"otto-queue: exit {code}\n".encode())
     return code
 

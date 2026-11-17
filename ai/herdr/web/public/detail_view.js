@@ -1,10 +1,11 @@
 // The PR detail: header, Review history (expandable bodies), Files and one file's diff.
 // Phase 2 adds the action bar, phone bar and output panel through `slots`; Phase 4 the Batch tab.
-import { badge, h, setChildren, status, tag, trustedMarkdown } from './dom.js';
+import { badge, copyable, h, setChildren, status, tag, trustedMarkdown } from './dom.js';
 import { historyRows } from '../../app/mods/_lib/history.js';
 import { MAX_LINES, summarize } from '../../app/mods/_lib/diff.js';
 import { prPresentation, statsText } from '../../app/mods/_lib/pr_status.js';
 import { fileMarkKind } from '../../app/mods/_lib/status.js';
+import { copyFields, shortSha } from '../../app/mods/_lib/pr_link.js';
 import { renderMarkdown } from '../lib/markdown.js';
 import { prUrl, sortedFiles } from '../lib/view.js';
 
@@ -14,17 +15,21 @@ function header(pr, files, { onClose, slots, itemOf }) {
   const stats = sum ? statsText({ additions: sum.add, deletions: sum.del, files: sum.files }) : p.stats;
   const marks = [p.ci, p.decision, ...p.detail_issues, p.review, p.busy].filter(Boolean);
   const url = prUrl(pr);
+  const copy = Object.fromEntries(copyFields(pr).map((f) => [f.key, f]));
   return h('div', { class: 'dhead' },
     h('div', { class: 'row' }, h('button', { class: 'btn mback', onclick: onClose }, '‹ Back'),
-      h('span', { class: 'num' }, p.ref), h('h2', {}, p.title), ...p.tags.map((name) => tag(name)),
+      (copy.ref ? copyable(copy.ref, p.ref, { cls: 'num' }) : h('span', { class: 'num' }, p.ref)), h('h2', {}, p.title), ...p.tags.map((name) => tag(name)),
       h('button', { class: 'icon-btn desk', title: 'Close', 'aria-label': 'Close', onclick: onClose }, '×')),
     h('div', { class: 'sub' }, h('span', {}, p.author),
-      h('span', { class: 'code' }, `${p.branch}${p.base_branch ? ` → ${p.base_branch}` : ''}`),
+      copy.branch ? copyable(copy.branch, p.branch, { cls: 'code' }) : h('span', { class: 'code' }, p.branch),
+      p.base_branch ? h('span', { class: 'code' }, `→ ${p.base_branch}`) : null,
+      copy.sha ? copyable(copy.sha, shortSha(copy.sha.value), { cls: 'code' }) : null,
       h('span', { class: 'meta add' }, stats.additions), h('span', { class: 'meta del' }, stats.deletions),
       h('span', { class: 'meta' }, stats.files),
       sum?.generated ? h('span', { class: 'meta' }, `excl. ${sum.generated} generated`) : null),
     marks.length ? h('div', { class: 'badges' }, marks.map(badge)) : null,
     h('div', { class: 'row desk-btns' }, slots?.headerButtons ?? null,
+      copy.link ? copyable(copy.link, 'Copy link', { cls: 'btn' }) : null,
       url ? h('a', { class: 'btn', href: url, target: '_blank', rel: 'noopener noreferrer' }, 'View on GitHub ↗') : null));
 }
 

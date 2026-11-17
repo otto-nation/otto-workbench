@@ -18,6 +18,7 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `queue`, `qu
 
 ## The Mine board
 
+- A PR header's PR ref, branch, short commit and Copy link copy on click and read "Copied" for `COPIED_MS`: what is copyable and the https-only PR URL come from `_lib/pr_link.js` (`copyFields`, `prUrl`), drawn by `_ui/ui.js` `copyable` here and `public/dom.js` `copyable` on the web, and written to the clipboard from `prs/main.js` `copyField` only.
 - Lanes, in precedence order: Merged, In Queue, In Review (a review running now, including a running review ticket), Has Conflicts, CI Failing, Has Comments, Changes Requested, Approved, Awaiting Review (`board/columns.py`, read through `_lib/columns.js` `laneOf`). A queued review stays in its resting lane with a `queued` status; Team puts it in In Queue and a running one in In Progress
 - Card problems and every PR slot come from `_lib/pr_status.js` `presentationOf`, shared by prs/board.js, prs/compact.js, prs/detail.js and the web; state tags sit top right in the title row; positive state shows only in the detail; batch run/step/item status kinds and step labels come from `_lib/batch.js` (`RUN_STATUS`, `STEP_STATUS`, `STEP_LABEL`, `AI_STEPS`), never a view map
 - A lane's Batch button opens the Batch page with the lane's shown PRs selected and its step set, and starts nothing. `COLUMN_BATCH` in `_lib/batch_launch.js` owns which lanes have one (Has Conflicts and Has Comments with AI on, CI Failing, Approved with PRs only behind); a lane that waits on someone else has none

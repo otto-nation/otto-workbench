@@ -1,5 +1,6 @@
 // The page's DOM builder: text always goes in as text. The one exception is trustedMarkdown.
 import { GLYPH } from '../../app/mods/_lib/status.js';
+import { COPIED_MS, COPIED_TEXT } from '../../app/mods/_lib/pr_link.js';
 
 // replaceChildren stringifies null/false to "null"/"false"; drop them like h() does.
 export function setChildren(el, ...kids) {
@@ -33,6 +34,38 @@ export function status(kind, label, { aria, role, wide } = {}) {
   const k = GLYPH[kind] ? kind : 'none';
   return h('span', { class: `status ${k}${role === 'body' ? ' body' : ''}${wide ? ' wide' : ''}`, 'aria-label': label ? null : (aria ?? k) },
     h('span', { 'aria-hidden': 'true' }, GLYPH[k]), label ?? null);
+}
+
+// Puts `value` on the clipboard: the async API in a secure context, else the selection command.
+export async function copyToClipboard(value) {
+  try {
+    await navigator.clipboard.writeText(value);
+    return true;
+  } catch {
+    const area = h('textarea', { 'aria-hidden': 'true', readonly: 'readonly' });
+    area.value = value;
+    area.style.position = 'fixed';
+    area.style.opacity = '0';
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok;
+  }
+}
+
+// A value that copies on click and says so for COPIED_MS. `shown` is the text the header draws; the
+// clipboard gets field.value (_lib/pr_link.js copyFields).
+export function copyable(field, shown, { tagName = 'button', cls = '' } = {}) {
+  const el = h(tagName, { class: `copyable ${cls}`.trim(), type: tagName === 'button' ? 'button' : null,
+    title: `Copy ${field.label.toLowerCase()}`, 'aria-label': `Copy ${field.label.toLowerCase()}: ${field.value}` }, shown);
+  el.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    if (!(await copyToClipboard(field.value))) return;
+    el.replaceChildren(status('pass', COPIED_TEXT));
+    setTimeout(() => el.replaceChildren(shown), COPIED_MS);
+  });
+  return el;
 }
 
 export function tag(text) {

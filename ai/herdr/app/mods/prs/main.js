@@ -9,6 +9,7 @@ import { MONO, LAYOUT } from "./_lib/tokens.js";
 import { actionsFor } from "./_lib/actions.js";
 import { readReview, loadFilesIncremental, loadPatch } from "./_lib/board_data.js";
 import { patchRows, summarize } from "./_lib/diff.js";
+import { COPIED_MS } from "./_lib/pr_link.js";
 import { switchArgv, parseSwitch, openForReviewState, spaceFor } from "./_lib/worktree.js";
 import { hcRunArgv, parseRunReply, outcomeText } from "./_lib/launch.js";
 import { REVIEW_PHASES, RUNS_MODELS, withPhaseModels } from "./_lib/model_overrides.js";
@@ -325,6 +326,18 @@ export default class PrsBoard extends Board {
   }
 
   // Check the PR out with the workbench's wt, then land in a space on that worktree.
+  // Puts a header value on the clipboard and reads "Copied" for COPIED_MS.
+  copyField(field) {
+    this.acx.write_to_clipboard(field.value);
+    this.copied = field.key;
+    this.acx.timer.after(COPIED_MS, (cx) => {
+      if (this.copied !== field.key) return;
+      this.copied = null;
+      cx.notify();
+    });
+    this.acx.notify();
+  }
+
   openForReview() {
     const d = this.detail;
     if (this.opening || !openForReviewState(d).enabled) return;
@@ -427,6 +440,8 @@ export default class PrsBoard extends Board {
       reviewState: openForReviewState(this.detail),
       targetSession: this.workflows.targetSession(this.detail.on, this.detail),
       onReview: () => this.openForReview(),
+      copied: this.copied,
+      onCopy: (field) => this.copyField(field),
       onClose: () => this.closeDetail(cx),
       // The browser is on this Mac even when the PR's repo is on a remote machine.
       onOpenUrl: (url) => exec("open", [url]),

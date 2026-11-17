@@ -11,6 +11,9 @@ button, input { font: inherit; color: inherit; }
 .pad { padding: var(--sp-lg); }
 .trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 
+/* copyable: a value that copies on click; hover fills, nothing else changes. */
+.copyable { background: none; border: 0; padding: 0 var(--sp-xxs); margin: 0; color: inherit; font: inherit; cursor: pointer; border-radius: var(--radius-control); }
+.copyable:hover { background: var(--hover); }
 /* button-outline: hairline on canvas, ink label; hover fills, the border stays. Disabled: muted, no hover. */
 .btn { font: var(--font-label); height: var(--control-h); padding: 0 var(--control-px); border-radius: var(--radius-control);
   border: 1px solid var(--border); background: var(--canvas); color: var(--foreground); white-space: nowrap; cursor: pointer;

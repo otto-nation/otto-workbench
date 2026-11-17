@@ -5,10 +5,11 @@ import { historyRows, runKey } from "./_lib/history.js";
 import { outputModel } from "./_lib/run_output.js";
 import { SP, LAYOUT } from "./_lib/tokens.js";
 import { prPresentation } from "./_lib/pr_status.js";
+import { COPIED_TEXT, copyFields, shortSha, prUrl } from "./_lib/pr_link.js";
 import { sessionControl } from "./workflows_view.js";
 import {
   segment, segmented, button, solidButton, scrollInset, card, placeholder, caption,
-  paneBar, pinned, selectableCode, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
+  paneBar, pinned, copyable, selectableCode, scrollBody, pane, type, text, statusText, errorLine, dangerColor,
   badgeRow, statsRow, tag, backButton,
 } from "./_ui/ui.js";
 
@@ -59,6 +60,7 @@ export function detailOf(pr, { item = null } = {}) {
     cwd: pr.cwd ?? null, headMoved: Boolean(pr.hasNewChangesSinceReview),
     batchBusy: Boolean(pr.busy), live: pr.reviewTerminal ?? null, sha: pr.headSha ?? "",
     features: pr.features ?? [],
+    link: prUrl(pr), copy: copyFields(pr),
     presentation: prPresentation(pr, { item }),
   };
 }
@@ -104,27 +106,28 @@ export function renderOutput(output, { onHide, onTab, onToggleTail, onViewReview
       type(scrollInset("output-box", selectableCode("output", lines), { maxH }), "code")));
 }
 
-export function prUrl(d) {
-  return d.url || `https://${d.host || "github.com"}/${d.repo}/pull/${d.number}`;
-}
-
-export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState, targetSession }) {
+export function renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState, targetSession, copied = null, onCopy = () => {} }) {
   const t = theme();
+  const copy = Object.fromEntries(d.copy.map((f) => [f.key, f]));
+  const copyOf = (key, shown) => (copy[key] ? copyable(`copy-${key}`, copy[key], shown, { copied: copied === key, onCopy }) : shown);
   const p = d.presentation;
   const marks = [p.ci, p.decision, ...p.detail_issues, p.review, p.busy].filter(Boolean);
   return paneBar().p(SP.lg)
     .child(h_flex().gap(SP.sm).flex_wrap().items_center()
       .child(button("detail-review", "Open for Review", () => onReview(), { disabled: !reviewState.enabled, reason: reviewState.reason }))
-      .child(button("detail-open", "View on GitHub", () => onOpenUrl(prUrl(d))))
+      .child(button("detail-open", "View on GitHub", () => onOpenUrl(d.link)))
+      .when(Boolean(copy.link), (e) => e.child(button("copy-link", copied === "link" ? COPIED_TEXT : "Copy link", () => onCopy(copy.link))))
       .when(Boolean(targetSession), (e) => e.child(sessionControl("open-session-target", targetSession))))
     .child(h_flex().gap(SP.xs).items_start().min_w(0)
       .child(backButton("detail-back", () => onClose()))
-      .child(text("body", p.ref, t.muted).flex_none())
+      .child(copyOf("ref", text("body", p.ref, t.muted).flex_none()))
       .child(type(div().flex_1().min_w(0).max_h(LAYOUT.titleMaxH).overflow_hidden(), "title").child(p.title))
       .children(p.tags.map(tag)))
     .child(h_flex().gap_x(SP.md).gap_y(SP.xs).flex_wrap().items_center()
       .child(text("body", p.author, t.muted))
-      .child(type(div().truncate(), "code").text_color(t.muted).child(p.base_branch ? `${p.branch} → ${p.base_branch}` : p.branch))
+      .child(copyOf("branch", type(div().truncate(), "code").text_color(t.muted).child(p.branch)))
+      .when(Boolean(p.base_branch), (e) => e.child(type(div().truncate(), "code").text_color(t.muted).child(`→ ${p.base_branch}`)))
+      .when(Boolean(copy.sha), (e) => e.child(copyOf("sha", type(div(), "code").text_color(t.muted).child(shortSha(copy.sha.value)))))
       .child(statsRow(p.stats))
       .when(d.generated > 0, (e) => e.child(text("meta", `excl. ${d.generated} generated`, t.muted))))
     .when(marks.length > 0, (e) => e.child(badgeRow(marks)));
@@ -147,7 +150,7 @@ function runCard(r, { openKey, bodyFor, onToggle }) {
 
 export function renderDetail(d, {
   onClose, onOpenUrl, onReview, reviewState, nowMs, openKey, bodyFor, onToggle, actionBar, outputPanel,
-  tab, onTab, filesBody, batchBody, targetSession,
+  tab, onTab, filesBody, batchBody, targetSession, copied, onCopy,
 }) {
   const rows = historyRows(d.runs ?? [], nowMs);
   const segs = [
@@ -158,7 +161,7 @@ export function renderDetail(d, {
     segs.push(segment("tab-batch", "Batch", tab === "batch", () => onTab("batch")));
   }
   return pane("prs-detail")
-    .child(renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState, targetSession }))
+    .child(renderDetailHeader(d, { onClose, onOpenUrl, onReview, reviewState, targetSession, copied, onCopy }))
     .child(actionBar)
     .when(Boolean(outputPanel), (e) => e.child(outputPanel))
     .child(pinned(h_flex().px(SP.lg).py(SP.md).child(segmented(segs))))

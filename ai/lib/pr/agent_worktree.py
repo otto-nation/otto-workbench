@@ -29,16 +29,20 @@ toplevel against `worktree_entries` by realpath, so a symlinked spelling of a
 worktree resolves to the one the board document uses. A path outside any
 checkout, or in a bare container, resolves to None.
 
-`report(call, env)` publishes the target on the agent's own herdr terminal and
-returns a `ReportOutcome`. It is SKIPPED when `HC_TERMINAL_ID` is unset or
-empty, when the call is a subagent's, or when there is no target. A state file
-per (`HC_TERMINAL_SOCKET`, `HC_SCOPE`, terminal) under the workbench state dir
-debounces it: an unchanged target is UNCHANGED and runs nothing. A changed one
-runs `hc label <terminal> otto.worktree=<path>` and is LABELLED, and the state
-is written only when hc exits 0, so a FAILED label is retried on the next call.
-`clear(env)` empties the label and removes the state file. Neither raises for a
-missing hc, a timeout or an unwritable state dir. The label is sticky by design:
-returning to the home checkout leaves it, so read-only peeks do not flap it.
+`report(call, env)` claims the target for the session `session_of(env)` names
+(`core.session_lock.claim_reached`), independent of the terminal, and publishes
+the target on the agent's own herdr terminal, returning a `ReportOutcome`. The
+claim is skipped when the call is a subagent's or there is no target; the label
+is SKIPPED when `HC_TERMINAL_ID` is unset or empty, when the call is a
+subagent's, or when there is no target. A state file per (`HC_TERMINAL_SOCKET`,
+`HC_SCOPE`, terminal) under the workbench state dir debounces it: an unchanged
+target is UNCHANGED and runs nothing. A changed one runs `hc label <terminal>
+otto.worktree=<path>` and is LABELLED, and the state is written only when hc
+exits 0, so a FAILED label is retried on the next call. `clear(env)` drops the
+reached claim for that session, empties the label and removes the state file.
+Neither raises for a missing hc, a timeout or an unwritable state dir. The
+label is sticky by design: returning to the home checkout leaves it, so
+read-only peeks do not flap it.
 """
 
 # doc-group: pr-state
@@ -58,6 +62,7 @@ from pathlib import Path
 
 import core.timeouts
 import core.serde
+import core.session_lock
 import core.workbench_paths
 import gh.shell_lex
 import git.topology
@@ -339,6 +344,32 @@ class ReportOutcome(enum.Enum):
     FAILED = "failed"
 
 
+@dataclass(frozen=True)
+class Session:
+    """The harness session a hook speaks for: whose reached claim to move."""
+
+    pid: int
+    harness: str
+    session_id: str
+
+
+def session_of(env: Mapping[str, str]) -> Session | None:
+    """The session to claim for, or None.
+
+    Pi's extension sets ``WORKBENCH_SESSION_HARNESS=pi`` always and the pid only
+    when the session claims trees at all; that marker stops a Pi hook from
+    falling through to a ``CLAUDE_PID`` it inherited. Claude injects
+    ``CLAUDE_PID`` into every hook.
+    """
+    if env.get("WORKBENCH_SESSION_HARNESS") == "pi":
+        pid = env.get("WORKBENCH_SESSION_PID", "")
+        return Session(int(pid), "pi", env.get("PI_SESSION_ID", "")) if pid.isdigit() else None
+    pid = env.get("CLAUDE_PID", "")
+    if pid.isdigit():
+        return Session(int(pid), "claude", env.get("CLAUDE_CODE_SESSION_ID", ""))
+    return None
+
+
 def _terminal(env: Mapping[str, str]) -> str:
     return env.get("HC_TERMINAL_ID", "")
 
@@ -376,12 +407,24 @@ def _label(terminal: str, value: str, run) -> bool:
 
 
 def report(call: ToolCall, env: Mapping[str, str], *, run=subprocess.run) -> ReportOutcome:
-    """Label this terminal with *call*'s target worktree when it changed."""
-    terminal = _terminal(env)
-    if not terminal or call.subagent:
+    """Claim *call*'s target worktree for this session, and label this terminal with it."""
+    if call.subagent:
         return ReportOutcome.SKIPPED
     target = target_worktree(call)
     if target is None:
+        return ReportOutcome.SKIPPED
+    session = session_of(env)
+    if session is not None:
+        core.session_lock.claim_reached(
+            target, pid=session.pid, harness=session.harness,
+            session_id=session.session_id, command=session.harness,
+        )
+    return _publish(target, env, run)
+
+
+def _publish(target: Path, env: Mapping[str, str], run) -> ReportOutcome:
+    terminal = _terminal(env)
+    if not terminal:
         return ReportOutcome.SKIPPED
     state = _state_path(env)
     if _labelled(state, terminal) == str(target):
@@ -402,7 +445,10 @@ def report(call: ToolCall, env: Mapping[str, str], *, run=subprocess.run) -> Rep
 
 
 def clear(env: Mapping[str, str], *, run=subprocess.run) -> None:
-    """Empty this terminal's worktree label and forget the debounce state."""
+    """Drop this session's reached claim, empty this terminal's label, forget the debounce state."""
+    session = session_of(env)
+    if session is not None:
+        core.session_lock.drop_reached(session.pid)
     terminal = _terminal(env)
     if not terminal:
         return

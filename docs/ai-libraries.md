@@ -3626,16 +3626,20 @@ toplevel against `worktree_entries` by realpath, so a symlinked spelling of a
 worktree resolves to the one the board document uses. A path outside any
 checkout, or in a bare container, resolves to None.
 
-`report(call, env)` publishes the target on the agent's own herdr terminal and
-returns a `ReportOutcome`. It is SKIPPED when `HC_TERMINAL_ID` is unset or
-empty, when the call is a subagent's, or when there is no target. A state file
-per (`HC_TERMINAL_SOCKET`, `HC_SCOPE`, terminal) under the workbench state dir
-debounces it: an unchanged target is UNCHANGED and runs nothing. A changed one
-runs `hc label <terminal> otto.worktree=<path>` and is LABELLED, and the state
-is written only when hc exits 0, so a FAILED label is retried on the next call.
-`clear(env)` empties the label and removes the state file. Neither raises for a
-missing hc, a timeout or an unwritable state dir. The label is sticky by design:
-returning to the home checkout leaves it, so read-only peeks do not flap it.
+`report(call, env)` claims the target for the session `session_of(env)` names
+(`core.session_lock.claim_reached`), independent of the terminal, and publishes
+the target on the agent's own herdr terminal, returning a `ReportOutcome`. The
+claim is skipped when the call is a subagent's or there is no target; the label
+is SKIPPED when `HC_TERMINAL_ID` is unset or empty, when the call is a
+subagent's, or when there is no target. A state file per (`HC_TERMINAL_SOCKET`,
+`HC_SCOPE`, terminal) under the workbench state dir debounces it: an unchanged
+target is UNCHANGED and runs nothing. A changed one runs `hc label <terminal>
+otto.worktree=<path>` and is LABELLED, and the state is written only when hc
+exits 0, so a FAILED label is retried on the next call. `clear(env)` drops the
+reached claim for that session, empties the label and removes the state file.
+Neither raises for a missing hc, a timeout or an unwritable state dir. The
+label is sticky by design: returning to the home checkout leaves it, so
+read-only peeks do not flap it.
 
 ### pr/ci_check.py
 

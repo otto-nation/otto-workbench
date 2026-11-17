@@ -487,3 +487,13 @@ teardown() {
   bad=$(perl -0777 -ne 'while (/placeholder\((?:[^()]|\([^()]*\))*\)(?!\s*\.(?:px|p)\()/g) { print "$ARGV: $&\n" }' "$MODS"/space-prs/*.js)
   [ -z "$bad" ]
 }
+
+@test "space-prs sits on herdr's sidebar fill and its group header is not a two-line row" {
+  run grep -c '\.bg(theme()\.chrome)' "$MODS"/space-prs/main.js
+  [ "$status" -eq 0 ]
+  [ "$output" = "1" ]
+  # The header is a section label, not a row: ROW_H.sidebar there leaves a gap under it.
+  header=$(sed -n '/const header = hoverRow/,/\.child(sectionLabel/p' "$MODS"/space-prs/main.js)
+  [ -n "$header" ]
+  [[ "$header" != *"ROW_H.sidebar"* ]]
+}

@@ -222,16 +222,17 @@ null.
   dropped three upstream behaviours (a per-machine serialization helper, a
   fall-through throttle and a doc-budget line) while reporting `status:
   completed`.
-- An encrypted file (an `ansible-vault` `vault.yml`) cannot be merged by any
-  resolver: its ciphertext is opaque, so a "one side" resolution keeps the
-  branch's older blob and silently drops every key the target added since.
-  Observed 2026-11 (through `pr rebase --fix`): the rebase kept the branch's
-  `vault.yml`, which would have deleted two keys main had added; the push hold
-  caught it. Rebuild the file from the target branch instead — decrypt the
-  target's version, re-apply only the branch's own change, re-encrypt — and
-  compare the key *names* of the result against both sides before publishing.
-  The password has to come from a terminal; an agent without a TTY asks the user
-  to run the rebuild.
+- An encrypted file (an `ansible-vault` `vault.yml`) cannot be merged by `pr
+  rebase`'s resolver or git's text merge: its ciphertext is opaque, so a "one
+  side" resolution keeps one side's blob whole and silently drops every key the
+  other side added. Observed 2026-11 (through `pr rebase --fix`): the rebase kept
+  the branch's `vault.yml`, which would have deleted the keys two main PRs had
+  added; the push hold caught it. Rebuild the file from the target branch instead
+  — decrypt the target's version, re-apply only the branch's own change,
+  re-encrypt — and compare the key *names* of the result against both sides
+  before publishing. When the password comes only from a terminal prompt, an
+  agent without a TTY (a harness `!` command has none either) asks the user to
+  run the rebuild in their own terminal.
 - When `squashed_commits` is non-null, the resulting commit keeps the first
   squashed commit's message, which describes one step of the work (observed: a
   branch of 24 commits ended as a single commit titled for its first, a

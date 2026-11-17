@@ -54,13 +54,14 @@ what the caller passed rather than on what the callee did with it. The fix is
 right, the test passes, and deleting the fix leaves it passing.
 
 A fixture that breaks two rules masks both. A refusal test whose input violates
-the assert under test *and* a neighbouring one passes with the first assert
-deleted, because the second still refuses it. Observed 2026-11 (grok through
-pi's `subagent` tool, an Ansible role's validation asserts): deleting a CPU
-quota assert left its test green because the same fixture also failed the Docker
-quota assert, and a plan that predicted which test each deletion would fail was
-wrong twice. Give each assert a fixture whose only violation is that one, and
-read the revert output rather than trusting the prediction.
+the condition under test *and* a neighbouring one passes with the first condition
+deleted, because the second still refuses it. Observed 2026-11 (opus plan, grok
+implementers through pi's `subagent` tool, an Ansible role's validation assert):
+deleting the `cpu_quota` condition left its refusal test green because the same
+fixture also failed the `docker_cpu_quota` condition beside it. The plan's
+prediction of which test each deletion would fail was wrong twice, once for this
+reason. Give each condition a fixture whose only violation is that one, and read
+the revert output rather than trusting the prediction.
 
 A filter is the other way to fool yourself here: `-k`, a `grep`, a subset path.
 A revert whose test was deselected reports no failures and reads as proof. Run

@@ -879,7 +879,7 @@ Exit codes: `0` ok · `1` failure · `2` usage · `69` unavailable · `75` tempf
 | `--wait` `<wait>` | Seconds to wait for a slot before exiting 75 (default: 3600). |
 | `...` | -- and the command to run. |
 
-**`otto-queue submit`** — Queue a command durably and print its entry id; `otto-queue wait ID` waits for it
+**`otto-queue submit`** — Queue a command durably and print its entry id (not when it runs here: stdout is the job's); `otto-queue wait ID` waits for it
 
 | Flag | Description |
 |------|-------------|

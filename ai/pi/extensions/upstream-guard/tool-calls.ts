@@ -13,10 +13,6 @@ import { runOwnersCheck } from "../_shared/github-writes.ts";
  * owners-check about the equivalent `gh api` call run from the session's
  * directory, with every body written to a file so its text is scanned.
  *
- * ceiling: the all-remotes-in-one-group rule can refuse a legitimate comment
- * in a multi-remote checkout whose remotes span groups. Upgrade trigger: when
- * a refusal is reported from such a checkout.
- *
  * The tools resolve their target with `gh repo view` in the session's cwd. The
  * check cannot know which remote that is, so it substitutes the stricter rule
  * the bash guard applies to an un-flagged `gh pr comment`: every remote at the

@@ -9,7 +9,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.machine  # noqa: E402
-import otto_queue.admission # noqa: E402
+import otto_queue.admission  # noqa: E402
 from batch.model import ItemStatus, Step  # noqa: E402
 # `_close_open_sessions` and `_quiet_outcomes` are autouse fixtures, imported only so
 # pytest registers them (the `noqa: F401` covers them); the other names are used directly.

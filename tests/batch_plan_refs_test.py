@@ -16,7 +16,7 @@ import batch.admission  # noqa: E402
 import batch.plan  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
-import otto_queue.admission # noqa: E402
+import otto_queue.admission  # noqa: E402
 from batch.model import STEP_ORDER, RebaseWhen, RunStatus, Step  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
 # `_close_open_sessions` is an autouse fixture; imported only so pytest registers it.

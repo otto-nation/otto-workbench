@@ -12,18 +12,12 @@ import otto_queue.admission  # noqa: E402
 from batch.model import Step  # noqa: E402
 from config.workbench_config import BatchConfig  # noqa: E402
 
-GiB = 1024 ** 3
+from admission_support import BUSY, CFG, GiB, HEALTHY  # noqa: E402
 
 
 def test_ceiling_clamps_to_pool_max_with_a_floor_of_one():
     cfg = BatchConfig(pool_max=2)
     assert (batch.admission.ceiling(5, cfg), batch.admission.ceiling(None, cfg), batch.admission.ceiling(0, cfg)) == (2, 2, 1)
-
-
-CFG = BatchConfig(pool_max=3, mem_reserve="2G", cpu_pressure_max=30.0, mem_pressure_max=5.0)
-
-
-HEALTHY = otto_queue.admission.HostSample(mem_available=8 * GiB, cpu_some_avg10=1.0, mem_some_avg10=0.0)
 
 
 def test_admits_when_healthy():
@@ -50,9 +44,6 @@ def test_refuses_on_cpu_pressure():
 def test_refuses_on_memory_pressure():
     s = otto_queue.admission.HostSample(mem_available=8 * GiB, cpu_some_avg10=1.0, mem_some_avg10=9.0)
     assert not batch.admission.decide(s, running=1, limit=3, estimate=1, cfg=CFG).admit
-
-
-BUSY = otto_queue.admission.HostSample(mem_available=1 * GiB, cpu_some_avg10=99.0, mem_some_avg10=50.0)
 
 
 def test_the_floor_slot_admits_one_even_on_a_busy_host():

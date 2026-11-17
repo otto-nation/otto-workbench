@@ -15,7 +15,7 @@ if str(LIB_DIR) not in sys.path:
 
 import cli.otto_queue  # noqa: E402
 import config.workbench_config  # noqa: E402
-import otto_queue.admission # noqa: E402
+import otto_queue.admission  # noqa: E402
 import otto_queue.paths  # noqa: E402
 from otto_queue.ledger import Ledger  # noqa: E402
 

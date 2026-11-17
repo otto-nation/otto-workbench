@@ -81,7 +81,7 @@ import otto_queue.ledger
 import otto_queue.slots
 import otto_queue.wait_report
 from otto_queue.model import (  # noqa: F401  env names are re-exported for callers
-    ACTION_ENV, LABEL_ENV, SUBJECT_ENV, WAIT_ENV, Entry, EntryClass, EntryKind,
+    ACTION_ENV, ENTRY_ENV, LABEL_ENV, SUBJECT_ENV, WAIT_ENV, Entry, EntryClass, EntryKind,
     EntryState, NewEntry)
 
 # How long a ticket waits for a slot before ending as `tempfail`. A review takes
@@ -99,7 +99,6 @@ REAP_EVERY_S = 5.0
 # Printed once when a wait poll hits LedgerBusy after the ledger's own retries.
 _BUSY_NOTICE = "otto-queue: ledger busy; still waiting"
 
-ENTRY_ENV = "OTTO_QUEUE_ENTRY"
 TERMINAL_ENV = "HC_TERMINAL_ID"
 
 

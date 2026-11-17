@@ -45,8 +45,7 @@ import core.signal_relay
 import otto_queue.lease
 import otto_queue.ledger
 import otto_queue.paths
-import otto_queue.ticket
-from otto_queue.model import MAX_JOB_ATTEMPTS, Entry, EntryState, retry_delay
+from otto_queue.model import ENTRY_ENV, MAX_JOB_ATTEMPTS, Entry, EntryState, retry_delay
 
 
 class JobOutcome(StrEnum):
@@ -123,7 +122,7 @@ def _run_claimed(ledger: otto_queue.ledger.Ledger, entry_id: int,
 def _execute(entry: Entry, log: Path) -> int:
     log.parent.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
-    env[otto_queue.ticket.ENTRY_ENV] = str(entry.id)
+    env[ENTRY_ENV] = str(entry.id)
     with open(log, "ab") as out:
         out.write(f"otto-queue: entry {entry.id}, attempt {entry.attempts}: {shlex.join(entry.argv)}\n".encode())
         out.flush()

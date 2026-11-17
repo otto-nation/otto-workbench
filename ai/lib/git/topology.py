@@ -117,7 +117,13 @@ def worktree_entries(cwd: str | None = None) -> list[WorktreeEntry]:
             ["git", "worktree", "list", "--porcelain"],
             capture_output=True, text=True, cwd=cwd, timeout=core.timeouts.LOCAL,
         )
-    except Exception:
+    except Exception as exc:
+        core.log.warn(f"git worktree list --porcelain failed in {cwd}: {exc}")
+        return []
+    if r.returncode != 0:
+        core.log.warn(failure_message(
+            f"git worktree list --porcelain failed in {cwd}", r,
+        ))
         return []
     parsed = map(_parse_worktree_block, r.stdout.split("\n\n"))
     return [entry for entry in parsed if entry]

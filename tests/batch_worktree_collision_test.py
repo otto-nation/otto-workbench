@@ -12,7 +12,7 @@ import batch.steps  # noqa: E402
 import git.topology  # noqa: E402
 from batch.model import FindingReason  # noqa: E402
 from batch.steps import WorktreeResult  # noqa: E402
-from conftest import git_in, init_repo  # noqa: E402
+from conftest import git_in, init_repo, seed_repo  # noqa: E402
 
 from batch_scheduler_support import (  # noqa: F401
     Harness, _close_open_sessions, _quiet_outcomes, row,
@@ -20,7 +20,7 @@ from batch_scheduler_support import (  # noqa: F401
 
 
 def test_a_worktree_on_another_branch_at_the_branch_path_is_a_collision(tmp_path, monkeypatch):
-    repo = init_repo(tmp_path / "main")
+    repo = seed_repo(tmp_path / "main")
     git_in(repo, "worktree", "add", "-b", "other", str(tmp_path / "feat-x"))
     monkeypatch.setattr(git.topology, "wt_switch", lambda *a, **kw: None)
     res = batch.steps.ensure_worktree(str(repo), "feat/x")
@@ -28,6 +28,19 @@ def test_a_worktree_on_another_branch_at_the_branch_path_is_a_collision(tmp_path
     assert "worktree move" in res.error
     assert "other" in res.error
     assert str(tmp_path / "feat-x") in res.error
+
+
+def test_a_named_worktree_already_on_the_branch_is_not_a_collision(tmp_path, monkeypatch):
+    """Index miss + failed switch still reuses a dir that is already on the branch."""
+    repo = seed_repo(tmp_path / "main")
+    wt = tmp_path / "feat-x"
+    git_in(repo, "worktree", "add", "-b", "feat/x", str(wt))
+    monkeypatch.setattr(git.topology, "find_worktree_for_branch", lambda *a, **kw: None)
+    monkeypatch.setattr(git.topology, "wt_switch", lambda *a, **kw: None)
+    res = batch.steps.ensure_worktree(str(repo), "feat/x")
+    assert res.ok
+    assert not res.collision
+    assert Path(res.path).resolve() == wt.resolve()
 
 
 def test_a_failed_switch_with_no_such_directory_is_not_a_collision(tmp_path, monkeypatch):

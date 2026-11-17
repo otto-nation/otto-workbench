@@ -27,7 +27,7 @@ function reviewInset(id, body) {
 
 // Enabled actions as buttons; when none is enabled, the first reason says why. A post action
 // asks first (confirm), because it writes to GitHub.
-export function renderActionBar(actions, { confirm, note, onAction, onConfirm, onCancel, trailing = null, fixes = [], onFix = () => {}, fixBusy = null }) {
+export function renderActionBar(actions, { confirm, note, starting = false, onAction, onConfirm, onCancel, trailing = null, fixes = [], onFix = () => {}, fixBusy = null }) {
   const t = theme();
   if (confirm) {
     const c = confirm.confirm;
@@ -49,7 +49,8 @@ export function renderActionBar(actions, { confirm, note, onAction, onConfirm, o
     .children(on.map((a) => button(`act-${a.id}`, a.label, () => onAction(a))))
     .when(!on.length && !fixes.length && Boolean(why), (e) => e.child(caption(why.reason)))
     .when(trailing != null, (e) => e.child(trailing))
-    .when(Boolean(note), (e) => e.child(caption(note, dangerColor())));
+    .when(starting, (e) => e.child(caption("Starting…")))
+    .when(!starting && Boolean(note), (e) => e.child(caption(note, dangerColor())));
 }
 
 // What the detail view needs from a board card.

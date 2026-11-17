@@ -397,7 +397,8 @@ export default class PrsBoard extends Board {
       onToggle: (key) => this.onToggle(key),
       actionBar: renderActionBar(this.actions(), {
         confirm: this.confirm,
-        note: this.launching || this.launcher.starting ? "Starting…" : (this.note ?? this.launcher.note),
+        starting: this.launching || this.launcher.starting,
+        note: this.note ?? this.launcher.note,
         fixes: this.detail.fixes,
         fixBusy: this.launcher.starting ? "A batch is starting" : (this.detail.batchBusy ? "A batch is running on this PR" : null),
         onFix: (f) => this.launcher.fixOne(pr, f),

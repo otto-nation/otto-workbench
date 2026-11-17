@@ -127,6 +127,46 @@ ARGS'
   [ "$status" -eq 0 ]
 }
 
+# _write_arcstats SIZE C_MAX — fake ZFS arcstats with a decoy row whose name contains "size".
+_write_arcstats() {
+  mkdir -p "$PROC/spl/kstat/zfs"
+  printf '%s\n' '13 1 0x01 147 39984 1234 5678' 'name                            type data' \
+    'hits                            4    9174612646' \
+    "c_max                           4    $2" \
+    "size                            4    $1" \
+    'data_size                       4    501028352' > "$PROC/spl/kstat/zfs/arcstats"
+}
+
+@test "--json reports the ZFS ARC size and cap from arcstats" {
+  _write_proc
+  _write_arcstats 3215081416 3221225472
+  _run_hh --json
+  [ "$status" -eq 0 ]
+  local json="$output"
+  run jq -e '.arc == {size_mb: 3066, max_mb: 3072}' <<< "$json"
+  [ "$status" -eq 0 ]
+}
+
+@test "no arcstats yields .arc null and no arc line in text mode" {
+  _write_proc
+  _run_hh --json
+  [ "$status" -eq 0 ]
+  local json="$output"
+  run jq -e 'has("arc") and .arc == null' <<< "$json"
+  [ "$status" -eq 0 ]
+  _run_hh
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"arc "* ]]
+}
+
+@test "text mode shows the ARC beside mem when arcstats exists" {
+  _write_proc
+  _write_arcstats 3215081416 3221225472
+  _run_hh
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"  arc    3066 MB of 3072 (ZFS cache, inside mem)"* ]]
+}
+
 @test "missing meminfo yields exit 0 and .mem null" {
   _run_hh --json
   [ "$status" -eq 0 ]

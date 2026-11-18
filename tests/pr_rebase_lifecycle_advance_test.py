@@ -176,6 +176,8 @@ def test_step_advance_continue_fails_but_rebase_in_progress():
 
     with mock.patch.object(rebase.inspect, "is_empty_patch", return_value=False), \
          mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=True), \
+         mock.patch.object(rebase.inspect, "continue_pause_is_progress",
+                           return_value=True), \
          mock.patch("subprocess.run", side_effect=fake_run):
         rc = rebase.lifecycle.step_advance("/fake", mock.MagicMock(), target_ref=_TARGET)
 

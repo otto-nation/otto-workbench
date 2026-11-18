@@ -1,11 +1,11 @@
 /**
- * Timer ticks that skip while the machine is busy. A poll of the board costs a process start and
- * GitHub round-trips on the box that is already struggling, so the periodic ticks (never a manual
- * refresh) run every Nth time while load per core stays high: every 2nd at BUSY_PER_CORE, every
- * 4th at twice that, and every tick again once it drops. The load is read on the machine the
- * poller runs on.
- * ceiling: local load only and fixed thresholds; upgrade to the polled target's load, or to board.*
- * config keys, if a poller on one machine drives pulls on another that stays hot.
+ * Timer ticks that skip while the polled machine is busy. A poll of the board costs a process
+ * start and GitHub round-trips on the box that is already struggling, so the periodic ticks
+ * (never a manual refresh) run every Nth time while load per core stays high: every 2nd at
+ * BUSY_PER_CORE, every 4th at twice that, and every tick again once it drops. The load is read
+ * on the target (`exec(..., {on})`), not on the machine running the poller.
+ * ceiling: fixed thresholds (BUSY_PER_CORE / STRAINED_PER_CORE); upgrade to board.* config keys
+ * if a target needs its own load marks.
  */
 
 export const BUSY_PER_CORE = 1.5;
@@ -62,17 +62,76 @@ export function createLoadGate({ read }) {
   };
 }
 
+const machineKey = (on) => (on == null || on === '' ? '' : String(on));
+
 /** A `read` for the herdr mod: `/proc/loadavg` and `nproc` through the mod's exec. Null off Linux. */
-export function execLoadReader(exec) {
+export function execLoadReader(exec, on = null) {
+  const opts = on != null && on !== '' ? { on } : {};
   let cores = null;
   return async function read() {
     if (cores == null) {
-      const n = await exec('nproc', [], {});
+      const n = await exec('nproc', [], opts);
       cores = n.code === 0 ? Number.parseInt(n.stdout, 10) : 0;
     }
     if (!(cores > 0)) return null;
-    const l = await exec('cat', ['/proc/loadavg'], {});
+    const l = await exec('cat', ['/proc/loadavg'], opts);
     const load = l.code === 0 ? parseLoadavg(l.stdout) : null;
     return load == null ? null : { load, cores };
+  };
+}
+
+/**
+ * One load reader per machine, with a reading reused for `ttlMs` and an in-flight one joined, so
+ * gates that share it (one per timer, each with its own skip counter) probe a host once per period.
+ */
+export function createReaders(exec, { ttlMs = 5000, now = () => Date.now() } = {}) {
+  const byMachine = new Map();
+  return function readersFor(on) {
+    const key = machineKey(on);
+    let r = byMachine.get(key);
+    if (!r) {
+      const read = execLoadReader(exec, on);
+      let at = -Infinity;
+      let last = null;
+      let inflight = null;
+      r = () => {
+        if (inflight) return inflight;
+        if (now() - at < ttlMs) return last;
+        inflight = Promise.resolve(read()).then((v) => { last = v; at = now(); return v; })
+          .finally(() => { inflight = null; });
+        return inflight;
+      };
+      byMachine.set(key, r);
+    }
+    return r;
+  };
+}
+
+/**
+ * One load gate per machine. `filter(targets)` calls `pass()` once per machine in a tick so two
+ * checkouts on the same host cannot double-count the skip counter.
+ */
+export function createGateMap(exec, readers = createReaders(exec)) {
+  const gates = new Map();
+  function get(on) {
+    const key = machineKey(on);
+    let g = gates.get(key);
+    if (!g) {
+      g = createLoadGate({ read: readers(on) });
+      gates.set(key, g);
+    }
+    return g;
+  }
+  return {
+    get,
+    filter(targets, onOf = (t) => t?.on) {
+      const allowed = new Map();
+      return targets.filter((t) => {
+        const on = onOf(t);
+        const k = machineKey(on);
+        if (!allowed.has(k)) allowed.set(k, get(on).pass());
+        return allowed.get(k);
+      });
+    },
   };
 }

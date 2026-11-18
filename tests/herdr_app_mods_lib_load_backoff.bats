@@ -99,3 +99,50 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = '[false,false,true,true]' ]
 }
+
+@test "execLoadReader passes on to nproc and cat, and omits it when the target is local" {
+  _js 'const rec = [];
+       const exec = async (cmd, args, opts = {}) => {
+         rec.push({ cmd, hasOn: Object.prototype.hasOwnProperty.call(opts, "on"), on: opts.on ?? null });
+         return cmd === "nproc" ? { code: 0, stdout: "4\\n" } : { code: 0, stdout: "1.0 1 1 1/1 1" };
+       };
+       await g.execLoadReader(exec, "mac")();
+       await g.execLoadReader(exec, null)();
+       out(rec)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"cmd":"nproc","hasOn":true,"on":"mac"},{"cmd":"cat","hasOn":true,"on":"mac"},{"cmd":"nproc","hasOn":false,"on":null},{"cmd":"cat","hasOn":false,"on":null}]' ]
+}
+
+@test "createGateMap.filter asks each machine once; a busy host skips every target on it" {
+  _js 'const exec = async (cmd, args, opts = {}) => {
+         if (cmd === "nproc") return { code: 0, stdout: "4\\n" };
+         const load = opts.on === "hot" ? "20.0" : "0.1";
+         return { code: 0, stdout: load + " 1 1 1/1 1" };
+       };
+       const map = g.createGateMap(exec);
+       const targets = [{ on: "hot", cwd: "/a" }, { on: "hot", cwd: "/b" }, { on: null, cwd: "/c" }];
+       map.filter(targets); await tick();
+       out([
+         map.filter(targets).map((t) => t.cwd),
+         map.filter(targets).map((t) => t.cwd),
+         map.filter(targets).map((t) => t.cwd),
+         map.filter(targets).map((t) => t.cwd),
+       ])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["/c"],["/c"],["/c"],["/a","/b","/c"]]' ]
+}
+
+@test "createReaders shares one probe across two gate maps" {
+  _js 'let nproc = 0;
+       const exec = async (cmd) => {
+         if (cmd === "nproc") { nproc += 1; return { code: 0, stdout: "4\\n" }; }
+         return { code: 0, stdout: "20.0 1 1 1/1 1" };
+       };
+       const readers = g.createReaders(exec);
+       const a = g.createGateMap(exec, readers);
+       const b = g.createGateMap(exec, readers);
+       a.filter([{ on: "hot" }]); b.filter([{ on: "hot" }]); await tick();
+       out(nproc)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '1' ]
+}

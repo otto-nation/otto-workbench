@@ -81,16 +81,43 @@ export function execLoadReader(exec, on = null) {
 }
 
 /**
+ * One load reader per machine, with a reading reused for `ttlMs` and an in-flight one joined, so
+ * gates that share it (one per timer, each with its own skip counter) probe a host once per period.
+ */
+export function createReaders(exec, { ttlMs = 5000, now = () => Date.now() } = {}) {
+  const byMachine = new Map();
+  return function readersFor(on) {
+    const key = machineKey(on);
+    let r = byMachine.get(key);
+    if (!r) {
+      const read = execLoadReader(exec, on);
+      let at = -Infinity;
+      let last = null;
+      let inflight = null;
+      r = () => {
+        if (inflight) return inflight;
+        if (now() - at < ttlMs) return last;
+        inflight = Promise.resolve(read()).then((v) => { last = v; at = now(); return v; })
+          .finally(() => { inflight = null; });
+        return inflight;
+      };
+      byMachine.set(key, r);
+    }
+    return r;
+  };
+}
+
+/**
  * One load gate per machine. `filter(targets)` calls `pass()` once per machine in a tick so two
  * checkouts on the same host cannot double-count the skip counter.
  */
-export function createGateMap(exec) {
+export function createGateMap(exec, readers = createReaders(exec)) {
   const gates = new Map();
   function get(on) {
     const key = machineKey(on);
     let g = gates.get(key);
     if (!g) {
-      g = createLoadGate({ read: execLoadReader(exec, on) });
+      g = createLoadGate({ read: readers(on) });
       gates.set(key, g);
     }
     return g;

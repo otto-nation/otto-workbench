@@ -131,3 +131,18 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = '[["/c"],["/c"],["/c"],["/a","/b","/c"]]' ]
 }
+
+@test "createReaders shares one probe across two gate maps" {
+  _js 'let nproc = 0;
+       const exec = async (cmd) => {
+         if (cmd === "nproc") { nproc += 1; return { code: 0, stdout: "4\\n" }; }
+         return { code: 0, stdout: "20.0 1 1 1/1 1" };
+       };
+       const readers = g.createReaders(exec);
+       const a = g.createGateMap(exec, readers);
+       const b = g.createGateMap(exec, readers);
+       a.filter([{ on: "hot" }]); b.filter([{ on: "hot" }]); await tick();
+       out(nproc)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '1' ]
+}

@@ -51,6 +51,19 @@ const start = async (exec) => {
 };
 const labels = () => calls.map((c) => c.label);
 const take = () => { const l = labels(); calls.length = 0; return l; };
+const tick = () => new Promise((r) => setTimeout(r, 0));
+const loadCalls = [];
+const busyLoad = { mac: "20.0" };
+const quietLoad = { mac: "0.1" };
+const isLoadRead = (cmd, args) => cmd === "nproc" || (cmd === "cat" && args[0] === "/proc/loadavg");
+const loadReply = (cmd, load) => (load == null
+  ? { code: 1, stdout: "", stderr: "no load" }
+  : cmd === "nproc" ? { code: 0, stdout: "4" } : { code: 0, stdout: load + " 1 1 1/1 1" });
+const withLoad = (inner, byOn) => async (cmd, args, opts = {}) => (
+  isLoadRead(cmd, args)
+    ? (loadCalls.push({ cmd, on: opts.on ?? null }), loadReply(cmd, byOn[opts.on]))
+    : inner(cmd, args, opts)
+);
 BOARD_JS
 )"
 
@@ -91,35 +104,22 @@ BOARD_JS
   [ "$output" = '{"local":[],"remote":["hc:ls:label@null","pr:listing:offline@mac"]}' ]
 }
 
-@test "mod pull: the 15 s timer reads the remote's load and then skips while that host is busy" {
+@test "mod pull: the 15 s timer reads remote load and then skips while that host is busy" {
   _host "$BOARD
-    const tick = () => new Promise((r) => setTimeout(r, 0));
-    const loadCalls = [];
-    const loadReply = (cmd, load) => {
-      if (load == null) return { code: 1, stdout: '', stderr: 'no load' };
-      return cmd === 'nproc' ? { code: 0, stdout: '4\\n' } : { code: 0, stdout: load + ' 1 1 1/1 1' };
-    };
-    const isLoadRead = (cmd, args) => cmd === 'nproc' || (cmd === 'cat' && args[0] === '/proc/loadavg');
-    const withLoad = (inner, byOn) => async (cmd, args, opts = {}) => {
-      if (!isLoadRead(cmd, args)) return inner(cmd, args, opts);
-      loadCalls.push({ cmd, on: opts.on ?? null });
-      return loadReply(cmd, byOn[opts.on]);
-    };
-    const fireListing = async (host) => {
-      host.timers.filter((x) => x.ms === 15000).at(-1).fn(host.cx);
-      await host.settle();
-      await tick();
-    };
     spacesOf(['/w/box'], 'mac');
-    const busy = await start(withLoad(fakePr(doc), { mac: '20.0' })); take();
-    await fireListing(busy); take();
-    await fireListing(busy); const skipped = take();
+    const busy = await start(withLoad(fakePr(doc), busyLoad)); take();
+    busy.timers.filter((x) => x.ms === 15000).at(-1).fn(busy.cx); await busy.settle(); await tick();
+    take();
+    busy.timers.filter((x) => x.ms === 15000).at(-1).fn(busy.cx); await busy.settle(); await tick();
+    const skipped = take();
     const probed = loadCalls.filter((c) => c.cmd === 'nproc');
     loadCalls.length = 0;
     spacesOf(['/w/box'], 'mac');
-    const quiet = await start(withLoad(fakePr(doc), { mac: '0.1' })); take();
-    await fireListing(quiet); take();
-    await fireListing(quiet); const quieted = take();
+    const quiet = await start(withLoad(fakePr(doc), quietLoad)); take();
+    quiet.timers.filter((x) => x.ms === 15000).at(-1).fn(quiet.cx); await quiet.settle(); await tick();
+    take();
+    quiet.timers.filter((x) => x.ms === 15000).at(-1).fn(quiet.cx); await quiet.settle(); await tick();
+    const quieted = take();
     out({ probed, skipped, quiet: quieted.filter((l) => l.startsWith('pr:')) });"
   [ "$status" -eq 0 ]
   [ "$output" = '{"probed":[{"cmd":"nproc","on":"mac"}],"skipped":[],"quiet":["pr:listing:offline:stamp"]}' ]

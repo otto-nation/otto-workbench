@@ -94,6 +94,9 @@ export class Workflows {
 
   hide() { this.visible = false; }
 
+  /** Share the board's per-machine load readers so one host is probed once per period. */
+  useLoadReaders(readers) { this.gateMap = createGateMap(exec, readers); }
+
   refresh(cx, opts = {}) {
     const wanted = this.targets();
     for (const key of [...this.machines.keys()]) {

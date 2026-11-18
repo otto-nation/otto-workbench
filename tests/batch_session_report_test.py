@@ -88,6 +88,25 @@ def test_stack_order_emits_base_before_child():
     assert child_entry.after == [base.key]
 
 
+def test_sessions_order_holds_when_items_are_built_in_parallel():
+    # Revert: collect pool results via as_completed and skip _order.
+    low = make_item(3, status=ItemStatus.AWAITING_DECISION)
+    base = make_item(1, status=ItemStatus.AWAITING_DECISION)
+    child = make_item(2, status=ItemStatus.AWAITING_DECISION, stacked_on=base.key)
+    run = make_run(
+        [low, child, base],
+        [make_decision(DecisionKind.FAILED, "rebase", {"reason": "error"}, id="d1",
+                       item=base.key),
+         make_decision(DecisionKind.FAILED, "rebase", {"reason": "error"}, id="d2",
+                       item=child.key),
+         make_decision(DecisionKind.FAILED, "rebase", {"reason": "error"}, id="d3",
+                       item=low.key)],
+        status=RunStatus.INTERRUPTED,
+    )
+    keys = [e.pr for e in batch.session_report.sessions(run, closeout=no_debt, tree=None)]
+    assert keys == [base.key, child.key, low.key]
+
+
 def test_non_draft_note_only_when_pushing_a_public_pr(tmp_path):
     tree = lambda i: _ahead(i)
     public = make_item(1, worktree=str(tmp_path), repo_dir=str(tmp_path), is_draft=False)

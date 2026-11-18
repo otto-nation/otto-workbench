@@ -243,9 +243,7 @@ EOF
   expected=$(cat <<'EOF'
 ## Now — run R1: 0 of 1 PRs waiting on you
 
-### o/r#1 — done (act) · b1 → main
-- finding `push_refused:publish` — replay (commits: c1 subj, c2 two)
-  decided: fixed — ok
+1 settled PR(s) hidden (all findings decided).
 EOF
 )
   [ "$output" = "$expected" ]
@@ -258,11 +256,62 @@ EOF
   expected=$(cat <<'EOF'
 ## Now — run R1: 0 of 1 PRs waiting on you
 
-### o/r#1 — done (act) · b1 → main
-- run `pr batch note --finding x:y` — file issue
+1 settled PR(s) hidden (all findings decided).
 EOF
 )
   [ "$output" = "$expected" ]
+}
+
+@test "run-session: Now hides decided PRs, keeps needs_session, and names the footer" {
+  _atext now.ts '(async () => { const e = await import(args[2]); const d = e.latestDecisions(JSON.parse(args[1])); return m.renderNow("run R1", JSON.parse(args[0]), d); })()' \
+    '[{"pr":"o/r#1","state":"needs_session","severity":"block","branch":"b1","base_ref":"main",
+       "findings":[{"reason":"ci_failing","step":"ci","detail":"red"}]},
+      {"pr":"o/r#2","state":"done","severity":"act","branch":"b2","base_ref":"main",
+       "findings":[{"reason":"ready_to_push","step":"publish"}]}]' \
+    '[{"kind":"decision","item":"o/r#2","finding":"ready_to_push:publish","verdict":"fixed","reason":"ok"}]' \
+    "$EXT/events.ts"
+  [ "$status" -eq 0 ]
+  local expected
+  expected=$(cat <<'EOF'
+## Now — run R1: 1 of 2 PRs waiting on you
+
+### o/r#1 — needs_session (block) · b1 → main
+- finding `ci_failing:ci` — red
+
+1 settled PR(s) hidden (all findings decided).
+EOF
+)
+  [ "$output" = "$expected" ]
+
+  _atext now.ts '(async () => { const e = await import(args[2]); const d = e.latestDecisions(JSON.parse(args[1])); return m.renderNow("run R1", JSON.parse(args[0]), d); })()' \
+    '[{"pr":"o/r#1","state":"needs_session","severity":"block","branch":"b1","base_ref":"main",
+       "findings":[{"reason":"ci_failing","step":"ci","detail":"red"}]}]' \
+    '[{"kind":"decision","item":"o/r#1","finding":"ci_failing:ci","verdict":"fixed","reason":"ok"}]' \
+    "$EXT/events.ts"
+  [ "$status" -eq 0 ]
+  expected=$(cat <<'EOF'
+## Now — run R1: 1 of 1 PRs waiting on you
+
+### o/r#1 — needs_session (block) · b1 → main
+- finding `ci_failing:ci` — red
+  decided: fixed — ok
+EOF
+)
+  [ "$output" = "$expected" ]
+
+  _eval now.ts 'm.renderNow("run R1", JSON.parse(args[0]), new Map([["o/r#1\u0000ci_failing:ci", {verdict:"fixed",reason:"a"}],["o/r#2\u0000ready_to_push:publish", {verdict:"dismissed",reason:"b"}]]))' \
+    '[{"pr":"o/r#1","state":"done","severity":"act","branch":"b1","base_ref":"main",
+       "findings":[{"reason":"ci_failing","step":"ci"}]},
+      {"pr":"o/r#2","state":"done","severity":"act","branch":"b2","base_ref":"main",
+       "findings":[{"reason":"ready_to_push","step":"publish"}]}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = '"## Now — run R1: 0 of 2 PRs waiting on you\n\n2 settled PR(s) hidden (all findings decided).\n"' ]
+}
+
+@test "run-session: the offline report may take 60s" {
+  _eval wire.ts 'm.REPORT_TIMEOUT_MS'
+  [ "$status" -eq 0 ]
+  [ "$output" = "60000" ]
 }
 
 @test "run-session: the latest well-formed state entry on the branch wins" {

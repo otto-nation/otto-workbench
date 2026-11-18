@@ -37,6 +37,7 @@ no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
 from __future__ import annotations
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -149,8 +150,14 @@ def sessions(run: Run, *, closeout: CloseoutFn | None = None,
     if run.status in _ACTIVE:
         items = [item for item in items if item.terminal]
     reader = closeout or batch.plan.closeout_debt
-    entries = [_session(run, item, reader, tree) for item in items
-               if item.status is not ItemStatus.SKIPPED_CLOSED]
+    wanted = [item for item in items if item.status is not ItemStatus.SKIPPED_CLOSED]
+    if not wanted:
+        return []
+    with ThreadPoolExecutor(max_workers=min(8, len(wanted))) as pool:
+        # Submit in input order and collect in that same order; do not use
+        # as_completed, which would scramble the list _order then reads.
+        futures = [pool.submit(_session, run, item, reader, tree) for item in wanted]
+        entries = [future.result() for future in futures]
     return _order([e for e in entries if e.findings or e.commands])
 
 

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from agent.session import read_jsonl
 from core.text import slugify
@@ -50,7 +50,7 @@ def build_failure_id(annotation: dict, job_name: str) -> str:
     line = annotation.get("start_line", 0)
     title = annotation.get("title", "")
     if path and line:
-        slug = title.split(":")[0].strip().lower() if title else "err"
+        slug = (slugify(title.split(":")[0]) if title else "") or "err"
         return f"{slug}-{path}-{line}"
     if title:
         return f"{job_name}-{slugify(title)}"
@@ -101,22 +101,39 @@ def _fallback_item(job_name: str, source_run_id: int | None = None) -> pr.ci_fai
     )
 
 
+def is_generic_message(message: str) -> bool:
+    """True when `message` is a runner restatement, not a diagnostic."""
+    msg = (message or "").lower()
+    return any(g in msg for g in _GENERIC_MESSAGES)
+
+
+def is_source_path(path: str) -> bool:
+    """True when `path` is a source file rather than a workflow location."""
+    if not path or path == ".github" or path.startswith(".github/"):
+        return False
+    return bool(PurePosixPath(path).suffix)
+
+
 def annotations_uninformative(annotations: list[dict]) -> bool:
     """True when non-notice annotations carry no actionable diagnostic context.
 
     A generic message (exit code restated, check failure marker) is always
     uninformative regardless of path — the real error is in the logs.
+    Warnings are ignored when a real failure annotation exists, so a runner
+    cache warning cannot make a generic step-failure look located.
     """
-    non_notices = [a for a in annotations if a.get("annotation_level") != "notice"]
-    if not non_notices:
+    failures = [
+        a for a in annotations
+        if a.get("annotation_level") not in ("notice", "warning")
+    ]
+    relevant = failures or [
+        a for a in annotations if a.get("annotation_level") != "notice"
+    ]
+    if not relevant:
         return True
-    for a in non_notices:
-        msg = (a.get("message", "") or "").lower()
-        if any(g in msg for g in _GENERIC_MESSAGES):
-            continue
-        path = a.get("path", "")
-        has_source_path = bool(path) and "." in path.rsplit("/", 1)[-1]
-        if has_source_path:
+    for a in relevant:
+        if (not is_generic_message(a.get("message", ""))
+                and is_source_path(a.get("path", ""))):
             return False
     return True
 
@@ -220,7 +237,7 @@ def _artifact_name(job_name: str) -> str:
         if slug.startswith(prefix):
             slug = slug[len(prefix):]
             break
-    return f"test-results-{slug.replace(' ', '-')}"
+    return f"test-results-{slugify(slug)}"
 
 
 def fetch_test_artifact(repo: str, run_id: int, job_name: str) -> str:
@@ -297,7 +314,14 @@ def fetch_job_failure(repo: str, job: dict, run_data: dict) -> JobFailure | None
     failed_step = extract_failed_step(job)
 
     annotations = gh.run_reads.fetch_annotations(repo, job_id) if job_id else []
-    annotation_texts = [a.get("message", "") for a in annotations]
+    failure_anns = [
+        a for a in annotations
+        if a.get("annotation_level") not in ("notice", "warning")
+    ]
+    classify_anns = failure_anns or [
+        a for a in annotations if a.get("annotation_level") != "notice"
+    ]
+    annotation_texts = [a.get("message", "") for a in classify_anns]
     kind = pr.ci_failures.classify_job(job_name, annotation_texts)
 
     if kind not in (pr.ci_failures.FailureKind.BUILD, pr.ci_failures.FailureKind.TEST):
@@ -318,7 +342,10 @@ def fetch_job_failure(repo: str, job: dict, run_data: dict) -> JobFailure | None
 
     ctx = fallback.context if fallback.ok else fetch_test_artifact(repo, source_run_id, job_name)
     if ctx and have_original:
-        return _make_result(job_name, fallback.kind if fallback.ok else kind, annotations, source_run_id, failed_step, context=ctx)
+        return _make_result(
+            job_name, fallback.kind if fallback.ok else kind,
+            failure_anns or annotations, source_run_id, failed_step, context=ctx,
+        )
     if ctx:
         annotations = [{"message": ctx, "path": "", "start_line": 0, "title": ""}]
         kind = pr.ci_failures.classify_job(job_name, [ctx])

@@ -62,7 +62,7 @@ The script outputs:
 - **stderr:** Human-readable dashboard (run number, commit, failure counts by kind, progression)
 - **stdout:** Structured JSON report with all failures, classifications, and progression markers
 
-**Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — `pr ci` handles all resolution internally. Capture both stderr and stdout together with `2>&1`. Without `--wait`, the dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there. With `--wait`, output uses `---`-delimited JSON chunks instead (see below).
+**Invocation rules:** Run the command as a single simple statement. Do not use command substitution `$(...)` or pipes to resolve arguments — `pr ci` handles all resolution internally. Capture both stderr and stdout together with `2>&1`. The dashboard and JSON are the report — do not follow them by fetching job logs. Without `--wait`, the dashboard text appears first, followed by the JSON report starting with `{` on its own line — parse from there. With `--wait`, output uses `---`-delimited JSON chunks instead (see below).
 
 **In-progress runs:** When the run is in-progress (dashboard says "Checks still running"):
 - Add `--wait` to poll until all jobs complete with incremental reporting
@@ -191,9 +191,9 @@ Print:
 | Kind | Examples | Log depth | Fix strategy |
 |------|----------|-----------|--------------|
 | **lint** | ShellCheck, ESLint, yamllint | Annotations only | Direct code fix |
-| **test** | pytest, bats, jest | Annotations; logs when those are generic | Code or test fix |
-| **build** | Docker, webpack, gradle | Full logs | Dependency/config fix |
-| **infra** | Timeouts, OOM; rate limits (rerun once by `run_fix`) | Full logs | Flag to user; rate-limit-only is rerun then re-waited |
+| **test** | pytest, bats, jest | Annotations; `log_file` when those are generic | Code or test fix |
+| **build** | Docker, webpack, gradle | `log_file` (failed step); never paste | Dependency/config fix |
+| **infra** | Timeouts, OOM; rate limits (rerun once by `run_fix`) | `log_file` (failed step); never paste | Flag to user; rate-limit-only is rerun then re-waited |
 | **flaky** | Same test passed in prior run | Never | Flag, suggest re-run |
 | **external** | CodeQL, Trivy, Scalr plan, any non-Actions check | Annotations only — it has no Actions logs | Flag to user |
 
@@ -203,7 +203,9 @@ Print:
 
 - An empty `failures` means CI passed only when `unread` is also empty — otherwise it means nobody could see all of it
 - Present classification + diagnosis, then proceed to fix without waiting for confirmation — the user can interrupt to override
-- Do not manually fetch CI logs (`gh run view`, `gh api`, `gh run view --log`). The `pr ci` JSON report includes failure context. Only call GitHub directly if the JSON context field is empty or clearly insufficient for a specific failure
+- Never call `gh_ci_failures`. It dumps full job logs into the prompt and has compacted sessions.
+- Never paste job logs, `gh run view --log`, or `gh run view --log-failed` output into the conversation.
+- Do not fetch CI logs into the prompt (`gh run view`, `gh api`, `gh run view --log`). The `pr ci` JSON report includes short failure context and a `log_file` path when logs were fetched. If that is not enough: redirect failed-step logs to a file (`gh run view RUN --log-failed` into a file), then `rg` that file. Never dump the file into context.
 - NEVER auto-fix infra, flaky or external failures (rate-limit-only infra is rerun once by `ci-check --fix` / `run_fix`, not by editing the repo)
 - A commit can be checked by something that ran no workflow. The report then names no run number and the dashboard reads `## CI Checks (<sha>)` rather than `## CI Run #N` — that is a commit with checks, not a missing run
 - Persisting failures on re-invocation include context of prior fix attempts

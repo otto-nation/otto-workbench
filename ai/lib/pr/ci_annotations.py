@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
 from agent.session import read_jsonl
+import core.workbench_paths
 from core.text import slugify
 import gh.run_reads
 import pr.ci_failures
@@ -61,7 +62,7 @@ def build_failure_id(annotation: dict, job_name: str) -> str:
 
 def annotations_to_items(
     annotations: list[dict], job_name: str, source_run_id: int | None = None,
-    context: str | None = None,
+    context: str | None = None, log_file: str | None = None,
 ) -> list[pr.ci_failures.FailureItem]:
     """Convert raw annotations to FailureItems, skipping notices."""
     items: list[pr.ci_failures.FailureItem] = []
@@ -83,11 +84,14 @@ def annotations_to_items(
             headline=pr.ci_failures.extract_headline(text) or pr.ci_failures.extract_headline(context),
             source_run_id=source_run_id,
             context=context,
+            log_file=log_file,
         ))
     return items
 
 
-def _fallback_item(job_name: str, source_run_id: int | None = None) -> pr.ci_failures.FailureItem:
+def _fallback_item(
+    job_name: str, source_run_id: int | None = None, log_file: str | None = None,
+) -> pr.ci_failures.FailureItem:
     """Create a placeholder item for a failed job with no annotations."""
     return pr.ci_failures.FailureItem(
         id=f"{job_name}-no-annotation",
@@ -98,6 +102,7 @@ def _fallback_item(job_name: str, source_run_id: int | None = None) -> pr.ci_fai
         fix_sha=None,
         outcome=None,
         source_run_id=source_run_id,
+        log_file=log_file,
     )
 
 
@@ -169,6 +174,7 @@ class LogFallback:
     context: str
     kind: pr.ci_failures.FailureKind
     structured: bool
+    log_file: str = ""
 
     @property
     def ok(self) -> bool:
@@ -192,41 +198,60 @@ def _test_annotation(failure: pr.ci_failures.TestFailure) -> dict:
     }
 
 
+def write_failed_job_log(repo: str, run_id: int, job_name: str, log_text: str) -> Path | None:
+    """Persist a failed job's log so an agent can rg it instead of pasting it.
+
+    The JSON report carries the path, not the body. Empty text writes nothing.
+    """
+    if not log_text:
+        return None
+    dest_dir = core.workbench_paths.state_dir() / "ci-logs" / slugify(repo) / str(run_id)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"{slugify(job_name) or 'job'}.log"
+    tmp = dest.with_suffix(".log.tmp")
+    tmp.write_text(log_text, encoding="utf-8", errors="replace")
+    tmp.replace(dest)
+    return dest
+
+
 def log_fallback(repo: str, job: dict, run_data: dict, kind: pr.ci_failures.FailureKind) -> LogFallback:
     """Fetch job logs and extract failure context as synthetic annotations.
 
     A log in a format `ci.extract_test_failures` parses becomes one annotation
     per failing test rather than one window over the whole run, so a suite with
     several failures surfaces as several items and each carries the location
-    the suite itself printed for it.
+    the suite itself printed for it. The raw log is written to disk; the report
+    carries that path rather than the body.
     """
     job_id = job.get("databaseId", 0)
     log_text = gh.run_reads.fetch_job_logs(repo, job_id) if job_id else ""
+    source_run_id = job.get("_source_run_id", run_data.get("databaseId") or 0)
     if not log_text:
-        source_run_id = job.get("_source_run_id", run_data["databaseId"])
         log_text = gh.run_reads.fetch_failed_logs(repo, source_run_id)
     if not log_text:
         return LogFallback([], "", kind, structured=False)
 
     job_name = job.get("name", "unknown")
+    log_path = write_failed_job_log(repo, int(source_run_id or 0), job_name, log_text)
+    log_file = str(log_path) if log_path else ""
     failed_step = extract_failed_step(job)
     tests = pr.ci_failures.extract_test_failures(log_text)
     if tests:
-        context = "\n\n".join(f.context for f in tests)
+        context = pr.ci_failures.clip_context("\n\n".join(f.context for f in tests))
         return LogFallback(
             [_test_annotation(f) for f in tests], context,
             pr.ci_failures.classify_job(job_name, [context], failed_step=failed_step),
-            structured=True,
+            structured=True, log_file=log_file,
         )
 
     context = pr.ci_failures.extract_failure_context(log_text, kind)
     if not context:
-        return LogFallback([], "", kind, structured=False)
+        return LogFallback([], "", kind, structured=False, log_file=log_file)
     annotations = [{"message": context, "path": "", "start_line": 0, "title": ""}]
     return LogFallback(
         annotations, context,
         pr.ci_failures.classify_job(job_name, [context], failed_step=failed_step),
-        structured=False,
+        structured=False, log_file=log_file,
     )
 
 
@@ -284,12 +309,14 @@ class JobFailure:
     failed_step: str | None
 
 
-def _make_result(job_name, kind, annotations, source_run_id, failed_step, context=None):
+def _make_result(job_name, kind, annotations, source_run_id, failed_step, context=None, log_file=None):
     """Build the JobFailure from resolved annotations."""
     if annotations:
-        items = annotations_to_items(annotations, job_name, source_run_id, context=context)
+        items = annotations_to_items(
+            annotations, job_name, source_run_id, context=context, log_file=log_file,
+        )
     else:
-        items = [_fallback_item(job_name, source_run_id)]
+        items = [_fallback_item(job_name, source_run_id, log_file=log_file)]
     if not items:
         return None
     return JobFailure(job_name=job_name, kind=kind, items=items, failed_step=failed_step)
@@ -354,20 +381,27 @@ def fetch_job_failure(repo: str, job: dict, run_data: dict) -> JobFailure | None
     # Annotations absent or uninformative — try logs, then artifact
     have_original = bool(annotations)
     fallback = log_fallback(repo, job, run_data, kind)
+    log_file = fallback.log_file or None
 
     # A location the log reported beats the one GitHub attached to the failed
     # step, which for a generic step failure anchors on the workflow file. The
     # annotations carry their own context here, so nothing below is needed.
     if fallback.structured:
-        return _make_result(job_name, fallback.kind, fallback.annotations, source_run_id, failed_step)
+        return _make_result(
+            job_name, fallback.kind, fallback.annotations, source_run_id, failed_step,
+            log_file=log_file,
+        )
 
     ctx = fallback.context if fallback.ok else fetch_test_artifact(repo, source_run_id, job_name)
     if ctx and have_original:
         return _make_result(
             job_name, fallback.kind if fallback.ok else kind,
             failure_anns or annotations, source_run_id, failed_step, context=ctx,
+            log_file=log_file,
         )
     if ctx:
         annotations = [{"message": ctx, "path": "", "start_line": 0, "title": ""}]
         kind = pr.ci_failures.classify_job(job_name, [ctx], failed_step=failed_step)
-    return _make_result(job_name, kind, annotations, source_run_id, failed_step)
+    return _make_result(
+        job_name, kind, annotations, source_run_id, failed_step, log_file=log_file,
+    )

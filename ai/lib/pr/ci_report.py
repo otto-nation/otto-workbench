@@ -49,6 +49,7 @@ def serialize_failures(
                 "outcome": outcome,
                 "source_run_id": item.source_run_id,
                 "context": item.context,
+                "log_file": item.log_file,
             })
     return result
 

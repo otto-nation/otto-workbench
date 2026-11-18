@@ -1,9 +1,10 @@
 # shellcheck shell=sh
 # env.sh — the environment a workbench tool needs, for any caller and any shell.
 #
-# The single owner of which directories user-installed tools live in and how
-# ~/.env.local is loaded. Every caller that does not start from an interactive
-# zsh reads it rather than keeping its own PATH line:
+# The single owner of which directories user-installed tools live in, how
+# ~/.env.local is loaded, and the Colima socket / Testcontainers variables an
+# interactive shell used to set only in docker.zsh. Every caller that does not
+# start from an interactive zsh reads it rather than keeping its own PATH line:
 #
 #   loader.zsh                    the interactive shell, before any config layer
 #   lib/setup.sh ensure_tool_path sync, from whatever launched it
@@ -56,10 +57,9 @@ workbench_path() {
   export PATH
 }
 
-# workbench_env — workbench_path, then ~/.env.local with every assignment
-# exported, so a child process sees what an interactive shell would. Always
-# returns 0: a caller's environment is degraded by a bad ~/.env.local, never
-# ended by it.
+# _workbench_source_env_local — ~/.env.local with every assignment exported.
+# Called only when the file is readable. Always returns 0: a caller's
+# environment is degraded by a bad ~/.env.local, never ended by it.
 #
 # An interactive shell sources the file directly, so a mistake in it prints
 # where it is. A non-interactive one sources it only if `sh -n` accepts its
@@ -71,9 +71,7 @@ workbench_path() {
 # restored after, so a command in ~/.env.local that returns non-zero does not end
 # the caller. Calling it as `workbench_env || true` is not enough on its own —
 # dash and bash 3.2 still exit on a failing command inside a `.` script there.
-workbench_env() {
-  workbench_path
-  [ -r "$HOME/.env.local" ] || return 0
+_workbench_source_env_local() {
   case "$-" in
     *a*) _wb_allexport=1 ;;
     *) _wb_allexport="" ;;
@@ -101,5 +99,24 @@ workbench_env() {
   [ -n "$_wb_allexport" ] || set +a
   [ -z "$_wb_errexit" ] || set -e
   unset _wb_allexport _wb_errexit
+  return 0
+}
+
+# workbench_env — workbench_path, then ~/.env.local, then the Colima socket and
+# Testcontainers variables that an interactive shell used to set in docker.zsh.
+# Missing ~/.env.local is not an early return: the socket still has to be
+# exported for a caller that never created that file. Always returns 0.
+workbench_env() {
+  workbench_path
+  if [ -r "$HOME/.env.local" ]; then
+    _workbench_source_env_local
+  fi
+  if [ -z "${DOCKER_HOST:-}" ] && [ -e "$HOME/.docker/run/docker.sock" ]; then
+    export DOCKER_HOST="unix://$HOME/.docker/run/docker.sock"
+  fi
+  if [ "$(uname -s)" = "Darwin" ]; then
+    export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
+    export TESTCONTAINERS_HOST_OVERRIDE="${TESTCONTAINERS_HOST_OVERRIDE:-localhost}"
+  fi
   return 0
 }

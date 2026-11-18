@@ -140,6 +140,70 @@ _host_brew() {
   [ "${lines[1]}" = "errexit-on" ]
 }
 
+# ── Colima socket and Testcontainers (owned here, not docker.zsh) ──────────
+
+# _stub_uname OS — puts `uname -s` on PATH via ~/.local/bin so workbench_path
+# picks it up. CI is Ubuntu; Darwin vs Linux must not depend on the host.
+_stub_uname() {
+  printf '#!/bin/sh\n[ "$1" = "-s" ] && echo %s && exit 0\necho %s\n' "$1" "$1" \
+    > "$FAKE_HOME/.local/bin/uname"
+  chmod +x "$FAKE_HOME/.local/bin/uname"
+}
+
+@test "workbench_env sets DOCKER_HOST from the Colima socket when ~/.env.local is absent" {
+  _stub_uname Linux
+  mkdir -p "$FAKE_HOME/.docker/run"
+  : > "$FAKE_HOME/.docker/run/docker.sock"
+
+  run _in_sh /usr/bin:/bin 'workbench_env; printf %s "$DOCKER_HOST"'
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "unix://$FAKE_HOME/.docker/run/docker.sock" ]
+}
+
+# passes-at-base: env.local already won; this change must not overwrite it
+@test "workbench_env preserves DOCKER_HOST from ~/.env.local over the Colima socket" {
+  _stub_uname Linux
+  mkdir -p "$FAKE_HOME/.docker/run"
+  : > "$FAKE_HOME/.docker/run/docker.sock"
+  printf 'DOCKER_HOST="unix:///custom/docker.sock"\n' > "$FAKE_HOME/.env.local"
+
+  run _in_sh /usr/bin:/bin 'workbench_env; printf %s "$DOCKER_HOST"'
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "unix:///custom/docker.sock" ]
+}
+
+@test "workbench_env exports the testcontainers overrides on Darwin" {
+  _stub_uname Darwin
+
+  run _in_sh /usr/bin:/bin 'workbench_env; printf "TC=%s TH=%s" "$TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE" "$TESTCONTAINERS_HOST_OVERRIDE"'
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "TC=/var/run/docker.sock TH=localhost" ]
+}
+
+# passes-at-base: Linux never exported these; Darwin now must not start doing so here
+@test "workbench_env leaves the testcontainers overrides unset on Linux" {
+  _stub_uname Linux
+
+  run _in_sh /usr/bin:/bin 'workbench_env; printf "TC=%s TH=%s" "$TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE" "$TESTCONTAINERS_HOST_OVERRIDE"'
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "TC= TH=" ]
+}
+
+# passes-at-base: env.local already won; Darwin defaults must not overwrite it
+@test "workbench_env preserves testcontainers overrides from ~/.env.local on Darwin" {
+  _stub_uname Darwin
+  printf 'TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/custom.sock\nTESTCONTAINERS_HOST_OVERRIDE=customhost\n' > "$FAKE_HOME/.env.local"
+
+  run _in_sh /usr/bin:/bin 'workbench_env; printf "TC=%s TH=%s" "$TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE" "$TESTCONTAINERS_HOST_OVERRIDE"'
+
+  [ "$status" -eq 0 ]
+  [ "$output" = "TC=/custom.sock TH=customhost" ]
+}
+
 @test "loader.zsh applies env.sh in an interactive zsh before any layer" {
   require_zsh || return 1
   mkdir -p "$FAKE_HOME/.config/zsh/config.d"

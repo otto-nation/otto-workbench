@@ -166,7 +166,7 @@ def behaviours_comment(behaviours: tuple[BehaviourEntry, ...] | None) -> str:
 
 
 _NOOP_FOCUS_SENTENCE = re.compile(
-    r"(?i)^(no new (?:issue|finding)|.*\bunchanged since\b.*|unchanged)$"
+    r"(?i)^(no new (?:issue|finding)|(?:[\w./-]+ )?unchanged since (?:the )?(?:prior|last|previous|earlier) review|unchanged)$"
 )
 
 
@@ -188,7 +188,7 @@ def focus_comment(areas: Sequence[FocusArea]) -> str:
     lines = []
     for area in areas:
         coverage = _coverage(area)
-        if _focus_is_noop(coverage):
+        if area.source is not FocusSource.USER and _focus_is_noop(coverage):
             continue
         asked = " *(requested)*" if area.source is FocusSource.USER else ""
         lines.append(f"- **{area.title}**{asked} — {_continued(coverage)}")

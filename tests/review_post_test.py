@@ -500,8 +500,8 @@ class TestACleanReviewStillPosts:
 
     A caller that approves a PR submits the pending review this leaves, read
     back from `post.jsonl`. With nothing posted there was nothing to submit, so
-    the approval went out with an empty body and the summary, verdict and
-    static-analysis results never reached the PR."""
+    the approval went out with an empty body and the summary and verdict
+    never reached the PR."""
 
     STATIC_ANALYSIS = (
         "### Nesting depth\n\n"
@@ -547,7 +547,7 @@ class TestACleanReviewStillPosts:
                                rp.ReviewMeta(repo="org/repo"), review_file)
         return code, payloads, review_dir / "post.jsonl"
 
-    def test_the_body_carries_summary_verdict_and_static_analysis(self, rp, tmp_path):
+    def test_the_body_carries_summary_and_verdict_not_static_analysis(self, rp, tmp_path):
         code, payloads, _ = self._post(rp, tmp_path, self.CLEAN)
         assert code == 0
         [payload] = payloads
@@ -564,7 +564,7 @@ class TestACleanReviewStillPosts:
         assert tracking.status == "pending"
         assert tracking.submitted is False
 
-    def test_the_body_carries_the_models_meta_json_records(self, rp, tmp_path):
+    def test_the_body_omits_the_models_line(self, rp, tmp_path):
         code, payloads, _ = self._post(rp, tmp_path, self.CLEAN, models="single m (low)")
         assert code == 0
         [payload] = payloads

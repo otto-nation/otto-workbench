@@ -6,21 +6,26 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from conftest import commit_all, git_in, git_out, init_repo
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import core.publishing  # noqa: E402
+import core.report  # noqa: E402
 import git.regenerate  # noqa: E402
 import rebase.conflicts  # noqa: E402
 import rebase.inspect  # noqa: E402
+import rebase.land  # noqa: E402
 import rebase.lifecycle  # noqa: E402
 import rebase.regen_dispatch  # noqa: E402
 import rebase.resolve_ai  # noqa: E402
 import rebase.types  # noqa: E402
 import agent.backend  # noqa: E402
 
-from pr_rebase_support import _TARGET
+from pr_rebase_support import _LEASE, _TARGET, _pushed
 
 
 def test_resumed_tally_restores_files_stale_from_the_stop():
@@ -114,3 +119,61 @@ def test_step_advance_retries_deferred_stale_once_not_every_step():
                 "/fake", mock.MagicMock(), tally, target_ref=_TARGET,
             )
     assert calls == [["go.sum"]]
+
+
+def _tip_regen_repo(tmp_path, *, hash_on_feat: str) -> Path:
+    repo = init_repo(tmp_path / "repo")
+    (repo / ".gitattributes").write_text(
+        "schema.hash linguist-generated=true regenerate=./regen.sh\n",
+    )
+    script = repo / "regen.sh"
+    script.write_text("#!/bin/sh\nprintf 'fresh-hash\n' > schema.hash\n")
+    script.chmod(0o755)
+    (repo / "schema.hash").write_text("fresh-hash\n")
+    commit_all(repo, "init generated")
+    git_in(repo, "switch", "-c", "feat")
+    if hash_on_feat != "fresh-hash\n":
+        (repo / "schema.hash").write_text(hash_on_feat)
+        commit_all(repo, "stale hash")
+    return repo
+
+
+def _tip_regen_success(repo, tally):
+    ctx = mock.MagicMock()
+    with core.publishing.run(post=True), \
+         mock.patch.object(rebase.land, "land_rebased", return_value=_pushed()), \
+         mock.patch.object(rebase.types.RebaseOutcome, "save"), \
+         mock.patch.object(core.report, "emit_json") as emit:
+        rc = rebase.lifecycle.rebase_success(
+            str(repo), ctx, rebase.types.RunMode.FIX, tally,
+            target_ref="main", lease=_LEASE,
+        )
+        held = core.publishing.held()
+    return rc, emit, held
+
+
+def test_tip_regeneration_commits_rebuilt_stale_file_and_clears_tally(tmp_path):
+    repo = _tip_regen_repo(tmp_path, hash_on_feat="stale-hash\n")
+    tally = rebase.types.ResolutionTally(
+        files=["schema.hash"], stale=["schema.hash"], commits=1,
+    )
+    rc, emit, held = _tip_regen_success(repo, tally)
+    assert rc == 0
+    assert tally.stale == []
+    assert git_out(repo, "log", "-1", "--format=%s").strip() == "chore: regenerate after rebase"
+    assert (repo / "schema.hash").read_text() == "fresh-hash\n"
+    assert emit.call_args[0][0]["commits_replayed"] == 1
+    assert not held
+
+
+def test_tip_regeneration_with_zero_diff_clears_stale_without_extra_commit(tmp_path):
+    repo = _tip_regen_repo(tmp_path, hash_on_feat="fresh-hash\n")
+    head_before = git_out(repo, "rev-parse", "HEAD").strip()
+    tally = rebase.types.ResolutionTally(
+        files=["schema.hash"], stale=["schema.hash"], commits=1,
+    )
+    rc, _, held = _tip_regen_success(repo, tally)
+    assert rc == 0
+    assert git_out(repo, "rev-parse", "HEAD").strip() == head_before
+    assert tally.stale == []
+    assert not held

@@ -6,12 +6,15 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+from conftest import commit_all, git_in, git_out, init_repo
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import core.report  # noqa: E402
+import git.client  # noqa: E402
 import rebase.inspect  # noqa: E402
 import rebase.types  # noqa: E402
 import rebase.resolve_ai  # noqa: E402
@@ -728,3 +731,74 @@ def test_a_resume_keeps_the_squash_count_from_the_stop():
         tally = rebase.lifecycle.resumed_tally("/fake", mock.MagicMock())
     assert tally.fork_point == "abc1234"
     assert tally.squashed_commits == 3
+
+
+def _two_commit_feat_repo(tmp_path) -> Path:
+    repo = init_repo(tmp_path / "repo")
+    (repo / "f.txt").write_text("f-base\n")
+    (repo / "g.txt").write_text("g-base\n")
+    commit_all(repo, "base")
+    git_in(repo, "checkout", "-q", "-b", "feat")
+    (repo / "f.txt").write_text("f-feat\n")
+    commit_all(repo, "feat1")
+    (repo / "g.txt").write_text("g-feat\n")
+    commit_all(repo, "feat2")
+    git_in(repo, "checkout", "-q", "main")
+    (repo / "f.txt").write_text("f-main\n")
+    commit_all(repo, "main-f")
+    (repo / "g.txt").write_text("g-main\n")
+    commit_all(repo, "main-g")
+    git_in(repo, "checkout", "-q", "feat")
+    return repo
+
+
+def test_step_advance_resumes_past_manually_committed_step_into_next_conflict(tmp_path):
+    """A hand-committed paused step is continued, not skipped."""
+    repo = _two_commit_feat_repo(tmp_path)
+    paused = git.client.run("rebase", "main", cwd=str(repo))
+    assert not paused.ok
+    assert rebase.inspect.detect_conflicts(str(repo)) == ["f.txt"]
+    (repo / "f.txt").write_text("f-feat\n")
+    git_in(repo, "add", "f.txt")
+    git_in(repo, "commit", "-q", "--no-verify", "-m", "manual feat1")
+
+    skip_cmds = []
+    original = rebase.lifecycle._git_rebase
+
+    def spy(cwd, *args, **kwargs):
+        if "--skip" in args:
+            skip_cmds.append(args)
+        return original(cwd, *args, **kwargs)
+
+    with mock.patch.object(rebase.lifecycle, "_git_rebase", side_effect=spy):
+        rc = rebase.lifecycle.step_advance(
+            str(repo), mock.MagicMock(), target_ref="main",
+        )
+
+    assert rc is None
+    assert skip_cmds == []
+    assert "manual feat1" in git_out(repo, "log", "-1", "--format=%s")
+    assert rebase.inspect.detect_conflicts(str(repo)) == ["g.txt"]
+
+
+def test_step_advance_skip_into_conflicting_next_commit_returns_none(tmp_path):
+    """`--skip` into the next conflict is the next loop step, not a failed skip."""
+    repo = _two_commit_feat_repo(tmp_path)
+    paused = git.client.run("rebase", "main", cwd=str(repo))
+    assert not paused.ok
+    assert rebase.inspect.detect_conflicts(str(repo)) == ["f.txt"]
+    git_in(repo, "checkout", "--ours", "--", "f.txt")
+    git_in(repo, "add", "f.txt")
+    assert rebase.inspect.is_empty_patch(str(repo))
+    assert rebase.inspect.step_committed_manually(str(repo)) is False
+
+    with mock.patch.object(
+        rebase.lifecycle.replay_audit, "audit_replay", return_value=None,
+    ):
+        rc = rebase.lifecycle.step_advance(
+            str(repo), mock.MagicMock(), target_ref="main",
+        )
+
+    assert rc is None
+    assert rebase.inspect.rebase_in_progress(str(repo))
+    assert rebase.inspect.detect_conflicts(str(repo)) == ["g.txt"]

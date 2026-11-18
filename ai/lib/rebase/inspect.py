@@ -79,6 +79,43 @@ def is_empty_patch(cwd: str) -> bool:
     return staged and git.client.ok("diff", "--quiet", cwd=cwd)
 
 
+def _expected_paused_head(merge_dir: Path) -> str:
+    """HEAD git leaves at a paused step: last rewritten new-sha, else onto."""
+    last = ""
+    try:
+        text = (merge_dir / "rewritten-list").read_text()
+    except OSError:
+        text = ""
+    for parts in (line.split() for line in text.splitlines()):
+        last = parts[1] if len(parts) >= 2 else last
+    if last:
+        return last
+    try:
+        return (merge_dir / "onto").read_text().strip()
+    except OSError:
+        return ""
+
+
+def step_committed_manually(cwd: str) -> bool:
+    """Whether the paused empty tree is a hand-made commit, not an upstream patch.
+
+    After `git commit` during a conflict, the index matches HEAD so
+    ``is_empty_patch`` is true — the same reading as a patch already on the
+    onto commit. ``stopped-sha`` is still set, and HEAD has moved past the
+    paused parent (onto, or the last rewritten new-sha).
+    """
+    if not is_empty_patch(cwd):
+        return False
+    merge_dir = git_dir(cwd) / GIT_REBASE_MERGE_DIR
+    if not (merge_dir / "stopped-sha").is_file():
+        return False
+    expected = _expected_paused_head(merge_dir)
+    head = git.client.out("rev-parse", "--verify", "--quiet", "HEAD", cwd=cwd)
+    if not expected or not head or head == expected:
+        return False
+    return git.client.ok("merge-base", "--is-ancestor", expected, head, cwd=cwd)
+
+
 def rebase_head_info(cwd: str) -> tuple[str, str]:
     """Return ``(short_sha, subject)`` of the commit being rebased."""
     sha = git.client.out("rev-parse", "--short", "REBASE_HEAD", cwd=cwd)

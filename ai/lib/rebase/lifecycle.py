@@ -647,7 +647,16 @@ def step_advance(
     if rc is not None:
         return rc
 
-    if rebase_inspect.is_empty_patch(cwd):
+    if rebase_inspect.step_committed_manually(cwd):
+        sha, subject = rebase_inspect.rebase_head_info(cwd)
+        core.log.info(f"Advancing past manually committed step {sha} — {subject}")
+        tdecision(
+            trail, "step", f"advancing past manually committed step {sha}",
+            reason="paused step already committed by hand",
+            data={"commit": sha, "subject": subject,
+                  "remaining": rebase_inspect.remaining_rebase_commits(cwd)},
+        )
+    elif rebase_inspect.is_empty_patch(cwd):
         sha, subject = rebase_inspect.rebase_head_info(cwd)
         core.log.info(f"Skipping empty commit {sha} — {subject}")
         tdecision(
@@ -664,10 +673,18 @@ def step_advance(
         # commit and goes straight on to apply the next, so the merges it runs
         # are as able to replay a recorded resolution as any other step's.
         r = _git_rebase(cwd, "rebase", "--skip")
-        if not r.ok:
-            core.log.error(f"git rebase --skip failed (exit {r.returncode})")
-            return 1
-        return None
+        if r.ok:
+            return None
+        if r.stderr.strip():
+            core.log.dim(r.stderr.strip())
+        skipped_into_conflict = (
+            rebase_inspect.rebase_in_progress(cwd)
+            and rebase_inspect.detect_conflicts(cwd)
+        )
+        if skipped_into_conflict:
+            return None
+        core.log.error(f"git rebase --skip failed (exit {r.returncode})")
+        return 1
 
     r = rebase_continue(cwd)
     if r.ok:

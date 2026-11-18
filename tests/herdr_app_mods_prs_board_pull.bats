@@ -91,6 +91,39 @@ BOARD_JS
   [ "$output" = '{"local":[],"remote":["hc:ls:label@null","pr:listing:offline@mac"]}' ]
 }
 
+@test "mod pull: the 15 s timer reads the remote's load and then skips while that host is busy" {
+  _host "$BOARD
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const loadCalls = [];
+    const withLoad = (inner, byOn) => async (cmd, args, opts = {}) => {
+      if (cmd === 'nproc' || (cmd === 'cat' && args[0] === '/proc/loadavg')) {
+        loadCalls.push({ cmd, on: opts.on ?? null });
+        const load = byOn[opts.on];
+        if (load == null) return { code: 1, stdout: '', stderr: 'no load' };
+        return cmd === 'nproc' ? { code: 0, stdout: '4\\n' } : { code: 0, stdout: load + ' 1 1 1/1 1' };
+      }
+      return inner(cmd, args, opts);
+    };
+    const fireListing = async (host) => {
+      host.timers.filter((x) => x.ms === 15000).at(-1).fn(host.cx);
+      await host.settle();
+      await tick();
+    };
+    spacesOf(['/w/box'], 'mac');
+    const busy = await start(withLoad(fakePr(doc), { mac: '20.0' })); take();
+    await fireListing(busy); take();
+    await fireListing(busy); const skipped = take();
+    const probed = loadCalls.filter((c) => c.cmd === 'nproc');
+    loadCalls.length = 0;
+    spacesOf(['/w/box'], 'mac');
+    const quiet = await start(withLoad(fakePr(doc), { mac: '0.1' })); take();
+    await fireListing(quiet); take();
+    await fireListing(quiet); const quieted = take();
+    out({ probed, skipped, quiet: quieted.filter((l) => l.startsWith('pr:')) });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"probed":[{"cmd":"nproc","on":"mac"}],"skipped":[],"quiet":["pr:listing:offline:stamp"]}' ]
+}
+
 # passes-at-base: characterizes the mod before the extraction
 @test "mod pull: Mine reads owed after status, then only once a minute; Has Comments rows come from it" {
   _host "$BOARD

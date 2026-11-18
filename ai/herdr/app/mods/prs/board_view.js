@@ -14,7 +14,7 @@ import { LOAD_DELAY_MS, loadState, errorsStatus } from "./_lib/load_state.js";
 import { runStatus } from "./_lib/batch.js";
 import { batchReason, selectionPreset } from "./_lib/batch_launch.js";
 import { createBoardStore, ctxKey, NO_WANT, FULL_PULL_MS } from "./_lib/board_store.js";
-import { createLoadGate, execLoadReader } from "./_lib/load_backoff.js";
+import { createGateMap } from "./_lib/load_backoff.js";
 import { boardModel, mineOpen, wantFor } from "./_lib/board_model.js";
 import { normalizeFilters, filterAction } from "./_lib/filters.js";
 import { viewOf } from "./_lib/compact.js";
@@ -98,13 +98,16 @@ export default class PrsBoard extends View {
     this.watchRoot = this.key = null;
     this.pollListing = false;
     this.manual = false;
-    const read = execLoadReader(exec);
-    const fullGate = createLoadGate({ read });
-    const listingGate = createLoadGate({ read });
-    cx.timer.every(FULL_PULL_MS, (cx) => { if (fullGate.pass()) this.refresh(cx); });
+    const fullGates = createGateMap(exec);
+    const listingGates = createGateMap(exec);
+    cx.timer.every(FULL_PULL_MS, (cx) => {
+      const targets = fullGates.filter(this.activeTargets());
+      if (targets.length) this.refresh(cx, { targets });
+    });
     cx.timer.every(15000, (cx) => {
-      if (!listingGate.pass()) return;
-      if (this.activeTargets().some((c) => c.on != null) || this.pollListing) this.refresh(cx, { listingOnly: true });
+      const needed = this.activeTargets().filter((c) => c.on != null || this.pollListing);
+      const targets = listingGates.filter(needed);
+      if (targets.length) this.refresh(cx, { listingOnly: true, targets });
     });
     this.refresh(cx);
   }
@@ -119,7 +122,7 @@ export default class PrsBoard extends View {
     }
     this.inflight = true;
     cx.spawn(async (cx) => {
-      try { await this.pull(cx, listingOnly); }
+      try { await this.pull(cx, listingOnly, opts.targets); }
       finally {
         this.inflight = false;
         // Clear only on a full pull with no other full pull queued behind it.
@@ -166,13 +169,13 @@ export default class PrsBoard extends View {
     return this.store.view(this.activeTargets(), scopeOf());
   }
 
-  async pull(cx, listingOnly) {
+  async pull(cx, listingOnly, targets) {
     const fresh = !listingOnly && this.freshNext;
     if (!listingOnly) this.freshNext = false;
     this.pullStartedAt = Date.now();
     cx.timer.after(LOAD_DELAY_MS, (cx) => cx.notify());
     await this.store.pull({
-      targets: this.activeTargets(), listingOnly, fresh,
+      targets: targets ?? this.activeTargets(), listingOnly, fresh,
       want: () => this.want(),
       isCurrent: (key) => this.same(key),
       keep: () => [ctxOf(), ...spaceTargets(spaces(), panes())],

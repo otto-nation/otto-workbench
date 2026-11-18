@@ -231,3 +231,38 @@ RUNS_JS
   run grep -c 'targetSession: this.workflows.targetSession(this.detail.on, this.detail)' "$REPO_ROOT/ai/herdr/app/mods/prs/main.js"
   [ "$output" = "1" ]
 }
+
+@test "workflows: the 15 s timer reads the remote's load and then skips batch status while that host is busy" {
+  _host "
+    const { Workflows } = await import(M + '/workflows.js');
+    const tick = () => new Promise((r) => setTimeout(r, 0));
+    const seen = []; const loadOns = [];
+    H.exec = async (cmd, args, opts = {}) => {
+      if (cmd === 'nproc' || (cmd === 'cat' && args[0] === '/proc/loadavg')) {
+        loadOns.push(opts.on ?? null);
+        const load = opts.on === 'hot' ? '20.0' : '0.1';
+        return cmd === 'nproc' ? { code: 0, stdout: '4\\n' } : { code: 0, stdout: load + ' 1 1 1/1 1' };
+      }
+      const line = (cmd === 'sh' && args[2] === 'sh' ? [args[3], ...args.slice(4)] : [cmd, ...args]).join(' ');
+      seen.push(line);
+      if (line.includes('batch status --list')) return { code: 0, stdout: JSON.stringify({ runs: [] }), stderr: '' };
+      return { code: 1, stdout: '', stderr: 'unexpected ' + line };
+    };
+    const fire = async (host) => {
+      host.timers.filter((x) => x.ms === 15000)[0].fn(host.cx);
+      await host.settle();
+      await tick();
+    };
+    const host = fakeCx();
+    const w = new Workflows(host.cx, () => [{ on: 'hot', cwd: '/w/box' }]);
+    w.show();
+    await host.settle();
+    const afterShow = seen.length;
+    seen.length = 0;
+    await fire(host);
+    seen.length = 0;
+    await fire(host);
+    out({ afterShow, probed: [...new Set(loadOns)], skipped: seen });"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"afterShow":1,"probed":["hot"],"skipped":[]}' ]
+}

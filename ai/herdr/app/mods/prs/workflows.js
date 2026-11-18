@@ -6,6 +6,7 @@ import {
 } from "./_lib/batch.js";
 import { cancelArgv, runProgress } from "./_lib/batch_launch.js";
 import { invoke, readJson } from "./_lib/board_data.js";
+import { createGateMap } from "./_lib/load_backoff.js";
 import { keepStarted, notShownText, parseRunReply } from "./_lib/launch.js";
 import {
   openSession as openKindSession, sessionGate, waitingText, SESSION_KINDS,
@@ -63,7 +64,8 @@ export class Workflows {
     this.preview = null;
     this.previewInflight = null;
     this.watching = new Set();
-    cx.timer.every(15000, (cx) => { if (this.visible) this.refresh(cx); });
+    this.gateMap = createGateMap(exec);
+    cx.timer.every(15000, (cx) => { if (this.visible) this.refresh(cx, { gated: true }); });
     cx.timer.every(3000, (cx) => {
       if (!this.visible || !this.openKey) return;
       if (this.step && this.stepStatus() === "running") this.loadLog(cx);
@@ -99,7 +101,10 @@ export class Workflows {
     }
     if (this.pinned && !wanted.has(k(this.pinned.on))) this.pinned = null;
     if (!wanted.size && !opts.fromShow) cx.notify();
-    for (const [key, ctx] of wanted) this.refreshOne(cx, key, ctx);
+    for (const [key, ctx] of wanted) {
+      if (opts.gated && !this.gateMap.get(ctx.on).pass()) continue;
+      this.refreshOne(cx, key, ctx);
+    }
   }
 
   refreshOne(cx, key, ctx) {

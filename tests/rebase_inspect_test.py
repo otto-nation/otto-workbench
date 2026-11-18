@@ -218,3 +218,109 @@ def test_drop_requeued_stopped_pick_removes_duplicate_leading_todo_entry(tmp_pat
     new_comments = [line for line in new_todo.splitlines() if line.startswith("#")]
     assert original_comments == new_comments
     assert rebase.inspect.drop_requeued_stopped_pick(str(repo)) == ""
+
+
+def test_drop_requeued_ignores_rebase_head_without_stopped_sha(tmp_path):
+    """A todo pick matching REBASE_HEAD is not dropped without stopped-sha."""
+    repo = init_repo(tmp_path / "no_stopped")
+    _commit_file(repo, "f.txt", "a\n", "a")
+    sha = git.client.out("rev-parse", "HEAD", cwd=str(repo))
+    short = git.client.out("rev-parse", "--short", "HEAD", cwd=str(repo))
+    git_dir = rebase.inspect.git_dir(str(repo))
+    (git_dir / "REBASE_HEAD").write_text(sha + "\n")
+    merge_dir = git_dir / rebase.inspect.GIT_REBASE_MERGE_DIR
+    merge_dir.mkdir()
+    todo = f"pick {short} a\n"
+    (merge_dir / rebase.inspect.GIT_REBASE_TODO).write_text(todo)
+
+    assert rebase.inspect.drop_requeued_stopped_pick(str(repo)) == ""
+    assert (merge_dir / rebase.inspect.GIT_REBASE_TODO).read_text() == todo
+
+
+def test_is_refused_clean_pick_detects_todo_without_stopped_sha(tmp_path):
+    repo = init_repo(tmp_path / "refused")
+    _commit_file(repo, "f.txt", "a\n", "a")
+    sha = git.client.out("rev-parse", "HEAD", cwd=str(repo))
+    short = git.client.out("rev-parse", "--short", "HEAD", cwd=str(repo))
+    (repo / "f.txt").write_text("staged\n")
+    git_in(repo, "add", "f.txt")
+    merge_dir = rebase.inspect.git_dir(str(repo)) / rebase.inspect.GIT_REBASE_MERGE_DIR
+    merge_dir.mkdir()
+    (merge_dir / rebase.inspect.GIT_REBASE_TODO).write_text(f"pick {short} a\n")
+
+    found = rebase.inspect.is_refused_clean_pick(str(repo))
+    assert git.client.same_commit(found, sha, cwd=str(repo))
+    (merge_dir / "stopped-sha").write_text(sha + "\n")
+    assert rebase.inspect.is_refused_clean_pick(str(repo)) == ""
+
+
+def test_is_refused_clean_pick_ignores_fake_cwd():
+    assert rebase.inspect.is_refused_clean_pick("/fake") == ""
+
+
+def test_step_committed_manually_without_stopped_sha_matches_todo(tmp_path):
+    """A hand commit after a refused pick is recognized without stopped-sha."""
+    repo = init_repo(tmp_path / "manual")
+    _commit_file(repo, "f.txt", "base\n", "base")
+    onto = git.client.out("rev-parse", "HEAD", cwd=str(repo))
+    git_in(repo, "checkout", "-q", "-b", "feat")
+    _commit_file(repo, "f.txt", "feat\n", "feat1")
+    old = git.client.out("rev-parse", "HEAD", cwd=str(repo))
+    old_short = git.client.out("rev-parse", "--short", "HEAD", cwd=str(repo))
+    _commit_file(repo, "g.txt", "g\n", "hand")
+    new = git.client.out("rev-parse", "HEAD", cwd=str(repo))
+    git_dir = rebase.inspect.git_dir(str(repo))
+    (git_dir / "REBASE_HEAD").write_text(old + "\n")
+    merge_dir = git_dir / rebase.inspect.GIT_REBASE_MERGE_DIR
+    merge_dir.mkdir()
+    (merge_dir / "onto").write_text(onto + "\n")
+    (merge_dir / rebase.inspect.GIT_REBASE_TODO).write_text(
+        f"pick {old_short} feat1\npick deadbeef later\n",
+    )
+
+    assert rebase.inspect.is_empty_patch(str(repo))
+    assert rebase.inspect.step_committed_manually(str(repo)) is True
+    dropped = rebase.inspect.drop_replayed_todo_pick(str(repo))
+    assert git.client.same_commit(dropped, old, cwd=str(repo))
+    first = next(
+        line for line in (merge_dir / rebase.inspect.GIT_REBASE_TODO).read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    )
+    assert first.startswith("pick deadbeef")
+    rewritten = (merge_dir / "rewritten-list").read_text().split()
+    assert git.client.same_commit(rewritten[0], old, cwd=str(repo))
+    assert git.client.same_commit(rewritten[1], new, cwd=str(repo))
+
+
+def test_step_committed_manually_uncommitted_index_is_false(tmp_path):
+    repo = init_repo(tmp_path / "dirty")
+    _commit_file(repo, "f.txt", "base\n", "base")
+    onto = git.client.out("rev-parse", "HEAD", cwd=str(repo))
+    git_in(repo, "checkout", "-q", "-b", "feat")
+    _commit_file(repo, "f.txt", "feat\n", "feat1")
+    old = git.client.out("rev-parse", "HEAD", cwd=str(repo))
+    old_short = git.client.out("rev-parse", "--short", "HEAD", cwd=str(repo))
+    (repo / "g.txt").write_text("g\n")
+    git_in(repo, "add", "g.txt")
+    git_dir = rebase.inspect.git_dir(str(repo))
+    (git_dir / "REBASE_HEAD").write_text(old + "\n")
+    merge_dir = git_dir / rebase.inspect.GIT_REBASE_MERGE_DIR
+    merge_dir.mkdir()
+    (merge_dir / "onto").write_text(onto + "\n")
+    (merge_dir / rebase.inspect.GIT_REBASE_TODO).write_text(
+        f"pick {old_short} feat1\n",
+    )
+
+    assert rebase.inspect.is_empty_patch(str(repo)) is False
+    assert rebase.inspect.step_committed_manually(str(repo)) is False
+    assert rebase.inspect.drop_replayed_todo_pick(str(repo)) == ""
+
+
+def test_step_state_equal_until_head_moves(tmp_path):
+    repo = init_repo(tmp_path / "state")
+    _commit_file(repo, "f.txt", "a\n", "a")
+    first = rebase.inspect.step_state(str(repo), deferred=("x",))
+    second = rebase.inspect.step_state(str(repo), deferred=("x",))
+    assert first == second
+    _commit_file(repo, "f.txt", "b\n", "b")
+    assert rebase.inspect.step_state(str(repo), deferred=("x",)) != first

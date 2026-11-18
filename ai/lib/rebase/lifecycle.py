@@ -11,6 +11,7 @@ a refusal, or an abort that leaves the branch where it started.
 from __future__ import annotations
 
 import dataclasses
+from pathlib import Path
 
 import agent.backend
 import core.log
@@ -188,6 +189,7 @@ def _drive_loop(
                 lease=lease, verify=verify, snapshot=snapshot, trail=trail,
             )
 
+        before = rebase_inspect.step_state(cwd, deferred=tuple(tally.deferred))
         rc, conflict_found = _drive_one_step(
             cwd, ctx, mode, tally, target_ref=target_ref, force=force, trail=trail,
             lease=lease, pause_on_conflict=pause_on_conflict,
@@ -196,6 +198,21 @@ def _drive_loop(
             return rc
         if conflict_found:
             tally.commits += 1
+        if (
+            rebase_inspect.rebase_in_progress(cwd)
+            and Path(cwd).is_dir()
+            and rebase_inspect.step_state(cwd, deferred=tuple(tally.deferred)) == before
+        ):
+            tfail(
+                trail, "drive_to_completion",
+                "rebase step made no progress",
+                data={"files_resolved": tally.files, "commits": tally.commits},
+            )
+            core.log.error(
+                "Rebase step made no progress — leaving the rebase in place."
+            )
+            _record_failed(ctx, tally, target_ref=target_ref, lease=lease)
+            return 1
 
     terr(trail, "drive_to_completion",
          f"rebase did not complete after {MAX_REBASE_STEPS} steps",
@@ -663,6 +680,12 @@ def step_advance(
             data={"commit": sha, "subject": subject,
                   "remaining": rebase_inspect.remaining_rebase_commits(cwd)},
         )
+        dropped_replayed = rebase_inspect.drop_replayed_todo_pick(cwd)
+        if dropped_replayed:
+            core.log.dim(
+                f"Cleared hand-committed pick "
+                f"{git.client.abbrev(dropped_replayed)} from git-rebase-todo",
+            )
     elif rebase_inspect.is_empty_patch(cwd):
         sha, subject = rebase_inspect.rebase_head_info(cwd)
         core.log.info(f"Skipping empty commit {sha} — {subject}")
@@ -693,6 +716,21 @@ def step_advance(
         core.log.error(f"git rebase --skip failed (exit {r.returncode})")
         return 1
 
+    refused = rebase_inspect.is_refused_clean_pick(cwd)
+    if refused:
+        sha, subject = rebase_inspect.rebase_head_info(cwd)
+        tfail(
+            trail, "step_advance", "refused clean pick; leaving rebase in place",
+            data={"commit": refused, "subject": subject,
+                  "remaining": rebase_inspect.remaining_rebase_commits(cwd)},
+        )
+        core.log.error(
+            f"Rebase stopped on a refused pick {git.client.abbrev(refused)} — "
+            f"{subject}. Commit by hand, then re-run."
+        )
+        _record_failed(ctx, tally, target_ref=target_ref, lease=lease)
+        return 1
+
     dropped_dup = rebase_inspect.drop_requeued_stopped_pick(cwd)
     if dropped_dup:
         core.log.dim(
@@ -700,6 +738,7 @@ def step_advance(
             "from git-rebase-todo",
         )
 
+    head_before = git.client.head_sha(cwd)
     r = rebase_continue(cwd)
     if r.ok:
         return None
@@ -707,8 +746,12 @@ def step_advance(
     if r.stderr.strip():
         core.log.dim(r.stderr.strip())
 
-    # rebase --continue can return non-zero when the next commit has conflicts
-    if rebase_inspect.rebase_in_progress(cwd):
+    # Next-commit conflicts, or HEAD moving onto a stopped-sha empty pause,
+    # are progress. Any other in-progress stop is a failed continue.
+    if (
+        rebase_inspect.rebase_in_progress(cwd)
+        and rebase_inspect.continue_pause_is_progress(cwd, head_before)
+    ):
         return None
 
     tfail(trail, "step_advance", "rebase --continue failed without conflicts",

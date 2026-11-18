@@ -1,4 +1,4 @@
-"""Tests for rebase.lifecycle.step_advance: skip, continue, and replay audit."""
+"""Tests for rebase.lifecycle.step_advance: skip, continue, replay audit, and stall paths."""
 
 import subprocess
 import sys
@@ -12,6 +12,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import core.proc  # noqa: E402
 import core.report  # noqa: E402
 import git.client  # noqa: E402
 import rebase.inspect  # noqa: E402
@@ -20,7 +21,7 @@ import rebase.lifecycle  # noqa: E402
 import rebase.survival  # noqa: E402
 import rebase.replay_audit  # noqa: E402
 
-from pr_rebase_support import _TARGET
+from pr_rebase_support import _LEASE, _TARGET
 
 
 # ── _step_advance ────────────────────────────────────────────────────────
@@ -342,3 +343,90 @@ def test_step_advance_clears_requeued_stopped_pick_before_continue(tmp_path):
         "log", "--format=%s", "main..HEAD", cwd=str(repo),
     )
     assert subjects == ["feat2", "feat1"]
+
+
+def test_step_advance_refused_clean_pick_returns_1_without_continue(tmp_path):
+    """A refused pick is left in place; never auto-committed."""
+    saved = []
+    with mock.patch.object(rebase.lifecycle, "_halt_if_discarding", return_value=None), \
+         mock.patch.object(rebase.inspect, "step_committed_manually", return_value=False), \
+         mock.patch.object(rebase.inspect, "is_empty_patch", return_value=False), \
+         mock.patch.object(rebase.inspect, "is_refused_clean_pick", return_value="abc1234"), \
+         mock.patch.object(rebase.inspect, "rebase_head_info",
+                           return_value=("abc1234", "feat: x")), \
+         mock.patch.object(rebase.inspect, "remaining_rebase_commits", return_value=1), \
+         mock.patch.object(rebase.types.RebaseOutcome, "save",
+                           lambda self, c: saved.append(self)), \
+         mock.patch.object(rebase.lifecycle, "rebase_continue") as cont:
+        rc = rebase.lifecycle.step_advance(
+            str(tmp_path), mock.MagicMock(), target_ref="main",
+        )
+
+    assert rc == 1
+    cont.assert_not_called()
+    assert saved
+
+
+def test_step_advance_continue_progress_on_conflicts_returns_none():
+    """A failed continue that left conflicts is the next loop step."""
+    def fake_run(cmd, **kwargs):
+        if "rebase" in cmd and "--continue" in cmd:
+            return subprocess.CompletedProcess(
+                args=cmd, returncode=1, stdout="", stderr="could not apply",
+            )
+        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
+
+    with mock.patch.object(rebase.inspect, "is_empty_patch", return_value=False), \
+         mock.patch.object(rebase.inspect, "is_refused_clean_pick", return_value=""), \
+         mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=True), \
+         mock.patch.object(rebase.inspect, "continue_pause_is_progress", return_value=True), \
+         mock.patch("subprocess.run", side_effect=fake_run):
+        rc = rebase.lifecycle.step_advance("/fake", mock.MagicMock(), target_ref="main")
+
+    assert rc is None
+
+
+def test_drive_loop_stalls_when_step_makes_no_progress(tmp_path):
+    """A no-op step fails the run and leaves the rebase in place."""
+    saved = []
+    commands = []
+
+    def fake_run(*args, **kwargs):
+        commands.append(args)
+        return core.proc.CmdResult()
+
+    with mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=True), \
+         mock.patch.object(rebase.lifecycle, "_drive_one_step", return_value=(None, False)), \
+         mock.patch.object(rebase.types.RebaseOutcome, "save",
+                           lambda self, c: saved.append(self)), \
+         mock.patch.object(git.client, "run", side_effect=fake_run):
+        rc = rebase.lifecycle._drive_loop(
+            str(tmp_path), mock.MagicMock(), rebase.types.RunMode.PUSH,
+            target_ref="origin/main", lease=_LEASE,
+        )
+
+    assert rc == 1
+    assert saved
+    assert not any("--abort" in args for args in commands)
+
+
+def test_drive_loop_finished_rebase_is_not_a_stall(tmp_path):
+    """Leaving rebase-merge is success, not a stuck step."""
+    progress = [True]
+
+    def in_progress(cwd):
+        if progress[0]:
+            progress[0] = False
+            return True
+        return False
+
+    with mock.patch.object(rebase.inspect, "rebase_in_progress", side_effect=in_progress), \
+         mock.patch.object(rebase.lifecycle, "_drive_one_step", return_value=(None, False)), \
+         mock.patch.object(rebase.lifecycle, "rebase_success", return_value=0) as success:
+        rc = rebase.lifecycle._drive_loop(
+            str(tmp_path), mock.MagicMock(), rebase.types.RunMode.PUSH,
+            target_ref="origin/main", lease=_LEASE,
+        )
+
+    assert rc == 0
+    success.assert_called_once()

@@ -20,12 +20,13 @@ no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
 |---|---|---|
 | `conflict_handwritten` | `pr rebase --fix --no-push --repo-dir WT` | `rebase` |
 | `conflict_generated` | `pr rebase --fix --no-push --repo-dir WT` | `rebase_generated` |
-| `stale_generated` | `git -C WT reset --hard <pre_rebase_head>` | `undo_rebase` |
+| `stale_generated` | guidance note; the lease push stays in `commands` | |
 | `ci_failing` | `pr ci --fix --repo-dir WT` | `ci` |
 | `review_findings` | `pr review --self --fix --repo-dir WT` | `review` |
 | `threads_need_human` | `pr comments --fix --repo-dir WT` | `comments` |
 | `closeout_owed` | `pr comments --finish --post --repo-dir WT` | `closeout` |
 | `ready_to_push` | `publish.plan` push argv | `push` |
+| `push_refused` (`not_incorporated_remote`) | `pr rebase --push-only --expect SHA --repo-dir WT` | `push` |
 | `wrong_branch` | `git -C WT switch <branch>` | `switch_branch` |
 | deferred issue | `pr comments --finish --track ID… --post --repo-dir WT` (on request) | `file_threads_issue` |
 | open review findings | `pr review --self --track ID… --post --repo-dir WT` (on request) | `file_review_issue` |
@@ -37,10 +38,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 
 import batch.plan
 import batch.publish
+import git.client
 import pr.needs_person
 import review.deferred_issue
 import review.finding_issue
@@ -159,14 +162,15 @@ def _session(run: Run, item: Item, closeout: CloseoutFn, tree: TreeFn | None) ->
             findings.append(_derived(FindingReason.CLOSEOUT_OWED, CLOSEOUT_WHY))
     else:
         _drop(findings, FindingReason.CLOSEOUT_OWED)
-    planned = _plan_tree(item, tree, debt)
+    planned = _plan_tree(item, tree, debt, no_verify=run.no_verify)
+    _refresh_stored(item, findings, planned)
     if planned is not None:
         _apply_plan(findings, planned)
     after = _after(run, item)
     severity = severity_for(findings)
     checkout = _checkout(item)
-    commands = _commands(item, findings, planned, checkout)
-    notes = _notes(item, commands, checkout)
+    commands = _commands(run, item, findings, planned, checkout)
+    notes = _notes(item, findings, commands, checkout)
     local = planned.tree.local if planned is not None else ""
     return SessionEntry(
         pr=item.key, url=f"https://github.com/{item.repo}/pull/{item.pr}",
@@ -183,18 +187,24 @@ class _Planned:
     plan: batch.publish.PublishPlan
 
 
-def _plan_tree(item: Item, tree: TreeFn | None, debt: CloseoutDebt) -> _Planned | None:
+def _plan_tree(item: Item, tree: TreeFn | None, debt: CloseoutDebt, *,
+               no_verify: bool = False) -> _Planned | None:
     if tree is None:
         return None
     state = tree(item)
     if state is None:
         return None
     return _Planned(state, batch.publish.plan(
-        item, "pr", state, closeout=CloseoutDebt(unlanded=debt.unlanded)))
+        item, "pr", state, closeout=CloseoutDebt(unlanded=debt.unlanded),
+        no_verify=no_verify))
 
 
 def _apply_plan(findings: list[Finding], planned: _Planned) -> None:
     result = planned.plan
+    stored_refusal = _has(findings, FindingReason.PUSH_REFUSED) or _has(
+        findings, FindingReason.WRONG_BRANCH)
+    if result.ok and result.pushes and stored_refusal:
+        return
     if result.ok and result.pushes:
         if not _has(findings, FindingReason.READY_TO_PUSH):
             findings.append(_derived(FindingReason.READY_TO_PUSH))
@@ -208,7 +218,82 @@ def _apply_plan(findings: list[Finding], planned: _Planned) -> None:
         return
     if not _has(findings, FindingReason.PUSH_REFUSED):
         data = {"refusal": result.refusal.value} if result.refusal is not None else {}
+        if result.commits:
+            data["commits"] = list(result.commits)
         findings.append(_derived(FindingReason.PUSH_REFUSED, result.detail, data))
+
+
+def _refresh_stored(item: Item, findings: list[Finding], planned: _Planned | None) -> None:
+    if planned is None:
+        return
+    # An offline replan cannot see a moved remote, so it may not clear a
+    # refusal publish recorded after a real fetch.
+    if planned.tree.observed:
+        _drop(findings, FindingReason.PUSH_REFUSED)
+        _drop(findings, FindingReason.WRONG_BRANCH)
+    if batch.publish.already_published(item, planned.tree) and planned.plan.ok:
+        _drop(findings, FindingReason.STALE_GENERATED)
+        _drop(findings, FindingReason.CONFLICT_HANDWRITTEN)
+        _drop(findings, FindingReason.CONFLICT_GENERATED)
+        return
+    _refresh_rebase(item, findings, planned)
+    findings[:] = [f for f in findings
+                   if f.reason is not FindingReason.STALE_GENERATED
+                   or not _stale_resolved(item, f, planned.tree)]
+
+
+def _refresh_rebase(item: Item, findings: list[Finding], planned: _Planned) -> None:
+    state = batch.plan.pr_state(item.repo_dir, item.branch)
+    if not _rebase_clean(state, item, planned.tree):
+        return
+    _drop(findings, FindingReason.CONFLICT_HANDWRITTEN)
+    _drop(findings, FindingReason.CONFLICT_GENERATED)
+    stale = list(dict.fromkeys([*state.rebase.files_one_sided, *state.rebase.files_stale]))
+    if stale and not _has(findings, FindingReason.STALE_GENERATED):
+        findings.append(Finding(
+            FindingReason.STALE_GENERATED, "rebase", files=list(stale),
+            data={"one_sided": bool(state.rebase.files_one_sided)},
+            created_at=state.rebase.updated_at))
+
+
+def _rebase_clean(state, item: Item, tree: TreeState) -> bool:
+    if state is None:
+        return False
+    status = getattr(state.rebase.status, "value", state.rebase.status)
+    return (status in ("clean", "completed")
+            and not state.rebase.aborted
+            and tree.local not in ("", item.remote_sha, item.pre_rebase_head))
+
+
+def _stale_resolved(item: Item, finding: Finding, tree: TreeState) -> bool:
+    wt = item.worktree
+    local = tree.local
+    if not wt or not local or not Path(wt).is_dir():
+        return False
+    rebase_head = str(finding.data.get("rebase_head") or "")
+    if rebase_head:
+        return (local != rebase_head
+                and git.client.ok("merge-base", "--is-ancestor", rebase_head, local, cwd=wt)
+                and _touches(wt, finding.files, f"{rebase_head}..{local}"))
+    if not finding.created_at or local in (item.remote_sha, item.pre_rebase_head):
+        return False
+    committed_at = git.client.out("log", "-1", "--format=%cI", local, cwd=wt)
+    try:
+        later = datetime.fromisoformat(committed_at) > datetime.fromisoformat(finding.created_at)
+    except ValueError:
+        return False
+    return later and _touches(wt, finding.files, local, since=finding.created_at)
+
+
+def _touches(wt: str, files: list[str], rev: str, *, since: str = "") -> bool:
+    """Whether commits in *rev* changed every one of *files*."""
+    if not files:
+        return False
+    args = ["log", "--format=", "--name-only"]
+    if since:
+        args.append(f"--since={since}")
+    r = git.client.run(*args, rev, cwd=wt)
+    return r.ok and set(files) <= set(r.stdout.split("\n"))
 
 
 def _after(run: Run, item: Item) -> list[str]:
@@ -235,7 +320,7 @@ def _drop(findings: list[Finding], reason: FindingReason) -> None:
     findings[:] = [f for f in findings if f.reason is not reason]
 
 
-def _commands(item: Item, findings: list[Finding],
+def _commands(run: Run, item: Item, findings: list[Finding],
               planned: _Planned | None, checkout: str | None) -> list[SessionCommand]:
     seen: set[FindingReason] = set()
     commands: list[SessionCommand] = []
@@ -252,6 +337,13 @@ def _commands(item: Item, findings: list[Finding],
             action="push",
             push=True,
         ))
+    if (planned is not None and planned.plan.refusal is Refusal.NOT_INCORPORATED_REMOTE
+            and item.remote_sha and (repo := _repo_args(item, checkout))):
+        nv = ("--no-verify",) if run.no_verify else ()
+        commands.append(SessionCommand(
+            ("pr", "rebase", "--push-only", "--expect", item.remote_sha, *nv, *repo),
+            "push under the planned lease once listed remote commits are confirmed",
+            action="push", push=True))
     if filing := _filing_command(item, checkout):
         commands.append(filing)
     if filing := _review_filing_command(item, findings, checkout):
@@ -277,10 +369,6 @@ def _command_for(item: Item, finding: Finding, checkout: str | None) -> SessionC
     if finding.reason is FindingReason.REVIEW_FINDINGS and repo:
         return SessionCommand(("pr", "review", "--self", "--fix", *repo),
                               "address open review findings", action="review")
-    if finding.reason is FindingReason.STALE_GENERATED and item.pre_rebase_head:
-        if git_cmd := _git(item, checkout, "reset", "--hard", item.pre_rebase_head):
-            return SessionCommand(git_cmd, "undo the rebase, then regenerate",
-                                  action="undo_rebase")
     if finding.reason is FindingReason.WRONG_BRANCH:
         if git_cmd := _git(item, checkout, "switch", item.branch):
             return SessionCommand(git_cmd, f"check out {item.branch}",
@@ -333,12 +421,24 @@ def _filing_command(item: Item, checkout: str | None) -> SessionCommand | None:
     )
 
 
-def _notes(item: Item, commands: list[SessionCommand], checkout: str | None) -> list[str]:
+def _stale_note(finding: Finding) -> str:
+    target = ", ".join(finding.files) if finding.files else "the affected files"
+    if finding.data.get("one_sided"):
+        return (f"verify one-sided resolution in {target} against both sides "
+                f"and commit any missing hunks before pushing")
+    return f"regenerate {target} at the rebased tip and commit any changes before pushing"
+
+
+def _notes(item: Item, findings: list[Finding], commands: list[SessionCommand],
+           checkout: str | None) -> list[str]:
     notes: list[str] = []
     if any(c.push for c in commands) and not item.is_draft:
         notes.append(COMMENT_BEFORE_PUSH)
     if checkout is None:
         notes.append(NO_CHECKOUT)
+    for finding in findings:
+        if finding.reason is FindingReason.STALE_GENERATED:
+            notes.append(_stale_note(finding))
     if not any(c.files_issue for c in commands):
         return notes
     info = review.issue.load_issue_provider(checkout, adopt=False)

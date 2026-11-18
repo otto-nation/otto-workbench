@@ -15,7 +15,7 @@ still the head the batch planned from (`Item.remote_sha`):
 | local == origin, or only behind | nothing to push |
 | local is a fast-forward of origin | `pr push --expect <remote_sha>` |
 | diverged, from a batch rebase whose start holds neither `remote_sha` nor a patch-equivalent of each of its commits | refuse: `not_incorporated` |
-| diverged, a remote commit has no patch-equivalent locally and no recorded squash replay | refuse: `not_incorporated_remote` |
+| diverged, a remote commit has no patch-equivalent, recorded replay, or matching author/date/subject locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
 `read_tree` is the publish-time reader: it fetches into
@@ -93,6 +93,9 @@ class TreeState:
     # "" when git could not say. None only in a tree built without reading
     # one — a test's — and then not checked.
     checked_out: str | None = None
+    # False when the remote side is the planned `Item.remote_sha` taken on
+    # trust (the offline reader), not a tip read from origin or a tracking ref.
+    observed: bool = True
 
 
 @dataclass(frozen=True)
@@ -119,44 +122,120 @@ def _cherry_plus(cwd: str, upstream: str, head: str, limit: str = "",
     return tuple(line[2:] for line in r.stdout.splitlines() if line.startswith("+ "))
 
 
+def _range_limit(item: Item, cwd: str) -> str:
+    """Merge-base of *item*'s planned remote head and its base; empty when unknown."""
+    if not item.base_ref:
+        return ""
+    return git.client.out("merge-base", f"refs/remotes/origin/{item.base_ref}",
+                          item.remote_sha, cwd=cwd)
+
+
+@dataclass(frozen=True)
+class _CommitMeta:
+    """Author identity, subject, and parent list of one commit."""
+
+    author_email: str
+    author_timestamp: str
+    subject: str
+    parents: str
+
+    @property
+    def key(self) -> tuple[str, str, str]:
+        return (self.author_email, self.author_timestamp, self.subject)
+
+
+def _commit_signatures(cwd: str, *revs: str, no_walk: bool = False
+                       ) -> dict[str, _CommitMeta]:
+    """Map each commit in *revs* to its author, subject, and parents."""
+    if not revs:
+        return {}
+    cmd: tuple[str, ...] = ("log", "--format=%H%x00%P%x00%ae%x00%at%x00%s")
+    if no_walk:
+        cmd += ("--no-walk",)
+    r = git.client.run(*cmd, *revs, cwd=cwd)
+    if not r.ok:
+        return {}
+    signatures: dict[str, _CommitMeta] = {}
+    for line in r.stdout.splitlines():
+        parts = line.split("\0")
+        if len(parts) != 5:
+            continue
+        sha, parents, ae, at, subj = parts
+        signatures[sha] = _CommitMeta(ae, at, subj, parents)
+    return signatures
+
+
+def _without_matching_signatures(
+    wt: str, found: tuple[str, ...], *, upstream: str, limit: str,
+) -> tuple[str, ...]:
+    """Drop cherry-plus labels uniquely matching an upstream commit that changed parent.
+
+    A rebase onto a moved base always changes parent ``%P``. Two distinct
+    non-patch-equivalent commits sharing ``%P`` and (author, date, subject)
+    is an in-place ``git commit --amend --no-edit``, which stays listed.
+    """
+    shas = tuple(label.split(None, 1)[0] for label in found)
+    cands = _commit_signatures(wt, *shas, no_walk=True)
+    spec = f"{limit}..{upstream}" if limit else upstream
+    upstream_metas = _commit_signatures(wt, spec)
+    cand_keys = [m.key for m in cands.values()]
+    upstream_keys = [m.key for m in upstream_metas.values()]
+    kept: list[str] = []
+    for label in found:
+        cand = cands.get(label.split(None, 1)[0])
+        match = next((m for m in upstream_metas.values()
+                      if cand is not None and m.key == cand.key), None)
+        # One-to-one unique signature whose parent list changed: a rebase
+        # replay. The same parent is an in-place amend and stays listed.
+        if (cand is not None and match is not None
+                and cand_keys.count(cand.key) == 1
+                and upstream_keys.count(cand.key) == 1
+                and cand.parents != match.parents):
+            continue
+        kept.append(label)
+    return tuple(kept)
+
+
 def _unincorporated(item: Item, cwd: str, upstream: str = "") -> tuple[str, ...] | None:
     """Remote commits since the base with no patch-equivalent in *upstream*; None when unreadable.
 
-    *upstream* defaults to the local branch.
+    *upstream* defaults to the local branch. Commits that match an upstream
+    commit by author email, author timestamp, and subject are incorporated
+    even when the patch-id differs (a conflict-resolved replay).
     """
-    limit = git.client.out("merge-base", f"refs/remotes/origin/{item.base_ref}",
-                           item.remote_sha, cwd=cwd) if item.base_ref else ""
-    return _cherry_plus(cwd, upstream or f"refs/heads/{item.branch}", item.remote_sha,
-                        limit, verbose=True)
+    limit = _range_limit(item, cwd)
+    dest = upstream or f"refs/heads/{item.branch}"
+    found = _cherry_plus(cwd, dest, item.remote_sha, limit, verbose=True)
+    if not found:
+        return found
+    return _without_matching_signatures(cwd, found, upstream=dest, limit=limit)
 
 
 def _not_replayed(wt: str, found: tuple[str, ...],
-                  finder: git.replay.ReplayFinder) -> tuple[str, ...]:
-    """Remote cherry-plus labels whose rewrite chain did not pass through a squash.
+                  finder: git.replay.ReplayFinder, *,
+                  upstream: str, limit: str = "") -> tuple[str, ...]:
+    """Remote cherry-plus labels with no recorded replay and no matching author/date/subject.
 
-    A recorded squash is a SHA that two or more distinct original commits were
-    rewritten to (`git.rewrites.fold_targets`). A remote commit is incorporated
-    when its first rewrite hop lands on such a SHA and `ReplayFinder` then
-    reports FOUND or AMBIGUOUS on the local branch. A one-to-one rewrite — an
-    AI-resolved pick — is left listed, so publish still refuses it. UNKNOWN
-    stays listed and fails closed.
+    A recorded squash (a SHA that two or more original commits were rewritten
+    to) is incorporated when `ReplayFinder` reports FOUND or AMBIGUOUS on HEAD.
+    A one-to-one rewrite is not trusted on its own; it falls through to the
+    signature match. UNKNOWN stays listed and fails closed. Remaining labels match by (author email, author
+    timestamp, subject) against *limit*..*upstream*.
     """
-    targets = git.rewrites.fold_targets(Path(wt))
-    if not targets:
-        return found
     mapping = git.rewrites.load(Path(wt))
+    targets = git.rewrites.fold_targets(Path(wt))
     kept: list[str] = []
     for label in found:
         sha = label.split(None, 1)[0]
         hops = mapping.get(sha, [])
-        if not hops or hops[0] not in targets:
-            kept.append(label)
-            continue
-        status = finder.find(sha).status
-        if status in (git.replay.ReplayStatus.FOUND, git.replay.ReplayStatus.AMBIGUOUS):
+        if hops and hops[0] in targets and finder.find(sha).status in (
+            git.replay.ReplayStatus.FOUND, git.replay.ReplayStatus.AMBIGUOUS,
+        ):
             continue
         kept.append(label)
-    return tuple(kept)
+    if not kept:
+        return ()
+    return _without_matching_signatures(wt, tuple(kept), upstream=upstream, limit=limit)
 
 
 def _start_incorporated(item: Item, cwd: str) -> bool:
@@ -245,7 +324,7 @@ def _compute_dropped(item: Item, wt: str, drafted: Sequence[str]) -> tuple[str, 
     return tuple(dropped)
 
 
-def _tree_from(item: Item, remote_sha: str, fetched: bool) -> TreeState:
+def _tree_from(item: Item, remote_sha: str, fetched: bool, observed: bool = True) -> TreeState:
     """Compare *item*'s local branch with *remote_sha*."""
     wt, branch = item.worktree, item.branch
     local = git.client.out("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=wt)
@@ -264,10 +343,11 @@ def _tree_from(item: Item, remote_sha: str, fetched: bool) -> TreeState:
             divergence = RefDivergence()
         else:
             unincorporated = _not_replayed(
-                wt, found, git.replay.ReplayFinder(Path(wt)))
+                wt, found, git.replay.ReplayFinder(Path(wt)),
+                upstream=f"refs/heads/{branch}", limit=_range_limit(item, wt))
     dropped = _dropped(item, wt) if item.worktree else ()
     return TreeState(local, remote_sha, divergence, fetched, incorporated, unincorporated,
-                     dropped, batch.steps.checked_out_branch(wt))
+                     dropped, batch.steps.checked_out_branch(wt), observed)
 
 
 def read_tree(item: Item) -> TreeState:
@@ -301,8 +381,21 @@ def peek_tree(item: Item) -> TreeState:
 
 
 def local_tree(item: Item) -> TreeState:
-    """Compare *item*'s local branch with its planned remote SHA; no network."""
-    return _tree_from(item, item.remote_sha, fetched=True)
+    """Compare *item*'s local branch with its planned remote SHA (or pushed tracking ref); no network."""
+    wt, branch = item.worktree, item.branch
+    local = git.client.out("rev-parse", "--verify", "--quiet", f"refs/heads/{branch}", cwd=wt)
+    tracking = git.client.out("rev-parse", "--verify", "--quiet",
+                              f"refs/remotes/origin/{branch}", cwd=wt)
+    remote = tracking if local and tracking == local else item.remote_sha
+    return _tree_from(item, remote, fetched=True, observed=remote != item.remote_sha)
+
+
+def already_published(item: Item, tree: TreeState) -> bool:
+    """Whether *tree* shows *item*'s local branch has already been pushed to origin."""
+    return bool(tree.local and tree.remote == tree.local
+                and tree.remote != item.remote_sha
+                and tree.divergence.comparable
+                and (not item.pre_rebase_head or tree.incorporated))
 
 
 def _has_staged(wt: str) -> bool:
@@ -350,7 +443,7 @@ def plan(item: Item, pr_bin: str, tree: TreeState, *,
                        f"not {item.branch}")
     if not tree.fetched:
         return _refuse(Refusal.FETCH_FAILED, f"could not fetch {item.branch}")
-    if not item.remote_sha or tree.remote != item.remote_sha:
+    if not item.remote_sha or (tree.remote != item.remote_sha and not already_published(item, tree)):
         return _refuse(Refusal.REMOTE_MOVED,
                        f"origin/{item.branch} is {git.client.abbrev(tree.remote) or 'gone'}; "
                        f"the batch planned from {git.client.abbrev(item.remote_sha)}")

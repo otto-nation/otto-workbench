@@ -37,7 +37,7 @@ def test_rebase_without_stale_is_done():
     assert r.status is StepStatus.DONE
 
 
-def test_stale_session_says_undo_then_regenerate(tmp_path):
+def test_stale_session_says_regenerate(tmp_path):
     item = make_item(
         1, worktree=str(tmp_path), pre_rebase_head="p0",
         status=batch.model.ItemStatus.NEEDS_SESSION,
@@ -45,5 +45,6 @@ def test_stale_session_says_undo_then_regenerate(tmp_path):
                           files=["a.pb.go"])])
     entries = batch.session_report.sessions(make_run([item]), closeout=no_debt, tree=None)
     assert entries and entries[0].findings[0].files == ["a.pb.go"]
-    why = " ".join(c.why for c in entries[0].commands)
-    assert "undo" in why and "regenerate" in why
+    notes = " ".join(entries[0].notes)
+    assert "regenerate" in notes and "a.pb.go" in notes
+    assert "reset" not in " ".join(tok for c in entries[0].commands for tok in c.argv)

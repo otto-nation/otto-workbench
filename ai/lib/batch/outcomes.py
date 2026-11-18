@@ -272,12 +272,18 @@ def _evidence(step: Step, stdout: str, item: Item, head_before: str,
         found.append({"kind": EvidenceKind.OPEN_FINDINGS.value, "findings": findings})
     if step is Step.REBASE:
         report = _json(stdout) or {}
+        rebase_head = ""
+        wt = item.worktree
+        if (report.get("files_one_sided") or report.get("files_stale")) and wt and os.path.isdir(wt):
+            rebase_head = git.client.out("rev-parse", "--verify", "--quiet", "HEAD", cwd=wt)
+        extra = {"rebase_head": rebase_head} if rebase_head else {}
         if report.get("files_one_sided"):
             found.append({"kind": EvidenceKind.ONE_SIDED.value,
                           "files": report["files_one_sided"],
-                          "regions": report.get("one_sided_regions", [])})
+                          "regions": report.get("one_sided_regions", []), **extra})
         if report.get("files_stale"):
-            found.append({"kind": EvidenceKind.STALE.value, "files": report["files_stale"]})
+            found.append({"kind": EvidenceKind.STALE.value, "files": report["files_stale"],
+                          **extra})
     if step is Step.CI:
         extra = ci_unfixed(stdout) if fixing else ci_failing(stdout)
         kind = EvidenceKind.CI_UNFIXED if fixing else EvidenceKind.CI_FAILING

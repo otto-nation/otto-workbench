@@ -156,8 +156,9 @@ export const ACTION_LABEL = Object.freeze({
   review: 'Fix review findings',
   closeout: 'Close out comments',
   push: 'Push',
-  switch_branch: 'Switch branch',
+  // legacy: persisted reports from before the action was removed
   undo_rebase: 'Undo rebase',
+  switch_branch: 'Switch branch',
   file_threads_issue: 'File issue for threads',
   file_review_issue: 'File issues for findings',
 });

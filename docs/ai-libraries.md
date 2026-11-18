@@ -4630,7 +4630,7 @@ still the head the batch planned from (`Item.remote_sha`):
 | local == origin, or only behind | nothing to push |
 | local is a fast-forward of origin | `pr push --expect <remote_sha>` |
 | diverged, from a batch rebase whose start holds neither `remote_sha` nor a patch-equivalent of each of its commits | refuse: `not_incorporated` |
-| diverged, a remote commit has no patch-equivalent locally and no recorded squash replay | refuse: `not_incorporated_remote` |
+| diverged, a remote commit has no patch-equivalent, recorded replay, or matching author/date/subject locally | refuse: `not_incorporated_remote` |
 | diverged | `pr rebase --push-only --expect <remote_sha>` |
 
 `read_tree` is the publish-time reader: it fetches into
@@ -4738,12 +4738,13 @@ no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
 |---|---|---|
 | `conflict_handwritten` | `pr rebase --fix --no-push --repo-dir WT` | `rebase` |
 | `conflict_generated` | `pr rebase --fix --no-push --repo-dir WT` | `rebase_generated` |
-| `stale_generated` | `git -C WT reset --hard <pre_rebase_head>` | `undo_rebase` |
+| `stale_generated` | guidance note; the lease push stays in `commands` | |
 | `ci_failing` | `pr ci --fix --repo-dir WT` | `ci` |
 | `review_findings` | `pr review --self --fix --repo-dir WT` | `review` |
 | `threads_need_human` | `pr comments --fix --repo-dir WT` | `comments` |
 | `closeout_owed` | `pr comments --finish --post --repo-dir WT` | `closeout` |
 | `ready_to_push` | `publish.plan` push argv | `push` |
+| `push_refused` (`not_incorporated_remote`) | `pr rebase --push-only --expect SHA --repo-dir WT` | `push` |
 | `wrong_branch` | `git -C WT switch <branch>` | `switch_branch` |
 | deferred issue | `pr comments --finish --track ID… --post --repo-dir WT` (on request) | `file_threads_issue` |
 | open review findings | `pr review --self --track ID… --post --repo-dir WT` (on request) | `file_review_issue` |

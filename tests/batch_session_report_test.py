@@ -146,7 +146,6 @@ def test_session_commands_carry_stable_action_ids(tmp_path):
         (FindingReason.REVIEW_FINDINGS, "review", {}),
         (FindingReason.THREADS_NEED_HUMAN, "comments", {}),
         (FindingReason.WRONG_BRANCH, "switch_branch", {}),
-        (FindingReason.STALE_GENERATED, "undo_rebase", {"pre_rebase_head": SHA}),
     ]
     for reason, action, extra in cases:
         item = make_item(1, worktree=wt, repo_dir=wt, status=ItemStatus.NEEDS_SESSION,
@@ -157,6 +156,64 @@ def test_session_commands_carry_stable_action_ids(tmp_path):
         actions = [c.action for e in entries for c in e.commands if not c.files_issue]
         assert actions == [action]
         assert entries[0].commands[0].to_dict()["action"] == action
+
+
+def test_stale_generated_emits_tip_note_and_never_reset_hard(tmp_path):
+    wt = str(tmp_path)
+    for one_sided, needle in (
+        (False, "regenerat"),
+        (True, "one-sided"),
+    ):
+        item = make_item(1, worktree=wt, repo_dir=wt, status=ItemStatus.NEEDS_SESSION,
+                         pre_rebase_head=SHA)
+        item.findings = [Finding(FindingReason.STALE_GENERATED, "rebase",
+                                 files=["a.pb.go"], data={"one_sided": one_sided})]
+        entries = batch.session_report.sessions(
+            make_run([item]), closeout=no_debt, tree=None)
+        assert entries
+        joined_notes = " ".join(entries[0].notes)
+        joined_argv = " ".join(tok for c in entries[0].commands for tok in c.argv)
+        actions = [c.action for c in entries[0].commands]
+        assert needle in joined_notes
+        assert "a.pb.go" in joined_notes
+        assert "pushing" in joined_notes
+        if one_sided:
+            assert "both sides" in joined_notes
+            assert "missing hunks" in joined_notes
+        else:
+            assert "rebased tip" in joined_notes
+        assert "reset" not in joined_argv
+        assert "--hard" not in joined_argv
+        assert "undo_rebase" not in actions
+
+
+def test_not_incorporated_remote_carries_commits_and_expect_push_command(tmp_path):
+    wt = str(tmp_path)
+    item = make_item(1, worktree=wt, repo_dir=wt, branch="feat")
+    tree = TreeState(
+        local=SHA, remote=item.remote_sha,
+        divergence=RefDivergence(ahead=1, behind=2, comparable=True),
+        unincorporated=("c1 subj one", "c2 subj two"),
+        checked_out=item.branch,
+    )
+    run = make_run([item])
+    entries = batch.session_report.sessions(
+        run, closeout=no_debt, tree=lambda i: tree)
+    refused = next(f for f in entries[0].findings if f.reason is FindingReason.PUSH_REFUSED)
+    assert refused.data["refusal"] == "not_incorporated_remote"
+    assert refused.data["commits"] == ["c1 subj one", "c2 subj two"]
+    expected = ("pr", "rebase", "--push-only", "--expect", item.remote_sha,
+                "--repo-dir", wt)
+    push = next(c for c in entries[0].commands if c.action == "push")
+    assert push.argv == expected
+    assert push.push is True
+    run.no_verify = True
+    with_nv = batch.session_report.sessions(
+        run, closeout=no_debt, tree=lambda i: tree)
+    nv_push = next(c for c in with_nv[0].commands if c.action == "push")
+    assert "--no-verify" in nv_push.argv
+    assert nv_push.argv == ("pr", "rebase", "--push-only", "--expect", item.remote_sha,
+                            "--no-verify", "--repo-dir", wt)
 
 
 def test_running_run_sessions_only_terminal_items():

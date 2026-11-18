@@ -192,6 +192,54 @@ EOF
   [ "$output" = $'## Now — run R1\nNothing in the report: no PR has findings or commands.' ]
 }
 
+@test "run-session: Now renders commits and counts a done PR with undecided findings as waiting" {
+  _atext now.ts '(async () => { const e = await import(args[2]); const d = e.latestDecisions(JSON.parse(args[1])); return m.renderNow("run R1", JSON.parse(args[0]), d); })()' \
+    '[{"pr":"o/r#1","state":"done","severity":"act","branch":"b1","base_ref":"main",
+       "findings":[{"reason":"push_refused","step":"publish","detail":"replay","data":{"commits":["c1 subj","c2 two"]}}]}]' \
+    '[]' \
+    "$EXT/events.ts"
+  [ "$status" -eq 0 ]
+  local expected
+  expected=$(cat <<'EOF'
+## Now — run R1: 1 of 1 PRs waiting on you
+
+### o/r#1 — done (act) · b1 → main
+- finding `push_refused:publish` — replay (commits: c1 subj, c2 two)
+EOF
+)
+  [ "$output" = "$expected" ]
+
+  _atext now.ts '(async () => { const e = await import(args[2]); const d = e.latestDecisions(JSON.parse(args[1])); return m.renderNow("run R1", JSON.parse(args[0]), d); })()' \
+    '[{"pr":"o/r#1","state":"done","severity":"act","branch":"b1","base_ref":"main",
+       "findings":[{"reason":"push_refused","step":"publish","detail":"replay","data":{"commits":["c1 subj","c2 two"]}}]}]' \
+    '[{"kind":"decision","item":"o/r#1","finding":"push_refused:publish","verdict":"fixed","reason":"ok"}]' \
+    "$EXT/events.ts"
+  [ "$status" -eq 0 ]
+  expected=$(cat <<'EOF'
+## Now — run R1: 0 of 1 PRs waiting on you
+
+### o/r#1 — done (act) · b1 → main
+- finding `push_refused:publish` — replay (commits: c1 subj, c2 two)
+  decided: fixed — ok
+EOF
+)
+  [ "$output" = "$expected" ]
+
+  _text now.ts 'm.renderNow("run R1", JSON.parse(args[0]), new Map())' \
+    '[{"pr":"o/r#1","state":"done","severity":"act","branch":"b1","base_ref":"main",
+       "findings":[],
+       "commands":[{"argv":["pr","batch","note","--finding","x:y"],"why":"file issue","action":"file_threads_issue"}]}]'
+  [ "$status" -eq 0 ]
+  expected=$(cat <<'EOF'
+## Now — run R1: 0 of 1 PRs waiting on you
+
+### o/r#1 — done (act) · b1 → main
+- run `pr batch note --finding x:y` — file issue
+EOF
+)
+  [ "$output" = "$expected" ]
+}
+
 @test "run-session: the latest well-formed state entry on the branch wins" {
   _eval session.ts '[m.latestState(JSON.parse(args[0])), m.latestState([])]' '[
     {"type":"custom","customType":"workbench-run","data":{"runDir":"/a","runId":"a","cursor":3,"nowDigest":"x"}},

@@ -31,10 +31,12 @@ def test_a_finding_renders_detail_files_and_log():
         "detail": "origin moved\n twice",
         "files": ["a.go", "b.go"],
         "log": "/l/x.log",
+        "data": {"commits": ["abc one", "def two"]},
     }]))
     assert "- push_refused: origin moved twice" in md
     assert "  - files: a.go, b.go" in md
     assert "  - log: /l/x.log" in md
+    assert "  - commits: abc one, def two" in md
     assert "remedy" not in md
 
 

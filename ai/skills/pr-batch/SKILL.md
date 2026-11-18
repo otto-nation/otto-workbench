@@ -93,7 +93,7 @@ command: read the log or wait.
 |---|---|---|
 | `conflict_handwritten` | rebase aborted on a hand-written conflict | `pr rebase --fix --no-push --repo-dir WT` |
 | `conflict_generated` | rebase aborted; generated files need a declared regenerator | `pr rebase --fix --no-push --repo-dir WT` |
-| `stale_generated` | rebase left generated files stale | `git reset --hard <pre_rebase_head>` — never accept |
+| `stale_generated` | rebase left generated files stale | none — regenerate at the rebased tip, commit, then push under the lease |
 | `ci_failing` | read-only CI is red | `pr ci --fix --repo-dir WT` |
 | `review_findings` | open self-review findings | `pr review --self --fix --repo-dir WT` |
 | `threads_need_human` | review comments need a person | `pr comments --fix --repo-dir WT` |

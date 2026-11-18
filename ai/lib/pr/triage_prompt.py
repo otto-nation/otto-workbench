@@ -149,7 +149,9 @@ def build_triage_prompt(
         history_block = (
             "\nCommits already made on this branch (newest first). A commit whose "
             "subject matches what a thread asks for means that thread was already "
-            "acted on — classify it already_addressed, not invalid:\n"
+            "acted on — classify it already_addressed, not invalid. That is not "
+            "enough on its own: still cite a file and 1-based line the matching "
+            "commit actually touched; empty evidence_file still downgrades:\n"
             f"{commit_log}\n"
         )
 
@@ -221,8 +223,11 @@ For each thread, provide:
    REQUIRED for {Verification.ALREADY_ADDRESSED} and {Verification.INVALID} — those verdicts get posted back to the
    reviewer as a claim about their code, and a claim with no line to point at is not one
    you can make. Cite the line that already does what the reviewer asked
-   (already_addressed) or the line that contradicts their premise (invalid). If you
-   cannot name one, the verdict is needs_discussion. Leave both empty otherwise.
+   (already_addressed) or the line that contradicts their premise (invalid). For an
+   unanchored review-body item or a commit-backed already_addressed, cite a file and
+   1-based line the matching commit actually touched — a matching commit subject
+   alone is not enough, and empty evidence_file still downgrades. If you cannot name
+   one, the verdict is needs_discussion. Leave both empty otherwise.
 
 Thread data:
 {thread_json}

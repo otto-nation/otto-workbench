@@ -282,15 +282,17 @@ def _github_only(
         )
     ckpt = pr.fix_checkpoint.load(ctx.target_dir)
     phase = ckpt.phase if ckpt else None
+
+    def fetch_threads():
+        report = review.comment_threads.read_report(
+            ctx, gh.pr_data.fetch_pr_data(ctx.repo, str(ctx.pr_number)),
+        )
+        return review.comment_threads.settle_adoptable_map(report)
+
     status = pr.settlement.run_settle(
         ctx, args.settle, args.settle_as, args.reason or "", args.commit or "",
         answers=review.closeout.tracking_answers(ctx.target_dir, phase=phase),
-        fetch_threads=lambda: {
-            t.id: t
-            for t in review.comment_threads.read_report(
-                ctx, gh.pr_data.fetch_pr_data(ctx.repo, str(ctx.pr_number)),
-            ).threads
-        },
+        fetch_threads=fetch_threads,
     )
     fix.resume.clear_if_adopted(ctx.target_dir)
     return status

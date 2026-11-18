@@ -27,8 +27,11 @@ For each thread, provide:
    REQUIRED for already_addressed and invalid — those verdicts get posted back to the
    reviewer as a claim about their code, and a claim with no line to point at is not one
    you can make. Cite the line that already does what the reviewer asked
-   (already_addressed) or the line that contradicts their premise (invalid). If you
-   cannot name one, the verdict is needs_discussion. Leave both empty otherwise.
+   (already_addressed) or the line that contradicts their premise (invalid). For an
+   unanchored review-body item or a commit-backed already_addressed, cite a file and
+   1-based line the matching commit actually touched — a matching commit subject
+   alone is not enough, and empty evidence_file still downgrades. If you cannot name
+   one, the verdict is needs_discussion. Leave both empty otherwise.
 
 Thread data:
 [

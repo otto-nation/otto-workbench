@@ -13,8 +13,10 @@ from review_threads_support import _fix, _make_state, _no_published_summary  # n
 from conftest import make_ctx
 import pr.state
 import pr.settlement
+import pr.triage
 from pr.fix import FixOutcome, ItemOutcome, SettledBy
-from pr.thread_models import ReportThread
+from pr.thread_models import CommentItem, CommentSourceKind, PRReport, ReportThread
+import review.comment_threads
 
 
 class TestSettleAdoptsOffSnapshot:
@@ -99,3 +101,39 @@ class TestSettleAdoptsOffSnapshot:
         ) == 0
         fetch.assert_not_called()
         assert self._reload(ctx).fix.items[0].outcome is FixOutcome.ALREADY_ADDRESSED
+
+    def test_rb_id_from_review_body_comments_is_adopted(self, tmp_path, capsys):
+        ctx = self._ctx(tmp_path)
+        self._save(ctx, self._needs_human("t-other"))
+        report = PRReport(review_body_comments=[{
+            "id": 88, "user": "alice", "body": "please rename the guard",
+        }])
+        fetch = MagicMock(
+            return_value=review.comment_threads.settle_adoptable_map(report),
+        )
+        assert pr.settlement.run_settle(
+            ctx, ["rb-88-0"], "already_addressed", "", "",
+            fetch_threads=fetch,
+        ) == 0
+        fetch.assert_called_once()
+        item = next(o for o in self._reload(ctx).fix.items if o.id == "rb-88-0")
+        assert item.outcome is FixOutcome.ALREADY_ADDRESSED
+        assert item.settled_by is SettledBy.OPERATOR
+        assert "not in the fix snapshot — taken from the PR" in capsys.readouterr().err
+
+    def test_settle_adoptable_map_assigns_rb_ids_like_triage(self):
+        report = PRReport(
+            threads=[self._thread("PRRT_t1")],
+            review_body_comments=[{
+                "id": 88, "user": "alice", "body": "please rename the guard",
+            }],
+        )
+        item = CommentItem(
+            source_id="88",
+            source_type=CommentSourceKind.REVIEW_BODY,
+        )
+        pr.triage.assign_item_ids([item])
+        adoptable = review.comment_threads.settle_adoptable_map(report)
+        assert item.id in adoptable
+        assert "PRRT_t1" in adoptable
+        assert adoptable[item.id].reviewer == "alice"

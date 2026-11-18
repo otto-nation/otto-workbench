@@ -115,8 +115,9 @@ def finish_deferred_work(
     """Close out what the fix pass held back: replies, tracking issue, summary.
 
     False once a `--track` id naming no deferred thread has been reported, or
-    the summary was refused because a handed-back thread still has no answer
-    on GitHub; the caller turns that into the exit status.
+    a handed-back thread still has no answer on GitHub. The unanswered check
+    runs before the held-commit push and the queued replies, so a refusal
+    mutates nothing on GitHub; the caller turns that into the exit status.
 
     A phase of its own rather than a tail of `--fix`, because the summary is
     withheld until the needs_human threads have been discussed — which by
@@ -143,6 +144,20 @@ def finish_deferred_work(
     if state is None:
         return True
     threads_by_id = {t.id: t for t in report.threads}
+    # `--track` files these later in this run; they are an answer, not a block.
+    answered_now = frozenset(
+        o.id for o in review.deferred_issue.deferred_outcomes(state)
+        if o.id in track
+    )
+    owed = pr.settlement.unanswered_handbacks(
+        state.fix.fix, threads_by_id, answered_now,
+    )
+    if owed:
+        pr.settlement.report_unanswered_handbacks(owed)
+        # The adopted checkpoint above is work that happened; a refusal must
+        # not discard it.
+        pr.state.save_state(ctx.target_dir, state)
+        return False
     pr.history_rewrite.follow_history_rewrite(state, wt_path)
     push_held_commit(state, wt_path, trail, no_push_verify=no_push_verify)
     if state.fix.pr_body_pending:

@@ -693,7 +693,10 @@ def settle_targets(
     the thread you meant" are indistinguishable from the outside, so a typo
     would read as agreement. An id missing from the snapshot but present in
     `threads` is adopted instead: a new row is appended, then treated like any
-    other named target.
+    other named target. Callers put synthetic `rb-<review_id>-<idx>` items
+    from `report.review_body_comments` in that map with the same ids
+    `--triage` assigns, so a review-body item on the PR is adopted rather
+    than refused.
     """
     by_id = {o.id: o for o in record.items if o.id}
     unknown = sorted({t for t in targets if t not in by_id})

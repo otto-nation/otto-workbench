@@ -42,7 +42,7 @@ import pr.thread_replies
 import pr.triage
 import pr.triage_round
 from pr.comments_state import ThreadRecord, ThreadState
-from pr.thread_models import PRReport, ReportThread
+from pr.thread_models import CommentItem, CommentSourceKind, PRReport, ReportThread
 import review.closeout
 from review.deferred_issue import TRACK_ALL
 
@@ -175,6 +175,34 @@ def read_report(ctx, pr_data: PRData) -> PRReport:
     if state is not None:
         mark_report_seen(report, state.comments)
     return report
+
+
+def settle_adoptable_map(report: PRReport) -> dict[str, ReportThread]:
+    """Threads and synthetic review-body items `--settle` can adopt, keyed by id.
+
+    Review-body ids use `pr.triage.assign_item_ids`, the same assignment
+    `--triage` writes, so `rb-<review_id>-<idx>` on the PR is adoptable even
+    when the fix snapshot never recorded it.
+    """
+    by_id = {t.id: t for t in report.threads if t.id}
+    items = [
+        CommentItem(
+            source_id=str(comment["id"]),
+            source_type=CommentSourceKind.REVIEW_BODY,
+            reviewer=str(comment.get("user") or ""),
+            body=str(comment.get("body") or ""),
+        )
+        for comment in report.review_body_comments
+        if comment.get("id") is not None
+    ]
+    pr.triage.assign_item_ids(items)
+    for item in items:
+        by_id[item.id] = ReportThread(
+            id=item.id,
+            reviewer=item.reviewer,
+            comments=[{"body": item.body, "author": {"login": item.reviewer}}],
+        )
+    return by_id
 
 
 def _resume_decision(args, ctx, toplevel, report, trail) -> fix.comments_resume.ResumeDecision:

@@ -24,7 +24,7 @@ from git.land import CommitStatus
 import pr.comments
 import pr.thread_replies
 import pr.summary_publish
-from pr.fix import FixOutcome, ItemOutcome, SettledBy
+from pr.fix import FixOutcome, Handoff, ItemOutcome, SettledBy
 from pr.state import PRIdentity, PRState
 from pr.thread_models import PRReport, ReportThread
 import review.closeout
@@ -201,6 +201,26 @@ class TestFinishDeferredWork:
         # the item's own `format_item_line`, with its outcome beside the id.
         assert not any("rb-4100200300-3  needs_human" in str(c[0][0])
                        for c in info.call_args_list)
+
+    @pytest.mark.parametrize("handoff", (None, Handoff.PLAN_DECLINED))
+    def test_unanswered_declined_does_not_push_or_post_replies(
+        self, worktree, handoff,
+    ):
+        self._save(worktree, items=[ItemOutcome(
+            id="t1", outcome=FixOutcome.DECLINED, summary="premise is wrong",
+            decided_at="2026-03-01T12:00:00Z", handoff=handoff,
+        )], summary_deferred=True, commit_status="no_changes")
+        report = PRReport(threads=[ReportThread(
+            id="t1", my_login="me",
+            comments=[{"author": {"login": "kgn"}, "body": "x",
+                       "createdAt": "2026-03-01T11:00:00Z"}],
+        )])
+        with patch.object(review.closeout, "push_held_commit") as push, \
+                patch.object(review.closeout, "post_pending_fix_replies") as replies:
+            assert review.closeout.finish_deferred_work(
+                self._ctx(worktree), report) is False
+        push.assert_not_called()
+        replies.assert_not_called()
 
     def test_unanswered_declined_returns_false_and_posts_nothing(self, worktree):
         self._save(worktree, items=[ItemOutcome(

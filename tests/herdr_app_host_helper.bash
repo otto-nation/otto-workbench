@@ -6,8 +6,9 @@
 #   Writes node loader hooks that resolve `gpui-kit`, `gpui-base` and `herdr` to generated stubs:
 #   every gpui name is a chainable no-op (`View` a class). When globalThis.__gpuiRecord is an array at
 #   call time, each gpui factory (div(), h_flex(), v_flex(), svg(), Input.new(), TextView.markdown(), …)
-#   pushes { id: null, click: null, children: [] }; .id(x) records x, .on_click(fn) records fn,
-#   .child/.children append, .when(c, b) returns c ? b(el) : el, every other method returns the element.
+#   pushes { id: null, click: null, mousedown: null, children: [] }; .id(x) records x, .on_click(fn)
+#   records fn, .on_mouse_down(btn, fn) records fn as mousedown, .child/.children append, .when(c, b)
+#   returns c ? b(el) : el, every other method returns the element.
 #   With the global unset, behaviour is unchanged. A herdr name calls globalThis.__herdr[name]
 #   when the test set it, else is a no-op.
 # _host JS — runs JS (top-level await allowed) as an ES module with:
@@ -40,7 +41,7 @@ export async function initialize({ root }) {
   }
 }
 const CHAIN = "const chain = () => { const f = new Proxy(function () {}, { get: (t, k) => (k === \"then\" ? undefined : k === \"prototype\" ? t.prototype : () => f), apply: () => f, construct: () => f }); return f; };\n";
-const GPUI = CHAIN + "const rec = () => { const recs = globalThis.__gpuiRecord; if (!Array.isArray(recs)) return chain(); const el = { id: null, click: null, children: [] }; recs.push(el); const wrap = new Proxy(function () {}, { get: (t, k) => { if (k === \"then\") return undefined; if (k === \"prototype\") return t.prototype; if (k === \"id\") return (x) => { el.id = x; return wrap; }; if (k === \"on_click\") return (fn) => { el.click = fn; return wrap; }; if (k === \"child\") return (c) => { el.children.push(c); return wrap; }; if (k === \"children\") return (...cs) => { el.children.push(...cs.flat()); return wrap; }; if (k === \"when\") return (c, b) => (c ? b(wrap) : wrap); return () => wrap; }, apply: () => wrap, construct: () => wrap }); return wrap; };\nconst gpui = () => new Proxy(function () {}, { apply: () => rec(), construct: () => rec(), get: (t, k) => (k === \"then\" ? undefined : k === \"prototype\" ? t.prototype : () => rec()) });\n";
+const GPUI = CHAIN + "const rec = () => { const recs = globalThis.__gpuiRecord; if (!Array.isArray(recs)) return chain(); const el = { id: null, click: null, mousedown: null, children: [] }; recs.push(el); const wrap = new Proxy(function () {}, { get: (t, k) => { if (k === \"then\") return undefined; if (k === \"prototype\") return t.prototype; if (k === \"id\") return (x) => { el.id = x; return wrap; }; if (k === \"on_click\") return (fn) => { el.click = fn; return wrap; }; if (k === \"on_mouse_down\") return (btn, fn) => { el.mousedown = fn; return wrap; }; if (k === \"child\") return (c) => { el.children.push(c); return wrap; }; if (k === \"children\") return (...cs) => { el.children.push(...cs.flat()); return wrap; }; if (k === \"when\") return (c, b) => (c ? b(wrap) : wrap); return () => wrap; }, apply: () => wrap, construct: () => wrap }); return wrap; };\nconst gpui = () => new Proxy(function () {}, { apply: () => rec(), construct: () => rec(), get: (t, k) => (k === \"then\" ? undefined : k === \"prototype\" ? t.prototype : () => rec()) });\n";
 function source(spec) {
   const list = [...(names[spec] ?? [])];
   if (spec === "herdr") return CHAIN + list.map((n) => `export const ${n} = (...a) => (globalThis.__herdr?.${n} ? globalThis.__herdr.${n}(...a) : chain());`).join("\n");

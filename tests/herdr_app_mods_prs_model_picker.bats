@@ -50,15 +50,14 @@ const draw = () => {
   picker.expanded = "synthesis";
   const recs = (globalThis.__gpuiRecord = []);
   picker.content();
-  const optionIds = recs
-    .filter((r) => typeof r.click === "function" && /^review-models-synthesis-\d+$/.test(String(r.id ?? "")))
-    .map((r) => r.id);
+  const optionRows = recs.filter((r) => typeof r.click === "function" && /^review-models-synthesis-\d+$/.test(String(r.id ?? "")));
   const enabled = phaseOptions(doc, "synthesis", "").sections.flatMap((s) => s.rows).filter((r) => !r.disabled);
   return {
-    optionIds,
-    unique: new Set(optionIds).size,
+    optionIds: optionRows.map((r) => r.id),
+    unique: new Set(optionRows.map((r) => r.id)).size,
     enabled: enabled.length,
     refs: enabled.map((r) => r.ref),
+    mousedown: optionRows.filter((r) => typeof r.mousedown === "function").length,
   };
 };
 PICKER_JS
@@ -73,6 +72,8 @@ PICKER_JS
 }
 
 @test "hoverRow stops a left mouse_down so a popover option click is not an outside dismiss" {
-  grep -A8 '^export function hoverRow' "$REPO_ROOT/ai/herdr/app/mods/_ui/ui.js" \
-    | grep -q 'on_mouse_down("left"'
+  _host "$PICKER
+    out(draw());"
+  [ "$status" -eq 0 ]
+  jq -e '.mousedown == .unique and .mousedown > 1' <<<"$output"
 }

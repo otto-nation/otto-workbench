@@ -173,7 +173,6 @@ export class ModelPicker {
   }
 
   failOpenContent() {
-    const t = theme();
     return popoverSurface()
       .child(caption(failCaption(this.result.error)))
       .child(caption("Model for the next run, per phase. Blank uses the configured one. Review phases refuse light and Haiku models."))
@@ -252,7 +251,6 @@ export class ModelPicker {
   }
 
   customRow(phase) {
-    const t = theme();
     const selected = this.custom || this.isCustom(phase);
     const row = hoverRow(`${this.id}-${phase}-custom`, { selected })
       .on_click(() => {

@@ -154,8 +154,8 @@ def sessions(run: Run, *, closeout: CloseoutFn | None = None,
     if not wanted:
         return []
     with ThreadPoolExecutor(max_workers=min(8, len(wanted))) as pool:
-        # Submit in input order and collect in that same order; do not use
-        # as_completed, which would scramble the list _order then reads.
+        # Collect futures in submit order: simpler than as_completed, and a
+        # worker exception surfaces deterministically (first item in input order).
         futures = [pool.submit(_session, run, item, reader, tree) for item in wanted]
         entries = [future.result() for future in futures]
     return _order([e for e in entries if e.findings or e.commands])

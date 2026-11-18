@@ -107,7 +107,7 @@ CONTRACT = core.command_contract.CommandContract(
                 "commit the fix for what the hook named, then: pr rebase --push-only "
                 "--branch {branch}",
                 "if prepare-commit-msg refused a paused step, restore the conflict with "
-                "git -C {worktree} checkout -m -- <path>, or if each listed change is "
+                "git checkout -m -- <path>, or if each listed change is "
                 "superseded: WORKBENCH_ALLOW_DROPPED_CHANGES=1 pr rebase --branch {branch}",
             )),
         )),

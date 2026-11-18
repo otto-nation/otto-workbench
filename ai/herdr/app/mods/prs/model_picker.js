@@ -222,7 +222,6 @@ export class ModelPicker {
   }
 
   phaseList(phase) {
-    const t = theme();
     const opts = phaseOptions(this.result.doc, phase, this.query, this.fields.get(phase).value());
     const kids = [];
     // One index across sections: GPUI keys hit-testing by id, and entries()

@@ -29,7 +29,9 @@ step_mise_install() {
 
 # _mise_is_path_wrapper FILE — true when FILE is the workbench path wrapper.
 _mise_is_path_wrapper() {
-  dd if="$1" bs=1024 count=1 2>/dev/null | tr -d '\0' | grep -q 'mise-path-wrapper'
+  local start
+  start="$(dd if="$1" bs=1024 count=1 2>/dev/null | tr -d '\0')" || true
+  [[ "$start" == *mise-path-wrapper* ]]
 }
 
 # sync_mise — put the path wrapper at ~/.local/bin/mise and the real binary at

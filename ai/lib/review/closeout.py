@@ -154,6 +154,9 @@ def finish_deferred_work(
     )
     if owed:
         pr.settlement.report_unanswered_handbacks(owed)
+        # The adopted checkpoint above is work that happened; a refusal must
+        # not discard it.
+        pr.state.save_state(ctx.target_dir, state)
         return False
     pr.history_rewrite.follow_history_rewrite(state, wt_path)
     push_held_commit(state, wt_path, trail, no_push_verify=no_push_verify)

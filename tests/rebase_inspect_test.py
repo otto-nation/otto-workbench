@@ -178,3 +178,43 @@ def test_step_committed_manually_distinguishes_manual_commit_from_empty_patch(tm
     _commit_file(repo, "g.txt", "g-feat\n", "manual step 2")
     assert rebase.inspect.is_empty_patch(str(repo))
     assert rebase.inspect.step_committed_manually(str(repo)) is True
+
+
+def test_drop_requeued_stopped_pick_removes_duplicate_leading_todo_entry(tmp_path):
+    """A rescheduled stopped pick is dropped once; a second call is a no-op."""
+    repo = init_repo(tmp_path / "requeued")
+    (repo / "f.txt").write_text("base\n")
+    (repo / "g.txt").write_text("g-base\n")
+    commit_all(repo, "base")
+    git_in(repo, "checkout", "-q", "-b", "feat")
+    _commit_file(repo, "f.txt", "feat1\n", "feat1")
+    feat1_sha = git.client.out("rev-parse", "HEAD", cwd=str(repo))
+    feat1_short = git.client.out("rev-parse", "--short", "HEAD", cwd=str(repo))
+    _commit_file(repo, "g.txt", "feat2\n", "feat2")
+    feat2_short = git.client.out("rev-parse", "--short", "HEAD", cwd=str(repo))
+    git_in(repo, "checkout", "-q", "main")
+    _commit_file(repo, "f.txt", "main\n", "main")
+    git_in(repo, "checkout", "-q", "feat")
+    paused = git.client.run("rebase", "main", cwd=str(repo))
+    assert not paused.ok
+
+    merge_dir = rebase.inspect.git_dir(str(repo)) / rebase.inspect.GIT_REBASE_MERGE_DIR
+    todo_path = merge_dir / rebase.inspect.GIT_REBASE_TODO
+    original = todo_path.read_text()
+    stopped = (merge_dir / "stopped-sha").read_text().strip()
+    assert git.client.same_commit(stopped, feat1_sha, cwd=str(repo))
+    todo_path.write_text(f"pick {feat1_short} feat1\n" + original)
+
+    dropped = rebase.inspect.drop_requeued_stopped_pick(str(repo))
+    assert git.client.same_commit(dropped, feat1_sha, cwd=str(repo))
+    new_todo = todo_path.read_text()
+    first = next(
+        line for line in new_todo.splitlines()
+        if line.strip() and not line.startswith("#")
+    )
+    assert first.startswith(f"pick {feat2_short}")
+    assert "feat2" in first
+    original_comments = [line for line in original.splitlines() if line.startswith("#")]
+    new_comments = [line for line in new_todo.splitlines() if line.startswith("#")]
+    assert original_comments == new_comments
+    assert rebase.inspect.drop_requeued_stopped_pick(str(repo)) == ""

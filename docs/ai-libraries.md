@@ -8793,9 +8793,10 @@ start; it names what a hand-run git will miss.
 
 Rebase-state detection and ref reads.
 
-Everything in this module is a read — it inspects ``.git/rebase-merge/`` or
-``.git/rebase-apply/`` to tell the caller what state the worktree is in, but
-never mutates it.
+Almost everything in this module is a read — it inspects ``.git/rebase-merge/``
+or ``.git/rebase-apply/`` to tell the caller what state the worktree is in.
+``drop_requeued_stopped_pick`` is the exception: it removes a duplicate todo
+entry git re-queued after a refused commit.
 
 ### rebase/land.py
 

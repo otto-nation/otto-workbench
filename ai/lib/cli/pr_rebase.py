@@ -106,6 +106,9 @@ CONTRACT = core.command_contract.CommandContract(
                 "if the JSON reads \"status\": \"completed\" with \"force_pushed\": false, "
                 "commit the fix for what the hook named, then: pr rebase --push-only "
                 "--branch {branch}",
+                "if prepare-commit-msg refused a paused step, restore the conflict with "
+                "git -C {worktree} checkout -m -- <path>, or if each listed change is "
+                "superseded: WORKBENCH_ALLOW_DROPPED_CHANGES=1 pr rebase --branch {branch}",
             )),
         )),
         core.command_contract.ExitOutcome(ExitCode.USAGE, "flags that cannot combine (--push-only with "

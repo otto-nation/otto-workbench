@@ -686,6 +686,13 @@ def step_advance(
         core.log.error(f"git rebase --skip failed (exit {r.returncode})")
         return 1
 
+    dropped_dup = rebase_inspect.drop_requeued_stopped_pick(cwd)
+    if dropped_dup:
+        core.log.dim(
+            f"Cleared duplicate re-queued pick {git.client.abbrev(dropped_dup)} "
+            "from git-rebase-todo",
+        )
+
     r = rebase_continue(cwd)
     if r.ok:
         return None

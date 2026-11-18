@@ -165,10 +165,12 @@ export function scrollInset(id, child, { maxH = LAYOUT.bodyMaxH } = {}) {
 }
 
 // list-row: hover fills; selected adds the selected fill, a 2px primary rule on the left and ink
-// text, so fill is never the only cue. Callers add on_click and content.
+// text, so fill is never the only cue. Callers add on_click and content. Stops mouse_down like
+// the other controls so the press is not a window drag or a popover outside-dismiss.
 export function hoverRow(id, { selected = false } = {}) {
   const t = theme();
   return div().id(id).rounded(RADIUS.control).cursor_pointer()
+    .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
     .when(selected, (e) => e.bg(t.selected).border_l_2().border_color(t.accent).text_color(t.foreground))
     .when(!selected, (e) => e.hover((s) => s.bg(t.hover)));
 }

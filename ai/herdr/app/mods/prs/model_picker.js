@@ -225,9 +225,12 @@ export class ModelPicker {
     const t = theme();
     const opts = phaseOptions(this.result.doc, phase, this.query, this.fields.get(phase).value());
     const kids = [];
+    // One index across sections: GPUI keys hit-testing by id, and entries()
+    // restarts at 0 in every section so later providers reuse the first ids.
+    let n = 0;
     for (const section of opts.sections ?? []) {
       kids.push(sectionLabel(section.label));
-      for (const [i, row] of section.rows.entries()) kids.push(this.optionRow(phase, row, i));
+      for (const row of section.rows) kids.push(this.optionRow(phase, row, n++));
     }
     return v_flex().gap(SP.xxs)
       .child(textInput(this.search))

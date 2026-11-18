@@ -134,6 +134,8 @@ When a git command fails (push, fetch, pull, clone), diagnose in this order:
 Step 4 takes the full ref on purpose. `git ls-remote` matches a bare branch name against any
 ref whose tail equals it, so `feat/auth` also returns `refs/heads/user/feat/auth` — two rows,
 and a caller reading the first gets a sibling branch's SHA. Always query `refs/heads/<branch>`.
+Never complete a short SHA to 40 hex by hand; resolve it with `git rev-parse <short>` or
+`git -C <worktree> rev-parse <short>`.
 
 ## Branch Analysis
 

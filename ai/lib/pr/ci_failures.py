@@ -47,6 +47,13 @@ class Outcome(Enum):
 _MAX_CONTEXT_CHARS = 4000
 _CONTEXT_LINES = 80
 
+
+def clip_context(text: str) -> str:
+    """Hard-cap extracted log text so a report cannot carry a multi-MB body."""
+    if len(text) <= _MAX_CONTEXT_CHARS:
+        return text
+    return text[:_MAX_CONTEXT_CHARS]
+
 JOB_PATTERNS: list[tuple[re.Pattern, FailureKind]] = [
     (re.compile(r"shellcheck|eslint|flake8|pylint|yamllint|lint|stylelint|rubocop", re.IGNORECASE), FailureKind.LINT),
     (re.compile(r"pytest|bats|jest|mocha|rspec|test|spec|vitest|unittest|\bit\b|integration", re.IGNORECASE), FailureKind.TEST),
@@ -94,6 +101,7 @@ class FailureItem:
     headline: str | None = None
     source_run_id: int | None = None
     context: str | None = None
+    log_file: str | None = None
 
 
 @dataclass(frozen=True)
@@ -515,15 +523,14 @@ def extract_failure_context(log_text: str, kind: FailureKind) -> str:
     if kind == FailureKind.TEST:
         context = _extract_test_context(lines)
         if context:
-            return context[:_MAX_CONTEXT_CHARS]
+            return clip_context(context)
 
     for marker in LOG_MARKERS:
         context = _extract_around_marker(lines, marker.pattern, marker.before, marker.after)
         if context:
-            return context[:_MAX_CONTEXT_CHARS]
+            return clip_context(context)
 
-    tail = "\n".join(lines[-_CONTEXT_LINES:])
-    return tail[:_MAX_CONTEXT_CHARS]
+    return clip_context("\n".join(lines[-_CONTEXT_LINES:]))
 
 
 def _extract_test_context(lines: list[str]) -> str:

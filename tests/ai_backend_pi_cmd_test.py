@@ -82,7 +82,8 @@ class TestBuildAgentCmd:
         cmd = agent.backend_pi._build_agent_cmd(PI, agent.backend_pi.AgentInvocation(prompt=""))
         tools = cmd[cmd.index("--tools") + 1].split(",")
         assert "gh_pr_unresolved_comments" in tools
-        assert "gh_ci_failures" in tools
+        assert "gh_merge_queue_failures" in tools
+        assert "gh_ci_failures" not in tools
 
     def test_thinking_level(self):
         cmd = agent.backend_pi._build_agent_cmd(

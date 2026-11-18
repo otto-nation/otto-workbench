@@ -99,6 +99,8 @@ def _failure_body(failure: CIFailure) -> str:
         body += f"**Error:** {item.headline}\n"
     if item.annotation and item.annotation != item.headline:
         body += f"**Details:** {item.annotation}\n"
+    if item.log_file:
+        body += f"**Log file:** {item.log_file}\n"
     if item.context:
         body += f"**Context:** {item.context}\n"
     if failure.outcome is not pr.ci_failures.Outcome.NEW:

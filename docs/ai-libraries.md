@@ -5504,7 +5504,8 @@ Tool allowlists:
   Go navigation only, because a fix pass has no GitHub business. The extension's
   gh_pr_reply_comment, gh_pr_bulk_reply and gh_pr_post_comment are in neither
   list: our scripts own what reaches a PR, and naming a tool is the only way the
-  allowlist grants it.
+  allowlist grants it. gh_ci_failures is withheld too: it dumps full job logs
+  into the prompt and has compacted sessions.
 
 Pi CLI reference:
   -p / --print     Prompt mode (non-interactive, like claude -p)

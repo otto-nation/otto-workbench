@@ -10,6 +10,7 @@ if str(LIB_DIR) not in sys.path:
 
 from pr.ci_failures import (
     FailureKind,
+    clip_context,
     extract_failure_context,
     extract_headline,
     extract_test_failures,
@@ -93,6 +94,12 @@ def test_extract_failure_context_truncates_large_output():
     log = "x" * (_MAX_CONTEXT_CHARS + 1000)
     result = extract_failure_context(log, FailureKind.BUILD)
     assert len(result) <= _MAX_CONTEXT_CHARS
+
+
+def test_clip_context_caps_joined_bodies():
+    assert clip_context("ok") == "ok"
+    huge = "x" * (_MAX_CONTEXT_CHARS + 50)
+    assert clip_context(huge) == "x" * _MAX_CONTEXT_CHARS
 
 
 def test_extract_failure_context_go_fail_tab():

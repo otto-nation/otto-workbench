@@ -207,7 +207,7 @@ def test_informative_real_error_with_source_path():
     assert pr.ci_annotations.annotations_uninformative(annotations) is False
 
 
-def test_dot_github_and_warning_annotations_do_not_suppress_log_fallback():
+def test_dot_github_and_warning_annotations_do_not_suppress_log_fallback(tmp_path, monkeypatch):
     annotations = [
         {
             "annotation_level": "failure",
@@ -237,6 +237,7 @@ def test_dot_github_and_warning_annotations_do_not_suppress_log_fallback():
         "    run_test.go:196: relation does not exist\n"
     )
     job = {"name": "Test: svc-orders", "conclusion": "failure", "databaseId": 10}
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
     with patch("gh.run_reads.fetch_annotations", return_value=annotations), \
          patch("gh.run_reads.fetch_job_logs", return_value=go_log), \
          patch(
@@ -250,6 +251,9 @@ def test_dot_github_and_warning_annotations_do_not_suppress_log_fallback():
     assert result is not None
     assert result.kind is not pr.ci_failures.FailureKind.INFRA
     assert "relation does not exist" in (result.items[0].context or "")
+    log_file = Path(result.items[0].log_file or "")
+    assert log_file.is_file()
+    assert go_log in log_file.read_text()
 
 
 def test_informative_mixed_generic_and_specific():
@@ -660,3 +664,23 @@ def test_codeql_is_not_classified_as_a_build_failure():
             "owner/repo", _external_job(summary="alert"), {"databaseId": 1},
         )
     assert result.kind is pr.ci_failures.FailureKind.EXTERNAL
+
+
+def test_write_failed_job_log_is_empty_for_empty_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
+    assert pr.ci_annotations.write_failed_job_log("owner/repo", 1, "job", "") is None
+
+
+def test_write_failed_job_log_replaces_atomically(tmp_path, monkeypatch):
+    monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path))
+    path = pr.ci_annotations.write_failed_job_log(
+        "owner/repo", 99, "Lint: dev-tooling (python)", "first\n",
+    )
+    assert path is not None
+    assert path.read_text() == "first\n"
+    again = pr.ci_annotations.write_failed_job_log(
+        "owner/repo", 99, "Lint: dev-tooling (python)", "second\n",
+    )
+    assert again == path
+    assert path.read_text() == "second\n"
+    assert list(path.parent.glob("*.tmp")) == []

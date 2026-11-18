@@ -69,6 +69,15 @@ def test_serialize_failures_carries_the_progression_it_was_given():
     assert rows[0]["outcome"] == "persisting"
 
 
+def test_serialize_failures_carries_log_file():
+    group = FailureGroup(
+        job="lint", kind=FailureKind.LINT,
+        items=(_make_item("a", log_file="/tmp/ci-logs/job.log"),),
+    )
+    rows = serialize_failures({"lint": group})
+    assert rows[0]["log_file"] == "/tmp/ci-logs/job.log"
+
+
 # ── Report keys ────────────────────────────────────────────────────────────
 
 _SINGLE_SHOT_KEYS = [

@@ -18,11 +18,11 @@ import review.dedup  # noqa: E402
 import review.render  # noqa: E402
 from core.phases import Mode  # noqa: E402
 from pr.domains import ReviewStatus, ReviewVerdict  # noqa: E402
-from review.record import ProseSection, Question, VerifiedNote  # noqa: E402
+from review.record import Disposition, ProseSection, Question, VerifiedNote  # noqa: E402
 from review.store import read_review, update_review  # noqa: E402
 from review.types import PhaseRun, ReviewMeta  # noqa: E402
 from review.verdict import resolve_review_verdict  # noqa: E402
-from review_focus_support import user_area  # noqa: E402
+from review_focus_support import area, user_area  # noqa: E402
 from review_record_support import (  # noqa: E402
     FIXTURES, fixture_meta, fixture_record, finding, record, store_record,
 )
@@ -56,7 +56,7 @@ class TestCommentBody:
         assert "Review findings" not in result
         assert "Have some comments" not in result
         assert "Clean." in result
-        assert "### Nesting depth" in result
+        assert "### Nesting depth" not in result
 
     def test_an_empty_pr_comment_is_the_approve_line(self):
         result = _comment([], False, {"M"})
@@ -262,7 +262,8 @@ class TestCommentBody:
         rec = record(summary="Clean.", extra=(ProseSection("Review gaps", "- group 2"),))
         body = review.render.comment_body(rec, [], has_inline=False, severity_filter={"M"},
                                           meta=ReviewMeta(models="single m (low)"))
-        assert body.endswith("- group 2\n\n<sub>Models: single m (low)</sub>")
+        assert body.rstrip().endswith("- group 2")
+        assert "Models:" not in body
 
     def test_no_models_line_without_a_body(self):
         body = review.render.comment_body(
@@ -281,9 +282,7 @@ class TestCommentBody:
         body = review.render.comment_body(record(summary="Clean."), [], has_inline=False,
                                           severity_filter={"M"},
                                           meta=ReviewMeta(models="single m\nnightly"))
-        assert "<sub>Models: single m nightly</sub>" in body
-        inner = body[body.rfind("<sub>"):body.rfind("</sub>")]
-        assert "\n" not in inner
+        assert "Models:" not in body and "<sub>" not in body
 
     def test_the_comment_ends_with_the_phases_sub_line(self):
         reason = "one group covers the PR"
@@ -300,12 +299,8 @@ class TestCommentBody:
             rec, [], has_inline=False, severity_filter={"M"},
             meta=ReviewMeta(models="single m (low)", phases=phases),
         )
-        assert body.endswith(
-            "<sub>Models: single m (low)</sub>\n"
-            "<sub>Phases: single agent (one group covers the PR) · "
-            "scan, groups, synthesis not run · "
-            "disprove not run (no must-fix or should-fix finding)</sub>"
-        )
+        assert body.rstrip().endswith("- group 2")
+        assert "Models:" not in body and "Phases:" not in body
 
     def test_the_comment_asks_its_questions_under_the_summary(self):
         result = _comment(
@@ -324,10 +319,9 @@ class TestCommentBody:
             verified=(VerifiedNote("pkg/client.go", 30, "fetch closes the body."),
                       VerifiedNote(None, None, "The flag defaults off.")),
         )
-        head = "<details><summary>Verified, no issue (2)</summary>"
-        assert head in result and "</details>" in result[result.index(head):]
-        assert result.index("Fix it") < result.index(head) < result.index("## Review gaps")
-        assert "<details open>" not in result
+        assert "Verified, no issue" not in result
+        assert "fetch closes the body." not in result
+        assert result.index("Fix it") < result.index("## Review gaps")
 
     def test_no_questions_or_verified_add_nothing_to_the_comment(self):
         for case in sorted(p.name for p in FIXTURES.iterdir() if (p / "record.json").is_file()):
@@ -418,15 +412,15 @@ class TestCommentBodyDetails:
         ]
         sa = "### Nesting depth\n1 violation in 1 of 3 files checked\n\n- **`scripts/deploy.sh:42`** — depth 5 exceeds limit 4 (in main())"
         result = _comment(findings, True, {"N"}, static_analysis=sa)
-        assert "### Nesting depth" in result
-        assert "depth 5 exceeds limit 4" in result
-        assert result.index("Nit") < result.index("Nesting depth")
+        assert "Nit" in result
+        assert "### Nesting depth" not in result
+        assert "depth 5 exceeds limit 4" not in result
 
     def test_static_analysis_with_no_findings(self):
         sa = "### Nesting depth\n1 violation in 1 of 3 files checked"
         result = _comment([], True, {"M"}, static_analysis=sa)
         assert "Have some comments" in result
-        assert "### Nesting depth" in result
+        assert "### Nesting depth" not in result
 
     def test_static_analysis_empty_string_omitted(self):
         result = _comment([], True, {"M"})
@@ -606,3 +600,141 @@ class TestDeclinedFindingsAreNotAskedFor:
         text = _comment([declined], False, {"S"})
         assert "**Declined — considered and not carried forward:**" in text
         assert "use a constant" in text
+
+
+class TestAuthorFacingComment:
+    """The GitHub body is for the author. review.md keeps the operator ledger."""
+
+    def test_declined_only_should_fix_approves_the_comment_not_the_ledger(self):
+        rec = record(
+            finding(
+                "S1", "use a constant", path="b.py", line=12,
+                disposition=Disposition.DECLINED, reason="the literal is clearer",
+            ),
+            summary="looked.",
+        )
+        meta = ReviewMeta()
+        assert resolve_review_verdict(rec, meta) is ReviewVerdict.NEEDS_DISCUSSION
+        rendered = review.render.render_review(rec, meta)
+        assert "1 should-fix declined, still counted." in rendered
+        body = review.render.comment_body(
+            rec, [rec.finding("S1").view()], meta=meta, has_inline=False,
+            severity_filter={"S"},
+        )
+        assert "**Verdict: Approve.**" in body
+        assert "Needs discussion" not in body
+        assert "still counted" not in body
+        assert "Review findings" not in body
+        assert "[should-fix]" not in body
+        assert "**Declined — considered and not carried forward:**" in body
+
+    def test_a_declined_must_fix_approves_the_comment_not_the_ledger(self):
+        rec = record(
+            finding(
+                "M1", "lock", disposition=Disposition.DECLINED, reason="not a bug",
+            ),
+            summary="looked.",
+        )
+        meta = ReviewMeta()
+        assert resolve_review_verdict(rec, meta) is ReviewVerdict.CHANGES_REQUESTED
+        body = review.render.comment_body(
+            rec, [rec.finding("M1").view()], meta=meta, has_inline=False,
+            severity_filter={"M"},
+        )
+        assert "**Verdict: Approve.**" in body
+        assert "Request changes" not in body
+
+    def test_an_open_should_fix_keeps_needs_discussion_without_the_declined_tally(self):
+        rec = record(
+            finding("S1", "real bug", path="a.py", line=3),
+            finding(
+                "S2", "use a constant", path="b.py", line=12,
+                disposition=Disposition.DECLINED, reason="literal is clearer",
+            ),
+            summary="looked.",
+        )
+        body = review.render.comment_body(
+            rec, [f.view() for f in rec.visible], meta=ReviewMeta(),
+            has_inline=False, severity_filter={"S"},
+        )
+        assert "**Verdict: Needs discussion.** 1 should-fix open." in body
+        assert "still counted" not in body
+        assert "Review findings" in body
+
+    def test_noop_focus_is_omitted_from_the_comment(self):
+        rec = record(
+            summary="looked.",
+            focus=(
+                area(
+                    id="F1", title="Generator",
+                    coverage=(
+                        "Checked the rules.go delta: late mismatch errors "
+                        "if the debit is missing. No new issue."
+                    ),
+                ),
+                area(
+                    id="F2", title="SimHandler lock",
+                    coverage=(
+                        "simhttp.go unchanged since the prior review; "
+                        "no new finding."
+                    ),
+                ),
+            ),
+        )
+        body = review.render.comment_body(
+            rec, [], meta=ReviewMeta(), has_inline=False, severity_filter={"M"},
+        )
+        assert "### Focus" in body
+        assert "Generator" in body
+        assert "SimHandler lock" not in body
+        assert "unchanged since" not in body
+
+    def test_all_noop_focus_drops_the_section(self):
+        rec = record(
+            summary="looked.",
+            focus=(
+                area(
+                    title="Lock",
+                    coverage="unchanged since the prior review; no new finding.",
+                ),
+            ),
+        )
+        body = review.render.comment_body(
+            rec, [], meta=ReviewMeta(), has_inline=False, severity_filter={"M"},
+        )
+        assert "### Focus" not in body
+
+    def test_static_analysis_stays_in_review_md_not_the_comment(self):
+        rec = record(summary="looked.", static_analysis="### Nesting depth\n1 violation")
+        meta = ReviewMeta()
+        body = review.render.comment_body(
+            rec, [], meta=meta, has_inline=False, severity_filter={"M"},
+        )
+        assert "Nesting depth" not in body
+        assert "Nesting depth" in review.render.render_review(rec, meta)
+
+    def test_verified_notes_stay_in_review_md_not_the_comment(self):
+        rec = record(
+            summary="looked.",
+            verified=(VerifiedNote("pkg/client.go", 30, "fetch closes the body."),),
+        )
+        meta = ReviewMeta()
+        body = review.render.comment_body(
+            rec, [], meta=meta, has_inline=False, severity_filter={"M"},
+        )
+        assert "Verified, no issue" not in body
+        assert "fetch closes the body." not in body
+        assert "fetch closes the body." in review.render.render_review(rec, meta)
+
+    def test_models_and_phases_stay_off_the_comment(self):
+        rec = record(summary="looked.")
+        meta = ReviewMeta(
+            models="single m (low)",
+            phases=(PhaseRun("single", True),),
+        )
+        body = review.render.comment_body(
+            rec, [], meta=meta, has_inline=False, severity_filter={"M"},
+        )
+        assert "Models:" not in body
+        assert "Phases:" not in body
+        assert "<sub>" not in body

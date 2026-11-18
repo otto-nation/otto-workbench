@@ -56,11 +56,12 @@ REVIEW = record(
 )
 
 
-def test_the_comment_carries_summary_verdict_and_static_analysis():
+def test_the_comment_carries_summary_and_verdict_not_static_analysis():
     body = _comment(REVIEW)
     assert "Clean refactor with good test coverage." in body
     assert "**Verdict: Request changes.** 1 must-fix, 1 should-fix open." in body
-    assert "Nesting depth" in body
+    assert "Nesting depth" not in body
+    assert "Nesting depth" in review.render.render_review(REVIEW, ReviewMeta())
 
 
 def test_the_summary_comes_before_the_verdict():
@@ -164,11 +165,13 @@ def test_the_comment_sections_run_in_posted_order():
         "**Findings outside the diff:**", "### Must fix", "### Should fix",
         "<summary>Nit (1)</summary>", "<summary>Idioms (1)</summary>",
         "**Declined — considered and not carried forward:**",
-        "### Nesting depth", "## Agent Failures", "## Review gaps",
+        "## Agent Failures", "## Review gaps",
     )
     idxs = [body.index(m) for m in markers]
     assert idxs == sorted(idxs)
     assert "[C1]" not in body and "[B1]" not in body and "[F1]" not in body
     assert "File Triage" not in body and "Prior findings" not in body
-    assert "**Verdict: Request changes.** 1 must-fix, 1 should-fix open; 1 should-fix declined, still counted." in body
+    assert "Nesting depth" not in body
+    assert "**Verdict: Request changes.** 1 must-fix, 1 should-fix open." in body
+    assert "still counted" not in body
     assert "M1 blocks." not in body

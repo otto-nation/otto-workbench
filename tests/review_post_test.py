@@ -289,7 +289,7 @@ class TestDryRunIntegration:
 
         assert result.returncode == 0
 
-    def test_dry_run_includes_static_analysis(self, tmp_path):
+    def test_dry_run_omits_static_analysis(self, tmp_path):
         rec = record(
             finding("M1", "missing error check", path="handler.go", line=11),
             summary="Clean refactor.",
@@ -308,8 +308,9 @@ class TestDryRunIntegration:
         result = self._run_dry_run(review_file, tmp_path)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         payload = self._extract_json(result.stdout)
-        assert "Nesting depth" in payload["body"]
-        assert "depth 5 exceeds limit 4" in payload["body"]
+        assert "Nesting depth" not in payload["body"]
+        assert "depth 5 exceeds limit 4" not in payload["body"]
+        assert "Nesting depth" in review_file.read_text()
 
     def test_dry_run_auto_discovers_unknown_section(self, tmp_path):
         rec = record(
@@ -553,7 +554,7 @@ class TestACleanReviewStillPosts:
         assert "comments" not in payload
         assert "No findings across 3 files" in payload["body"]
         assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in payload["body"]
-        assert "depth 3 exceeds limit 2" in payload["body"]
+        assert "depth 3 exceeds limit 2" not in payload["body"]
         assert "Review findings" not in payload["body"]
 
     def test_the_pending_review_is_tracked_for_the_approver(self, rp, tmp_path):
@@ -567,7 +568,7 @@ class TestACleanReviewStillPosts:
         code, payloads, _ = self._post(rp, tmp_path, self.CLEAN, models="single m (low)")
         assert code == 0
         [payload] = payloads
-        assert payload["body"].endswith("<sub>Models: single m (low)</sub>")
+        assert "Models:" not in payload["body"]
 
     def test_an_empty_pr_record_posts_its_verdict(self, rp, tmp_path):
         code, payloads, post_file = self._post(rp, tmp_path, record())

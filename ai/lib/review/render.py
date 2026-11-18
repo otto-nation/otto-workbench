@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 
 from core.markdown import escape_cell
@@ -22,7 +23,7 @@ from review.record import (
 )
 from review.phase_runs import phases_line
 from review.types import SEVERITIES, Finding, ReviewMeta, severity_by_key
-from review.verdict import verdict_line
+from review.verdict import comment_verdict_line, verdict_line
 
 # The line every rendered review.md carries. Agents write JSON, so nothing
 # parses review.md; the banner tells a human the file is generated and that
@@ -164,12 +165,33 @@ def behaviours_comment(behaviours: tuple[BehaviourEntry, ...] | None) -> str:
     return "\n".join(f"- {_behaviour_citation(b)}" for b in behaviours)
 
 
+_NOOP_FOCUS_SENTENCE = re.compile(
+    r"(?i)^(no new (?:issue|finding)|.*\bunchanged since\b.*|unchanged)$"
+)
+
+
+def _focus_is_noop(coverage: str) -> bool:
+    """True when coverage is only 'no new issue' / 'unchanged since …'.
+
+    A focus area that also says what was checked stays; one that only reports
+    a no-op is operator scratch and does not belong on the GitHub body.
+    """
+    # Split on ';' only — a '.' is a filename (`simhttp.go`) as often as a
+    # sentence end, and splitting on it treated `simhttp.go unchanged since…`
+    # as two clauses.
+    clauses = [s.strip().rstrip(".") for s in coverage.split(";") if s.strip()]
+    return bool(clauses) and all(_NOOP_FOCUS_SENTENCE.fullmatch(s) for s in clauses)
+
+
 def focus_comment(areas: Sequence[FocusArea]) -> str:
     """The GitHub-comment Focus lines: title, requested mark, coverage."""
     lines = []
     for area in areas:
+        coverage = _coverage(area)
+        if _focus_is_noop(coverage):
+            continue
         asked = " *(requested)*" if area.source is FocusSource.USER else ""
-        lines.append(f"- **{area.title}**{asked} — {_continued(_coverage(area))}")
+        lines.append(f"- **{area.title}**{asked} — {_continued(coverage)}")
     return "\n".join(lines)
 
 
@@ -238,13 +260,16 @@ def _comment_findings(findings: list[Finding], has_inline: bool) -> list[str]:
                       *(_comment_finding_line(f, label=False) for f in items), "", "</details>", ""]
     if declined:
         lines += ["", "**Declined — considered and not carried forward:**", "",
-                  *(_comment_finding_line(f) for f in sorted(declined, key=_by_place)), ""]
+                  *(_comment_finding_line(f, label=False)
+                    for f in sorted(declined, key=_by_place)), ""]
     return lines
 
 
 def _comment_tail(record: ReviewRecord) -> list[str]:
-    static = record.static_analysis.strip()
-    chunks: list[tuple[str, str]] = [("", static)] if static else []
+    # ceiling: GitHub comment omits the static-analysis dump; upgrade if a
+    # round needs to surface new-this-round violations that are not already
+    # findings.
+    chunks: list[tuple[str, str]] = []
     if record.failures:
         chunks.append((f"## {SECTION_FAILURES}", failures_body(record.failures)))
     chunks += [(f"## {s.heading}", s.body.strip()) for s in record.extra if s.body.strip()]
@@ -262,31 +287,20 @@ def comment_body(record: ReviewRecord, findings: list[Finding], *,
 
     `findings` are the ones `review.format` placed in the body, tagged with
     their record IDs. A declined finding is stated in a block of its own.
-    `meta` supplies the verdict line's mode and status and the `Models:` and
-    `Phases:` lines.
+    `meta` supplies the verdict line's mode and status. Models, phases, verified
+    notes and the static-analysis dump stay on review.md — they are the operator
+    ledger, not an ask of the author.
     """
     labels = ", ".join(s.label for s in SEVERITIES if s.key in severity_filter)
-    lines = _comment_prose(record, verdict_line(record, meta))
+    lines = _comment_prose(record, comment_verdict_line(record, meta))
+    asked = [f for f in findings if not f.declined]
     if has_inline:
         lines.append(f"Have some comments marked as {labels}.")
-    elif findings:
+    elif asked:
         lines.append(f"Review findings ({labels}):")
-    body = "\n".join(
-        lines + _comment_findings(findings, has_inline)
-        + _verified_comment(record) + _comment_tail(record),
+    return "\n".join(
+        lines + _comment_findings(findings, has_inline) + _comment_tail(record),
     ).rstrip("\n")
-    # Only beside something else: a self-review with nothing to post still posts nothing.
-    if not body:
-        return body
-    tails: list[str] = []
-    if meta.models:
-        tails.append(f"<sub>{_models_line(meta.models)}</sub>")
-    phases = phases_line(meta.phases)
-    if phases:
-        tails.append(f"<sub>{phases}</sub>")
-    if not tails:
-        return body
-    return f"{body}\n\n" + "\n".join(tails)
 
 
 def _severity_sections(record: ReviewRecord, sids: bool, evidence: bool) -> list[ProseSection]:
@@ -299,13 +313,6 @@ def _severity_sections(record: ReviewRecord, sids: bool, evidence: bool) -> list
         lines = [n for n in notes if n] + [finding_line(f, sids=sids, evidence=evidence) for f in findings]
         out.append(ProseSection(severity.section, "\n".join(lines)))
     return out
-
-
-def _verified_comment(record: ReviewRecord) -> list[str]:
-    if not record.verified:
-        return []
-    head = f"<details><summary>{SECTION_VERIFIED} ({len(record.verified)})</summary>"
-    return ["", head, "", *(verified_line(v) for v in record.verified), "", "</details>"]
 
 
 def _sections(record: ReviewRecord, sids: bool, evidence: bool,

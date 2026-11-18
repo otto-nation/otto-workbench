@@ -37,7 +37,7 @@ def test_rebase_without_stale_is_done():
     assert r.status is StepStatus.DONE
 
 
-def test_stale_session_says_undo_then_regenerate(tmp_path):
+def test_stale_session_says_regenerate(tmp_path):
     item = make_item(
         1, worktree=str(tmp_path), pre_rebase_head="p0",
         status=batch.model.ItemStatus.NEEDS_SESSION,

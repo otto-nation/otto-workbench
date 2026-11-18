@@ -201,6 +201,10 @@ def _plan_tree(item: Item, tree: TreeFn | None, debt: CloseoutDebt, *,
 
 def _apply_plan(findings: list[Finding], planned: _Planned) -> None:
     result = planned.plan
+    stored_refusal = _has(findings, FindingReason.PUSH_REFUSED) or _has(
+        findings, FindingReason.WRONG_BRANCH)
+    if result.ok and result.pushes and stored_refusal:
+        return
     if result.ok and result.pushes:
         if not _has(findings, FindingReason.READY_TO_PUSH):
             findings.append(_derived(FindingReason.READY_TO_PUSH))
@@ -222,8 +226,11 @@ def _apply_plan(findings: list[Finding], planned: _Planned) -> None:
 def _refresh_stored(item: Item, findings: list[Finding], planned: _Planned | None) -> None:
     if planned is None:
         return
-    _drop(findings, FindingReason.PUSH_REFUSED)
-    _drop(findings, FindingReason.WRONG_BRANCH)
+    # An offline replan cannot see a moved remote, so it may not clear a
+    # refusal publish recorded after a real fetch.
+    if planned.tree.observed:
+        _drop(findings, FindingReason.PUSH_REFUSED)
+        _drop(findings, FindingReason.WRONG_BRANCH)
     if batch.publish.already_published(item, planned.tree) and planned.plan.ok:
         _drop(findings, FindingReason.STALE_GENERATED)
         _drop(findings, FindingReason.CONFLICT_HANDWRITTEN)
@@ -265,15 +272,28 @@ def _stale_resolved(item: Item, finding: Finding, tree: TreeState) -> bool:
         return False
     rebase_head = str(finding.data.get("rebase_head") or "")
     if rebase_head:
-        return local != rebase_head and git.client.ok(
-            "merge-base", "--is-ancestor", rebase_head, local, cwd=wt)
+        return (local != rebase_head
+                and git.client.ok("merge-base", "--is-ancestor", rebase_head, local, cwd=wt)
+                and _touches(wt, finding.files, f"{rebase_head}..{local}"))
     if not finding.created_at or local in (item.remote_sha, item.pre_rebase_head):
         return False
     committed_at = git.client.out("log", "-1", "--format=%cI", local, cwd=wt)
     try:
-        return datetime.fromisoformat(committed_at) > datetime.fromisoformat(finding.created_at)
+        later = datetime.fromisoformat(committed_at) > datetime.fromisoformat(finding.created_at)
     except ValueError:
         return False
+    return later and _touches(wt, finding.files, local, since=finding.created_at)
+
+
+def _touches(wt: str, files: list[str], rev: str, *, since: str = "") -> bool:
+    """Whether commits in *rev* changed every one of *files*."""
+    if not files:
+        return False
+    args = ["log", "--format=", "--name-only"]
+    if since:
+        args.append(f"--since={since}")
+    r = git.client.run(*args, rev, cwd=wt)
+    return r.ok and set(files) <= set(r.stdout.split("\n"))
 
 
 def _after(run: Run, item: Item) -> list[str]:

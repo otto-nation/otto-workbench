@@ -224,6 +224,20 @@ EOF
 EOF
 )
   [ "$output" = "$expected" ]
+
+  _text now.ts 'm.renderNow("run R1", JSON.parse(args[0]), new Map())' \
+    '[{"pr":"o/r#1","state":"done","severity":"act","branch":"b1","base_ref":"main",
+       "findings":[],
+       "commands":[{"argv":["pr","batch","note","--finding","x:y"],"why":"file issue","action":"file_threads_issue"}]}]'
+  [ "$status" -eq 0 ]
+  expected=$(cat <<'EOF'
+## Now — run R1: 0 of 1 PRs waiting on you
+
+### o/r#1 — done (act) · b1 → main
+- run `pr batch note --finding x:y` — file issue
+EOF
+)
+  [ "$output" = "$expected" ]
 }
 
 @test "run-session: the latest well-formed state entry on the branch wins" {

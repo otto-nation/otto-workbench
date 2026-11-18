@@ -95,8 +95,11 @@ def test_commit_on_top_of_rebase_head_clears_stale_generated(tmp_path):
     (repo / "a.txt").write_text("two\n")
     commit_all(repo, "rebase tip")
     rebase_head = git_out(repo, "rev-parse", "HEAD").strip()
-    (repo / "a.txt").write_text("three\n")
-    commit_all(repo, "follow-up")
+    (repo / "other.txt").write_text("unrelated\n")
+    commit_all(repo, "unrelated follow-up")
+    unrelated_head = git_out(repo, "rev-parse", "HEAD").strip()
+    (repo / "a.pb.go").write_text("regenerated\n")
+    commit_all(repo, "regenerate")
     head_after = git_out(repo, "rev-parse", "HEAD").strip()
     wt = str(repo)
     pre = "p" * 40
@@ -110,6 +113,12 @@ def test_commit_on_top_of_rebase_head_clears_stale_generated(tmp_path):
 
     item = make_item(1, worktree=wt, repo_dir=wt, branch="feat", remote_sha=SHA,
                      pre_rebase_head=pre)
+    item.findings = [Finding(FindingReason.STALE_GENERATED, "rebase", files=["a.pb.go"],
+                             data={"rebase_head": rebase_head})]
+    unrelated = batch.session_report.sessions(
+        make_run([item]), closeout=no_debt, tree=lambda i: _tree(unrelated_head))
+    assert FindingReason.STALE_GENERATED in _reasons(unrelated)
+
     item.findings = [Finding(FindingReason.STALE_GENERATED, "rebase", files=["a.pb.go"],
                              data={"rebase_head": rebase_head})]
     after = batch.session_report.sessions(
@@ -128,11 +137,6 @@ def test_commit_on_top_of_rebase_head_clears_stale_generated(tmp_path):
     legacy = batch.session_report.sessions(
         make_run([item]), closeout=no_debt, tree=lambda i: _tree(head_after))
     assert FindingReason.STALE_GENERATED not in _reasons(legacy)
-    assert local_is_neither(head_after, SHA, pre)
-
-
-def local_is_neither(local, remote_sha, pre_rebase_head):
-    return local != remote_sha and local != pre_rebase_head
 
 
 def test_clean_rebase_state_clears_stored_conflict_finding(tmp_path, monkeypatch):
@@ -186,7 +190,7 @@ def test_clean_rebase_state_clears_stored_conflict_finding(tmp_path, monkeypatch
         make_run([item]), closeout=no_debt, tree=lambda i: _tree(rebase_head))
     assert FindingReason.STALE_GENERATED in _reasons(derived)
 
-    (repo / "a.txt").write_text("three\n")
+    (repo / "x.pb.go").write_text("regenerated\n")
     monkeypatch.setenv("GIT_COMMITTER_DATE", "2000-01-01T00:00:01+00:00")
     monkeypatch.setenv("GIT_AUTHOR_DATE", "2000-01-01T00:00:01+00:00")
     commit_all(repo, "follow-up")
@@ -195,3 +199,16 @@ def test_clean_rebase_state_clears_stored_conflict_finding(tmp_path, monkeypatch
     after = batch.session_report.sessions(
         make_run([item]), closeout=no_debt, tree=lambda i: _tree(head_after))
     assert FindingReason.STALE_GENERATED not in _reasons(after)
+
+
+def test_offline_replan_keeps_stored_push_refused(tmp_path):
+    item = make_item(1, worktree=str(tmp_path), repo_dir=str(tmp_path), branch="feat",
+                     remote_sha=SHA)
+    item.findings = [Finding(FindingReason.PUSH_REFUSED, "publish",
+                             data={"refusal": "remote_moved"})]
+    tree = TreeState(local=SHA, remote=SHA,
+                     divergence=RefDivergence(ahead=0, behind=0, comparable=True),
+                     checked_out=item.branch, observed=False)
+    entries = batch.session_report.sessions(
+        make_run([item]), closeout=no_debt, tree=lambda i: tree)
+    assert FindingReason.PUSH_REFUSED in _reasons(entries)

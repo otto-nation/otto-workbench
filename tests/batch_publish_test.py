@@ -264,7 +264,7 @@ def test_a_squashed_replay_recorded_by_git_is_incorporated(tmp_path):
         ["pr", "rebase", "--push-only", "--expect", c, "--repo-dir", str(pair.work)]]
 
 
-def test_a_recorded_one_to_one_rewrite_is_incorporated(tmp_path):
+def test_a_recorded_one_to_one_rewrite_is_still_refused(tmp_path):
     pair = remote_and_clone(tmp_path)
     planned = advance(pair.seed, "feat", "elsewhere")
     item = _item(worktree=str(pair.work), remote=planned, base_ref="main")
@@ -276,10 +276,8 @@ def test_a_recorded_one_to_one_rewrite_is_incorporated(tmp_path):
     ])
     tree = batch.publish.read_tree(item)
     got = batch.publish.plan(item, "pr", tree)
-    assert tree.unincorporated == ()
-    assert got.ok
-    assert got.commands == [
-        ["pr", "rebase", "--push-only", "--expect", planned, "--repo-dir", str(pair.work)]]
+    assert tree.unincorporated == (f"{planned} chore: elsewhere",)
+    assert got.refusal is Refusal.NOT_INCORPORATED_REMOTE
 
 
 def test_conflict_replayed_commit_matches_by_author_date_subject_without_rewrite_log(tmp_path):
@@ -322,6 +320,48 @@ def test_conflict_replayed_commit_matches_by_author_date_subject_without_rewrite
     renamed = batch.publish.read_tree(item)
     assert renamed.unincorporated == (f"{planned} feat",)
     assert batch.publish.plan(item, "pr", renamed).refusal is Refusal.NOT_INCORPORATED_REMOTE
+
+
+def test_amended_remote_commit_keeping_author_date_subject_is_refused(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    name, email, date = git_out(
+        pair.seed, "log", "-1", "--format=%an%x00%ae%x00%aD", "HEAD").strip().split("\0")
+    (pair.seed / "feat.txt").write_text("amended\n")
+    git_in(pair.seed, "add", "feat.txt")
+    run_checked(
+        ["git", "-C", str(pair.seed), "commit", "--amend", "--no-edit", "-q", "--no-verify"],
+        env=os.environ | {
+            "GIT_AUTHOR_NAME": name,
+            "GIT_AUTHOR_EMAIL": email,
+            "GIT_AUTHOR_DATE": date,
+        },
+    )
+    git_in(pair.seed, "push", "-q", "--force", "origin", "feat")
+    amended = remote_tip(pair.origin, "feat")
+    item = _item(worktree=str(pair.work), remote=amended, base_ref="main")
+    tree = batch.publish.read_tree(item)
+    assert tree.unincorporated == (f"{amended} feat",)
+    assert batch.publish.plan(item, "pr", tree).refusal is Refusal.NOT_INCORPORATED_REMOTE
+
+
+def test_signature_shared_by_two_local_commits_is_not_incorporated(tmp_path):
+    pair = remote_and_clone(tmp_path)
+    planned = remote_tip(pair.origin, "feat")
+    name, email, date = git_out(
+        pair.origin, "log", "-1", "--format=%an%x00%ae%x00%aD", planned).strip().split("\0")
+    subject = git_out(pair.origin, "log", "-1", "--format=%s", planned).strip()
+    env = os.environ | {"GIT_AUTHOR_NAME": name, "GIT_AUTHOR_EMAIL": email,
+                        "GIT_AUTHOR_DATE": date}
+    git_in(pair.work, "reset", "-q", "--hard", "origin/main")
+    for i in range(2):
+        (pair.work / f"c{i}.txt").write_text(f"{i}\n")
+        git_in(pair.work, "add", "-A")
+        run_checked(["git", "-C", str(pair.work), "commit", "-q", "--no-verify", "-m", subject],
+                    env=env)
+    item = _item(worktree=str(pair.work), remote=planned, base_ref="main")
+    tree = batch.publish.read_tree(item)
+    assert tree.unincorporated
+    assert batch.publish.plan(item, "pr", tree).refusal is Refusal.NOT_INCORPORATED_REMOTE
 
 
 @pytest.mark.parametrize("start", ["planned", "none"])

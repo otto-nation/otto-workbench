@@ -67,7 +67,7 @@ export function renderNow(
   if (!sessions.length) {
     return `## Now — ${subject}\nNothing in the report: no PR has findings or commands.`;
   }
-  const waiting = sessions.filter((s) => s.state === "needs_session" || !(s.findings?.length) || s.findings.some((f) => !decisions.has(decisionKey(s.pr, `${f.reason}:${f.step}`)))).length;
+  const waiting = sessions.filter((s) => s.state === "needs_session" || (s.findings ?? []).some((f) => !decisions.has(decisionKey(s.pr, `${f.reason}:${f.step}`)))).length;
   const out = [`## Now — ${subject}: ${waiting} of ${sessions.length} PRs waiting on you`];
   for (const s of sessions) {
     const base = s.base_ref ? ` → ${s.base_ref}` : "";

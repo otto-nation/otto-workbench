@@ -31,6 +31,7 @@ for a commit mid-rebase, and `resolve_ai` for an answer before it is written.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from enum import StrEnum
@@ -313,15 +314,51 @@ def _group_loss(group: _Group, v: _Versions) -> Loss | None:
     clean = _clean_change(group)
     if clean is None:
         return _one_sided(group, v)
-    if not _reverted(clean, v.side(clean.side), v.r, v.r_ops):
+    if not _reverted(clean, v.side(clean.side), v.b, v.r, v.r_ops):
         return None
     return Loss(LossKind.HUNK_REVERTED, clean.side, clean.at + 1, _excerpt(clean, v.b))
 
 
 # ── Clean changes ───────────────────────────────────────────────────────────
 
+def _stripped_nonblank(lines: Sequence[str]) -> list[str]:
+    return [line.strip() for line in lines if line.strip()]
+
+
+def _count_run(haystack: list[str], needle: list[str]) -> int:
+    """Non-overlapping contiguous occurrences of *needle* in *haystack*."""
+    count = 0
+    step = len(needle)
+    idx = 0
+    limit = len(haystack) - step
+    while idx <= limit:
+        if haystack[idx:idx + step] == needle:
+            count += 1
+            idx += step
+        else:
+            idx += 1
+    return count
+
+
+def _relocated_in_result(change: _Change, b: list[str], r: list[str]) -> bool:
+    """Whether *change*'s non-blank lines occur more often in *r* than in *b*.
+
+    Indent and blank lines are ignored so a moved, re-indented block counts
+    as kept. A pure deletion or single-line change has no usable needle and must still
+    satisfy alignment.
+    """
+    needle = _stripped_nonblank(change.lines)
+    # A single line is too common to prove relocation: another side may add the
+    # same line elsewhere while this change is reverted at its own site.
+    if len(needle) < 2:
+        return False
+    return _count_run(_stripped_nonblank(r), needle) > _count_run(
+        _stripped_nonblank(b), needle,
+    )
+
+
 def _reverted(
-    change: _Change, side_text: list[str], r: list[str],
+    change: _Change, side_text: list[str], b: list[str], r: list[str],
     r_ops: list[tuple[str, int, int, int, int]],
 ) -> bool:
     """Whether *r* holds the base text where *change* was, and not the change.
@@ -331,11 +368,17 @@ def _reverted(
     also needs the side's version of the spot — its lines with their
     surroundings — to be absent from *r*. Either test alone would misfire on
     repeated lines; together they only agree on a genuine revert.
+
+    A clean insert that later sits elsewhere, or at a different indent, is
+    not a revert: the resolution kept the change even though the original
+    site matches the base again.
     """
     if any(
         tag != "equal" and _touches(change.start, change.end, i1, i2)
         for tag, i1, i2, _, _ in r_ops
     ):
+        return False
+    if _relocated_in_result(change, b, r):
         return False
     before = side_text[max(0, change.at - _CONTEXT_LINES):change.at]
     after_at = change.at + len(change.lines)

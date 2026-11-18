@@ -62,3 +62,11 @@ def test_an_unreadable_worktree_keeps_exit_3(monkeypatch, tmp_path):
     monkeypatch.setattr(rebase.commands, "_run", lambda *a: 3)
 
     assert cli.pr_rebase.main([]) == 3
+
+
+def test_failure_mentions_checkout_m_and_dropped_changes_override(ran, capsys):
+    """Exit 1 next-steps name the hook restore and the documented override."""
+    assert ran(1, False) == 1
+    err = capsys.readouterr().err
+    assert "checkout -m" in err
+    assert "WORKBENCH_ALLOW_DROPPED_CHANGES=1 pr rebase" in err

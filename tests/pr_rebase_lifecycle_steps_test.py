@@ -802,3 +802,41 @@ def test_step_advance_skip_into_conflicting_next_commit_returns_none(tmp_path):
     assert rc is None
     assert rebase.inspect.rebase_in_progress(str(repo))
     assert rebase.inspect.detect_conflicts(str(repo)) == ["g.txt"]
+
+
+def test_step_advance_clears_requeued_stopped_pick_before_continue(tmp_path):
+    """A rescheduled stopped pick is dropped so --continue does not double-pick."""
+    repo = init_repo(tmp_path / "requeued")
+    (repo / "f.txt").write_text("f-base\n")
+    (repo / "g.txt").write_text("g-base\n")
+    commit_all(repo, "base")
+    git_in(repo, "checkout", "-q", "-b", "feat")
+    (repo / "f.txt").write_text("f-feat\n")
+    commit_all(repo, "feat1")
+    feat1_short = git.client.out("rev-parse", "--short", "HEAD", cwd=str(repo))
+    (repo / "g.txt").write_text("g-feat\n")
+    commit_all(repo, "feat2")
+    git_in(repo, "checkout", "-q", "main")
+    (repo / "f.txt").write_text("f-main\n")
+    commit_all(repo, "main-f")
+    git_in(repo, "checkout", "-q", "feat")
+    paused = git.client.run("rebase", "main", cwd=str(repo))
+    assert not paused.ok
+    assert rebase.inspect.detect_conflicts(str(repo)) == ["f.txt"]
+
+    (repo / "f.txt").write_text("f-feat\nf-main\n")
+    git_in(repo, "add", "f.txt")
+    merge_dir = rebase.inspect.git_dir(str(repo)) / rebase.inspect.GIT_REBASE_MERGE_DIR
+    todo_path = merge_dir / rebase.inspect.GIT_REBASE_TODO
+    todo_path.write_text(f"pick {feat1_short} feat1\n" + todo_path.read_text())
+
+    rc = rebase.lifecycle.step_advance(
+        str(repo), mock.MagicMock(), target_ref="main",
+    )
+
+    assert rc is None
+    assert not rebase.inspect.rebase_in_progress(str(repo))
+    subjects = git.client.lines(
+        "log", "--format=%s", "main..HEAD", cwd=str(repo),
+    )
+    assert subjects == ["feat2", "feat1"]

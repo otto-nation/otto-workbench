@@ -1,18 +1,21 @@
 """Rebase-state detection and ref reads.
 
-Everything in this module is a read — it inspects ``.git/rebase-merge/`` or
-``.git/rebase-apply/`` to tell the caller what state the worktree is in, but
-never mutates it.
+Almost everything in this module is a read — it inspects ``.git/rebase-merge/``
+or ``.git/rebase-apply/`` to tell the caller what state the worktree is in.
+``drop_requeued_stopped_pick`` is the exception: it removes a duplicate todo
+entry git re-queued after a refused commit.
 """
 
 # doc-group: platform
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 import core.log
 import core.proc
+import core.serde
 import git.client
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -27,6 +30,16 @@ _PICK_COMMANDS = frozenset({
     "pick", "p", "reword", "r", "edit", "e",
     "squash", "s", "fixup", "f", "drop", "d",
 })
+_PICK_VERBS = frozenset({
+    "pick", "p", "reword", "r", "edit", "e",
+    "squash", "s", "fixup", "f",
+})
+
+
+@dataclass(frozen=True)
+class _TodoHead:
+    index: int
+    sha: str
 
 
 # ── Git-dir resolution ─────────────────────────────────────────────────────
@@ -141,6 +154,55 @@ def remaining_rebase_commits(cwd: str) -> int:
         except ValueError:
             return 0
     return 0
+
+
+def _first_todo_pick(lines: list[str]) -> _TodoHead | None:
+    """The first actionable todo line, if it is a pick-like command."""
+    for idx, line in enumerate(lines):
+        if not line.strip() or line.startswith("#"):
+            continue
+        parts = line.split()
+        if parts[0] in _PICK_VERBS and len(parts) >= 2:
+            return _TodoHead(index=idx, sha=parts[1])
+        return None
+    return None
+
+
+def drop_requeued_stopped_pick(cwd: str) -> str:
+    """Remove a leading todo pick that git re-queued for the stopped commit.
+
+    After a refused ``prepare-commit-msg``, git's ``reschedule_last_command``
+    prepends the stopped pick onto ``git-rebase-todo`` while ``stopped-sha``
+    still names that commit. ``rebase --continue`` would then pick it twice.
+    Returns the full stopped sha when a duplicate was dropped, else "".
+    """
+    if not cwd or not Path(cwd).is_dir():
+        return ""
+    merge_dir = git_dir(cwd) / GIT_REBASE_MERGE_DIR
+    todo_path = merge_dir / GIT_REBASE_TODO
+    try:
+        stopped = (merge_dir / "stopped-sha").read_text().strip()
+        lines = todo_path.read_text().splitlines()
+    except OSError:
+        return ""
+    if not stopped:
+        return ""
+    head = _first_todo_pick(lines)
+    if head is None:
+        return ""
+    stopped_full = git.client.out(
+        "rev-parse", "--verify", "--quiet", f"{stopped}^{{commit}}", cwd=cwd,
+    )
+    todo_full = git.client.out(
+        "rev-parse", "--verify", "--quiet", f"{head.sha}^{{commit}}", cwd=cwd,
+    )
+    if not stopped_full or stopped_full != todo_full:
+        return ""
+    kept = [line for i, line in enumerate(lines) if i != head.index]
+    tmp = todo_path.with_suffix(".tmp")
+    tmp.write_text("\n".join(kept) + ("\n" if kept else ""))
+    core.serde.replace_file(tmp, todo_path)
+    return stopped_full
 
 
 # ── Status helpers ──────────────────────────────────────────────────────────

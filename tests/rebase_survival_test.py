@@ -109,6 +109,148 @@ class TestRevertedHunks:
             "though git had merged it cleanly\n      + F"
         )
 
+    def test_relocated_and_reindented_block_is_not_flagged_as_reverted(self):
+        b = (
+            "func_a() {\n"
+            "    x := 1\n"
+            "    y := 2\n"
+            "}\n"
+            "\n"
+            "func_b() {\n"
+            "    z := 3\n"
+            "}\n"
+        )
+        t = (
+            "func_a() {\n"
+            "    x := 1\n"
+            "    cfg := loadGrafana()\n"
+            "    if cfg.Enabled {\n"
+            "        startGrafana(cfg)\n"
+            "    }\n"
+            "    y := 2\n"
+            "}\n"
+            "\n"
+            "func_b() {\n"
+            "    z := 3\n"
+            "    extra := true\n"
+            "}\n"
+        )
+        u = (
+            "func_a() {\n"
+            "    x := 1\n"
+            "    y := 2\n"
+            "}\n"
+            "\n"
+            "cmd_full() {\n"
+            "    if nested {\n"
+            "        z := 3\n"
+            "    }\n"
+            "}\n"
+        )
+        r = (
+            "func_a() {\n"
+            "    x := 1\n"
+            "    y := 2\n"
+            "}\n"
+            "\n"
+            "cmd_full() {\n"
+            "    if nested {\n"
+            "        cfg := loadGrafana()\n"
+            "        if cfg.Enabled {\n"
+            "            startGrafana(cfg)\n"
+            "        }\n"
+            "        z := 3\n"
+            "    }\n"
+            "}\n"
+        )
+
+        audit = _audit(r, base=b, target=u, replayed=t)
+        losses = list(audit.losses)
+
+        assert [loss for loss in losses if loss.blocking] == []
+
+    def test_single_line_revert_not_masked_by_same_line_added_elsewhere(self):
+        b = "h2() {\n    return value\n}\n\nh1() {\n    return None\n}\n\nbottom() {\n    x := 1\n}\n"
+        t = b.replace("    return value\n", "    return value\n    return None\n").replace(
+            "    x := 1\n", "    x := 1\n    extra := true\n")
+        u = b.replace("    x := 1\n", "    x := 1\n    return None\n")
+        r = b.replace("    x := 1\n", "    x := 1\n    return None\n    extra := true\n")
+
+        audit = _audit(r, base=b, target=u, replayed=t)
+
+        assert any(
+            loss.kind is LossKind.HUNK_REVERTED and loss.blocking
+            for loss in audit.losses
+        )
+
+    def test_dropped_repeated_single_line_is_still_flagged_as_reverted(self):
+        b = (
+            "helper_two() {\n"
+            "    return value\n"
+            "}\n"
+            "\n"
+            "helper_one() {\n"
+            "    return None\n"
+            "}\n"
+            "\n"
+            "bottom() {\n"
+            "    x := 1\n"
+            "}\n"
+        )
+        t = (
+            "helper_two() {\n"
+            "    return value\n"
+            "    return None\n"
+            "}\n"
+            "\n"
+            "helper_one() {\n"
+            "    return None\n"
+            "}\n"
+            "\n"
+            "bottom() {\n"
+            "    x := 1\n"
+            "    extra := true\n"
+            "}\n"
+        )
+        u = (
+            "helper_two() {\n"
+            "    return value\n"
+            "}\n"
+            "\n"
+            "helper_one() {\n"
+            "    return None\n"
+            "}\n"
+            "\n"
+            "bottom() {\n"
+            "    x := 1\n"
+            "    merged := true\n"
+            "}\n"
+        )
+        # `--ours` of the helpers drops the second `return None`. Keep the
+        # replayed `bottom()` edit so the file is not the target verbatim —
+        # that would be FILE_TAKEN_WHOLE rather than HUNK_REVERTED.
+        r = (
+            "helper_two() {\n"
+            "    return value\n"
+            "}\n"
+            "\n"
+            "helper_one() {\n"
+            "    return None\n"
+            "}\n"
+            "\n"
+            "bottom() {\n"
+            "    x := 1\n"
+            "    extra := true\n"
+            "}\n"
+        )
+
+        audit = _audit(r, base=b, target=u, replayed=t)
+
+        assert any(
+            loss.kind is LossKind.HUNK_REVERTED and loss.blocking
+            for loss in audit.losses
+        )
+
 
 class TestCollidingRegions:
     def test_a_collision_resolved_to_one_side_is_advisory(self):

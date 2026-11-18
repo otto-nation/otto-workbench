@@ -59,6 +59,19 @@ def test_the_publish_table(tree, commands, refusal):
     assert got.pushes is bool(commands)
 
 
+def test_already_published_ignores_a_stale_pre_rebase_head():
+    item = _item(remote_sha="r0", pre_rebase_head="old-local")
+    tree = TreeState(
+        local="l1", remote="l1",
+        divergence=RefDivergence(ahead=0, behind=0, comparable=True),
+        incorporated=False,
+    )
+    assert batch.publish.already_published(item, tree) is True
+    got = batch.publish.plan(item, "pr", tree)
+    assert got.refusal is None
+    assert got.commands == []
+
+
 def test_an_unincorporated_refusal_names_the_remote_commits():
     got = batch.publish.plan(_item(), "pr", _tree(2, 3, unincorporated=("c1 subj", "c2 two")))
     assert got.commits == ["c1 subj", "c2 two"]

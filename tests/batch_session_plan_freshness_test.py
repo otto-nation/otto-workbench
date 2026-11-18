@@ -74,7 +74,9 @@ def test_already_published_tree_clears_stored_rebase_and_push_findings(tmp_path)
         Finding(FindingReason.STALE_GENERATED, "rebase"),
         Finding(FindingReason.CONFLICT_HANDWRITTEN, "rebase"),
         Finding(FindingReason.CONFLICT_GENERATED, "rebase"),
+        Finding(FindingReason.FAILED_UNKNOWN, "rebase"),
         Finding(FindingReason.PUSH_REFUSED, "publish"),
+        Finding(FindingReason.CI_FAILING, "ci"),
     ]
     published = "b" * 40
     tree = TreeState(
@@ -85,7 +87,7 @@ def test_already_published_tree_clears_stored_rebase_and_push_findings(tmp_path)
     assert published != item.remote_sha
     entries = batch.session_report.sessions(
         make_run([item]), closeout=no_debt, tree=lambda i: tree)
-    assert entries == []
+    assert _reasons(entries) == [FindingReason.CI_FAILING]
 
 
 def test_commit_on_top_of_rebase_head_clears_stale_generated(tmp_path):

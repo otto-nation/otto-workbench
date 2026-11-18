@@ -51,6 +51,8 @@ def test_fresh_no_dirty_check():
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(rebase.lifecycle.rebase_target, "checkout_target_branch",
+                           return_value=0), \
          mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=False), \
          mock.patch.object(rebase.lifecycle, "rebase_success", return_value=0):
         result = rebase.lifecycle.fresh(
@@ -72,6 +74,8 @@ def test_fresh_delegates_to_drive_on_paused_rebase():
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(rebase.lifecycle.rebase_target, "checkout_target_branch",
+                           return_value=0), \
          mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=True), \
          mock.patch.object(rebase.lifecycle, "drive_to_completion", return_value=0) as mock_drive:
         result = rebase.lifecycle.fresh(
@@ -101,6 +105,8 @@ def test_fresh_forwards_no_verify_to_whichever_path_lands(paused):
         return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(rebase.lifecycle.rebase_target, "checkout_target_branch",
+                           return_value=0), \
          mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=paused), \
          mock.patch.object(rebase.lifecycle, "rebase_success", return_value=0) as success, \
          mock.patch.object(rebase.lifecycle, "drive_to_completion", return_value=0) as drive:
@@ -113,19 +119,17 @@ def test_fresh_forwards_no_verify_to_whichever_path_lands(paused):
     assert lander.call_args.kwargs["verify"] is False
 
 
-def test_fresh_skips_checkout_when_on_correct_branch():
-    """No checkout when current_branch already matches ctx.branch."""
+def test_fresh_syncs_when_already_on_the_branch():
+    """Already on the branch still runs checkout_target_branch (FF / keep / refuse)."""
     ctx = mock.MagicMock()
     ctx.branch = "feat/my-branch"
     ctx.current_branch = "feat/my-branch"
-    checkout_calls = []
 
-    def fake_run(cmd, **kwargs):
-        if cmd[:2] == ["git", "checkout"]:
-            checkout_calls.append(cmd)
-        return subprocess.CompletedProcess(args=cmd, returncode=0, stdout="", stderr="")
-
-    with mock.patch("subprocess.run", side_effect=fake_run), \
+    with mock.patch("subprocess.run",
+                    return_value=subprocess.CompletedProcess(
+                        args=[], returncode=0, stdout="", stderr="")), \
+         mock.patch.object(rebase.lifecycle.rebase_target, "checkout_target_branch",
+                           return_value=0) as sync, \
          mock.patch.object(rebase.inspect, "rebase_in_progress", return_value=False), \
          mock.patch.object(rebase.lifecycle, "rebase_success", return_value=0):
         result = rebase.lifecycle.fresh(
@@ -133,7 +137,7 @@ def test_fresh_skips_checkout_when_on_correct_branch():
         )
 
     assert result == 0
-    assert len(checkout_calls) == 0
+    sync.assert_called_once()
 
 
 def _fake_run_without_local_branch(checkout_calls):
@@ -272,16 +276,23 @@ def _run_fresh(*, tracker=None, git=None, unrelated=None, force=False,
     ctx.branch = _LANDED_BRANCH
     ctx.current_branch = current_branch
     commands, saw_checkout = [], {}
+    synced = {"done": False}
 
     def fake_run(cmd, **kwargs):
         commands.append(list(cmd))
         return _completed(cmd)
 
+    def fake_sync(*_a, **_k):
+        synced["done"] = True
+        return 0
+
     def record(half, report):
-        saw_checkout[half] = any(c[:2] == ["git", "checkout"] for c in commands)
+        saw_checkout[half] = synced["done"]
         return report
 
     with mock.patch("subprocess.run", side_effect=fake_run), \
+         mock.patch.object(rebase.lifecycle.rebase_target, "checkout_target_branch",
+                           side_effect=fake_sync), \
          mock.patch.object(rebase.refusals, "tracker_landed_check",
                            side_effect=lambda *_, **kw: record("tracker", tracker)), \
          mock.patch.object(rebase.refusals, "git_landed_check",
@@ -326,12 +337,11 @@ def test_fresh_asks_the_tracker_before_the_checkout():
 
 
 def test_fresh_probes_the_tracker_even_when_already_on_the_branch():
-    """The common case takes the same path — no checkout, same probe."""
+    """The common case probes first; sync still runs after the probe."""
     rc, commands, saw_checkout = _run_fresh()
 
     assert rc == 0
     assert saw_checkout["tracker"] is False
-    assert not any(cmd[:2] == ["git", "checkout"] for cmd in commands)
 
 
 def test_fresh_runs_the_git_signals_after_the_checkout():
@@ -381,6 +391,8 @@ def test_fresh_skips_every_half_of_the_preflight_under_force():
     ctx.current_branch = _LANDED_BRANCH
 
     with mock.patch("subprocess.run", side_effect=lambda cmd, **kw: _completed(cmd)), \
+         mock.patch.object(rebase.lifecycle.rebase_target, "checkout_target_branch",
+                           return_value=0), \
          mock.patch.object(rebase.refusals, "tracker_landed_check") as mock_tracker, \
          mock.patch.object(rebase.refusals, "git_landed_check") as mock_git, \
          mock.patch.object(rebase.refusals, "unrelated_history_check") as mock_unrelated, \
@@ -436,6 +448,8 @@ def test_fresh_falls_back_to_the_git_signals_when_the_tracker_is_unreachable():
     seen = []
 
     with mock.patch("subprocess.run", side_effect=lambda cmd, **kw: _completed(cmd)), \
+         mock.patch.object(rebase.lifecycle.rebase_target, "checkout_target_branch",
+                           return_value=0), \
          mock.patch.object(git.regenerate, "try_run", return_value=None), \
          mock.patch.object(git.client, "commits_ahead", return_value=2), \
          mock.patch.object(gh.landed, "diff_is_empty", return_value=True), \

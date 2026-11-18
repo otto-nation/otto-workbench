@@ -36,6 +36,20 @@ def test_needs_session_items_are_named_in_the_hint():
     assert "nothing is left" not in hint
 
 
+def test_hint_counts_sessions_when_the_report_includes_them():
+    items = [_item(1), _item(2)]
+    hint = batch.report.build(
+        _run(items), active=False, sessions=[],
+    )["run"]["hint"]
+    assert "need a session" not in hint
+    assert "nothing is left to answer" in hint
+
+    hint = batch.report.build(
+        _run(items), active=False, sessions=[{"pr": "o/r#1"}],
+    )["run"]["hint"]
+    assert "1 PR need a session" in hint
+
+
 def test_act_findings_on_a_done_item_are_named_in_the_hint():
     # Revert: drop the findings check in _hint.
     item = _item(1, status=ItemStatus.DONE)

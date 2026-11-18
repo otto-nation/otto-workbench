@@ -391,11 +391,14 @@ def local_tree(item: Item) -> TreeState:
 
 
 def already_published(item: Item, tree: TreeState) -> bool:
-    """Whether *tree* shows *item*'s local branch has already been pushed to origin."""
+    """Whether *tree* shows *item*'s local branch has already been pushed to origin.
+
+    Tracking equal to HEAD is the spent lease. ``incorporated`` is a pre-push
+    check on a diverged force-push and is not part of this.
+    """
     return bool(tree.local and tree.remote == tree.local
                 and tree.remote != item.remote_sha
-                and tree.divergence.comparable
-                and (not item.pre_rebase_head or tree.incorporated))
+                and tree.divergence.comparable)
 
 
 def _has_staged(wt: str) -> bool:

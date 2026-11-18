@@ -381,6 +381,50 @@ def test_parse_run_does_not_double_count_a_job_reported_by_two_runs():
     assert len(group.items) == 1
 
 
+def test_parse_run_drops_downstream_fan_in_gate_when_real_job_failed_but_keeps_sole_gate():
+    real_ann = [
+        {
+            "annotation_level": "failure",
+            "message": "undefined: Foo",
+            "path": "svc/orders.go",
+            "start_line": 10,
+        },
+    ]
+    gate_ann = [
+        {
+            "annotation_level": "failure",
+            "message": "One or more PR checks failed",
+            "path": ".github",
+            "start_line": 12,
+        },
+    ]
+
+    def anns(_repo, job_id):
+        return real_ann if job_id == 10 else gate_ann
+
+    empty_log = _no_log_fallback(pr.ci_failures.FailureKind.BUILD)
+    run_data = _make_run_data([
+        {"name": "IT: svc-orders", "conclusion": "failure", "databaseId": 10},
+        {"name": "PR checks passed", "conclusion": "failure", "databaseId": 11},
+    ])
+    with patch("gh.run_reads.fetch_annotations", side_effect=anns), \
+         patch("pr.ci_annotations.log_fallback", return_value=empty_log), \
+         patch("pr.ci_annotations.fetch_test_artifact", return_value=""):
+        result = pr.ci_runs.parse_run("owner/repo", run_data)
+    assert "it:-svc-orders" in result.failures
+    assert "pr-checks-passed" not in result.failures
+
+    sole = _make_run_data([
+        {"name": "PR checks passed", "conclusion": "failure", "databaseId": 11},
+    ])
+    with patch("gh.run_reads.fetch_annotations", return_value=gate_ann), \
+         patch("pr.ci_annotations.log_fallback", return_value=empty_log), \
+         patch("pr.ci_annotations.fetch_test_artifact", return_value=""):
+        sole_result = pr.ci_runs.parse_run("owner/repo", sole)
+    assert "pr-checks-passed" in sole_result.failures
+    assert sole_result.failures
+
+
 def test_parse_run_keeps_distinct_failures_sharing_one_id():
     """Two annotations on one file and line share an id but are two failures."""
     run_data = _make_run_data([

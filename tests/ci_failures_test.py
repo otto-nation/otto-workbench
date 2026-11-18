@@ -121,6 +121,13 @@ def test_classify_job_no_infra_override_without_signature():
     assert classify_job("lint / shellcheck", annotations) == FailureKind.LINT
 
 
+def test_classify_job_recognizes_it_prefix_and_failed_step():
+    assert classify_job("IT: svc-orders", []) == FailureKind.TEST
+    assert classify_job("Integration: api", []) == FailureKind.TEST
+    assert classify_job("svc-orders", [], failed_step="go test ./...") == FailureKind.TEST
+    assert classify_job("CodeQL", []) == FailureKind.BUILD
+
+
 def _infra_group(*annotations, kind=FailureKind.INFRA, headline=None):
     items = tuple(
         FailureItem(

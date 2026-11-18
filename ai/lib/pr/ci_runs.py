@@ -14,6 +14,7 @@ called from here once per failed job and in parallel.
 
 from __future__ import annotations
 
+import re
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -22,6 +23,16 @@ import gh.run_reads
 from gh.run_reads import FAILURE_CONCLUSIONS
 import pr.ci_annotations
 import pr.ci_failures
+
+_GATE_NAME_RE = re.compile(
+    r"^(?:(?:pr|all|required)\s+checks(?:\s+passed)?|checks\s+passed|gate)$",
+    re.IGNORECASE,
+)
+_FAN_IN_MESSAGES = (
+    "one or more pr checks failed",
+    "required checks failed",
+    "all checks have failed",
+)
 
 
 class RunUnavailable(Exception):
@@ -74,6 +85,22 @@ def _claims_failure(run_data: dict) -> bool:
     return run_data.get("conclusion") in FAILURE_CONCLUSIONS and bool(failed_jobs(run_data))
 
 
+def _is_fan_in_gate(group: pr.ci_failures.FailureGroup) -> bool:
+    """True when this job is a required-checks fan-in with no real failure of its own."""
+    if not _GATE_NAME_RE.match(group.job.strip()):
+        return False
+    return all(
+        not item.context
+        and not pr.ci_annotations.is_source_path(item.file or "")
+        and (
+            pr.ci_annotations.is_generic_message(item.annotation)
+            or any(m in item.annotation.lower() for m in _FAN_IN_MESSAGES)
+            or "failed with no annotations" in item.annotation.lower()
+        )
+        for item in group.items
+    )
+
+
 def parse_run(repo: str, run_data: dict) -> pr.ci_failures.RunState:
     """Parse gh run data into a RunState with classified failures."""
     failures: dict[str, pr.ci_failures.FailureGroup] = {}
@@ -93,6 +120,9 @@ def parse_run(repo: str, run_data: dict) -> pr.ci_failures.RunState:
             items=_dedupe_items(prior_items + tuple(r.items)),
             failed_step=r.failed_step,
         )
+
+    if any(not _is_fan_in_gate(g) for g in failures.values()):
+        failures = {k: g for k, g in failures.items() if not _is_fan_in_gate(g)}
 
     return pr.ci_failures.RunState(
         run_id=run_data["databaseId"],

@@ -139,6 +139,26 @@ def test_uninformative_generic_path_dot_github():
     assert pr.ci_annotations.annotations_uninformative(annotations) is True
 
 
+def test_failure_annotation_on_dot_github_with_non_generic_message_is_still_uninformative():
+    """A .github path is a workflow location even when the message is specific."""
+    assert pr.ci_annotations.annotations_uninformative([
+        {
+            "annotation_level": "failure",
+            "message": "One or more PR checks failed",
+            "path": ".github",
+            "start_line": 12,
+        },
+    ]) is True
+    assert pr.ci_annotations.annotations_uninformative([
+        {
+            "annotation_level": "failure",
+            "message": "One or more PR checks failed",
+            "path": ".github/workflows/ci.yml",
+            "start_line": 12,
+        },
+    ]) is True
+
+
 def test_uninformative_generic_exit_code_message():
     """Annotations with a source path but generic 'exit code' message are uninformative."""
     annotations = [

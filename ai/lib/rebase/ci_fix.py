@@ -19,9 +19,11 @@ import fix.ci
 import fix.engine
 import fix.verify
 import gh.client
+import git.client
 from git.land import CommitStatus
 import pr.ci_failures
 import pr.ci_report
+from pr.fix import FixOutcome, ItemOutcome
 import pr.ci_wait
 import pr.state
 import rebase.commands
@@ -226,6 +228,36 @@ def _tally(adapter: fix.ci.CIFixAdapter,
     )
 
 
+def _short_circuit_blind(trail, adapter: fix.ci.CIFixAdapter, ctx) -> int:
+    """Record every remaining failure as needing a person and skip the AI pass."""
+    head_before = git.client.head_sha(cwd=str(ctx.require_worktree()))
+    outcomes = [
+        ItemOutcome(
+            id=f.id,
+            outcome=FixOutcome.NEEDS_HUMAN,
+            summary=f.group.job,
+            reason="CI log and annotations carried no actionable failure output",
+            file=f.item.file or "",
+            line=f.item.line or 0,
+            read_sha=head_before,
+        )
+        for f in adapter.fixable
+    ]
+    run = fix.engine.FixRun(outcomes=outcomes, head_before=head_before)
+    adapter.record(run)
+    _emit_tally(_tally(adapter, run))
+    trail.info(
+        "fix_short_circuit",
+        f"{len(outcomes)} unactionable failure(s)",
+        data={"unfixed": [o.id for o in outcomes]},
+    )
+    core.log.info(
+        f"Skipping AI fix pass — {len(outcomes)} CI failure(s) "
+        "carry no actionable log or annotation context"
+    )
+    return 0
+
+
 def run_fix(trail, report: pr.ci_report.CIReport, ctx, *,
             rebase_first: bool = True, verify: bool = True,
             wait_timeout: int = 900, wait_interval: int = 30) -> int:
@@ -302,6 +334,9 @@ def run_fix(trail, report: pr.ci_report.CIReport, ctx, *,
         core.log.dim("Finish it with `pr rebase --fix`, or discard it with "
                 "`pr rebase --abort`, then re-run.")
         return 1
+
+    if all(fix.ci.is_blind_failure(f) for f in adapter.fixable):
+        return _short_circuit_blind(trail, adapter, ctx)
 
     trail.info("fix_start", f"{len(adapter.fixable)} fixable failure(s)")
     core.log.info(f"Fixing {len(adapter.fixable)} CI failure(s)...")

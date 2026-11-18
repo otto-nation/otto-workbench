@@ -195,12 +195,13 @@ def log_fallback(repo: str, job: dict, run_data: dict, kind: pr.ci_failures.Fail
         return LogFallback([], "", kind, structured=False)
 
     job_name = job.get("name", "unknown")
+    failed_step = extract_failed_step(job)
     tests = pr.ci_failures.extract_test_failures(log_text)
     if tests:
         context = "\n\n".join(f.context for f in tests)
         return LogFallback(
             [_test_annotation(f) for f in tests], context,
-            pr.ci_failures.classify_job(job_name, [context]),
+            pr.ci_failures.classify_job(job_name, [context], failed_step=failed_step),
             structured=True,
         )
 
@@ -208,7 +209,11 @@ def log_fallback(repo: str, job: dict, run_data: dict, kind: pr.ci_failures.Fail
     if not context:
         return LogFallback([], "", kind, structured=False)
     annotations = [{"message": context, "path": "", "start_line": 0, "title": ""}]
-    return LogFallback(annotations, context, pr.ci_failures.classify_job(job_name, [context]), structured=False)
+    return LogFallback(
+        annotations, context,
+        pr.ci_failures.classify_job(job_name, [context], failed_step=failed_step),
+        structured=False,
+    )
 
 
 def parse_test_artifact(artifact_dir: str) -> str:
@@ -322,7 +327,9 @@ def fetch_job_failure(repo: str, job: dict, run_data: dict) -> JobFailure | None
         a for a in annotations if a.get("annotation_level") != "notice"
     ]
     annotation_texts = [a.get("message", "") for a in classify_anns]
-    kind = pr.ci_failures.classify_job(job_name, annotation_texts)
+    kind = pr.ci_failures.classify_job(
+        job_name, annotation_texts, failed_step=failed_step,
+    )
 
     if kind not in (pr.ci_failures.FailureKind.BUILD, pr.ci_failures.FailureKind.TEST):
         return _make_result(job_name, kind, annotations, source_run_id, failed_step)
@@ -348,5 +355,5 @@ def fetch_job_failure(repo: str, job: dict, run_data: dict) -> JobFailure | None
         )
     if ctx:
         annotations = [{"message": ctx, "path": "", "start_line": 0, "title": ""}]
-        kind = pr.ci_failures.classify_job(job_name, [ctx])
+        kind = pr.ci_failures.classify_job(job_name, [ctx], failed_step=failed_step)
     return _make_result(job_name, kind, annotations, source_run_id, failed_step)

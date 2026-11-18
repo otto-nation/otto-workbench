@@ -16,6 +16,7 @@ import agent.retry
 import fix.engine
 import fix.suite
 import fix.types
+import pr.ci_annotations
 import pr.ci_failures
 import pr.ci_report
 import pr.state
@@ -53,6 +54,27 @@ class CIFailure:
     @property
     def id(self) -> str:
         return self.item.id
+
+
+def _is_unactionable_text(text: str) -> bool:
+    """True when annotation text carries no diagnostic a fix pass could act on."""
+    if not (text or "").strip():
+        return True
+    lowered = text.lower()
+    return (
+        pr.ci_annotations.is_generic_message(text)
+        or "failed with no annotations" in lowered
+        or "one or more pr checks failed" in lowered
+    )
+
+
+def is_blind_failure(failure: CIFailure) -> bool:
+    """True when a fixable failure still has no log, source path, or diagnostic."""
+    return (
+        not failure.item.context
+        and not pr.ci_annotations.is_source_path(failure.item.file or "")
+        and _is_unactionable_text(failure.item.annotation)
+    )
 
 
 def flatten(

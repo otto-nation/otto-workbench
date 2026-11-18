@@ -13,6 +13,7 @@ if str(LIB_DIR) not in sys.path:
 
 import git.client  # noqa: E402
 import git.land  # noqa: E402
+import core.publishing  # noqa: E402
 import core.report  # noqa: E402
 import rebase.types  # noqa: E402
 import rebase.land  # noqa: E402
@@ -36,7 +37,8 @@ def test_rebase_success_emits_stale_files():
     )
     saved = []
 
-    with mock.patch.object(git.client, "commits_ahead", return_value=1), \
+    with core.publishing.run(post=True), \
+         mock.patch.object(git.client, "commits_ahead", return_value=1), \
          mock.patch.object(
              rebase.types.RebaseOutcome, "save",
              lambda self, c: saved.append(self),
@@ -45,6 +47,7 @@ def test_rebase_success_emits_stale_files():
         rc = rebase.lifecycle.rebase_success(
             "/fake", ctx, rebase.types.RunMode.PUSH, tally, target_ref=_TARGET,
         )
+        assert core.publishing.held()
 
     assert rc == 0
     assert saved[0].files_stale == ["pnpm-lock.yaml"]
@@ -433,3 +436,28 @@ def test_rebase_success_hands_the_hook_decision_to_the_landing(verify):
         )
 
     assert mock_land.call_args.kwargs["verify"] is verify
+
+
+def test_remaining_stale_files_hold_the_push_even_when_posting(capsys):
+    ctx = mock.MagicMock()
+    tally = rebase.types.ResolutionTally(
+        files=["schema.hash"], stale=["schema.hash"], commits=1,
+        pre_rebase_head="p0",
+    )
+    land = mock.Mock(side_effect=lambda *a, **k: _pushed() if core.publishing.enabled() else _held())
+    with core.publishing.run(post=True), \
+         mock.patch.object(git.client, "commits_ahead", return_value=1), \
+         mock.patch.object(rebase.land, "land_rebased", land), \
+         mock.patch.object(rebase.types.RebaseOutcome, "save", lambda self, c: None), \
+         mock.patch.object(core.report, "emit_json") as emit:
+        rc = rebase.lifecycle.rebase_success(
+            "/fake", ctx, rebase.types.RunMode.FIX, tally,
+            target_ref=_TARGET, lease=_LEASE,
+        )
+        held = core.publishing.held()
+    assert rc == 0
+    assert held
+    assert "force_pushed" not in emit.call_args[0][0]
+    err = capsys.readouterr().err
+    assert "pr rebase --push-only" in err
+    assert "without --no-push" not in err

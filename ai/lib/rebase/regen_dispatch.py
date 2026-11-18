@@ -12,6 +12,8 @@ from pathlib import Path
 
 import core.log
 from core.trail import Trail, terr, tinfo
+import git.client
+import git.land
 import git.regenerate
 
 from . import conflicts
@@ -158,3 +160,23 @@ def rebuild_stale(
         path for path in tally.stale
         if path not in attempted or path in failed_set or path in unknown_set
     ]
+
+
+def retry_stale_at_tip(
+    cwd: str, tally: ResolutionTally, *,
+    trail: Trail | None, conventional: bool = True,
+    message: str = rebase_types.REGEN_MESSAGE,
+) -> None:
+    """Retry remaining `tally.stale` paths at the finished rebase tip and commit any diff."""
+    if not tally.stale or not Path(cwd).is_dir():
+        return
+    before = list(tally.stale)
+    rebuild_stale(cwd, tally, trail=trail, conventional=conventional)
+    rebuilt = [p for p in before if p not in tally.stale]
+    if not rebuilt:
+        return
+    if git.client.lines("diff", "--name-only", cwd=cwd):
+        git.client.run("add", "-u", cwd=cwd)
+    committed = git.land.commit_only(cwd, message=message, trail=trail)
+    if committed.status is git.land.CommitStatus.COMMIT_FAILED:
+        tally.stale.extend(p for p in rebuilt if p not in tally.stale)

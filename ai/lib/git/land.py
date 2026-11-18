@@ -691,6 +691,20 @@ def land(
     )
 
 
+def commit_only(
+    wt_path: str | Path,
+    *,
+    message: str,
+    paths: Iterable[str] | None = None,
+    trail: Trail | None = None,
+) -> LandResult:
+    """Stage and commit locally without pushing (`NO_CHANGES`, `COMMIT_FAILED`, or `PUSH_HELD`)."""
+    made = _commit(wt_path, message=message, paths=paths, trail=trail)
+    if made.outcome is not None:
+        return made.outcome
+    return LandResult(CommitStatus.PUSH_HELD, sha=made.sha)
+
+
 def land_head(
     wt_path: str | Path,
     *,

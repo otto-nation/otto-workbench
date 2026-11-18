@@ -8719,6 +8719,10 @@ rest of this package (`rebase.lifecycle`, `rebase.land`, `rebase.lease`, …).
 `push_head` is the one leased push. `cmd_push` (the rebase's force-push) records
 the rebase after it; `cmd_push_head` (`pr push`) records `PushDomain` and no rebase.
 
+### rebase/complete.py
+
+Finishing a completed rebase — tip regeneration, push holds, and landing.
+
 ### rebase/conflict_stop.py
 
 Default-mode conflict stop: classify, regenerate if declared, else abort.

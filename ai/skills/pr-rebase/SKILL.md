@@ -248,11 +248,14 @@ null.
 Every conflict is resolved by the run itself: git's rerere cache is held off, so
 no unreviewed resolution is recorded for a later rebase.
 
-Report commits replayed and any conflicts resolved. When `files_stale` is
-non-empty **after a completed rebase**, those files were staged from the
-incoming side and never rebuilt — the repo's regeneration command failed, the
+Report commits replayed and any conflicts resolved. `pr rebase` retries
+`files_stale` once at the completed tip: it rebuilds those paths, commits
+`chore: regenerate after rebase` when they change, and clears `files_stale`
+when they do not. When `files_stale` remains non-empty after that retry, the
+push is held, matching `files_one_sided` — those files were staged from the
+incoming side and never rebuilt (the repo's regeneration command failed, the
 path has no `regenerate=` attribute and no declared `rebase.regenerate` /
-conventional `generate` task, or the rebuild was unknown. Regenerate them
+conventional `generate` task, or the rebuild was unknown). Regenerate them
 yourself — see *After the rebase* — then finish at step 3. A repo that keeps
 landing on unattributed generated files wants `regenerate=<command>` on those
 paths in `.gitattributes`.

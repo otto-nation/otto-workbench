@@ -4,6 +4,8 @@ import sys
 from pathlib import Path
 from unittest import mock
 
+from conftest import commit_all, git_in, init_repo
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
@@ -108,3 +110,71 @@ class TestSharesHistory:
         with mock.patch.object(rebase.inspect, "ref_exists", return_value=True), \
              mock.patch.object(git.client, "ok", return_value=False):
             assert rebase.inspect.shares_history("/fake", target_ref="orphan") is False
+
+
+def _commit_file(repo: Path, name: str, body: str, message: str) -> None:
+    (repo / name).write_text(body)
+    git_in(repo, "add", name)
+    git_in(repo, "commit", "-q", "--no-verify", "-m", message)
+
+
+def _stage_ours(repo: Path, name: str) -> None:
+    git_in(repo, "checkout", "--ours", "--", name)
+    git_in(repo, "add", name)
+
+
+def _last_rewritten_new(repo: Path) -> str:
+    merge_dir = rebase.inspect.git_dir(str(repo)) / rebase.inspect.GIT_REBASE_MERGE_DIR
+    last = ""
+    for line in (merge_dir / "rewritten-list").read_text().splitlines():
+        parts = line.split()
+        last = parts[1] if len(parts) >= 2 else last
+    return last
+
+
+def test_step_committed_manually_distinguishes_manual_commit_from_empty_patch(tmp_path):
+    """A clean tree after `git commit` is not an empty upstream patch."""
+    repo = init_repo(tmp_path / "case_a")
+    _commit_file(repo, "f.txt", "base\n", "base")
+    git_in(repo, "checkout", "-q", "-b", "feat")
+    _commit_file(repo, "f.txt", "feat\n", "feat1")
+    git_in(repo, "checkout", "-q", "main")
+    _commit_file(repo, "f.txt", "main\n", "main")
+    git_in(repo, "checkout", "-q", "feat")
+    paused = git.client.run("rebase", "main", cwd=str(repo))
+    assert not paused.ok
+    assert rebase.inspect.detect_conflicts(str(repo)) == ["f.txt"]
+
+    _stage_ours(repo, "f.txt")
+    assert rebase.inspect.is_empty_patch(str(repo))
+    assert rebase.inspect.step_committed_manually(str(repo)) is False
+
+    _commit_file(repo, "f.txt", "feat\n", "manual step 1")
+    merge_dir = rebase.inspect.git_dir(str(repo)) / rebase.inspect.GIT_REBASE_MERGE_DIR
+    assert (merge_dir / "stopped-sha").is_file()
+    assert rebase.inspect.is_empty_patch(str(repo))
+    assert rebase.inspect.step_committed_manually(str(repo)) is True
+
+    repo = init_repo(tmp_path / "case_b")
+    (repo / "f.txt").write_text("f-base\n")
+    (repo / "g.txt").write_text("g-base\n")
+    commit_all(repo, "base")
+    git_in(repo, "checkout", "-q", "-b", "feat")
+    _commit_file(repo, "f.txt", "f-feat\n", "feat1")
+    _commit_file(repo, "g.txt", "g-feat\n", "feat2")
+    git_in(repo, "checkout", "-q", "main")
+    _commit_file(repo, "g.txt", "g-main\n", "main")
+    git_in(repo, "checkout", "-q", "feat")
+    paused = git.client.run("rebase", "main", cwd=str(repo))
+    assert not paused.ok
+    assert rebase.inspect.detect_conflicts(str(repo)) == ["g.txt"]
+
+    head = git.client.out("rev-parse", "HEAD", cwd=str(repo))
+    assert head == _last_rewritten_new(repo)
+    _stage_ours(repo, "g.txt")
+    assert rebase.inspect.is_empty_patch(str(repo))
+    assert rebase.inspect.step_committed_manually(str(repo)) is False
+
+    _commit_file(repo, "g.txt", "g-feat\n", "manual step 2")
+    assert rebase.inspect.is_empty_patch(str(repo))
+    assert rebase.inspect.step_committed_manually(str(repo)) is True

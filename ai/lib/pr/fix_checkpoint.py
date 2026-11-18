@@ -149,12 +149,21 @@ def checkpoint_path(target_dir: Path) -> Path:
     return pr.comments.artifacts_dir(target_dir) / CHECKPOINT_FILENAME
 
 
+def _discard_unreadable(path: Path) -> None:
+    """Warn and unlink a corrupt checkpoint. Unlink failure is a no-op."""
+    core.log.warn(f"{path} is unreadable — discarding it")
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
 def load(target_dir: Path) -> CommentsFixCheckpoint | None:
     """The recorded checkpoint, or None when missing, corrupt, or the wrong version.
 
     A version mismatch is not corruption: it is a schema this code does not
-    read, so the file is ignored rather than warned about. An unreadable file
-    is warned and discarded, matching `serde.load_file`.
+    read, so the file is ignored rather than warned about or unlinked. An
+    unreadable file is warned, unlinked, and discarded.
     """
     path = checkpoint_path(target_dir)
     if not path.is_file():
@@ -162,20 +171,20 @@ def load(target_dir: Path) -> CommentsFixCheckpoint | None:
     try:
         raw = json.loads(path.read_text())
     except (OSError, ValueError):
-        core.log.warn(f"{path} is unreadable — discarding it")
+        _discard_unreadable(path)
         return None
     if not isinstance(raw, dict) or raw.get("version") != CHECKPOINT_VERSION:
         return None
     try:
         ckpt = core.serde.from_dict(CommentsFixCheckpoint, raw)
     except (TypeError, ValueError):
-        core.log.warn(f"{path} is unreadable — discarding it")
+        _discard_unreadable(path)
         return None
     if (
         ckpt.phase.reached(CheckpointPhase.AGENT_RUNNING)
         and not ckpt.engine.head_before
     ):
-        core.log.warn(f"{path} is unreadable — discarding it")
+        _discard_unreadable(path)
         return None
     return ckpt
 

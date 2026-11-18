@@ -46,6 +46,16 @@ class TestTriagePromptVerificationValues:
         assert "abc1234 fix(logging): inject logger" in prompt
         assert "already_addressed, not invalid" in prompt
 
+    def test_commit_backed_already_addressed_requires_a_touched_line(self):
+        prompt = pr.triage_prompt.build_triage_prompt(
+            [], "diff", commit_log="abc1234 fix(logging): inject logger",
+        )
+        assert "matching commit actually touched" in prompt
+        assert "matching commit subject" in prompt
+        assert "alone is not enough" in prompt
+        assert "empty evidence_file still downgrades" in prompt
+        assert f"REQUIRED for {Verification.ALREADY_ADDRESSED}" in prompt
+
     def test_commit_log_omitted_when_empty(self):
         prompt = pr.triage_prompt.build_triage_prompt([], "diff", commit_log="")
         assert "Commits already made on this branch" not in prompt

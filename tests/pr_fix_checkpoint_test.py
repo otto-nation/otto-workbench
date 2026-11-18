@@ -147,7 +147,7 @@ class TestSchema:
         assert loaded.seen_issue_comments == {11: "stamp"}
         assert loaded.updated_at
 
-    def test_version_mismatch_is_none(self, tmp_path):
+    def test_version_mismatch_is_none(self, tmp_path, capsys):
         ctx = make_ctx(target_dir=tmp_path)
         _write(ctx, _filled(ctx))
         path = pr.fix_checkpoint.checkpoint_path(tmp_path)
@@ -155,6 +155,34 @@ class TestSchema:
         raw["version"] = pr.fix_checkpoint.CHECKPOINT_VERSION + 1
         path.write_text(json.dumps(raw))
         assert pr.fix_checkpoint.load(tmp_path) is None
+        assert path.is_file()
+        assert capsys.readouterr().err == ""
+
+    def test_corrupt_json_unlinks_and_warns_once(self, tmp_path, capsys):
+        path = pr.fix_checkpoint.checkpoint_path(tmp_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("{not json")
+        assert pr.fix_checkpoint.load(tmp_path) is None
+        assert not path.exists()
+        err = capsys.readouterr().err
+        assert err.count("unreadable") == 1
+        assert "discarding it" in err
+        assert pr.fix_checkpoint.load(tmp_path) is None
+        assert capsys.readouterr().err == ""
+
+    def test_failed_from_dict_unlinks_and_warns_once(self, tmp_path, capsys):
+        path = pr.fix_checkpoint.checkpoint_path(tmp_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({
+            "version": pr.fix_checkpoint.CHECKPOINT_VERSION,
+            "phase": "not-a-phase",
+        }))
+        assert pr.fix_checkpoint.load(tmp_path) is None
+        assert not path.exists()
+        err = capsys.readouterr().err
+        assert err.count("unreadable") == 1
+        assert pr.fix_checkpoint.load(tmp_path) is None
+        assert capsys.readouterr().err == ""
 
     def test_failed_replace_returns_false_and_leaves_the_old_file(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)
@@ -535,7 +563,9 @@ class TestFoldAndLoad:
             head_sha=ctx.head_sha,
         )
         _write(ctx, ckpt)
+        path = pr.fix_checkpoint.checkpoint_path(tmp_path)
         assert pr.fix_checkpoint.load(tmp_path) is None
+        assert not path.exists()
 
     def test_save_stamps_checkpoint_version(self, tmp_path):
         ctx = make_ctx(target_dir=tmp_path)

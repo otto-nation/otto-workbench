@@ -530,9 +530,8 @@ def _ai_mode_conflicts(
         terr(trail, "resolve_conflicts", "AI backend cannot run in worktree",
              data={"error": env_err})
         core.log.error(f"Cannot resolve conflicts — {env_err}")
-        return _report_conflicts_and_stop(
-            cwd, ctx, target_ref=target_ref, tally=tally, lease=lease,
-        )
+        _record_failed(ctx, tally, target_ref=target_ref, lease=lease)
+        return 1
     if not force:
         over = _over_budget(tally, conflicts)
         if over is not None:

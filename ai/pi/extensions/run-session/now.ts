@@ -36,9 +36,15 @@ export interface ReportSession {
   notes?: string[];
 }
 
-export type Parsed = { ok: true; sessions: ReportSession[] } | { ok: false; error: string };
+/** `pr batch report --format json`: `sessions` plus `run.active` from batch.report.build. */
+export interface Report {
+  sessions: ReportSession[];
+  active: boolean;
+}
 
-/** The report's `sessions`, or why there are none to show. */
+export type Parsed = ({ ok: true } & Report) | { ok: false; error: string };
+
+/** The report's `sessions` and `run.active`, or why there are none to show. */
 export function parseReport(stdout: string): Parsed {
   let doc: unknown;
   try {
@@ -46,9 +52,10 @@ export function parseReport(stdout: string): Parsed {
   } catch {
     return { ok: false, error: "the report was not JSON" };
   }
-  const sessions = (doc as { sessions?: unknown } | null)?.sessions;
+  const body = doc as { sessions?: unknown; run?: { active?: unknown } } | null;
+  const sessions = body?.sessions;
   if (!Array.isArray(sessions)) return { ok: false, error: "the report has no sessions list" };
-  return { ok: true, sessions: sessions as ReportSession[] };
+  return { ok: true, sessions: sessions as ReportSession[], active: body?.run?.active === true };
 }
 
 const SHELL_SAFE = /^[A-Za-z0-9_@%+=:,./#-]+$/;
@@ -63,9 +70,13 @@ export function renderNow(
   subject: string,
   sessions: ReportSession[],
   decisions: Map<string, RunEvent>,
+  active = false,
 ): string {
   if (!sessions.length) {
-    return `## Now — ${subject}\nNothing in the report: no PR has findings or commands.`;
+    if (active) {
+      return `## Now — ${subject}\nBatch run is still in progress — no settled PRs need attention yet.\n`;
+    }
+    return `## Now — ${subject}\nNothing in the report: no PR has findings or commands.\n`;
   }
   const waiting = sessions.filter((s) => s.state === "needs_session" || (s.findings ?? []).some((f) => !decisions.has(decisionKey(s.pr, `${f.reason}:${f.step}`)))).length;
   const out = [`## Now — ${subject}: ${waiting} of ${sessions.length} PRs waiting on you`];
@@ -90,5 +101,5 @@ export function renderNow(
     }
     for (const note of s.notes ?? []) out.push(`- note: ${note}`);
   }
-  return out.join("\n");
+  return `${out.join("\n")}\n`;
 }

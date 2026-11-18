@@ -87,6 +87,15 @@ and test specifics live with their owners (pointers below).
   settles by merging text. Decide the roles first, rename one side, then rebase
   by hand hunk by hunk. `pr rebase --fix` aborted on baseline.py and its earlier
   resolutions of settlement.py left dead code and a double settle
+- Fixed mechanical commands (lockfile regeneration, codegen, `pr` subcommands with
+  known flags) run directly under `job_start` rather than through an implementation
+  subagent: observed 2026-11 through Pi's `subagent` tool, a `grok` dispatch given a
+  mechanical regeneration task spent turns exploring the tree instead of running
+  the command.
+- In a multi-PR orchestrator session, delegate codebase inspections of unfamiliar
+  modules to a read-only `gemini` subagent (`thinking: low`,
+  `tools: ["read", "grep", "find", "ls"]`) so file reads do not accumulate in the
+  orchestrator's context window (observed 2026-11 through Pi's `subagent` tool).
 
 ## Concurrency
 

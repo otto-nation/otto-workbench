@@ -138,7 +138,7 @@ EOF
 @test "run-session: parseReport says what is wrong with a report it cannot use" {
   _eval now.ts '[m.parseReport("nope"), m.parseReport("{}"), m.parseReport("null"), m.parseReport("{\"sessions\":[]}")]'
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"ok":false,"error":"the report was not JSON"},{"ok":false,"error":"the report has no sessions list"},{"ok":false,"error":"the report has no sessions list"},{"ok":true,"sessions":[]}]' ]
+  [ "$output" = '[{"ok":false,"error":"the report was not JSON"},{"ok":false,"error":"the report has no sessions list"},{"ok":false,"error":"the report has no sessions list"},{"ok":true,"sessions":[],"active":false}]' ]
 }
 
 @test "run-session: shellQuote quotes only what a shell would split" {
@@ -190,6 +190,31 @@ EOF
   _text now.ts 'm.renderNow("run R1", [], new Map())'
   [ "$status" -eq 0 ]
   [ "$output" = $'## Now — run R1\nNothing in the report: no PR has findings or commands.' ]
+}
+
+@test "run-session: Now ends with a newline so it never concatenates onto the prompt" {
+  _eval now.ts 'm.renderNow("run R1", [], new Map()).endsWith("\n")'
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+  _eval now.ts 'm.renderNow("run R1", [], new Map())'
+  [ "$status" -eq 0 ]
+  [ "$output" = '"## Now — run R1\nNothing in the report: no PR has findings or commands.\n"' ]
+  _eval now.ts 'm.renderNow("run R1", JSON.parse(args[0]), new Map()).endsWith("\n")' \
+    '[{"pr":"o/r#1","state":"done","severity":"act","branch":"b1","base_ref":"main"}]'
+  [ "$status" -eq 0 ]
+  [ "$output" = "true" ]
+  _eval now.ts 'm.renderNow("run R1", [], new Map(), true)'
+  [ "$status" -eq 0 ]
+  [ "$output" = '"## Now — run R1\nBatch run is still in progress — no settled PRs need attention yet.\n"' ]
+}
+
+@test "run-session: Now says the batch is still running when sessions are empty and run.active" {
+  _eval now.ts 'm.parseReport(args[0])' '{"sessions":[],"run":{"active":true}}'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"ok":true,"sessions":[],"active":true}' ]
+  _text now.ts 'm.renderNow("run R1", [], new Map(), true)'
+  [ "$status" -eq 0 ]
+  [ "$output" = $'## Now — run R1\nBatch run is still in progress — no settled PRs need attention yet.' ]
 }
 
 @test "run-session: Now renders commits and counts a done PR with undecided findings as waiting" {
@@ -424,7 +449,7 @@ _wired() {
       quiet: quiet ?? null,
       note: [note.includes(ID), note.includes("record_decision"), note.includes(RUN + "/events.jsonl")],
       message: [changed.message.customType, changed.message.display],
-      now: changed.message.content.split("\n").slice(-3),
+      now: changed.message.content.trimEnd().split("\n").slice(-3),
       histories: ofType(f.entries, m.HISTORY_TYPE).map((e) => e.data.text.split("\n")[0]),
     }));
   '

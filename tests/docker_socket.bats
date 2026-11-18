@@ -1,6 +1,7 @@
 #!/usr/bin/env bats
 # Tests for which Docker socket the workbench points at: the Linux sync in
-# docker/steps.sh, and the DOCKER_HOST export in zsh/config.d/aliases/docker.zsh.
+# docker/steps.sh. DOCKER_HOST and TESTCONTAINERS_* are owned by zsh/env.sh
+# workbench_env; docker.zsh must not re-export them.
 
 setup() {
   load 'test_helper'
@@ -107,9 +108,11 @@ sync_linux() {
 }
 
 # ─── docker.zsh ─────────────────────────────────────────────────────────────
+# Env exports moved to zsh/env.sh; these cases hold that docker.zsh does not
+# grow a second copy.
 
 # zsh_env OSTYPE — sources docker.zsh in zsh with OSTYPE forced and prints the
-# three variables it may export.
+# three variables workbench_env owns, so a regression re-export is visible.
 zsh_env() {
   zsh -fc 'OSTYPE=$1; source "$2"; print -r -- "DH=$DOCKER_HOST TC=$TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE TH=$TESTCONTAINERS_HOST_OVERRIDE"' \
     _ "$1" "$REPO_ROOT/zsh/config.d/aliases/docker.zsh"
@@ -126,19 +129,18 @@ zsh_env() {
   [[ "$output" == "DH=unix:///run/user/3001/docker.sock TC= TH=" ]]
 }
 
-@test "docker.zsh points an unset DOCKER_HOST at the canonical link" {
+@test "docker.zsh does not set DOCKER_HOST from the canonical socket" {
   mkdir -p "$DOCKER_RUN_DIR"
   make_socket "$TMPDIR/sys/docker.sock"
   ln -s "$TMPDIR/sys/docker.sock" "$DOCKER_RUN_DIR/docker.sock"
 
   run zsh_env linux-gnu
   [[ "$status" -eq 0 ]]
-  [[ "$output" == "DH=unix://$HOME/.docker/run/docker.sock TC= TH=" ]]
+  [[ "$output" == "DH= TC= TH=" ]]
 }
 
-# passes-at-base: asserts the macOS behaviour this change was careful not to break
-@test "docker.zsh sets the testcontainers overrides on macOS" {
+@test "docker.zsh does not set the testcontainers overrides on macOS" {
   run zsh_env darwin23.0
   [[ "$status" -eq 0 ]]
-  [[ "$output" == "DH= TC=/var/run/docker.sock TH=localhost" ]]
+  [[ "$output" == "DH= TC= TH=" ]]
 }

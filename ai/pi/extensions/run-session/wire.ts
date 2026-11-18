@@ -145,7 +145,8 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
     const parsed = parseReport(result.stdout);
     if (!parsed.ok) return unavailable(`printed no usable report (${parsed.error})`);
     return {
-      text: renderNow(KINDS[s.kind].subject(s.runId), parsed.sessions, latestDecisions(all)),
+      text: renderNow(KINDS[s.kind].subject(s.runId), parsed.sessions, latestDecisions(all),
+        parsed.active),
       available: true,
     };
   }

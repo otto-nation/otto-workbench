@@ -19,6 +19,7 @@ import batch.store  # noqa: E402
 import core.run_events  # noqa: E402
 from batch.model import Finding, FindingReason, Verdict  # noqa: E402
 from batch_report_support import make_item, make_run  # noqa: E402
+from conftest import git_in, run_checked, seed_repo  # noqa: E402
 
 
 def test_recipe_names_the_session_after_the_run_and_its_repo():
@@ -63,6 +64,24 @@ def test_a_run_with_no_items_is_named_after_its_checkout():
     run = make_run([], run_id="r9")
     run.checkouts = ["/src/widget"]
     assert batch.run_session.recipe(run).name == "batch widget r9"
+
+
+def test_recipe_resolves_bare_container_checkout_to_default_worktree(tmp_path):
+    seed = seed_repo(tmp_path / "seed")
+    container = tmp_path / "my-repo"
+    run_checked(["git", "clone", "-q", "--bare", str(seed), str(container / ".git")])
+    git_in(container / ".git", "worktree", "add", "-q", str(container / "main"), "main")
+    run = make_run([], run_id="r1")
+    run.checkouts = [str(container)]
+    got = batch.run_session.recipe(run)
+    assert Path(got.cwd).resolve() == (container / "main").resolve()
+    assert got.name == "batch my-repo r1"
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    run = make_run([], run_id="r2")
+    run.checkouts = [str(plain)]
+    assert batch.run_session.recipe(run).cwd == str(plain)
 
 
 def _noted_run():

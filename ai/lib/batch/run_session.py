@@ -3,7 +3,9 @@
 `recipe(run)` is the one owner of a run session's identity: session id
 `batch-<run-id>`, name `batch <owner/repo> <run-id>`, working directory the
 run's one checkout, argv `pi --session-id ID --name NAME`, and
-`WORKBENCH_RUN_DIR` set to the run directory. `pr batch session` prints or
+`WORKBENCH_RUN_DIR` set to the run directory. A bare-repo container checkout
+resolves to its default worktree via `git_layout.worktree_for`; the session
+name still uses the container's directory. `pr batch session` prints or
 executes it; every UI asks that command rather than building the argv. The
 checkout is `Run.checkouts`, or for a run saved before that field its items'
 `repo_dir`. A run over more than one checkout or repo has no run session and
@@ -31,8 +33,11 @@ from pathlib import Path
 import batch.events
 import batch.session_report
 import batch.store
+import config.workbench_config
 import core.run_events
 from batch.model import Item, Run, Verdict
+# git_layout is reached through config.workbench_config's insert of <root>/lib.
+import git_layout  # noqa: E402
 
 SCHEMA_VERSION = 1
 RUN_DIR_ENV = "WORKBENCH_RUN_DIR"
@@ -76,10 +81,16 @@ def _repo(run: Run, checkout: str) -> str:
     return repos[0] if repos else Path(checkout).name
 
 
+def _session_cwd(checkout: str) -> str:
+    found = git_layout.worktree_for(checkout)
+    return found.path if found.ok else checkout
+
+
 def recipe(run: Run) -> SessionRecipe:
-    cwd = _checkout(run)
+    checkout = _checkout(run)
     session_id = f"batch-{run.id}"
-    name = f"batch {_repo(run, cwd)} {run.id}"
+    name = f"batch {_repo(run, checkout)} {run.id}"
+    cwd = _session_cwd(checkout)
     return SessionRecipe(session_id, name, cwd, (PI, "--session-id", session_id, "--name", name),
                          {RUN_DIR_ENV: str(batch.store.run_dir(run.id))})
 

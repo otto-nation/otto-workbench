@@ -1,38 +1,14 @@
 # Docker shell configuration — shared across all runtimes.
 #
-# Sets DOCKER_HOST to the canonical socket symlink managed by docker/steps.sh,
-# so all docker tooling works regardless of which runtime is active.
-#
 # Runtime-specific config (Colima lazy-start, OrbStack no-op, etc.) is loaded
 # from <state root>/docker-aliases.zsh — a symlink written by
 # docker/setup.sh pointing to docker/<runtime>/aliases.zsh in the workbench.
 # No-op if that symlink does not exist (fresh machine before docker/setup.sh runs).
 #
 # To switch runtimes: re-run docker/setup.sh or 'otto-workbench sync'.
-
-# ============================================================================
-# Environment
-# ============================================================================
-
-# Point DOCKER_HOST at the canonical socket symlink maintained by docker/steps.sh.
-# If the symlink doesn't exist (OrbStack manages its own socket), leave DOCKER_HOST
-# unset so Docker falls back to the default socket path.
-# A DOCKER_HOST already in the environment wins: whatever exported it (rootless
-# Docker's ~/.zshenv block, ~/.env.local) chose the daemon deliberately, and this
-# file runs after it, so overwriting it would repoint every interactive shell.
-if [[ -z "${DOCKER_HOST:-}" && -e "${HOME}/.docker/run/docker.sock" ]]; then
-  export DOCKER_HOST="unix://${HOME}/.docker/run/docker.sock"
-fi
-
-# VM runtimes (Colima, OrbStack) expose the daemon socket to containers at its
-# in-VM path, not the macOS path in DOCKER_HOST, so Ryuk needs it spelled out.
-# On Linux the daemon runs on the host and testcontainers derives both values
-# from DOCKER_HOST; a fixed /var/run/docker.sock there names the system daemon
-# even when DOCKER_HOST is a rootless one.
-if [[ "$OSTYPE" == darwin* ]]; then
-  export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE=/var/run/docker.sock
-  export TESTCONTAINERS_HOST_OVERRIDE=localhost
-fi
+#
+# DOCKER_HOST and TESTCONTAINERS_* live in zsh/env.sh workbench_env, so a
+# non-interactive caller gets the same socket as an interactive shell.
 
 # ============================================================================
 # Runtime-specific config (lazy-start, vars, etc.)

@@ -13,6 +13,7 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import batch.outcomes  # noqa: E402
 import core.report  # noqa: E402
 import git.client  # noqa: E402
 import rebase.inspect  # noqa: E402
@@ -417,6 +418,30 @@ def test_step_conflicts_fix_ai_unavailable():
         )
 
     assert rc == 3
+
+
+def test_ai_mode_conflicts_records_stop_with_mise_error_when_pi_unresolvable(capsys):
+    ctx = mock.MagicMock()
+    err = (
+        "mise could not report the tools pinned in /wt: "
+        "Config files in /wt/mise.toml are not trusted."
+    )
+    with mock.patch.object(agent.backend, "is_available", return_value=True), \
+         mock.patch.object(agent.backend, "environment_error", return_value=err), \
+         mock.patch.object(rebase.resolve_ai, "resolve_file_conflicts") as resolve, \
+         mock.patch.object(rebase.lifecycle, "_record_failed") as record:
+        rc = rebase.lifecycle._ai_mode_conflicts(
+            "/wt", ctx, ["a.go"], rebase.types.ResolutionTally(),
+            target_ref="origin/main", force=False, trail=None,
+        )
+
+    assert rc == 1
+    resolve.assert_not_called()
+    record.assert_called_once()
+    captured = capsys.readouterr()
+    assert "Config files in /wt/mise.toml are not trusted" in captured.err
+    failure = batch.outcomes.classify_failure(captured.err.splitlines())
+    assert failure.reason is batch.outcomes.FailureReason.MISE_UNTRUSTED
 
 
 def test_step_conflicts_continue_fails_but_rebase_in_progress():

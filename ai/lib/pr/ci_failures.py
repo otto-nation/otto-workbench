@@ -126,6 +126,24 @@ def _matches_signatures(text: str, signatures: list[str]) -> bool:
     return any(sig in lowered for sig in signatures)
 
 
+# Step names are free prose ("Wait for it", "Upload test results"), so only a
+# concrete runner invocation counts as TEST for a step.
+_STEP_TEST_RE = re.compile(
+    r"pytest|bats|jest|mocha|rspec|vitest|unittest|\b(?:go|cargo|npm|yarn|pnpm|make) test\b",
+    re.IGNORECASE,
+)
+
+
+def _kind_from_step(step: str) -> FailureKind | None:
+    if JOB_PATTERNS[0][0].search(step):
+        return FailureKind.LINT
+    if _STEP_TEST_RE.search(step):
+        return FailureKind.TEST
+    if JOB_PATTERNS[2][0].search(step):
+        return FailureKind.BUILD
+    return None
+
+
 def _kind_from_name(name: str) -> FailureKind | None:
     for pattern, kind in JOB_PATTERNS:
         if pattern.search(name):
@@ -149,7 +167,7 @@ def classify_job(
     if kind is not None:
         return kind
     if failed_step:
-        kind = _kind_from_name(failed_step)
+        kind = _kind_from_step(failed_step)
         if kind is not None:
             return kind
     return FailureKind.BUILD

@@ -421,3 +421,9 @@ def test_failure_group_failed_step_default():
     item = _make_item("a")
     group = FailureGroup(job="lint", kind=FailureKind.LINT, items=(item,))
     assert group.failed_step is None
+
+
+def test_classify_job_step_prose_does_not_reclassify_build():
+    assert classify_job("deploy", [], failed_step="Wait for it") == FailureKind.BUILD
+    assert classify_job("deploy", [], failed_step="Run integration deploy") == FailureKind.BUILD
+    assert classify_job("deploy", [], failed_step="Upload test results") == FailureKind.BUILD

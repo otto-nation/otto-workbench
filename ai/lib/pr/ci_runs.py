@@ -28,11 +28,6 @@ _GATE_NAME_RE = re.compile(
     r"^(?:(?:pr|all|required)\s+checks(?:\s+passed)?|checks\s+passed|gate)$",
     re.IGNORECASE,
 )
-_FAN_IN_MESSAGES = (
-    "one or more pr checks failed",
-    "required checks failed",
-    "all checks have failed",
-)
 
 
 class RunUnavailable(Exception):
@@ -94,8 +89,7 @@ def _is_fan_in_gate(group: pr.ci_failures.FailureGroup) -> bool:
         and not pr.ci_annotations.is_source_path(item.file or "")
         and (
             pr.ci_annotations.is_generic_message(item.annotation)
-            or any(m in item.annotation.lower() for m in _FAN_IN_MESSAGES)
-            or "failed with no annotations" in item.annotation.lower()
+            or pr.ci_annotations.is_fan_in_message(item.annotation)
         )
         for item in group.items
     )

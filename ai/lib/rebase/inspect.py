@@ -10,12 +10,12 @@ entry git re-queued after a refused commit.
 
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
 from pathlib import Path
 
 import core.log
 import core.proc
+import core.serde
 import git.client
 
 # ── Constants ───────────────────────────────────────────────────────────────
@@ -201,7 +201,7 @@ def drop_requeued_stopped_pick(cwd: str) -> str:
     kept = [line for i, line in enumerate(lines) if i != head.index]
     tmp = todo_path.with_suffix(".tmp")
     tmp.write_text("\n".join(kept) + ("\n" if kept else ""))
-    os.replace(tmp, todo_path)
+    core.serde.replace_file(tmp, todo_path)
     return stopped_full
 
 

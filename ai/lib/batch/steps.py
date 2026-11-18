@@ -224,8 +224,10 @@ def trust_mise_config(worktree: str) -> None:
 
     Only a file whose bytes match the same path on the repo's default branch
     or at ``merge-base(HEAD, default)`` is trusted. A stale feature branch
-    whose mise config still matches the fork point is safe; a PR that edited
-    the file is not. ``author:@me`` is not enough: PR content can come from a
+    whose mise config still matches the fork point is accepted; a PR that
+    edited the file is not. This is a widening of the boundary, not a proof
+    of safety: the default branch may have since changed that file, and the
+    merge-base is computed against PR-controlled history. ``author:@me`` is not enough: PR content can come from a
     fork or a collaborator commit, and trusting lets mise run arbitrary tasks
     that persist in the user's trust store. A file that differs from both, is
     absent on the default branch, or whose comparison fails is left untrusted

@@ -114,7 +114,8 @@ workbench_env() {
   if [ -z "${DOCKER_HOST:-}" ] && [ -e "$HOME/.docker/run/docker.sock" ]; then
     export DOCKER_HOST="unix://$HOME/.docker/run/docker.sock"
   fi
-  if [ "$(uname -s)" = "Darwin" ]; then
+  [ -n "${_WORKBENCH_UNAME:-}" ] || _WORKBENCH_UNAME="$(uname -s)"
+  if [ "$_WORKBENCH_UNAME" = "Darwin" ]; then
     export TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE="${TESTCONTAINERS_DOCKER_SOCKET_OVERRIDE:-/var/run/docker.sock}"
     export TESTCONTAINERS_HOST_OVERRIDE="${TESTCONTAINERS_HOST_OVERRIDE:-localhost}"
   fi

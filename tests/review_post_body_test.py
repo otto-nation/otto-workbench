@@ -18,7 +18,7 @@ import review.dedup  # noqa: E402
 import review.render  # noqa: E402
 from core.phases import Mode  # noqa: E402
 from pr.domains import ReviewStatus, ReviewVerdict  # noqa: E402
-from review.record import Disposition, ProseSection, Question, VerifiedNote  # noqa: E402
+from review.record import Disposition, FocusSource, ProseSection, Question, VerifiedNote  # noqa: E402
 from review.store import read_review, update_review  # noqa: E402
 from review.types import PhaseRun, ReviewMeta  # noqa: E402
 from review.verdict import resolve_review_verdict  # noqa: E402
@@ -258,7 +258,7 @@ class TestCommentBody:
         assert "- **[N1]** `c.py:1` — trailing space" in body
         assert "pattern holds" in body
 
-    def test_the_models_line_closes_the_body(self):
+    def test_the_models_line_is_left_out_of_the_body(self):
         rec = record(summary="Clean.", extra=(ProseSection("Review gaps", "- group 2"),))
         body = review.render.comment_body(rec, [], has_inline=False, severity_filter={"M"},
                                           meta=ReviewMeta(models="single m (low)"))
@@ -284,7 +284,7 @@ class TestCommentBody:
                                           meta=ReviewMeta(models="single m\nnightly"))
         assert "Models:" not in body and "<sub>" not in body
 
-    def test_the_comment_ends_with_the_phases_sub_line(self):
+    def test_the_phases_sub_line_is_left_out_of_the_comment(self):
         reason = "one group covers the PR"
         phases = (
             PhaseRun("scout", False, reason),
@@ -689,6 +689,24 @@ class TestAuthorFacingComment:
         assert "SimHandler lock" not in body
         assert "unchanged since" not in body
 
+    def test_substantive_unchanged_since_clause_is_kept(self):
+        rec = record(
+            summary="looked.",
+            focus=(
+                area(
+                    title="Lock",
+                    coverage=(
+                        "Verified mutex ordering in simhttp.go, which is "
+                        "unchanged since the prior review."
+                    ),
+                ),
+            ),
+        )
+        body = review.render.comment_body(
+            rec, [], meta=ReviewMeta(), has_inline=False, severity_filter={"M"},
+        )
+        assert "Verified mutex ordering" in body
+
     def test_all_noop_focus_drops_the_section(self):
         rec = record(
             summary="looked.",
@@ -703,6 +721,24 @@ class TestAuthorFacingComment:
             rec, [], meta=ReviewMeta(), has_inline=False, severity_filter={"M"},
         )
         assert "### Focus" not in body
+
+    def test_a_requested_noop_focus_stays_on_the_comment(self):
+        rec = record(
+            summary="looked.",
+            focus=(
+                area(
+                    title="Lock",
+                    source=FocusSource.USER,
+                    coverage="unchanged since the prior review; no new finding.",
+                ),
+            ),
+        )
+        body = review.render.comment_body(
+            rec, [], meta=ReviewMeta(), has_inline=False, severity_filter={"M"},
+        )
+        assert "### Focus" in body
+        assert "Lock" in body
+        assert "*(requested)*" in body
 
     def test_static_analysis_stays_in_review_md_not_the_comment(self):
         rec = record(summary="looked.", static_analysis="### Nesting depth\n1 violation")

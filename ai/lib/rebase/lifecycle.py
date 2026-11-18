@@ -525,6 +525,12 @@ def _ai_mode_conflicts(
         return _report_conflicts_and_stop(
             cwd, ctx, target_ref=target_ref, tally=tally, lease=lease,
         )
+    env_err = agent.backend.environment_error(cwd)
+    if isinstance(env_err, str):
+        terr(trail, "resolve_conflicts", "AI backend cannot run in worktree",
+             data={"error": env_err})
+        core.log.error(f"cannot choose a pi binary: {env_err}")
+        return 1
     if not force:
         over = _over_budget(tally, conflicts)
         if over is not None:

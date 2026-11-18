@@ -478,3 +478,23 @@ def is_available() -> bool:
     if selected is Backend.PI:
         return agent.pi_binary.any_installed()
     return selected is not None and shutil.which(selected) is not None
+
+
+def environment_error(cwd: str) -> str | None:
+    """Why the selected backend cannot run in *cwd*, or None when it can.
+
+    Pi resolution consults mise in *cwd*; an untrusted config there is a
+    machine problem, not a missing binary. Callers that already checked
+    ``is_available`` still need this before they spawn. A missing or
+    non-directory *cwd* is not probed: unit tests pass a fake path and the
+    binary check already answered.
+    """
+    if not cwd or not Path(cwd).is_dir():
+        return None
+    if selected_backend() is not Backend.PI:
+        return None
+    try:
+        agent.pi_binary.resolve(cwd=cwd)
+    except agent.pi_binary.PiUnresolvable as err:
+        return str(err)
+    return None

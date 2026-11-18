@@ -180,8 +180,24 @@ def _default_rev(cwd: str) -> str | None:
     return None
 
 
+def _blob_at(worktree: str, rev: str, rel: str) -> str:
+    r = git.client.run(
+        "rev-parse", "--verify", "--quiet", f"{rev}:{rel}", cwd=worktree,
+    )
+    return r.stdout.strip() if r.ok else ""
+
+
+def _trusted_blobs(worktree: str, rev: str, rel: str) -> set[str]:
+    blobs = {_blob_at(worktree, rev, rel)}
+    mb = git.client.out("merge-base", "HEAD", rev, cwd=worktree)
+    if mb and mb != rev:
+        blobs.add(_blob_at(worktree, mb, rel))
+    blobs.discard("")
+    return blobs
+
+
 def _same_bytes_as_default(cfg: Path, worktree: str) -> str | None:
-    """Empty if *cfg* matches the default branch; otherwise why it must not be trusted.
+    """Empty if *cfg* matches the default branch or merge-base; otherwise why not.
 
     Never raises: a comparison that cannot be made is not a match.
     """
@@ -190,14 +206,14 @@ def _same_bytes_as_default(cfg: Path, worktree: str) -> str | None:
         rev = _default_rev(worktree)
         if rev is None:
             return f"could not resolve the default branch in {worktree}"
-        tree = git.client.run("rev-parse", f"{rev}:{rel}", cwd=worktree)
-        if not tree.ok:
+        blobs = _trusted_blobs(worktree, rev, rel)
+        if not blobs:
             return f"{rel} is absent on {rev}"
         work = git.client.run("hash-object", str(cfg), cwd=worktree)
         if not work.ok:
             return f"could not hash {cfg}"
-        if tree.stdout.strip() != work.stdout.strip():
-            return f"{rel} differs from {rev}"
+        if work.stdout.strip() not in blobs:
+            return f"{rel} differs from {rev} and merge-base"
         return None
     except Exception as exc:
         return f"could not compare {cfg} to the default branch: {exc}"
@@ -207,12 +223,15 @@ def trust_mise_config(worktree: str) -> None:
     """Trust mise config files in *worktree* so a child hook can run tasks.
 
     Only a file whose bytes match the same path on the repo's default branch
-    is trusted. ``author:@me`` is not enough: PR content can come from a fork
-    or a collaborator commit, and trusting lets mise run arbitrary tasks that
-    persist in the user's trust store. A file that differs, is absent on the
-    default branch, or whose comparison fails is left untrusted — the reason
-    is logged and the item still starts. A failed ``mise trust`` is the same:
-    logged, never fatal; an untrusted config surfaces as the hook's own error.
+    or at ``merge-base(HEAD, default)`` is trusted. A stale feature branch
+    whose mise config still matches the fork point is safe; a PR that edited
+    the file is not. ``author:@me`` is not enough: PR content can come from a
+    fork or a collaborator commit, and trusting lets mise run arbitrary tasks
+    that persist in the user's trust store. A file that differs from both, is
+    absent on the default branch, or whose comparison fails is left untrusted
+    — the reason is logged and the item still starts. A failed ``mise trust``
+    is the same: logged, never fatal; an untrusted config surfaces as the
+    hook's own error.
     """
     if not shutil.which("mise"):
         return

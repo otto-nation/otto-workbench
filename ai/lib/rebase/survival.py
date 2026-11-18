@@ -344,10 +344,13 @@ def _relocated_in_result(change: _Change, b: list[str], r: list[str]) -> bool:
     """Whether *change*'s non-blank lines occur more often in *r* than in *b*.
 
     Indent and blank lines are ignored so a moved, re-indented block counts
-    as kept. A pure deletion has no needle and must still satisfy alignment.
+    as kept. A pure deletion or single-line change has no usable needle and must still
+    satisfy alignment.
     """
     needle = _stripped_nonblank(change.lines)
-    if not needle:
+    # A single line is too common to prove relocation: another side may add the
+    # same line elsewhere while this change is reverted at its own site.
+    if len(needle) < 2:
         return False
     return _count_run(_stripped_nonblank(r), needle) > _count_run(
         _stripped_nonblank(b), needle,

@@ -169,6 +169,20 @@ class TestRevertedHunks:
 
         assert [loss for loss in losses if loss.blocking] == []
 
+    def test_single_line_revert_not_masked_by_same_line_added_elsewhere(self):
+        b = "h2() {\n    return value\n}\n\nh1() {\n    return None\n}\n\nbottom() {\n    x := 1\n}\n"
+        t = b.replace("    return value\n", "    return value\n    return None\n").replace(
+            "    x := 1\n", "    x := 1\n    extra := true\n")
+        u = b.replace("    x := 1\n", "    x := 1\n    return None\n")
+        r = b.replace("    x := 1\n", "    x := 1\n    return None\n    extra := true\n")
+
+        audit = _audit(r, base=b, target=u, replayed=t)
+
+        assert any(
+            loss.kind is LossKind.HUNK_REVERTED and loss.blocking
+            for loss in audit.losses
+        )
+
     def test_dropped_repeated_single_line_is_still_flagged_as_reverted(self):
         b = (
             "helper_two() {\n"

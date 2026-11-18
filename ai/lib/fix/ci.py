@@ -60,11 +60,9 @@ def _is_unactionable_text(text: str) -> bool:
     """True when annotation text carries no diagnostic a fix pass could act on."""
     if not (text or "").strip():
         return True
-    lowered = text.lower()
     return (
         pr.ci_annotations.is_generic_message(text)
-        or "failed with no annotations" in lowered
-        or "one or more pr checks failed" in lowered
+        or pr.ci_annotations.is_fan_in_message(text)
     )
 
 

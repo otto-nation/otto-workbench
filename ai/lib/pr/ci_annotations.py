@@ -101,6 +101,20 @@ def _fallback_item(job_name: str, source_run_id: int | None = None) -> pr.ci_fai
     )
 
 
+_FAN_IN_MESSAGES = (
+    "one or more pr checks failed",
+    "required checks failed",
+    "all checks have failed",
+    "failed with no annotations",
+)
+
+
+def is_fan_in_message(message: str) -> bool:
+    """True when `message` is a fan-in gate's restatement of other jobs' failures."""
+    msg = (message or "").lower()
+    return any(m in msg for m in _FAN_IN_MESSAGES)
+
+
 def is_generic_message(message: str) -> bool:
     """True when `message` is a runner restatement, not a diagnostic."""
     msg = (message or "").lower()

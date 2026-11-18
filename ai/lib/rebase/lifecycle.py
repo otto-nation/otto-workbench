@@ -11,7 +11,6 @@ a refusal, or an abort that leaves the branch where it started.
 from __future__ import annotations
 
 import dataclasses
-from pathlib import Path
 
 import agent.backend
 import core.log
@@ -200,7 +199,6 @@ def _drive_loop(
             tally.commits += 1
         if (
             rebase_inspect.rebase_in_progress(cwd)
-            and Path(cwd).is_dir()
             and rebase_inspect.step_state(cwd, deferred=tuple(tally.deferred)) == before
         ):
             tfail(

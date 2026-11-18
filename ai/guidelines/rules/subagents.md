@@ -96,6 +96,11 @@ and test specifics live with their owners (pointers below).
   modules to a read-only `gemini` subagent (`thinking: low`,
   `tools: ["read", "grep", "find", "ls"]`) so file reads do not accumulate in the
   orchestrator's context window (observed 2026-11 through Pi's `subagent` tool).
+- The `gemini` shortcut is Flash — bulk extraction, `thinking: low`, read-only
+  tools. Contested or architectural judgement is a separate pass: one read-only
+  `google-vertex/gemini-4-carbon` dispatch at `thinking: high`, not a 3-model
+  fan-out. Observed 2026-11 through Pi's `subagent` / `consult` tools. Revisit
+  when the session router or those tools change.
 
 ## Concurrency
 

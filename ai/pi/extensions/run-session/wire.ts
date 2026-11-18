@@ -45,7 +45,7 @@ export interface Deps {
 }
 
 /** How long one offline report may take before Now says it is unavailable. */
-export const REPORT_TIMEOUT_MS = 30_000;
+export const REPORT_TIMEOUT_MS = 60_000;
 
 /** How long one `pr batch note` may take before record_decision reports it stopped. */
 export const NOTE_TIMEOUT_MS = 30_000;

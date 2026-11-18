@@ -6,6 +6,7 @@ session_report / scheduler / model and this file must fail.
 
 import re
 import sys
+import threading
 from pathlib import Path
 
 import pytest
@@ -86,6 +87,35 @@ def test_stack_order_emits_base_before_child():
     child_entry = next(e for e in batch.session_report.sessions(run, closeout=no_debt, tree=None)
                        if e.pr == child.key)
     assert child_entry.after == [base.key]
+
+
+def test_sessions_order_holds_when_items_are_built_in_parallel():
+    # Revert: skip _order (workers finish child before base).
+    low = make_item(3, status=ItemStatus.AWAITING_DECISION)
+    base = make_item(1, status=ItemStatus.AWAITING_DECISION)
+    child = make_item(2, status=ItemStatus.AWAITING_DECISION, stacked_on=base.key)
+    run = make_run(
+        [low, child, base],
+        [make_decision(DecisionKind.FAILED, "rebase", {"reason": "error"}, id="d1",
+                       item=base.key),
+         make_decision(DecisionKind.FAILED, "rebase", {"reason": "error"}, id="d2",
+                       item=child.key),
+         make_decision(DecisionKind.FAILED, "rebase", {"reason": "error"}, id="d3",
+                       item=low.key)],
+        status=RunStatus.INTERRUPTED,
+    )
+    child_done = threading.Event()
+
+    def tree(item):
+        # base finishes only after child, forcing out-of-order worker completion.
+        if item.key == base.key:
+            assert child_done.wait(timeout=10)
+        elif item.key == child.key:
+            child_done.set()
+        return None
+
+    keys = [e.pr for e in batch.session_report.sessions(run, closeout=no_debt, tree=tree)]
+    assert keys == [base.key, child.key, low.key]
 
 
 def test_non_draft_note_only_when_pushing_a_public_pr(tmp_path):

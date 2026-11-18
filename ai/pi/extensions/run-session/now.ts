@@ -65,7 +65,15 @@ export function shellQuote(argv: string[]): string {
   return argv.map((arg) => (SHELL_SAFE.test(arg) ? arg : `'${arg.replaceAll("'", `'\\''`)}'`)).join(" ");
 }
 
-/** The Now block for `subject` (e.g. "run R1" / "target t"): each PR, its findings with their latest decision, its commands. */
+/** True when the operator still owes this PR a look. */
+function sessionWaiting(s: ReportSession, decisions: Map<string, RunEvent>): boolean {
+  if (s.state === "needs_session") return true;
+  return (s.findings ?? []).some(
+    (f) => !decisions.has(decisionKey(s.pr, `${f.reason}:${f.step}`)),
+  );
+}
+
+/** The Now block for `subject` (e.g. "run R1" / "target t"): waiting PRs only, each with findings, decisions, commands. */
 export function renderNow(
   subject: string,
   sessions: ReportSession[],
@@ -78,9 +86,9 @@ export function renderNow(
     }
     return `## Now — ${subject}\nNothing in the report: no PR has findings or commands.\n`;
   }
-  const waiting = sessions.filter((s) => s.state === "needs_session" || (s.findings ?? []).some((f) => !decisions.has(decisionKey(s.pr, `${f.reason}:${f.step}`)))).length;
-  const out = [`## Now — ${subject}: ${waiting} of ${sessions.length} PRs waiting on you`];
-  for (const s of sessions) {
+  const waiting = sessions.filter((s) => sessionWaiting(s, decisions));
+  const out = [`## Now — ${subject}: ${waiting.length} of ${sessions.length} PRs waiting on you`];
+  for (const s of waiting) {
     const base = s.base_ref ? ` → ${s.base_ref}` : "";
     const after = s.after?.length ? ` · after ${s.after.join(", ")}` : "";
     out.push("", `### ${s.pr} — ${s.state} (${s.severity}) · ${s.branch}${base}${after}`);
@@ -101,5 +109,7 @@ export function renderNow(
     }
     for (const note of s.notes ?? []) out.push(`- note: ${note}`);
   }
+  const hidden = sessions.length - waiting.length;
+  if (hidden) out.push("", `${hidden} settled PR(s) hidden (all findings decided).`);
   return `${out.join("\n")}\n`;
 }

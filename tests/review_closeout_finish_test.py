@@ -240,6 +240,22 @@ class TestFinishDeferredWork:
         saved = pr.state.load_state(worktree / "target")
         assert saved.fix.summary_deferred is True
 
+    def test_unanswered_refusal_saves_state(self, worktree):
+        self._save(worktree, items=[ItemOutcome(
+            id="t1", outcome=FixOutcome.DECLINED, summary="premise is wrong",
+            decided_at="2026-03-01T12:00:00Z",
+        )], summary_deferred=True, commit_status="no_changes")
+        report = PRReport(threads=[ReportThread(
+            id="t1", my_login="me",
+            comments=[{"author": {"login": "kgn"}, "body": "x",
+                       "createdAt": "2026-03-01T11:00:00Z"}],
+        )])
+        with patch.object(git.client, "head_sha", return_value="abc1234"), \
+                patch.object(pr.state, "save_state") as save:
+            assert review.closeout.finish_deferred_work(
+                self._ctx(worktree), report) is False
+        save.assert_called_once()
+
     def test_a_needs_human_filed_this_run_counts_as_answered(self, worktree):
         """Passing frozenset() at the render call site would refuse this."""
         self._save(worktree, items=[ItemOutcome(

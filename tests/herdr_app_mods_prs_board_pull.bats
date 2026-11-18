@@ -95,14 +95,15 @@ BOARD_JS
   _host "$BOARD
     const tick = () => new Promise((r) => setTimeout(r, 0));
     const loadCalls = [];
+    const loadReply = (cmd, load) => {
+      if (load == null) return { code: 1, stdout: '', stderr: 'no load' };
+      return cmd === 'nproc' ? { code: 0, stdout: '4\\n' } : { code: 0, stdout: load + ' 1 1 1/1 1' };
+    };
+    const isLoadRead = (cmd, args) => cmd === 'nproc' || (cmd === 'cat' && args[0] === '/proc/loadavg');
     const withLoad = (inner, byOn) => async (cmd, args, opts = {}) => {
-      if (cmd === 'nproc' || (cmd === 'cat' && args[0] === '/proc/loadavg')) {
-        loadCalls.push({ cmd, on: opts.on ?? null });
-        const load = byOn[opts.on];
-        if (load == null) return { code: 1, stdout: '', stderr: 'no load' };
-        return cmd === 'nproc' ? { code: 0, stdout: '4\\n' } : { code: 0, stdout: load + ' 1 1 1/1 1' };
-      }
-      return inner(cmd, args, opts);
+      if (!isLoadRead(cmd, args)) return inner(cmd, args, opts);
+      loadCalls.push({ cmd, on: opts.on ?? null });
+      return loadReply(cmd, byOn[opts.on]);
     };
     const fireListing = async (host) => {
       host.timers.filter((x) => x.ms === 15000).at(-1).fn(host.cx);

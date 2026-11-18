@@ -14,7 +14,7 @@ import { LOAD_DELAY_MS, loadState, errorsStatus } from "./_lib/load_state.js";
 import { runStatus } from "./_lib/batch.js";
 import { batchReason, selectionPreset } from "./_lib/batch_launch.js";
 import { createBoardStore, ctxKey, NO_WANT, FULL_PULL_MS } from "./_lib/board_store.js";
-import { createGateMap } from "./_lib/load_backoff.js";
+import { createGateMap, createReaders } from "./_lib/load_backoff.js";
 import { boardModel, mineOpen, wantFor } from "./_lib/board_model.js";
 import { normalizeFilters, filterAction } from "./_lib/filters.js";
 import { viewOf } from "./_lib/compact.js";
@@ -98,8 +98,10 @@ export default class PrsBoard extends View {
     this.watchRoot = this.key = null;
     this.pollListing = false;
     this.manual = false;
-    const fullGates = createGateMap(exec);
-    const listingGates = createGateMap(exec);
+    const readers = createReaders(exec);
+    const fullGates = createGateMap(exec, readers);
+    const listingGates = createGateMap(exec, readers);
+    this.workflows.useLoadReaders(readers);
     cx.timer.every(FULL_PULL_MS, (cx) => {
       const targets = fullGates.filter(this.activeTargets());
       if (targets.length) this.refresh(cx, { targets });
@@ -115,6 +117,8 @@ export default class PrsBoard extends View {
   refresh(cx, opts = {}) {
     const listingOnly = Boolean(opts.listingOnly);
     if (this.inflight) {
+      // A gated timer tick is periodic: drop it rather than queue a replay that widens to every target.
+      if (opts.targets) return;
       if (!this.again) this.againListing = listingOnly;
       else if (!listingOnly) this.againListing = false;
       this.again = true;

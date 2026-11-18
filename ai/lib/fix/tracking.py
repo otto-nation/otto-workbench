@@ -135,8 +135,15 @@ _REASONED = frozenset(
 )
 
 _SECTION_RE = re.compile(
-    r"^## <!-- fix:(?P<id>[^\s>]+) -->[ ]*(?P<heading>.*)$", re.MULTILINE,
+    r"^## <!-- fix:(?P<id>[^\r\n]+?) -->[ ]*(?P<heading>.*)$", re.MULTILINE,
 )
+
+
+def _validate_item_id(item_id: str) -> None:
+    """Refuse ids that cannot round-trip through `_SECTION_RE`."""
+    if (not item_id or item_id != item_id.strip()
+            or "\n" in item_id or "\r" in item_id or "-->" in item_id):
+        raise ValueError(f"invalid FixItem id: {item_id!r}")
 
 
 def box_pattern(boxes: tuple[_Box, ...]) -> re.Pattern[str]:
@@ -210,6 +217,7 @@ def render(
     """
     sections = [f"# {title}\n"]
     for item in items:
+        _validate_item_id(item.id)
         heading = f"## <!-- fix:{item.id} --> {item.location()}"
         if item.label:
             heading += f"{_HEADING_SEP}{item.label}"

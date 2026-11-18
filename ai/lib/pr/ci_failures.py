@@ -49,7 +49,7 @@ _CONTEXT_LINES = 80
 
 JOB_PATTERNS: list[tuple[re.Pattern, FailureKind]] = [
     (re.compile(r"shellcheck|eslint|flake8|pylint|yamllint|lint|stylelint|rubocop", re.IGNORECASE), FailureKind.LINT),
-    (re.compile(r"pytest|bats|jest|mocha|rspec|test|spec|vitest|unittest", re.IGNORECASE), FailureKind.TEST),
+    (re.compile(r"pytest|bats|jest|mocha|rspec|test|spec|vitest|unittest|\bit\b|integration", re.IGNORECASE), FailureKind.TEST),
     (re.compile(r"build|compile|docker|bundle|webpack|vite|gradle|maven|cargo", re.IGNORECASE), FailureKind.BUILD),
 ]
 
@@ -126,16 +126,50 @@ def _matches_signatures(text: str, signatures: list[str]) -> bool:
     return any(sig in lowered for sig in signatures)
 
 
-def classify_job(job_name: str, annotations: list[str]) -> FailureKind:
-    """Classify a CI job by name pattern, with infra override from annotations."""
+# Step names are free prose ("Wait for it", "Upload test results"), so only a
+# concrete runner invocation counts as TEST for a step.
+_STEP_TEST_RE = re.compile(
+    r"pytest|bats|jest|mocha|rspec|vitest|unittest|\b(?:go|cargo|npm|yarn|pnpm|make) test\b",
+    re.IGNORECASE,
+)
+
+
+def _kind_from_step(step: str) -> FailureKind | None:
+    if JOB_PATTERNS[0][0].search(step):
+        return FailureKind.LINT
+    if _STEP_TEST_RE.search(step):
+        return FailureKind.TEST
+    if JOB_PATTERNS[2][0].search(step):
+        return FailureKind.BUILD
+    return None
+
+
+def _kind_from_name(name: str) -> FailureKind | None:
+    for pattern, kind in JOB_PATTERNS:
+        if pattern.search(name):
+            return kind
+    return None
+
+
+def classify_job(
+    job_name: str, annotations: list[str], *, failed_step: str | None = None,
+) -> FailureKind:
+    """Classify a CI job by name pattern, with infra override from annotations.
+
+    When the job name does not match, `failed_step` is classified the same way
+    so a generic job that ran `go test` still lands as TEST.
+    """
     for annotation in annotations:
         if _matches_signatures(annotation, INFRA_SIGNATURES):
             return FailureKind.INFRA
 
-    for pattern, kind in JOB_PATTERNS:
-        if pattern.search(job_name):
+    kind = _kind_from_name(job_name)
+    if kind is not None:
+        return kind
+    if failed_step:
+        kind = _kind_from_step(failed_step)
+        if kind is not None:
             return kind
-
     return FailureKind.BUILD
 
 

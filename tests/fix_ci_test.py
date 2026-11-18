@@ -2,7 +2,7 @@
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from conftest import make_ctx
 
@@ -11,16 +11,22 @@ LIB_DIR = REPO_ROOT / "ai" / "lib"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
+import json
+
 import fix.ci
 import fix.suite  # noqa: E402
 import fix.engine  # noqa: E402
+import git.client  # noqa: E402
 import git.land  # noqa: E402
 from git.land import CommitStatus  # noqa: E402
 import pr.ci_failures  # noqa: E402
+import pr.ci_report  # noqa: E402
 from pr.ci_report import CIReport  # noqa: E402
 from pr.fix import FixOutcome, ItemOutcome  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 import pr.state
+import rebase.ci_fix  # noqa: E402
+import rebase.inspect  # noqa: E402
 
 
 def _item(item_id: str, **kwargs) -> pr.ci_failures.FailureItem:
@@ -351,3 +357,85 @@ def test_an_external_check_is_reported_but_not_handed_to_the_fix_pass(tmp_path):
     })
     assert [f.item.id for f in adapter.fixable] == ["lint-1"]
     assert [f.item.id for f in adapter.skipped] == ["ext-1"]
+
+
+def _tally_from_stdout(stdout: str) -> dict:
+    docs = []
+    for chunk in stdout.split("---"):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        try:
+            docs.append(json.loads(chunk))
+        except json.JSONDecodeError:
+            continue
+    return next(
+        d for d in reversed(docs) if d.get("type") == pr.ci_report.FIX_TALLY_TYPE
+    )
+
+
+def _run_fix(tmp_path, failures, *, engine=None):
+    engine = engine or MagicMock(return_value=fix.engine.FixRun())
+    state = _state()
+    report = _report(failures)
+    ctx = make_ctx(worktree_root=tmp_path, target_dir=tmp_path)
+    with patch.object(fix.engine, "run", engine), \
+         patch.object(rebase.ci_fix, "rebase_if_behind", return_value=False), \
+         patch.object(rebase.inspect, "rebase_in_progress", return_value=False), \
+         patch.object(git.client, "head_sha", return_value="abc123"), \
+         patch.object(pr.state, "load_or_init", return_value=state):
+        rc = rebase.ci_fix.run_fix(MagicMock(), report, ctx)
+    return rc, engine, state
+
+
+def test_run_fix_short_circuits_when_all_fixable_failures_are_blind(tmp_path, capsys):
+    blind = _item(
+        "err-.github-1",
+        annotation="Process completed with exit code 1.",
+        file=".github",
+        line=1,
+        context=None,
+        headline=None,
+    )
+    rc, engine, state = _run_fix(tmp_path, {
+        "build": _group("build", pr.ci_failures.FailureKind.BUILD, blind),
+    })
+    engine.assert_not_called()
+    assert rc == 0
+    recorded = {i.id: i for i in state.ci.fix.items}
+    assert recorded["err-.github-1"].outcome is FixOutcome.NEEDS_HUMAN
+    tally = _tally_from_stdout(capsys.readouterr().out)
+    assert tally["unfixed"] == ["err-.github-1"]
+    assert tally["fixed"] == []
+
+    with_context = _item(
+        "test-1",
+        annotation="Process completed with exit code 1.",
+        file=".github",
+        line=1,
+        context="--- FAIL: TestX",
+        headline="--- FAIL: TestX",
+    )
+    rc, engine, _state_obj = _run_fix(tmp_path, {
+        "test": _group("test", pr.ci_failures.FailureKind.TEST, with_context),
+    })
+    engine.assert_called_once()
+    assert not fix.ci.is_blind_failure(fix.ci.flatten({
+        "test": _group("test", pr.ci_failures.FailureKind.TEST, with_context),
+    }, {})[0])
+
+    sourced = _item(
+        "build-1",
+        annotation="undefined: foo",
+        file="src/app.go",
+        line=4,
+        context=None,
+        headline="undefined: foo",
+    )
+    rc, engine, _state_obj = _run_fix(tmp_path, {
+        "build": _group("build", pr.ci_failures.FailureKind.BUILD, sourced),
+    })
+    engine.assert_called_once()
+    assert not fix.ci.is_blind_failure(fix.ci.flatten({
+        "build": _group("build", pr.ci_failures.FailureKind.BUILD, sourced),
+    }, {})[0])

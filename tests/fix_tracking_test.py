@@ -9,6 +9,8 @@ hand-built string is a format with two spellings.
 import sys
 from pathlib import Path
 
+import pytest
+
 LIB_DIR = str(Path(__file__).resolve().parent.parent / "ai" / "lib")
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
@@ -74,6 +76,11 @@ class TestRender:
         path = tmp_path / "ignore" / "pr-comments" / "fix-tracking.md"
         fix.tracking.write(path, "t", _items())
         assert path.read_text() == fix.tracking.render("t", _items())
+
+    def test_render_rejects_unparseable_ids(self):
+        for bad in ("", " lead", "trail ", "line1\nline2", "bad-->id"):
+            with pytest.raises(ValueError, match="invalid FixItem id"):
+                fix.tracking.render("t", [FixItem(id=bad)])
 
 
 class TestParse:
@@ -261,6 +268,45 @@ class TestParse:
         fix.tracking.write(path, "t", [FixItem(id="A")])
         path.write_text(path.read_text().replace("- [ ] fixed", "- [X] fixed"))
         assert fix.tracking.parse(path)[0].outcome == FixOutcome.FIXED
+
+    def test_ids_with_spaces_round_trip_without_merging_sections(self, tmp_path):
+        items = [
+            FixItem(id="err-.github-704", file=".github", line=704),
+            FixItem(id="go build cache-.github-701", file=".github", line=701),
+            FixItem(id="Tests (bats)-setup-file-failed"),
+        ]
+        path = tmp_path / "t.md"
+        fix.tracking.write(path, "t", items)
+        text = _tick(path.read_text(), "err-.github-704", "needs a person", "no job log")
+        text = _tick(text, "go build cache-.github-701", "declined", "runner cache warning")
+        text = _tick(text, "Tests (bats)-setup-file-failed", "fixed", "Test: test_x")
+        path.write_text(text)
+
+        by_id = {o.id: o for o in fix.tracking.parse(path)}
+        assert set(by_id) == {
+            "err-.github-704",
+            "go build cache-.github-701",
+            "Tests (bats)-setup-file-failed",
+        }
+        assert by_id["err-.github-704"].outcome == FixOutcome.NEEDS_HUMAN
+        assert by_id["err-.github-704"].reason == "no job log"
+        assert by_id["go build cache-.github-701"].outcome == FixOutcome.DECLINED
+        assert by_id["go build cache-.github-701"].reason == "runner cache warning"
+        assert by_id["Tests (bats)-setup-file-failed"].outcome == FixOutcome.FIXED
+        assert by_id["Tests (bats)-setup-file-failed"].reason == "Test: test_x"
+
+        verify = tmp_path / "v.md"
+        fix.tracking.write(verify, "Verify", items, fix.tracking.VERIFY_BOXES)
+        vtext = _tick(verify.read_text(), "err-.github-704", "verified", "ran it")
+        vtext = _tick(vtext, "go build cache-.github-701", "broken", "still fails")
+        vtext = _tick(vtext, "Tests (bats)-setup-file-failed", "not verified", "no log")
+        verify.write_text(vtext)
+        verdicts = fix.tracking.parse_verdicts(verify)
+        assert verdicts == {
+            "err-.github-704": (True, "ran it"),
+            "go build cache-.github-701": (False, "still fails"),
+            "Tests (bats)-setup-file-failed": (None, "no log"),
+        }
 
 
 class TestInstructions:

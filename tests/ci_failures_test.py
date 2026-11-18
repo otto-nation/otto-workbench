@@ -121,6 +121,13 @@ def test_classify_job_no_infra_override_without_signature():
     assert classify_job("lint / shellcheck", annotations) == FailureKind.LINT
 
 
+def test_classify_job_recognizes_it_prefix_and_failed_step():
+    assert classify_job("IT: svc-orders", []) == FailureKind.TEST
+    assert classify_job("Integration: api", []) == FailureKind.TEST
+    assert classify_job("svc-orders", [], failed_step="go test ./...") == FailureKind.TEST
+    assert classify_job("CodeQL", []) == FailureKind.BUILD
+
+
 def _infra_group(*annotations, kind=FailureKind.INFRA, headline=None):
     items = tuple(
         FailureItem(
@@ -414,3 +421,9 @@ def test_failure_group_failed_step_default():
     item = _make_item("a")
     group = FailureGroup(job="lint", kind=FailureKind.LINT, items=(item,))
     assert group.failed_step is None
+
+
+def test_classify_job_step_prose_does_not_reclassify_build():
+    assert classify_job("deploy", [], failed_step="Wait for it") == FailureKind.BUILD
+    assert classify_job("deploy", [], failed_step="Run integration deploy") == FailureKind.BUILD
+    assert classify_job("deploy", [], failed_step="Upload test results") == FailureKind.BUILD

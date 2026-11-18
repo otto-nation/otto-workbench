@@ -139,6 +139,26 @@ def test_uninformative_generic_path_dot_github():
     assert pr.ci_annotations.annotations_uninformative(annotations) is True
 
 
+def test_failure_annotation_on_dot_github_with_non_generic_message_is_still_uninformative():
+    """A .github path is a workflow location even when the message is specific."""
+    assert pr.ci_annotations.annotations_uninformative([
+        {
+            "annotation_level": "failure",
+            "message": "One or more PR checks failed",
+            "path": ".github",
+            "start_line": 12,
+        },
+    ]) is True
+    assert pr.ci_annotations.annotations_uninformative([
+        {
+            "annotation_level": "failure",
+            "message": "One or more PR checks failed",
+            "path": ".github/workflows/ci.yml",
+            "start_line": 12,
+        },
+    ]) is True
+
+
 def test_uninformative_generic_exit_code_message():
     """Annotations with a source path but generic 'exit code' message are uninformative."""
     annotations = [
@@ -185,6 +205,51 @@ def test_informative_real_error_with_source_path():
         {"annotation_level": "failure", "message": "SC2086: Double quote to prevent globbing", "path": "bin/foo.sh", "start_line": 42},
     ]
     assert pr.ci_annotations.annotations_uninformative(annotations) is False
+
+
+def test_dot_github_and_warning_annotations_do_not_suppress_log_fallback():
+    annotations = [
+        {
+            "annotation_level": "failure",
+            "message": "Process completed with exit code 1.",
+            "path": ".github",
+            "start_line": 704,
+        },
+        {
+            "annotation_level": "warning",
+            "message": "GET failed: RemoteDisconnected (timed out)",
+            "path": ".github",
+            "start_line": 701,
+            "title": "go build cache",
+        },
+        {
+            "annotation_level": "warning",
+            "message": "GET failed: RemoteDisconnected (timed out)",
+            "path": ".github",
+            "start_line": 702,
+            "title": "go build cache",
+        },
+    ]
+    assert pr.ci_annotations.annotations_uninformative(annotations) is True
+
+    go_log = (
+        "=== FAIL: internal/service TestRun (0.05s)\n"
+        "    run_test.go:196: relation does not exist\n"
+    )
+    job = {"name": "Test: svc-orders", "conclusion": "failure", "databaseId": 10}
+    with patch("gh.run_reads.fetch_annotations", return_value=annotations), \
+         patch("gh.run_reads.fetch_job_logs", return_value=go_log), \
+         patch(
+             "pr.ci_annotations.log_fallback",
+             wraps=pr.ci_annotations.log_fallback,
+         ) as mock_fallback:
+        result = pr.ci_annotations.fetch_job_failure(
+            "owner/repo", job, {"databaseId": 100},
+        )
+    mock_fallback.assert_called()
+    assert result is not None
+    assert result.kind is not pr.ci_failures.FailureKind.INFRA
+    assert "relation does not exist" in (result.items[0].context or "")
 
 
 def test_informative_mixed_generic_and_specific():
@@ -249,6 +314,11 @@ def test_parse_test_artifact_keeps_the_records_a_truncated_artifact_did_finish(t
 # ── fetch_test_artifact ─────────────────────────────────────────────────
 
 
+def test_artifact_name_slugifies_colon_job_names():
+    assert pr.ci_annotations._artifact_name("IT: svc-orders") == "test-results-it-svc-orders"
+    assert pr.ci_annotations._artifact_name("Test: svc-payment") == "test-results-svc-payment"
+
+
 def test_fetch_test_artifact_asks_for_the_artifact_the_job_uploads():
     """A `Test: svc-payment` job uploads `test-results-svc-payment`."""
     with patch("gh.run_reads.download_artifact") as mock_download:
@@ -278,6 +348,17 @@ def _id_under_hash_seed(message: str, seed: str) -> str:
         env={**os.environ, "PYTHONHASHSEED": seed},
     )
     return result.stdout.strip()
+
+
+def test_build_failure_id_slugifies_titled_located_annotations():
+    annotation = {
+        "path": ".github",
+        "start_line": 701,
+        "title": "go build cache: GET failed",
+    }
+    assert pr.ci_annotations.build_failure_id(annotation, "Build") == (
+        "go-build-cache-.github-701"
+    )
 
 
 def test_a_pathless_untitled_failure_keeps_one_id_across_processes():

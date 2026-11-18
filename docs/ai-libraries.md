@@ -4694,7 +4694,9 @@ How to open a batch run's pi session, and the operator decisions recorded in it.
 `recipe(run)` is the one owner of a run session's identity: session id
 `batch-<run-id>`, name `batch <owner/repo> <run-id>`, working directory the
 run's one checkout, argv `pi --session-id ID --name NAME`, and
-`WORKBENCH_RUN_DIR` set to the run directory. `pr batch session` prints or
+`WORKBENCH_RUN_DIR` set to the run directory. A bare-repo container checkout
+resolves to its default worktree via `git_layout.worktree_for`; the session
+name still uses the container's directory. `pr batch session` prints or
 executes it; every UI asks that command rather than building the argv. The
 checkout is `Run.checkouts`, or for a run saved before that field its items'
 `repo_dir`. A run over more than one checkout or repo has no run session and

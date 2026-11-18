@@ -314,7 +314,8 @@ def _group_loss(group: _Group, v: _Versions) -> Loss | None:
     clean = _clean_change(group)
     if clean is None:
         return _one_sided(group, v)
-    if not _reverted(clean, v.side(clean.side), v.b, v.r, v.r_ops):
+    other_text = v.u if clean.side is Side.REPLAYED else v.t
+    if not _reverted(clean, v.side(clean.side), v.b, v.r, v.r_ops, other_text):
         return None
     return Loss(LossKind.HUNK_REVERTED, clean.side, clean.at + 1, _excerpt(clean, v.b))
 
@@ -327,6 +328,8 @@ def _stripped_nonblank(lines: Sequence[str]) -> list[str]:
 
 def _count_run(haystack: list[str], needle: list[str]) -> int:
     """Non-overlapping contiguous occurrences of *needle* in *haystack*."""
+    if not needle:
+        return 0
     count = 0
     step = len(needle)
     idx = 0
@@ -340,26 +343,29 @@ def _count_run(haystack: list[str], needle: list[str]) -> int:
     return count
 
 
-def _relocated_in_result(change: _Change, b: list[str], r: list[str]) -> bool:
-    """Whether *change*'s non-blank lines occur more often in *r* than in *b*.
+def _relocated_in_result(
+    change: _Change, b: list[str], r: list[str],
+    clean_text: list[str], other_text: list[str],
+) -> bool:
+    """Whether *r* kept *change* after accounting for copies the other side added.
 
     Indent and blank lines are ignored so a moved, re-indented block counts
-    as kept. A pure deletion or single-line change has no usable needle and must still
-    satisfy alignment.
+    as kept. A pure deletion has no needle and must still satisfy alignment.
     """
     needle = _stripped_nonblank(change.lines)
-    # A single line is too common to prove relocation: another side may add the
-    # same line elsewhere while this change is reverted at its own site.
-    if len(needle) < 2:
+    if not needle:
         return False
-    return _count_run(_stripped_nonblank(r), needle) > _count_run(
-        _stripped_nonblank(b), needle,
-    )
+    b_count = _count_run(_stripped_nonblank(b), needle)
+    clean_count = _count_run(_stripped_nonblank(clean_text), needle)
+    other_count = _count_run(_stripped_nonblank(other_text), needle)
+    r_count = _count_run(_stripped_nonblank(r), needle)
+    required = max(b_count + 1, clean_count) + max(0, other_count - b_count)
+    return r_count >= required
 
 
 def _reverted(
     change: _Change, side_text: list[str], b: list[str], r: list[str],
-    r_ops: list[tuple[str, int, int, int, int]],
+    r_ops: list[tuple[str, int, int, int, int]], other_text: list[str],
 ) -> bool:
     """Whether *r* holds the base text where *change* was, and not the change.
 
@@ -378,7 +384,7 @@ def _reverted(
         for tag, i1, i2, _, _ in r_ops
     ):
         return False
-    if _relocated_in_result(change, b, r):
+    if _relocated_in_result(change, b, r, side_text, other_text):
         return False
     before = side_text[max(0, change.at - _CONTEXT_LINES):change.at]
     after_at = change.at + len(change.lines)

@@ -25,7 +25,8 @@ rest is not. All three signals here are all-or-nothing — they report the
 branch's work present or absent — so a branch six of whose seven commits have
 landed reads to every one of them as a branch that landed nothing. A squash of
 a stacked parent is the same shape: the prefix's tip tree is already on the
-target, with no per-commit equivalent. It is kept apart from `check`'s ladder
+target, with no per-commit equivalent. Once the target moves on, the prefix is
+recognised by range patch-id instead. It is kept apart from `check`'s ladder
 because it is not evidence the work is done: it is evidence that replaying the
 branch whole would reapply the landed part on top of itself, which is a
 different finding with a different remedy.
@@ -333,8 +334,11 @@ def partial_landing(
     carrying one has it counted on neither side.
 
     A squash of a stacked parent is a third signal: the longest proper prefix
-    whose tip tree equals a tree already in ``base..target_ref``. A squash
-    leaves no per-commit equivalent and a subject that does not match.
+    whose tip tree equals a tree already in ``base..target_ref``, or whose
+    combined diff has a stable patch-id already upstream. A squash leaves no
+    per-commit equivalent and a subject that does not match. Tree equality is
+    the fast path; range patch-id is what still sees the squash after the
+    target has moved on.
 
     Returns None unless both sides are non-empty. Everything landed is
     `by_git`'s finding, not this one, and nothing landed is the ordinary
@@ -364,7 +368,7 @@ def partial_landing(
         if not match:
             landed = max(index, _squashed_prefix(
                 cwd, base=base, target_ref=target_ref, rev=rev,
-                total=len(commits),
+                commits=commits, min_landed=index,
             ))
             fork = commits[landed - 1] if landed else None
             return _partial(fork, landed=landed, unlanded=len(commits) - landed)
@@ -373,14 +377,29 @@ def partial_landing(
     return None
 
 
-# ceiling: tree equality misses a squash made after the target moved.
-# Upgrade trigger: if a stacked child still replays its squash-landed parent,
-# switch to a range patch-id.
+# ceiling: range patch-id misses a squash whose diff context or content differs from the prefix (main edited lines within -U3 of a hunk, or a queue-side fix).
+# Upgrade trigger: if a stacked child still replays a squash-landed parent whose squash differs only in context, compare per-hunk +/- lines instead.
 def _squashed_prefix(
-    cwd: str | Path, *, base: str, target_ref: str, rev: str, total: int,
+    cwd: str | Path, *, base: str, target_ref: str, rev: str,
+    commits: list[BranchCommit], min_landed: int,
 ) -> int:
     """Length of the longest proper prefix whose tip tree is a tree in
-    base..target_ref, else 0."""
+    base..target_ref, else whose range patch-id is already upstream, else 0."""
+    found = _tree_equal_prefix(
+        cwd, base=base, target_ref=target_ref, rev=rev, total=len(commits),
+    )
+    if found:
+        return found
+    return _range_patch_id_prefix(
+        cwd, base=base, target_ref=target_ref,
+        commits=commits, min_landed=min_landed,
+    )
+
+
+def _tree_equal_prefix(
+    cwd: str | Path, *, base: str, target_ref: str, rev: str, total: int,
+) -> int:
+    """Length of the longest proper prefix whose tip tree is in base..target_ref."""
     upstream = set(git.client.lines(
         "log", "--format=%T", f"{base}..{target_ref}", cwd=cwd,
     ))
@@ -396,6 +415,66 @@ def _squashed_prefix(
         if trees[length - 1] in upstream:
             return length
     return 0
+
+
+def _range_patch_id_prefix(
+    cwd: str | Path, *, base: str, target_ref: str,
+    commits: list[BranchCommit], min_landed: int,
+) -> int:
+    """Longest proper prefix whose combined diff is already upstream by patch-id."""
+    upstream = _upstream_range_patch_ids(cwd, base=base, target_ref=target_ref)
+    if not upstream:
+        return 0
+    for length in range(len(commits) - 1, min_landed, -1):
+        patch_id = _range_patch_id(cwd, base=base, tip=commits[length - 1].sha)
+        if patch_id and patch_id in upstream:
+            return length
+    return 0
+
+
+def _upstream_range_patch_ids(
+    cwd: str | Path, *, base: str, target_ref: str,
+) -> frozenset[str]:
+    """Stable patch-ids of non-merge commits in base..target_ref."""
+    listed = git.client.run(
+        "rev-list", "--no-merges", f"{base}..{target_ref}", cwd=cwd,
+    )
+    if not listed.ok or not listed.stdout.strip():
+        return frozenset()
+    patches = git.client.run(
+        "diff-tree", "--stdin", "--root", "-p", "--no-renames", "--no-color",
+        "-U3", cwd=cwd, input_text=listed.stdout,
+    )
+    if not patches.ok or not patches.stdout.strip():
+        return frozenset()
+    ident = git.client.run(
+        "patch-id", "--stable", cwd=cwd, input_text=patches.stdout,
+    )
+    if not ident.ok:
+        return frozenset()
+    ids: set[str] = set()
+    for line in ident.stdout.splitlines():
+        token, _, _ = line.strip().partition(" ")
+        if token:
+            ids.add(token)
+    return frozenset(ids)
+
+
+def _range_patch_id(cwd: str | Path, *, base: str, tip: str) -> str:
+    """Stable patch-id of the combined diff from *base* to *tip*, or ""."""
+    patches = git.client.run(
+        "diff-tree", "-p", "--no-renames", "--no-color", "-U3", base, tip,
+        cwd=cwd,
+    )
+    if not patches.ok or not patches.stdout.strip():
+        return ""
+    ident = git.client.run(
+        "patch-id", "--stable", cwd=cwd, input_text=patches.stdout,
+    )
+    if not ident.ok:
+        return ""
+    token, _, _ = ident.stdout.strip().partition(" ")
+    return token
 
 
 def _partial(

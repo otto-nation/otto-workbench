@@ -331,3 +331,67 @@ class TestASquashMergedParentIsALandedPrefix:
         git_in(repo, "checkout", "-q", "base")
 
         assert gh.landed.partial_landing(str(repo), target_ref="main") is None
+
+    def _two_then_child(self, tmp_path) -> tuple[Path, str]:
+        repo = init_repo(tmp_path / "repo")
+        (repo / "shared.txt").write_text("l1\nl2\nl3\n")
+        git_in(repo, "add", "shared.txt")
+        git_in(repo, "commit", "-q", "-m", "chore: root")
+
+        git_in(repo, "checkout", "-q", "-b", "parent")
+        (repo / "shared.txt").write_text("p1\nl2\nl3\n")
+        git_in(repo, "commit", "-q", "-am", "feat: p1")
+        (repo / "shared.txt").write_text("p2\nl2\nl3\n")
+        git_in(repo, "commit", "-q", "-am", "feat: p2")
+        p2 = git_out(repo, "rev-parse", "HEAD").strip()
+
+        git_in(repo, "checkout", "-q", "-b", "child")
+        _commit(repo, "c.txt", "c1\n", "feat: c1")
+        return repo, p2
+
+    def _squash_parent_after_main_moved(self, tmp_path) -> tuple[Path, str]:
+        repo, p2 = self._two_then_child(tmp_path)
+        git_in(repo, "checkout", "-q", "main")
+        _commit(repo, "other.txt", "m1\n", "feat: m1")
+        git_in(repo, "merge", "--squash", "parent")
+        git_in(repo, "commit", "-q", "-m", "feat: parent (#1)")
+        git_in(repo, "checkout", "-q", "child")
+        return repo, p2
+
+    def test_a_squash_made_after_main_moved_is_the_landed_prefix(self, tmp_path):
+        repo, p2 = self._squash_parent_after_main_moved(tmp_path)
+
+        partial = gh.landed.partial_landing(str(repo), target_ref="main")
+        assert partial is not None
+        assert partial.landed == 2
+        assert partial.unlanded == 1
+        assert partial.fork_point == p2
+        assert partial.fork_subject == "feat: p2"
+
+    def test_a_later_commit_landed_without_its_predecessor_is_not_a_prefix(
+        self, tmp_path,
+    ):
+        repo = init_repo(tmp_path / "repo")
+        _commit(repo, "root.txt", "root\n", "chore: root")
+        git_in(repo, "checkout", "-q", "-b", "parent")
+        _commit(repo, "p1.txt", "p1\n", "feat: p1")
+        p2 = _commit(repo, "p2.txt", "p2\n", "feat: p2")
+        git_in(repo, "checkout", "-q", "-b", "child")
+        _commit(repo, "c.txt", "c1\n", "feat: c1")
+        git_in(repo, "checkout", "-q", "main")
+        git_in(repo, *_COPY, p2)
+        git_in(repo, "checkout", "-q", "child")
+
+        assert gh.landed.partial_landing(str(repo), target_ref="main") is None
+
+    def test_repo_diff_config_does_not_change_the_match(self, tmp_path):
+        repo, p2 = self._squash_parent_after_main_moved(tmp_path)
+        git_in(repo, "config", "diff.noprefix", "true")
+        git_in(repo, "config", "diff.context", "1")
+        git_in(repo, "config", "color.ui", "always")
+
+        partial = gh.landed.partial_landing(str(repo), target_ref="main")
+        assert partial is not None
+        assert partial.landed == 2
+        assert partial.unlanded == 1
+        assert partial.fork_point == p2

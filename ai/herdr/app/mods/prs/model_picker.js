@@ -173,7 +173,6 @@ export class ModelPicker {
   }
 
   failOpenContent() {
-    const t = theme();
     return popoverSurface()
       .child(caption(failCaption(this.result.error)))
       .child(caption("Model for the next run, per phase. Blank uses the configured one. Review phases refuse light and Haiku models."))
@@ -222,12 +221,14 @@ export class ModelPicker {
   }
 
   phaseList(phase) {
-    const t = theme();
     const opts = phaseOptions(this.result.doc, phase, this.query, this.fields.get(phase).value());
     const kids = [];
+    // One index across sections: GPUI keys hit-testing by id, and entries()
+    // restarts at 0 in every section so later providers reuse the first ids.
+    let n = 0;
     for (const section of opts.sections ?? []) {
       kids.push(sectionLabel(section.label));
-      for (const [i, row] of section.rows.entries()) kids.push(this.optionRow(phase, row, i));
+      for (const row of section.rows) kids.push(this.optionRow(phase, row, n++));
     }
     return v_flex().gap(SP.xxs)
       .child(textInput(this.search))
@@ -250,7 +251,6 @@ export class ModelPicker {
   }
 
   customRow(phase) {
-    const t = theme();
     const selected = this.custom || this.isCustom(phase);
     const row = hoverRow(`${this.id}-${phase}-custom`, { selected })
       .on_click(() => {

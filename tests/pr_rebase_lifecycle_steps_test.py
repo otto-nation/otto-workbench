@@ -13,7 +13,6 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.outcomes  # noqa: E402
 import core.report  # noqa: E402
-import git.client  # noqa: E402
 import rebase.inspect  # noqa: E402
 import rebase.types  # noqa: E402
 import rebase.resolve_ai  # noqa: E402
@@ -508,6 +507,7 @@ def test_step_conflicts_continue_fails_records_instead_of_aborting():
     assert rc == 1
     assert not any("--abort" in cmd for cmd in commands)
     assert saved and saved[-1].files_resolved == ["a.py"]
+
 
 
 def test_fix_only_still_resolves_conflicts():

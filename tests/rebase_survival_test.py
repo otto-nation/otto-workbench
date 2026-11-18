@@ -251,6 +251,177 @@ class TestRevertedHunks:
             for loss in audit.losses
         )
 
+    def test_relocated_and_reindented_one_line_is_not_flagged_as_reverted(self):
+        b = (
+            "func_a() {\n"
+            "    x := 1\n"
+            "}\n"
+            "\n"
+            "func_b() {\n"
+            "    z := 3\n"
+            "}\n"
+        )
+        t = (
+            "func_a() {\n"
+            "    x := 1\n"
+            "    token := UNIQUE\n"
+            "}\n"
+            "\n"
+            "func_b() {\n"
+            "    z := 3\n"
+            "}\n"
+        )
+        u = (
+            "func_a() {\n"
+            "    x := 1\n"
+            "}\n"
+            "\n"
+            "cmd_full() {\n"
+            "    if nested {\n"
+            "        z := 3\n"
+            "    }\n"
+            "}\n"
+        )
+        r = (
+            "func_a() {\n"
+            "    x := 1\n"
+            "}\n"
+            "\n"
+            "cmd_full() {\n"
+            "    if nested {\n"
+            "        token := UNIQUE\n"
+            "        z := 3\n"
+            "    }\n"
+            "}\n"
+        )
+
+        audit = _audit(r, base=b, target=u, replayed=t)
+
+        assert audit.losses == ()
+
+    def test_one_line_reverted_while_other_side_added_the_same_line_elsewhere(self):
+        # b=0, clean=1, other=1, r=1: the other side's copy must not mask this revert.
+        b = (
+            "f() {\n"
+            "    x := 1\n"
+            "}\n"
+            "\n"
+            "g() {\n"
+            "    y := 2\n"
+            "}\n"
+            "\n"
+            "h() {\n"
+            "    z := 3\n"
+            "}\n"
+        )
+        t = (
+            "f() {\n"
+            "    x := 1\n"
+            "    token := UNIQUE\n"
+            "}\n"
+            "\n"
+            "g() {\n"
+            "    y := 2\n"
+            "}\n"
+            "\n"
+            "h() {\n"
+            "    z := 3\n"
+            "    kept := true\n"
+            "}\n"
+        )
+        u = (
+            "f() {\n"
+            "    x := 1\n"
+            "}\n"
+            "\n"
+            "g() {\n"
+            "    y := 2\n"
+            "    token := UNIQUE\n"
+            "}\n"
+            "\n"
+            "h() {\n"
+            "    z := 3\n"
+            "}\n"
+        )
+        r = (
+            "f() {\n"
+            "    x := 1\n"
+            "}\n"
+            "\n"
+            "g() {\n"
+            "    y := 2\n"
+            "    token := UNIQUE\n"
+            "}\n"
+            "\n"
+            "h() {\n"
+            "    z := 3\n"
+            "    kept := true\n"
+            "}\n"
+        )
+
+        audit = _audit(r, base=b, target=u, replayed=t)
+
+        assert any(
+            loss.kind is LossKind.HUNK_REVERTED and loss.blocking
+            for loss in audit.losses
+        )
+
+    def test_one_of_two_identical_one_line_inserts_reverted_is_flagged(self):
+        # b=0, clean=2, other=0, r=1: keeping f() does not cover reverting g().
+        b = (
+            "f() {\n"
+            "    x := 1\n"
+            "}\n"
+            "\n"
+            "g() {\n"
+            "    y := 2\n"
+            "}\n"
+        )
+        t = (
+            "f() {\n"
+            "    x := 1\n"
+            "    token := UNIQUE\n"
+            "}\n"
+            "\n"
+            "g() {\n"
+            "    y := 2\n"
+            "    token := UNIQUE\n"
+            "}\n"
+        )
+        r = (
+            "f() {\n"
+            "    x := 1\n"
+            "    token := UNIQUE\n"
+            "}\n"
+            "\n"
+            "g() {\n"
+            "    y := 2\n"
+            "}\n"
+        )
+
+        audit = _audit(r, base=b, target=b, replayed=t)
+
+        assert any(
+            loss.kind is LossKind.HUNK_REVERTED and loss.blocking
+            for loss in audit.losses
+        )
+
+    def test_empty_needle_does_not_hang_and_pure_deletion_is_still_flagged(self):
+        assert rebase.survival._count_run(["a", "b"], []) == 0
+        change = rebase.survival._Change(Side.REPLAYED, 0, 1, (), 0)
+        assert rebase.survival._relocated_in_result(
+            change, ["gone"], ["gone"], ["gone"], ["gone"],
+        ) is False
+
+        replayed = "a\nb\nC\nd\ne\ng\n"
+        target = "a\nB\nc\nd\ne\nf\ng\n"
+        audit = _audit("a\nB\nC\nd\ne\nf\ng\n", target=target, replayed=replayed)
+
+        assert any(
+            loss.kind is LossKind.HUNK_REVERTED and loss.blocking
+            for loss in audit.losses
+        )
+
 
 class TestCollidingRegions:
     def test_a_collision_resolved_to_one_side_is_advisory(self):

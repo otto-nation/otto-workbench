@@ -56,7 +56,7 @@ class TestCommentBody:
         assert "Review findings" not in result
         assert "Have some comments" not in result
         assert "Clean." in result
-        assert "### Nesting depth" in result
+        assert "### Nesting depth" not in result
 
     def test_an_empty_pr_comment_is_the_approve_line(self):
         result = _comment([], False, {"M"})
@@ -258,11 +258,12 @@ class TestCommentBody:
         assert "- **[N1]** `c.py:1` — trailing space" in body
         assert "pattern holds" in body
 
-    def test_the_models_line_closes_the_body(self):
+    def test_the_models_line_is_left_out_of_the_body(self):
         rec = record(summary="Clean.", extra=(ProseSection("Review gaps", "- group 2"),))
         body = review.render.comment_body(rec, [], has_inline=False, severity_filter={"M"},
                                           meta=ReviewMeta(models="single m (low)"))
-        assert body.endswith("- group 2\n\n<sub>Models: single m (low)</sub>")
+        assert body.rstrip().endswith("- group 2")
+        assert "Models:" not in body
 
     def test_no_models_line_without_a_body(self):
         body = review.render.comment_body(
@@ -281,11 +282,9 @@ class TestCommentBody:
         body = review.render.comment_body(record(summary="Clean."), [], has_inline=False,
                                           severity_filter={"M"},
                                           meta=ReviewMeta(models="single m\nnightly"))
-        assert "<sub>Models: single m nightly</sub>" in body
-        inner = body[body.rfind("<sub>"):body.rfind("</sub>")]
-        assert "\n" not in inner
+        assert "Models:" not in body and "<sub>" not in body
 
-    def test_the_comment_ends_with_the_phases_sub_line(self):
+    def test_the_phases_sub_line_is_left_out_of_the_comment(self):
         reason = "one group covers the PR"
         phases = (
             PhaseRun("scout", False, reason),
@@ -300,12 +299,8 @@ class TestCommentBody:
             rec, [], has_inline=False, severity_filter={"M"},
             meta=ReviewMeta(models="single m (low)", phases=phases),
         )
-        assert body.endswith(
-            "<sub>Models: single m (low)</sub>\n"
-            "<sub>Phases: single agent (one group covers the PR) · "
-            "scan, groups, synthesis not run · "
-            "disprove not run (no must-fix or should-fix finding)</sub>"
-        )
+        assert body.rstrip().endswith("- group 2")
+        assert "Models:" not in body and "Phases:" not in body
 
     def test_the_comment_asks_its_questions_under_the_summary(self):
         result = _comment(
@@ -324,10 +319,9 @@ class TestCommentBody:
             verified=(VerifiedNote("pkg/client.go", 30, "fetch closes the body."),
                       VerifiedNote(None, None, "The flag defaults off.")),
         )
-        head = "<details><summary>Verified, no issue (2)</summary>"
-        assert head in result and "</details>" in result[result.index(head):]
-        assert result.index("Fix it") < result.index(head) < result.index("## Review gaps")
-        assert "<details open>" not in result
+        assert "Verified, no issue" not in result
+        assert "fetch closes the body." not in result
+        assert result.index("Fix it") < result.index("## Review gaps")
 
     def test_no_questions_or_verified_add_nothing_to_the_comment(self):
         for case in sorted(p.name for p in FIXTURES.iterdir() if (p / "record.json").is_file()):
@@ -418,15 +412,15 @@ class TestCommentBodyDetails:
         ]
         sa = "### Nesting depth\n1 violation in 1 of 3 files checked\n\n- **`scripts/deploy.sh:42`** — depth 5 exceeds limit 4 (in main())"
         result = _comment(findings, True, {"N"}, static_analysis=sa)
-        assert "### Nesting depth" in result
-        assert "depth 5 exceeds limit 4" in result
-        assert result.index("Nit") < result.index("Nesting depth")
+        assert "Nit" in result
+        assert "### Nesting depth" not in result
+        assert "depth 5 exceeds limit 4" not in result
 
     def test_static_analysis_with_no_findings(self):
         sa = "### Nesting depth\n1 violation in 1 of 3 files checked"
         result = _comment([], True, {"M"}, static_analysis=sa)
         assert "Have some comments" in result
-        assert "### Nesting depth" in result
+        assert "### Nesting depth" not in result
 
     def test_static_analysis_empty_string_omitted(self):
         result = _comment([], True, {"M"})

@@ -507,7 +507,7 @@ class TestReclassifyAndRetry:
             )
         assert "Clean refactor." in captured[1]
         assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in captured[1]
-        assert "<sub>Models: single m (low)</sub>" in captured[1]
+        assert "Models:" not in captured[1]
 
 
 class TestHandleChunkFailure:

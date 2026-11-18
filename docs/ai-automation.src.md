@@ -329,9 +329,8 @@ next write overwrites the edit; nothing reads it back.
 - **What the run was** — head SHA, mode, status, dates, generator, the models
   its agents ran on (read once from the usage ledger), the phases that ran or
   were skipped and why, and any coverage gaps — is `meta.json`'s; the header
-  at the top of `review.md` is rendered from it, and the posted comment ends
-  with the same `Models:` line (and a `Phases:` line beside it when phases
-  were recorded) when the comment has anything else to say.
+  at the top of `review.md` is rendered from it. The posted comment does not
+  repeat `Models:` or `Phases:` — those stay on the operator ledger.
 - **A finding's disposition** — open, fixed, declined, skipped, unreached,
   falsified — replaces the checkbox and annotation ledgers.
   `review-orchestrate --track` files the findings a fix pass left skipped or
@@ -451,14 +450,12 @@ run ended and its mode:
   was read. At an effort that skips large files, its entry says it was not
   reviewed, and that entry counts as triaged.
 
-Open means not fixed: declined, skipped and unreached findings still count, and
-the line counts declined ones apart. Nits and idioms never count.
-
-Both `review.md` and the posted comment state it as one generated line closing
-the Summary (`**Verdict: Needs discussion.** 1 should-fix open.`). Agents write
-none: prompts never see the line, and a writer's `verdict` key is a schema
-violation. `pr status`, the listing and herdr record the same value, so they
-cannot disagree.
+Open means not fixed: declined, skipped and unreached findings still count on
+the operator ledger (`review.md`, `pr status`, herdr); declined are counted
+apart. Nits and idioms never count. The posted comment uses the same line
+shape but only counts findings still asked of the author — declined does not
+block Approve there. Agents write none: prompts never see the line, and a
+writer's `verdict` key is a schema violation.
 
 An objection to the approach is a must-fix finding about the PR as a whole;
 there is no Disapprove.

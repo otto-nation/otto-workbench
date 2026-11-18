@@ -153,14 +153,14 @@ def _rationale(record: ReviewRecord) -> str:
 
 
 def verdict_line(record: ReviewRecord, meta: ReviewMeta) -> str:
-    """The one line review.md and the comment state the verdict in; "" for a self-review.
+    """The one line review.md and `pr status` state the verdict in; "" for a self-review.
 
     `**Verdict: Needs discussion.** 1 should-fix open.` — the rationale counts rather
     than naming IDs, because record IDs restart each round. An error run,
     and a partial run with nothing blocking open, say why they state none; a partial
     run's blocking verdict says the review is incomplete. Incomplete coverage
     withholds Approve and names the gaps; a blocking verdict keeps its line and
-    takes a coverage tail.
+    takes a coverage tail. The GitHub comment uses `comment_verdict_line`.
     """
     if _is_self_review(meta):
         return ""
@@ -177,6 +177,21 @@ def verdict_line(record: ReviewRecord, meta: ReviewMeta) -> str:
         return f"**No verdict.** {PARTIAL_VERDICT}"
     tail = f" {PARTIAL_NOTE}" if meta.status is ReviewStatus.PARTIAL else ""
     return f"**Verdict: {verdict.prose}.** {_rationale(record)}{tail}{coverage_tail}"
+
+
+def comment_verdict_line(record: ReviewRecord, meta: ReviewMeta) -> str:
+    """The verdict the GitHub comment states; declined findings do not block Approve.
+
+    `verdict_line` is the operator ledger — declined still counts, so a declined
+    must-fix cannot become Approve on review.md or `pr status`. The GitHub body
+    asks the author for work; a declined finding is not that.
+    """
+    asked = replace(record, findings=tuple(
+        replace(f, disposition=Disposition.FIXED)
+        if f.disposition is Disposition.DECLINED else f
+        for f in record.findings
+    ))
+    return verdict_line(asked, meta)
 
 
 # What the Summary says when no synthesis agent wrote the review — the

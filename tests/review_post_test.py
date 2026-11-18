@@ -289,7 +289,7 @@ class TestDryRunIntegration:
 
         assert result.returncode == 0
 
-    def test_dry_run_includes_static_analysis(self, tmp_path):
+    def test_dry_run_omits_static_analysis(self, tmp_path):
         rec = record(
             finding("M1", "missing error check", path="handler.go", line=11),
             summary="Clean refactor.",
@@ -308,8 +308,9 @@ class TestDryRunIntegration:
         result = self._run_dry_run(review_file, tmp_path)
         assert result.returncode == 0, f"stderr: {result.stderr}"
         payload = self._extract_json(result.stdout)
-        assert "Nesting depth" in payload["body"]
-        assert "depth 5 exceeds limit 4" in payload["body"]
+        assert "Nesting depth" not in payload["body"]
+        assert "depth 5 exceeds limit 4" not in payload["body"]
+        assert "Nesting depth" in review_file.read_text()
 
     def test_dry_run_auto_discovers_unknown_section(self, tmp_path):
         rec = record(
@@ -499,8 +500,8 @@ class TestACleanReviewStillPosts:
 
     A caller that approves a PR submits the pending review this leaves, read
     back from `post.jsonl`. With nothing posted there was nothing to submit, so
-    the approval went out with an empty body and the summary, verdict and
-    static-analysis results never reached the PR."""
+    the approval went out with an empty body and the summary and verdict
+    never reached the PR."""
 
     STATIC_ANALYSIS = (
         "### Nesting depth\n\n"
@@ -546,14 +547,14 @@ class TestACleanReviewStillPosts:
                                rp.ReviewMeta(repo="org/repo"), review_file)
         return code, payloads, review_dir / "post.jsonl"
 
-    def test_the_body_carries_summary_verdict_and_static_analysis(self, rp, tmp_path):
+    def test_the_body_carries_summary_and_verdict_not_static_analysis(self, rp, tmp_path):
         code, payloads, _ = self._post(rp, tmp_path, self.CLEAN)
         assert code == 0
         [payload] = payloads
         assert "comments" not in payload
         assert "No findings across 3 files" in payload["body"]
         assert "**Verdict: Approve.** No must-fix or should-fix finding is open." in payload["body"]
-        assert "depth 3 exceeds limit 2" in payload["body"]
+        assert "depth 3 exceeds limit 2" not in payload["body"]
         assert "Review findings" not in payload["body"]
 
     def test_the_pending_review_is_tracked_for_the_approver(self, rp, tmp_path):
@@ -563,11 +564,11 @@ class TestACleanReviewStillPosts:
         assert tracking.status == "pending"
         assert tracking.submitted is False
 
-    def test_the_body_carries_the_models_meta_json_records(self, rp, tmp_path):
+    def test_the_body_omits_the_models_line(self, rp, tmp_path):
         code, payloads, _ = self._post(rp, tmp_path, self.CLEAN, models="single m (low)")
         assert code == 0
         [payload] = payloads
-        assert payload["body"].endswith("<sub>Models: single m (low)</sub>")
+        assert "Models:" not in payload["body"]
 
     def test_an_empty_pr_record_posts_its_verdict(self, rp, tmp_path):
         code, payloads, post_file = self._post(rp, tmp_path, record())

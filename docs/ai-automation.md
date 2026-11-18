@@ -717,15 +717,11 @@ run ended and its mode:
   reviewed, and that entry counts as triaged.
 
 Open means not fixed: declined, skipped and unreached findings still count on
-the operator ledger (`review.md`, `pr status`, herdr), and the line counts
-declined ones apart. Nits and idioms never count.
-
-The posted GitHub comment uses the same line shape but only counts findings
-still asked of the author — a declined must/should does not block Approve
-there, and the declined block is how that judgement is stated. Verified notes
-and the static-analysis dump stay on `review.md`. Agents write none: prompts
-never see the line, and a writer's `verdict` key is a schema violation.
-`review.md`, `pr status`, the listing and herdr still cannot disagree.
+the operator ledger (`review.md`, `pr status`, herdr); declined are counted
+apart. Nits and idioms never count. The posted comment uses the same line
+shape but only counts findings still asked of the author — declined does not
+block Approve there. Agents write none: prompts never see the line, and a
+writer's `verdict` key is a schema violation.
 
 An objection to the approach is a must-fix finding about the PR as a whole;
 there is no Disapprove.

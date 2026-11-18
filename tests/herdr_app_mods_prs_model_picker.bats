@@ -52,12 +52,14 @@ const draw = () => {
   picker.content();
   const optionRows = recs.filter((r) => typeof r.click === "function" && /^review-models-synthesis-\d+$/.test(String(r.id ?? "")));
   const enabled = phaseOptions(doc, "synthesis", "").sections.flatMap((s) => s.rows).filter((r) => !r.disabled);
+  const list = recs.find((r) => r.id === "review-models-synthesis-list");
   return {
     optionIds: optionRows.map((r) => r.id),
     unique: new Set(optionRows.map((r) => r.id)).size,
     enabled: enabled.length,
     refs: enabled.map((r) => r.ref),
     mousedown: optionRows.filter((r) => typeof r.mousedown === "function").length,
+    listKids: list?.children?.length ?? 0,
   };
 };
 PICKER_JS
@@ -76,4 +78,11 @@ PICKER_JS
     out(draw());"
   [ "$status" -eq 0 ]
   jq -e '.mousedown == .unique and .mousedown > 1' <<<"$output"
+}
+
+@test "an expanded phase's model list is one overflow child so it can clip" {
+  _host "$PICKER
+    out(draw());"
+  [ "$status" -eq 0 ]
+  jq -e '.listKids == 1' <<<"$output"
 }

@@ -230,10 +230,12 @@ export class ModelPicker {
       kids.push(sectionLabel(section.label));
       for (const row of section.rows) kids.push(this.optionRow(phase, row, n++));
     }
+    // Overflow on a div wrapping one child, same as scrollInset: a v_flex of
+    // rows with max_h in an auto-height popover does not scroll.
     return v_flex().gap(SP.xxs)
       .child(textInput(this.search))
-      .child(v_flex().id(`${this.id}-${phase}-list`).max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar()
-        .children(kids))
+      .child(div().id(`${this.id}-${phase}-list`).max_h(LAYOUT.bodyMaxH).overflow_y_scrollbar()
+        .child(v_flex().gap(SP.xxs).children(kids)))
       .child(this.customRow(phase));
   }
 

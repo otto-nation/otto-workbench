@@ -47,21 +47,30 @@ def _github_hint(github: dict) -> str:
     return f"GitHub shows {said} — see `github`, and start a new `pr batch run`"
 
 
-def _hint(run: Run, active: bool, github: dict | None = None) -> str:
+def _waiting_hint(run: Run, n: int) -> str:
+    if n:
+        return (f"the run is {run.status.value}; {n} PR{'' if n == 1 else 's'} "
+                f"need a session — `pr batch report`")
+    return f"the run is {run.status.value}; nothing is left to answer"
+
+
+def _hint(run: Run, active: bool, github: dict | None = None,
+          sessions: list | None = None) -> str:
     if active:
         return "a scheduler is driving this run; wait for its run_summary line"
-    if run.status in (RunStatus.DONE, RunStatus.CANCELLED):
-        if batch.live.owes(github):
-            return f"the run is {run.status.value}; {_github_hint(github)}"
-        n = sum(1 for i in run.items if i.status is ItemStatus.NEEDS_SESSION)
-        if n:
-            return (f"the run is {run.status.value}; {n} PR{'' if n == 1 else 's'} "
-                    f"need a session — `pr batch report`")
-        if any(i.findings for i in run.items):
-            return f"the run is {run.status.value}; findings remain — `pr batch report`"
-        return f"the run is {run.status.value}; nothing is left to answer"
-    return (f"continue with `pr batch resume {run.id}`; its decisions become "
-            "findings (`pr batch report`)")
+    if run.status not in (RunStatus.DONE, RunStatus.CANCELLED):
+        return (f"continue with `pr batch resume {run.id}`; its decisions become "
+                "findings (`pr batch report`)")
+    if batch.live.owes(github):
+        return f"the run is {run.status.value}; {_github_hint(github)}"
+    if sessions is not None:
+        return _waiting_hint(run, len(sessions))
+    n = sum(1 for i in run.items if i.status is ItemStatus.NEEDS_SESSION)
+    if n:
+        return _waiting_hint(run, n)
+    if any(i.findings for i in run.items):
+        return f"the run is {run.status.value}; findings remain — `pr batch report`"
+    return f"the run is {run.status.value}; nothing is left to answer"
 
 
 def _item_view(item: Item) -> dict:
@@ -91,7 +100,7 @@ def build(run: Run, *, active: bool,
         "schema_version": SCHEMA_VERSION,
         "run": {"id": run.id, "status": run.status.value, "active": active,
                 "exit_hint": None if active else exit_code(run.status),
-                "hint": _hint(run, active, github),
+                "hint": _hint(run, active, github, sessions),
                 "pending_requests": pending_requests,
                 "failed_requests": [{"name": f.name, "error": f.error}
                                     for f in failed_requests]},

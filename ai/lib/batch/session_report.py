@@ -75,6 +75,19 @@ DERIVED_STEPS: dict[FindingReason, str] = {
     FindingReason.PUSH_REFUSED: "publish",
 }
 
+# Rebase/push findings a published tree has superseded. CI, review, threads,
+# and closeout can still be owed after the branch has reached origin.
+_PUBLISHED_DROPS = frozenset({
+    FindingReason.STALE_GENERATED,
+    FindingReason.CONFLICT_HANDWRITTEN,
+    FindingReason.CONFLICT_GENERATED,
+    FindingReason.FAILED_UNKNOWN,
+    FindingReason.PUSH_REFUSED,
+    FindingReason.READY_TO_PUSH,
+    FindingReason.WRONG_BRANCH,
+    FindingReason.BUDGET_EXHAUSTED,
+})
+
 
 def finding_key(finding: Finding) -> str:
     """How a session and `pr batch note` name one finding: `<reason>:<step>`."""
@@ -239,9 +252,8 @@ def _refresh_stored(item: Item, findings: list[Finding], planned: _Planned | Non
         _drop(findings, FindingReason.PUSH_REFUSED)
         _drop(findings, FindingReason.WRONG_BRANCH)
     if batch.publish.already_published(item, planned.tree) and planned.plan.ok:
-        _drop(findings, FindingReason.STALE_GENERATED)
-        _drop(findings, FindingReason.CONFLICT_HANDWRITTEN)
-        _drop(findings, FindingReason.CONFLICT_GENERATED)
+        for reason in _PUBLISHED_DROPS:
+            _drop(findings, reason)
         return
     _refresh_rebase(item, findings, planned)
     findings[:] = [f for f in findings

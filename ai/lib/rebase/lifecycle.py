@@ -816,23 +816,30 @@ def fresh(
     if landed is not None:
         return refusals.refuse(ctx, landed, target_ref=target_ref, trail=trail)
 
-    if ctx.current_branch != ctx.branch:
+    # Defense in depth: `_resolve_worktree` returns None when no checkout
+    # holds the branch, so a mismatched tree here is only reachable for a
+    # detached worktree named after the branch (the porcelain fallback).
+    # Checking out into the default branch's worktree would still leave a
+    # feature branch sitting in main/, where the next tool that syncs main/
+    # to origin/<default> hard-resets it out from under it.
+    on_other = ctx.current_branch != ctx.branch
+    if on_other and ctx.current_branch == default:
         display = ctx.current_branch or "detached HEAD"
-        # Defense in depth: `_resolve_worktree` returns None when no checkout
-        # holds the branch, so a mismatched tree here is only reachable for a
-        # detached worktree named after the branch (the porcelain fallback).
-        # Checking out into the default branch's worktree would still leave a
-        # feature branch sitting in main/, where the next tool that syncs main/
-        # to origin/<default> hard-resets it out from under it.
-        if ctx.current_branch == default:
-            terr(trail, "preflight", f"refusing to check out {ctx.branch} into the {display} worktree")
-            core.log.error(f"Refusing to check out {ctx.branch} into the {display} worktree.")
-            core.log.dim(f"Run 'wt switch {ctx.branch}' and retry with --repo-dir on that worktree.")
-            return 1
+        terr(trail, "preflight", f"refusing to check out {ctx.branch} into the {display} worktree")
+        core.log.error(f"Refusing to check out {ctx.branch} into the {display} worktree.")
+        core.log.dim(f"Run 'wt switch {ctx.branch}' and retry with --repo-dir on that worktree.")
+        return 1
+    if on_other:
+        display = ctx.current_branch or "detached HEAD"
         core.log.info(f"Worktree on {display}, checking out {ctx.branch}...")
-        rc = rebase_target.checkout_target_branch(cwd, ctx, trail=trail)
-        if rc != 0:
-            return rc
+    # Always sync, including when already on the branch: behind origin is
+    # fast-forwarded, unpushed commits are kept, divergence is refused.
+    # Skipping that when current_branch matched left leftover local SHAs to
+    # replay.
+    rc = rebase_target.checkout_target_branch(cwd, ctx, trail=trail)
+    if rc != 0:
+        return rc
+    if on_other:
         tdecision(
             trail, "branch_checkout",
             f"checked out {ctx.branch} (was {display})",

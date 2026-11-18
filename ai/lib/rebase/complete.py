@@ -41,7 +41,7 @@ def rebase_success(
     # gate — shut for those modes — is what stops it, and a held landing is what
     # carries the force-push command back as data.
     lands_here = mode is not RunMode.PUSH
-    if lands_here and tally.stale:
+    if tally.stale:
         regen_dispatch.retry_stale_at_tip(
             cwd, tally, trail=trail, conventional=mode.resolves_conflicts,
         )

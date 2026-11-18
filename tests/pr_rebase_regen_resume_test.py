@@ -6,6 +6,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
+import pytest
+
 from conftest import commit_all, git_in, git_out, init_repo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -138,26 +140,30 @@ def _tip_regen_repo(tmp_path, *, hash_on_feat: str) -> Path:
     return repo
 
 
-def _tip_regen_success(repo, tally):
+def _tip_regen_success(repo, tally, mode=rebase.types.RunMode.FIX):
     ctx = mock.MagicMock()
     with core.publishing.run(post=True), \
          mock.patch.object(rebase.land, "land_rebased", return_value=_pushed()), \
          mock.patch.object(rebase.types.RebaseOutcome, "save"), \
          mock.patch.object(core.report, "emit_json") as emit:
         rc = rebase.lifecycle.rebase_success(
-            str(repo), ctx, rebase.types.RunMode.FIX, tally,
+            str(repo), ctx, mode, tally,
             target_ref="main", lease=_LEASE,
         )
         held = core.publishing.held()
     return rc, emit, held
 
 
-def test_tip_regeneration_commits_rebuilt_stale_file_and_clears_tally(tmp_path):
+@pytest.mark.parametrize("mode", [
+    rebase.types.RunMode.FIX,
+    rebase.types.RunMode.PUSH,
+])
+def test_tip_regeneration_commits_rebuilt_stale_file_and_clears_tally(tmp_path, mode):
     repo = _tip_regen_repo(tmp_path, hash_on_feat="stale-hash\n")
     tally = rebase.types.ResolutionTally(
         files=["schema.hash"], stale=["schema.hash"], commits=1,
     )
-    rc, emit, held = _tip_regen_success(repo, tally)
+    rc, emit, held = _tip_regen_success(repo, tally, mode)
     assert rc == 0
     assert tally.stale == []
     assert git_out(repo, "log", "-1", "--format=%s").strip() == "chore: regenerate after rebase"

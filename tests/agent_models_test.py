@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
 import agent.phases
 import config.workbench_config
-from agent.models import ModelRef, UnsetTier, parse_ref, resolve, unversioned_id
+from agent.models import ModelRef, UnsetTier, default_thinking, parse_ref, resolve, unversioned_id, with_default_level
 from agent.registry import PHASES
 from config.workbench_config import ModelsConfig
 from core.phases import Effort, Phase, Thinking, Tier
@@ -65,6 +65,30 @@ def test_a_reference_parses_into_its_parts(value, ref):
 ])
 def test_an_unversioned_id_drops_only_the_version_suffix(value, expected):
     assert unversioned_id(value) == expected
+
+
+@pytest.mark.parametrize(("value", "level"), [
+    ("xai/grok-4.6", "high"),
+    ("grok-4.7", "high"),
+    ("google-vertex/gemini-4-carbon", "high"),
+    ("google-vertex-claude/claude-haiku-4-5@20251001", "low"),
+    ("claude-haiku-5-5", "low"),
+    ("anthropic.claude-haiku-5-5-v1:0", "low"),
+    ("us.anthropic.claude-haiku-5-5-v1:0", "low"),
+    ("anthropic/claude-sonnet-5-5", "high"),
+    ("anthropic/claude-opus-5-5", "high"),
+    ("claude-opus-5-5@20251001", "high"),
+    ("google-vertex/gemini-3.8-flash", None),
+    ("anthropic/claude-sonnet-4-6", None),
+])
+def test_known_families_name_a_thinking_level_when_the_ref_does_not(value, level):
+    assert default_thinking(parse_ref(value)) == level
+
+
+def test_a_written_level_wins_over_the_family_default():
+    ref = parse_ref("xai/grok-4.6:medium")
+    assert with_default_level(ref) is ref
+    assert with_default_level(parse_ref("xai/grok-4.6")).level == "high"
 
 
 def test_every_thinking_level_is_a_level_suffix():

@@ -322,7 +322,7 @@ _live() {
   [ "$(_live '.defaultProvider')" = "anthropic" ]
   [ "$(_live '.defaultThinkingLevel')" = "high" ]
   [ "$(_live '.enabledModels | join(",")')" = "anthropic/claude-opus-5-5,anthropic/claude-sonnet-5-5,openai/gpt-6-luna" ]
-  [ "$(_live '.modelThinkingLevels | tojson')" = '{"anthropic/claude-opus-5-5":"high"}' ]
+  [ "$(_live '.modelThinkingLevels | tojson')" = '{"anthropic/claude-opus-5-5":"high","anthropic/claude-sonnet-5-5":"high"}' ]
 }
 
 @test "a routed session starts Pi on workbench/auto beside the tiers" {
@@ -350,7 +350,7 @@ _live() {
   run _run_step
   [ "$status" -eq 0 ]
   [ "$(_live '.enabledModels | join(",")')" = "google-vertex-claude/claude-opus-5-5,anthropic/claude-haiku-5-5" ]
-  [ "$(_live '.modelThinkingLevels | tojson')" = '{"google-vertex-claude/claude-opus-5-5":"high"}' ]
+  [ "$(_live '.modelThinkingLevels | tojson')" = '{"google-vertex-claude/claude-opus-5-5":"high","anthropic/claude-haiku-5-5":"low"}' ]
 }
 
 @test "with no provider anywhere a bare id stays bare and its level is dropped" {

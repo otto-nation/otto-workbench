@@ -275,7 +275,9 @@ class ModelsConfig:
     reads as ``--provider`` and the Claude CLI does not take — and is left off
     for the backend's default provider. ``:level`` is a thinking level the
     tier runs at, one of ``Thinking``'s values; a suffix that is not one is part
-    of the id (Bedrock ids end ``:0``).
+    of the id (Bedrock ids end ``:0``). Unset, some families still fill a level
+    (`agent.models.default_thinking`) so Auto, Pi's per-model thinking, and
+    Claude Code effort agree without every machine writing the suffix.
 
     Unset, a tier names no model and its phases run on the backend's own
     default: there is no built-in model.
@@ -284,10 +286,9 @@ class ModelsConfig:
     tier name, or a model in the same grammar. The workbench writes it into each
     harness's settings at sync. Unset, each harness keeps its own default.
     ``auto`` routes instead: Claude Code runs ``opusplan`` (deep while planning,
-    standard otherwise), and Pi runs ``workbench/auto``, which starts on
-    standard, moves to deep when a planning skill loads, back to standard for
-    good at the first edit outside the workspace's plans and specs, and sends
-    requests outside the agent loop (compaction summaries) to light. It needs
+    standard otherwise), and Pi runs ``workbench/auto``, which stays on
+    standard for the agent loop (planning included: deep is a poor long loop)
+    and sends requests outside it (compaction summaries) to light. It needs
     all three tiers set, each naming its provider.
     """
 

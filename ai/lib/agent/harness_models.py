@@ -27,8 +27,9 @@ Pi:
   ``models.session``; each is left out when the session does not name it, so
   Pi keeps the value it has.
 - ``enabledModels`` lists every tier, then a named session, as ``/model``
-  offers them; ``modelThinkingLevels`` carries each one's level. Both are
-  keyed ``provider/id`` where the reference names a provider and by the bare
+  offers them; ``modelThinkingLevels`` carries each one's level, including a
+  family default when the reference named none (`agent.models.with_default_level`).
+  Both are keyed ``provider/id`` where the reference names a provider and by the bare
   id where it does not: Pi's sync qualifies a bare id with the
   ``defaultProvider`` the settings end up with, which only the live file knows.
   ``models.session: auto`` is the exception: ``workbench/auto`` is prepended
@@ -58,7 +59,7 @@ import re
 from dataclasses import dataclass, field, replace
 
 import agent.backend_claude
-from agent.models import ModelRef, resolve
+from agent.models import ModelRef, resolve, with_default_level
 from core.errors import OperatorError
 from config.workbench_config import ModelsConfig
 from core.phases import Tier
@@ -236,11 +237,16 @@ def harness_models(models: ModelsConfig) -> HarnessModels:
     ``auto`` without all three tiers naming a provider, and `AutoTakesNoLevel`
     for ``auto`` with a level.
     """
-    tiers = {tier: ref for tier in Tier if (ref := resolve(getattr(models, tier.value), models,
-                                                           where=f"models.{tier.value}"))}
+    tiers = {
+        tier: with_default_level(ref)
+        for tier in Tier
+        if (ref := resolve(getattr(models, tier.value), models, where=f"models.{tier.value}"))
+    }
     if models.session == AUTO_SESSION:
         return _auto(tiers)
     if (models.session or "").partition(":")[0] == AUTO_SESSION:
         raise AutoTakesNoLevel(models.session)
     session = resolve(models.session, models, where="models.session")
+    if session is not None:
+        session = with_default_level(session)
     return HarnessModels(claude=_claude(tiers, session), pi=_pi(tiers, session), tiers=tiers)

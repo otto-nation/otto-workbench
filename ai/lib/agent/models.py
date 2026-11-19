@@ -134,6 +134,58 @@ def unversioned_id(model_id: str) -> str:
     return model_id.partition("@")[0]
 
 
+def default_thinking(ref: ModelRef) -> str | None:
+    """The thinking level this model runs at when the reference names none.
+
+    A written ``:level`` always wins (`with_default_level`). Unknown ids stay
+    unset so `agent.thinking` and the phase spec still answer. Review phases
+    do not read this table: their spec and ``agent.thinking`` stay the budget.
+    """
+    model_id = _claude_family_id(unversioned_id(ref.id).lower())
+    # Grok cannot disable reasoning. xAI's API default is high; xhigh is the
+    # quality-max effort for hard one-shot problems, not the all-day driver.
+    if model_id.startswith("grok-"):
+        return Thinking.HIGH.value
+    # Carbon's catalogue maps low/medium/high only. Deep and planning work
+    # uses that top mapped level rather than leaving thinking to the session.
+    if model_id == "gemini-4-carbon":
+        return Thinking.HIGH.value
+    # Opus 5.5 and Sonnet 5.5 always think (off/minimal are unmapped). high is
+    # the driver; xhigh and max are quality-max, the same split as Grok vs xhigh.
+    if _id_is(model_id, "claude-opus-5-5") or _id_is(model_id, "claude-sonnet-5-5"):
+        return Thinking.HIGH.value
+    # Haiku is the light tier: compaction summaries, titles, cheap follow-ups.
+    # Low keeps those calls from paying for a deliberation budget they do not use.
+    if model_id.startswith("claude-haiku-"):
+        return Thinking.LOW.value
+    return None
+
+
+def _claude_family_id(model_id: str) -> str:
+    """Bedrock-shaped ``[region.]anthropic.claude-…`` as the ``claude-…`` segment."""
+    marker = "anthropic."
+    i = model_id.find(marker)
+    if i != -1 and model_id[i + len(marker):].startswith("claude-"):
+        return model_id[i + len(marker):]
+    return model_id
+
+
+def _id_is(model_id: str, family: str) -> bool:
+    """Whether *model_id* is *family*, *family@version*, or *family-…* (Bedrock -v1)."""
+    if not model_id.startswith(family):
+        return False
+    rest = model_id[len(family):]
+    return not rest or rest[:1] in "@-"
+
+
+def with_default_level(ref: ModelRef) -> ModelRef:
+    """*ref* with `default_thinking` filled in when it named no level."""
+    if ref.level is not None:
+        return ref
+    level = default_thinking(ref)
+    return replace(ref, level=level) if level else ref
+
+
 def tier_ref(tier: Tier, models: ModelsConfig) -> ModelRef | None:
     """The model ``models.<tier>`` names, or None when the tier is unset."""
     value = getattr(models, tier.value)

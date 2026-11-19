@@ -1334,8 +1334,7 @@ def command_spec(**overrides):
 
     fields = dict(name="probe", help="a probe",
                   need=Need(REMOTE, update=False, locks=NO_LOCK),
-                  contract="cli.pr_commands:STATUS_CONTRACT",
-                  queue=None)
+                  contract="cli.pr_commands:STATUS_CONTRACT")
     fields.update(overrides)
     return CommandSpec(**fields)
 

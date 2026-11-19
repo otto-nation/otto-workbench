@@ -589,7 +589,7 @@ class Scheduler:
 
     def _accept(self, item: Item, rec: StepRecord, argv: list[str]
                 ) -> batch.queue_entries.Accepted | None:
-        # AI -> HEAVY else LIGHT. Matches cli.needs.rebase_queue and
+        # AI -> HEAVY else LIGHT. Matches cli.needs.ticket_class and
         # test_queues_itself_matches_the_cli_registry; batch cannot import cli.
         entry_class = (
             otto_queue.model.EntryClass.HEAVY if self.run.uses_ai(rec.step)

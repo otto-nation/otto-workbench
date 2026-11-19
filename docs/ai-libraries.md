@@ -9426,15 +9426,10 @@ and its short allowlist do not account for.
 What a `pr` subcommand needs of dispatch before its handler runs.
 
 `Need` is the declaration; `review_need` is the one resolver that reads a mode
-flag off an argv. Both were written inside `ai/bin/pr`, where nothing could
-import them and no test could reach them without executing the binary. The
-queue-class resolvers next to them (`ci_queue`, `comments_queue`, …) are the
-same kind of declaration, read off the same flags with `has_flag`.
-
-The mode table itself lives in `cli.review_modes`, beside the handlers it
-names. The resolvers here still take a table rather than reaching for one:
-`review_modes` would otherwise have to be imported from below it, and taking it
-as an argument is also what lets a test declare a table of its own.
+flag off an argv. `ticket_class` is derived from that Need plus whether the
+argv runs an agent or git-pushes — it does not live on `CommandSpec`.
+This module does not import `cli.review_modes`; the modes mapping is an
+argument, which is also what lets a test declare a table of its own.
 
 ### cli/otto_log.py
 
@@ -9784,7 +9779,7 @@ promote-scan [--home DIR] [--workbench DIR]
 
 ### cli/queue_gate.py
 
-Admit AI `pr` subcommands through an otto-queue ticket before they run.
+Admit locked `pr` subcommands through an otto-queue ticket before they run.
 
 `gate` returns None to carry on in this process, or the ticket's exit status
 when the command ran (or failed to get a slot) under the queue. Help, unqueued

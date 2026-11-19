@@ -1,4 +1,4 @@
-"""Admit AI `pr` subcommands through an otto-queue ticket before they run.
+"""Admit locked `pr` subcommands through an otto-queue ticket before they run.
 
 `gate` returns None to carry on in this process, or the ticket's exit status
 when the command ran (or failed to get a slot) under the queue. Help, unqueued
@@ -19,7 +19,7 @@ import cli.needs
 import core.log
 import git.client
 import pr.target
-from cli.registry import COMMANDS, queue_for
+from cli.registry import COMMANDS, need_for
 from otto_queue.model import ACTION_ENV, ADOPT_ENV, LEASE_FD_ENV, SUBJECT_ENV, EntryClass
 
 NO_QUEUE_ENV = "WORKBENCH_PR_NO_QUEUE"
@@ -29,8 +29,12 @@ _LABEL_FLAGS = ("--self", "--fix", "--triage", "--recover")
 
 
 def class_for(command: str, argv: Sequence[str]) -> EntryClass | None:
-    """The queue class `command`'s *argv* declares, or None to run unqueued."""
-    return queue_for(COMMANDS[command], argv)
+    """The queue class this invocation takes, derived from its Need."""
+    import cli.review_modes
+    spec = COMMANDS[command]
+    return cli.needs.ticket_class(
+        need_for(spec, argv), command, argv, cli.review_modes.MODES,
+    )
 
 
 def label_for(command: str, argv: Sequence[str], *, pr_ref: str | None,

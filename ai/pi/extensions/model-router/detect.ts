@@ -3,9 +3,14 @@ import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { nearestExistingDir, workspaceFor } from "../_shared/workspace.ts";
-import type { Tier } from "./route.ts";
+import { ROUTER_ID, ROUTER_PROVIDER, type Tier } from "./route.ts";
 
 export * from "./route.ts";
+export { footerLines, lastPhysicalId, spendFromEntries } from "../_shared/spend.ts";
+
+export function isAutoModel(model: { provider?: string; id?: string } | null | undefined): boolean {
+  return model?.provider === ROUTER_PROVIDER && model?.id === ROUTER_ID;
+}
 
 /**
  * What the router reads from outside Pi: the tiers, and where plans live.

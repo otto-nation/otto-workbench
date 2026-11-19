@@ -331,8 +331,6 @@ def test_a_fixture_change_selects_everything(monkeypatch, capsys):
     ".github/workflows/ci.yml",
     ".github/workflows/site.yml",
     "bin/local/run-tests",
-    "bin/local/select-tests",
-    "bin/local/select-pytest",
     "tests/test_helper.bash",
     "Taskfile.yml",
 ])
@@ -352,6 +350,14 @@ def test_a_github_action_is_not_a_full_suite_trigger():
     assert not sp._triggers_full_suite(
         [".github/actions/install-yq/action.yml"],
     )
+
+
+def test_the_bats_selector_is_not_a_pytest_full_suite_trigger():
+    assert not sp._triggers_full_suite(["bin/local/select-tests"])
+
+
+def test_the_pytest_selector_is_not_a_full_suite_trigger():
+    assert not sp._triggers_full_suite(["bin/local/select-pytest"])
 
 
 def test_validate_fails_on_an_unmapped_test():

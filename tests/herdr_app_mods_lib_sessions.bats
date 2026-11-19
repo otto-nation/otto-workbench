@@ -77,6 +77,24 @@ _js() {
   [ "$output" = '["box:abcdef123456","live · 1.5 GB · idle 18 h",true,7,[{"label":"#7","url":"u","title":"t"}],"closed · 1 h ago",false,":abcdef123456"]' ]
 }
 
+@test "spendText: labelled costs joined; empty is empty" {
+  _js 'out([s.spendText([{ label: "opus", cost: 12.4 }, { label: "grok", cost: 0.01 }]), s.spendText([]), s.spendText(null)])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["opus $12.40 · grok $0.01","",""]' ]
+}
+
+@test "rowModel: spend appends to the state line; missing spend is unchanged" {
+  _js '
+    const live = { pid: 7, rss_mb: 1536, idle_s: 64800, terminal: "", close_candidate: true };
+    const withSpend = s.rowModel(sess({ live, spend: [{ label: "opus", cost: 12.4 }, { label: "grok", cost: 0.01 }] }), "box", NOW);
+    const without = s.rowModel(sess({ live }), "box", NOW);
+    const closed = s.rowModel(sess({ spend: [{ label: "opus", cost: 1 }] }), null, NOW);
+    out([withSpend.state, without.state, closed.state]);
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["live · 1.5 GB · idle 18 h · opus $12.40 · grok $0.01","live · 1.5 GB · idle 18 h","closed · 1 h ago · opus $1.00"]' ]
+}
+
 @test "groupsOf: grouped by first worktree; close candidates first, then newest" {
   _js '
     const cand = { pid: 1, rss_mb: 900, idle_s: 90000, terminal: "", close_candidate: true };

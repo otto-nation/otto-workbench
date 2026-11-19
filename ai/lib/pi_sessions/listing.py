@@ -8,8 +8,8 @@ any older session that is live (*live*, keyed by session file, from
 title its last brief recorded), newest first. ``show(root, key, live=)``
 is one session by id or path, whatever its age. A ``SessionRow`` carries the
 header, the tail's name and brief (``title_set``, ``tldr``, ``worktrees``,
-``prs``) and the ``Live`` facts; ``to_json()`` is the row ``pi-sessions list
---json`` prints.
+``prs``, ``spend``) and the ``Live`` facts; ``to_json()`` is the row
+``pi-sessions list --json`` prints.
 """
 
 # ceiling: every listing stats every session file and tail-reads the ones in the
@@ -48,16 +48,28 @@ class SessionRow:
     worktrees: tuple[str, ...]
     prs: tuple[dict, ...]
     live: Live | None
+    spend: tuple[dict, ...]
 
     def to_json(self) -> dict:
         return {"id": self.id, "file": self.file, "cwd": self.cwd, "started": self.started,
                 "last_active": self.last_active, "name": self.name, "title_set": self.title_set,
                 "tldr": self.tldr, "worktrees": list(self.worktrees), "prs": list(self.prs),
-                "live": self.live.to_json() if self.live else None}
+                "live": self.live.to_json() if self.live else None, "spend": list(self.spend)}
 
 
 def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _spend(brief: dict) -> tuple[dict, ...]:
+    items = []
+    for item in brief.get("spend") or ():
+        if not isinstance(item, dict):
+            continue
+        label, cost = item.get("label"), item.get("cost")
+        if isinstance(label, str) and isinstance(cost, (int, float)):
+            items.append({"label": label, "cost": cost})
+    return tuple(items)
 
 
 def _row(path: Path, mtime: float, tail: Tail, live: Live | None) -> SessionRow | None:
@@ -73,7 +85,7 @@ def _row(path: Path, mtime: float, tail: Tail, live: Live | None) -> SessionRow 
         tldr=str(brief.get("tldr") or ""),
         worktrees=tuple(w for w in brief.get("worktrees") or () if isinstance(w, str)),
         prs=tuple(p for p in brief.get("prs") or () if isinstance(p, dict)),
-        live=live)
+        live=live, spend=_spend(brief))
 
 
 def _named(tail: Tail) -> bool:

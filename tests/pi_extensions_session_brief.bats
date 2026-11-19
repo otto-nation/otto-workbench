@@ -133,6 +133,19 @@ _detect() {
   [ "$output" = '[{"worktrees":["/w"],"prs":[{"repo":"a/b","number":1,"url":"u","title":""}]},{"worktrees":[],"prs":[]}]' ]
 }
 
+@test "briefData: records spend; omitted spend is empty" {
+  _detect '
+    const at = new Date("2026-11-17T12:00:00Z");
+    const facts = { worktrees: [], prs: [] };
+    const withSpend = m.briefData({ titleSet: "t", name: "n", tldr: "d", facts, at,
+      spend: [{ label: "opus", cost: 1.5 }] });
+    const without = m.briefData({ titleSet: "t", name: "n", tldr: "d", facts, at });
+    out([withSpend.spend, without.spend]);
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[{"label":"opus","cost":1.5}],[]]' ]
+}
+
 @test "briefContext: the transcript goes to the model as one user message under the brief prompt" {
   _detect '
     const c = m.briefContext("User: hi", 5);
@@ -198,7 +211,23 @@ _wired() {
     out([f.state.name, brief.data, f.calls.completes[0].model.id, f.calls.completes[0].options.maxTokens]);
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '["Fix login",{"title_set":"Fix login","name":"Fix login","tldr":"Fixing the login race.","worktrees":["/w/a"],"prs":[],"at":"2026-11-17T12:00:00.000Z"},"claude-haiku-4-5",400]' ]
+  [ "$output" = '["Fix login",{"title_set":"Fix login","name":"Fix login","tldr":"Fixing the login race.","worktrees":["/w/a"],"prs":[],"at":"2026-11-17T12:00:00.000Z","spend":[]},"claude-haiku-4-5",400]' ]
+}
+
+@test "wire: spend on the brief is rolled up from entry usage" {
+  _wired '
+    const entries = [
+      { type: "message", message: { role: "user", content: "fix" } },
+      { type: "message", message: { role: "assistant", content: [{ type: "text", text: "done" }],
+        model: "claude-opus-5-5", usage: { cost: { total: 2.5 } } } },
+    ];
+    const f = fakePi({ entries }); wire(f.pi, f.deps);
+    await f.calls.handlers.agent_settled({ aborted: false }, f.ctx);
+    await f.calls.timers[0].fn();
+    out(ofType(f.entries, m.BRIEF_TYPE)[0].data.spend);
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"label":"opus","cost":2.5}]' ]
 }
 
 @test "wire: a name a person chose is kept; the TL;DR still refreshes" {

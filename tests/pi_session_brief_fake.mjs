@@ -37,7 +37,7 @@ export function fakePi({ entries = [], name, mode = 'tui', file = '/s/x_s1.jsonl
         return control.reply;
       },
     },
-    sessionManager: { getBranch: () => entries, getSessionFile: () => file },
+    sessionManager: { getBranch: () => entries, getEntries: () => entries, getSessionFile: () => file },
   };
   const deps = {
     env: {},

@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Tests for the model-router Pi extension: which tier a workbench/auto request goes to.
-# select-on: ai/pi/extensions/model-router/* ai/pi/extensions/_shared/workspace.ts
+# select-on: ai/pi/extensions/model-router/* ai/pi/extensions/_shared/workspace.ts ai/pi/extensions/_shared/spend.ts
 
 bats_require_minimum_version 1.5.0
 
@@ -210,7 +210,7 @@ _route() {
   node --input-type=module -e "
     const { default: register } = await import('$ROUTER/index.ts');
     let definition;
-    register({ registerVirtualModel: (d) => { definition = d; } });
+    register({ registerVirtualModel: (d) => { definition = d; }, on() {} });
     const ctx = {
       cwd: process.argv[2],
       modelRegistry: { find: (provider, id) => provider === 'nowhere' ? undefined : { provider, id, contextWindow: id.endsWith('luna') ? 200000 : 1000000 } },
@@ -261,7 +261,7 @@ _seed_tiers() {
   run node --input-type=module -e "
     const { default: register } = await import('$ROUTER/index.ts');
     let definition;
-    register({ registerVirtualModel: (d) => { definition = d; } });
+    register({ registerVirtualModel: (d) => { definition = d; }, on() {} });
     console.log(definition.thinkingLevels.join(','));
   "
   [ "$output" = "off,minimal,low,medium,high,xhigh,max" ]
@@ -286,4 +286,42 @@ print(','.join(Thinking))
   run _route '{"reason":"user"}'
   [ "$status" -eq 3 ]
   [[ "$output" == *"models.standard is nowhere/model, which pi does not list"* ]]
+}
+
+@test "index.ts imports only its siblings and SDK types" {
+  run grep -nE '^import .*from "\.\./' "$ROUTER/index.ts"
+  [ "$status" -eq 1 ]
+}
+
+@test "isAutoModel: only workbench/auto" {
+  run node --input-type=module -e "
+    const { isAutoModel } = await import('$ROUTER/detect.ts');
+    console.log(JSON.stringify([
+      isAutoModel({ provider: 'workbench', id: 'auto' }),
+      isAutoModel({ provider: 'google-vertex-claude', id: 'claude-opus-5-5' }),
+      isAutoModel(undefined),
+    ]));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '[true,false,false]' ]
+}
+
+@test "Auto binds a spend footer; a pinned model clears it" {
+  run node --input-type=module -e '
+    const { default: register } = await import(process.argv[1]);
+    const handlers = {};
+    const calls = [];
+    register({ registerVirtualModel() {}, on(event, fn) { handlers[event] = fn; } });
+    const sessionManager = { getBranch: () => [
+      { message: { role: "assistant", model: "claude-opus-5-5", usage: { cost: { total: 1.5 } } } },
+    ] };
+    const ui = { setFooter: (fn) => { calls.push(fn); } };
+    await handlers.session_start({}, { model: { provider: "workbench", id: "auto" }, ui, sessionManager });
+    const theme = { fg: (_k, s) => s };
+    const lines = calls[0](null, theme).render(80);
+    await handlers.model_change({}, { model: { provider: "x", id: "y" }, ui, sessionManager });
+    console.log(JSON.stringify({ events: Object.keys(handlers).sort(), lines, cleared: calls[1] === undefined }));
+  ' -- "$ROUTER/index.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"events":["model_change","session_start"],"lines":["auto → claude-opus-5-5","opus $1.50"],"cleared":true}' ]
 }

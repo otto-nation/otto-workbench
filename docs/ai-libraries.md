@@ -8604,8 +8604,8 @@ any older session that is live (*live*, keyed by session file, from
 title its last brief recorded), newest first. ``show(root, key, live=)``
 is one session by id or path, whatever its age. A ``SessionRow`` carries the
 header, the tail's name and brief (``title_set``, ``tldr``, ``worktrees``,
-``prs``) and the ``Live`` facts; ``to_json()`` is the row ``pi-sessions list
---json`` prints.
+``prs``, ``spend``) and the ``Live`` facts; ``to_json()`` is the row
+``pi-sessions list --json`` prints.
 
 ### pi_sessions/live.py
 

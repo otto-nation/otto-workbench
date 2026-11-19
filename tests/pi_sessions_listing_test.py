@@ -75,6 +75,17 @@ def test_row_json_carries_the_brief_and_live_facts(tmp_path):
     assert doc["prs"][0]["number"] == 7
     assert doc["live"] == {"pid": 9, "rss_mb": 300, "idle_s": 61200, "terminal": "T1", "close_candidate": True}
     assert doc["last_active"] == "2027-01-15T08:00:00Z"
+    assert doc["spend"] == []
+
+
+def test_row_json_carries_spend_from_the_brief(tmp_path):
+    brief = {**BRIEF, "data": {**BRIEF["data"], "spend": [
+        {"label": "opus", "cost": 12.4}, {"label": "grok", "cost": 0.01},
+        {"label": 3, "cost": 1}, {"cost": 1}, {"label": "x"},
+    ]}}
+    _session(tmp_path, "s1", age_days=0, entries=(brief,))
+    doc = pi_sessions.listing.list_sessions(tmp_path, now=NOW, since_days=9, live={})[0].to_json()
+    assert doc["spend"] == [{"label": "opus", "cost": 12.4}, {"label": "grok", "cost": 0.01}]
 
 
 def test_show_finds_one_session_by_id_whatever_its_age(tmp_path):

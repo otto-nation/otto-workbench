@@ -434,7 +434,9 @@ _glob_suffix_rx() {
 _name_matches_changed() {
   local changed="$1" changed_base="$2" hit; shift 2
   for hit in "$@"; do
-    [[ "$changed" == *"$hit" || "$changed_base" == "$hit" ]] && return 0
+    if [[ "$changed" == *"$hit" || "$changed_base" == "$hit" ]]; then
+      return 0
+    fi
   done
   return 1
 }
@@ -475,8 +477,12 @@ _pattern_selects() {
   [[ ${#names[@]} -gt 0 ]] && named=1
   for changed in "$@"; do
     _glob_match "$changed" "$pattern" || continue
-    [[ "$named" -eq 0 ]] && return 0
-    _name_matches_changed "$changed" "${changed##*/}" "${names[@]}" && return 0
+    if [[ "$named" -eq 0 ]]; then
+      return 0
+    fi
+    if _name_matches_changed "$changed" "${changed##*/}" "${names[@]}"; then
+      return 0
+    fi
   done
   return 1
 }
@@ -542,19 +548,29 @@ _validate_test_refs() {
 }
 
 # _pattern_matches_any PATTERN PATHS... — returns 0 if any path matches PATTERN.
+# _rx_any RX PATHS... — some PATH matches the already-anchored regex RX.
+_rx_any() {
+  local rx="$1" path; shift
+  for path in "$@"; do
+    if [[ "$path" =~ $rx ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 _pattern_matches_any() {
-  local pattern="$1" path rx match_path; shift
+  local pattern="$1" rx path; shift
+  local -a candidates=()
   rx="^$(_glob_to_rx "$pattern")$"
   if [[ "$pattern" != */* ]]; then
     for path in "$@"; do
-      match_path="${path##*/}"
-      [[ "$match_path" =~ $rx ]] && return 0
+      candidates+=("${path##*/}")
     done
+    _rx_any "$rx" "${candidates[@]}" && return 0
     return 1
   fi
-  for path in "$@"; do
-    [[ "$path" =~ $rx ]] && return 0
-  done
+  _rx_any "$rx" "$@" && return 0
   return 1
 }
 

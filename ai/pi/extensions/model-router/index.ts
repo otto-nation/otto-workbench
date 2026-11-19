@@ -5,41 +5,34 @@ import {
   type RouteMessage,
   type RouterState,
   decide,
-  footerLines,
+  formatSpend,
   isAutoModel,
-  lastPhysicalId,
   loadTiers,
   planFileTest,
   spendFromEntries,
 } from "./detect.ts";
 
-function bindSpendFooter(pi: ExtensionAPI): void {
+// setStatus adds a line under Pi's footer. setFooter would replace cwd and tokens.
+function bindSpendStatus(pi: ExtensionAPI): void {
   const apply = (ctx: ExtensionContext) => {
-    const ui = ctx.ui as { setFooter?: (factory: unknown) => void } | undefined;
-    if (!ui?.setFooter) return;
+    if (!ctx.ui?.setStatus) return;
     if (!isAutoModel(ctx.model)) {
-      ui.setFooter(undefined);
+      ctx.ui.setStatus("spend", undefined);
       return;
     }
-    ui.setFooter((_tui: unknown, theme: { fg: (kind: string, text: string) => string }) => ({
-      dispose() {},
-      invalidate() {},
-      render(_width: number) {
-        const session = ctx.sessionManager as {
-          getBranch?: () => unknown[];
-          getEntries?: () => unknown[];
-        };
-        const entries = session.getBranch?.() ?? session.getEntries?.() ?? [];
-        const [who, strip] = footerLines({
-          physicalId: lastPhysicalId(entries),
-          spend: spendFromEntries(entries),
-        });
-        return [theme.fg("dim", who), theme.fg("dim", strip)];
-      },
-    }));
+    const session = ctx.sessionManager as {
+      getBranch?: () => unknown[];
+      getEntries?: () => unknown[];
+    };
+    const entries = session.getEntries?.() ?? session.getBranch?.() ?? [];
+    ctx.ui.setStatus("spend", formatSpend(spendFromEntries(entries)) || "$0.00");
   };
   pi.on("session_start", (_event, ctx) => apply(ctx));
-  pi.on("model_change", (_event, ctx) => apply(ctx));
+  pi.on("model_select", (_event, ctx) => apply(ctx));
+  pi.on("agent_end", (_event, ctx) => apply(ctx));
+  // turn_end, not message_end: Pi emits message_end before it appends the
+  // assistant entry, so getEntries() would still be one message behind.
+  pi.on("turn_end", (_event, ctx) => apply(ctx));
 }
 
 /**
@@ -51,7 +44,7 @@ function bindSpendFooter(pi: ExtensionAPI): void {
  * read on the first routed request, not at load.
  */
 export default function (pi: ExtensionAPI) {
-  bindSpendFooter(pi);
+  bindSpendStatus(pi);
   // One predicate per working directory: resolving the workspace spawns git and
   // resolve-workspace, and a session asks on every request.
   const planTests = new Map<string, (path: string) => boolean>();

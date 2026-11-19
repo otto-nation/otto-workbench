@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# Tests for the per-model spend rollup shared by Auto's footer and session-brief.
+# Tests for the per-model spend rollup shared by Auto's status line and session-brief.
 # select-on: ai/pi/extensions/_shared/spend.ts
 bats_require_minimum_version 1.5.0
 
@@ -98,34 +98,4 @@ _spend() {
   _spend 'out([m.formatSpend([{ label: "opus", cost: 12.4 }, { label: "grok", cost: 0.01 }]), m.formatSpend([])])'
   [ "$status" -eq 0 ]
   [ "$output" = '["opus $12.40 · grok $0.01",""]' ]
-}
-
-@test "lastPhysicalId: the newest entry that named a model" {
-  _spend '
-    out([m.lastPhysicalId([
-      { message: { role: "user" } },
-      { message: { role: "assistant", model: "claude-opus-5-5" } },
-      { message: { role: "assistant", responseModel: "grok-4.6" } },
-    ]), m.lastPhysicalId([{ message: { role: "user" } }])]);
-  '
-  [ "$status" -eq 0 ]
-  [ "$output" = '["grok-4.6",null]' ]
-}
-
-@test "lastPhysicalId: ignores a bare top-level model (subagent result shape)" {
-  _spend '
-    out([m.lastPhysicalId([{ model: "sub-model" }])]);
-  '
-  [ "$status" -eq 0 ]
-  [ "$output" = '[null]' ]
-}
-
-@test "footerLines: auto, then the strip; physical id when known; empty spend is \$0.00" {
-  _spend '
-    out([m.footerLines({ physicalId: "claude-sonnet-5-5", spend: [{ label: "sonnet", cost: 1 }] }),
-      m.footerLines({ spend: [] }),
-      m.footerLines({ physicalId: "claude-opus-5-5", spend: [] })]);
-  '
-  [ "$status" -eq 0 ]
-  [ "$output" = '[["auto → claude-sonnet-5-5","sonnet $1.00"],["auto","$0.00"],["auto → claude-opus-5-5","$0.00"]]' ]
 }

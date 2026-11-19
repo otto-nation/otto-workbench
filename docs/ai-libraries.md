@@ -97,14 +97,15 @@ Pi:
 - ``defaultModel``, ``defaultProvider`` and ``defaultThinkingLevel`` take
   ``models.session``; each is left out when the session does not name it, so
   Pi keeps the value it has.
-- ``enabledModels`` lists the session's model first, then every tier's, as
-  ``/model`` offers them; ``modelThinkingLevels`` carries each one's level.
-  Both are keyed ``provider/id`` where the reference names a provider and by
-  the bare id where it does not: Pi's sync qualifies a bare id with the
+- ``enabledModels`` lists every tier, then a named session, as ``/model``
+  offers them; ``modelThinkingLevels`` carries each one's level. Both are
+  keyed ``provider/id`` where the reference names a provider and by the bare
+  id where it does not: Pi's sync qualifies a bare id with the
   ``defaultProvider`` the settings end up with, which only the live file knows.
-  The session goes first because Pi uses ``scopedModels[0]`` when the saved
-  default is not in that list — a project ``defaultProvider`` that cannot
-  resolve ``auto`` would otherwise open on the deep tier.
+  ``models.session: auto`` is the exception: ``workbench/auto`` is prepended
+  because Pi uses ``scopedModels[0]`` when the saved default is not in that
+  list — a project ``defaultProvider`` that cannot resolve ``auto`` would
+  otherwise open on the deep tier.
 
 ``models.session: auto`` routes instead of naming one model. Claude Code takes
 it as ``opusplan`` — the deep tier (its ``opus`` alias) while planning, the

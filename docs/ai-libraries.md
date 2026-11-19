@@ -4897,7 +4897,7 @@ The queue's admission policy: host room, class limits, and what a queue entry ma
 
 `QueuePolicy` is what `otto_queue.slots` asks, so "is there room" has one owner
 (`room`). A queue entry is admitted by `admit_entry`: light work on count
-alone, heavy work on `room` beyond the first. The class limits are
+alone, heavy work on `room`. The class limits are
 `class_limit`: heavy entries per platform (`HEAVY_LIMITS`), light ones every
 core but one.
 

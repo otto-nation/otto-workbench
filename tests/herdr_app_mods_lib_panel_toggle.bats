@@ -25,8 +25,8 @@ _js() {
   [ "$output" = '[true,false,false,false]' ]
 }
 
-@test "enableWorkspacePanel drops files and changes and adds the child once" {
-  _js '[m.enableWorkspacePanel(undefined, "queue-panel"), m.enableWorkspacePanel(["files","changes","queue-panel"], "queue-panel"), m.enableWorkspacePanel(["files","changes","prs-panel"], "queue-panel"), m.enableWorkspacePanel(["queue-panel"], "queue-panel")]'
+@test "syncWorkspacePanels drops files and changes and adds the child once" {
+  _js '[m.syncWorkspacePanels(undefined, "queue-panel"), m.syncWorkspacePanels(["files","changes","queue-panel"], "queue-panel"), m.syncWorkspacePanels(["files","changes","prs-panel"], "queue-panel"), m.syncWorkspacePanels(["queue-panel"], "queue-panel")]'
   [ "$output" = '[["queue-panel"],["queue-panel"],["prs-panel","queue-panel"],null]' ]
 }
 

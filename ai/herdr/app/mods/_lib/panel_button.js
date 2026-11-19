@@ -11,7 +11,7 @@ import { PANEL_BUTTON, RADIUS, SP } from "./tokens.js";
 import { type } from "../_ui/ui.js";
 import { fullscreenState, healDue } from "./fullscreen.js";
 import { exitFullscreen } from "./fullscreen_run.js";
-import { panelOn, enableWorkspacePanel, clickSteps } from "./panel_toggle.js";
+import { panelOn, syncWorkspacePanels, clickSteps } from "./panel_toggle.js";
 
 export function panelButton({ child, label, icon, buttonId }) {
   return class PanelButton extends View {
@@ -19,7 +19,7 @@ export function panelButton({ child, label, icon, buttonId }) {
       // herdr's tabs mod remembers each space's panel only among `workspace.panels`;
       // without this child listed there, switching spaces closes it. The helper
       // also drops files/changes so those hard-coded buttons disappear.
-      const next = enableWorkspacePanel(shared("workspace.panels"), child);
+      const next = syncWorkspacePanels(shared("workspace.panels"), child);
       if (next) setShared("workspace.panels", next);
       this.healUntil = 0;
       this.on = null;

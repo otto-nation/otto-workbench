@@ -66,7 +66,7 @@ _run_step() {
   run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
   [ "$status" -eq 0 ]
   jq -e '[.. | objects | select(.id? == "panel-body") | .children | map(.id)] == [["prs-panel","queue-panel","hosts-panel","sessions-panel"]]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "panel-body") | has("active")] == [false]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "panel-body") | .active] == ["prs-panel"]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "prs-panel") | .content.mod] == ["prs"]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "queue-panel") | .content] == [{"mod":"queue"}]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "hosts-panel") | .content] == [{"mod":"hosts"}]' <<< "$output"

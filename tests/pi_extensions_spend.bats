@@ -66,6 +66,34 @@ _spend() {
   [ "$output" = '[{"label":"opus","cost":2},{"label":"grok","cost":0.25}]' ]
 }
 
+@test "spendFromEntries: subagent details.results by each result model" {
+  _spend '
+    const entries = [
+      { message: { role: "assistant", model: "claude-sonnet-5-5", usage: { cost: { total: 1 } } } },
+      { message: { role: "toolResult", details: { mode: "parallel", results: [
+        { usage: { cost: 3 }, model: "google-vertex/gemini-4-carbon" },
+        { usage: { cost: 0.5 }, model: "grok-4.6" },
+        { usage: { cost: 0 }, model: "claude-sonnet-5-5" },
+      ] } } },
+    ];
+    out(m.spendFromEntries(entries));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"label":"carbon","cost":3},{"label":"sonnet","cost":1},{"label":"grok","cost":0.5}]' ]
+}
+
+@test "spendFromEntries: details.results skip parent toolResult usage" {
+  _spend '
+    const entries = [
+      { message: { role: "toolResult", usage: { cost: { total: 99 } }, modelId: "claude-opus-5-5",
+        details: { mode: "single", results: [{ usage: { cost: 1.2 }, model: "grok-4.6" }] } } },
+    ];
+    out(m.spendFromEntries(entries));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"label":"grok","cost":1.2}]' ]
+}
+
 @test "formatSpend: labelled costs joined; empty is empty" {
   _spend 'out([m.formatSpend([{ label: "opus", cost: 12.4 }, { label: "grok", cost: 0.01 }]), m.formatSpend([])])'
   [ "$status" -eq 0 ]

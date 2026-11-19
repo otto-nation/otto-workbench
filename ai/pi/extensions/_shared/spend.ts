@@ -68,14 +68,14 @@ function usageOf(entry: unknown): unknown {
   return rec.message?.usage ?? rec.usage;
 }
 
-function modelOf(entry: unknown): string {
+function modelOf(entry: unknown, includeTopLevel = false): string {
   if (entry == null || typeof entry !== "object") return "unknown";
   const rec = entry as {
     model?: unknown;
     modelId?: unknown;
     message?: { responseModel?: unknown; model?: unknown };
   };
-  for (const value of [rec.message?.responseModel, rec.message?.model, rec.modelId, rec.model]) {
+  for (const value of [rec.message?.responseModel, rec.message?.model, rec.modelId, includeTopLevel ? rec.model : undefined]) {
     if (typeof value === "string" && value) return value;
   }
   return "unknown";
@@ -98,7 +98,7 @@ function resultsOf(entry: unknown): unknown[] | undefined {
 function addCost(totals: Map<string, number>, item: unknown): void {
   const cost = costOf(usageOf(item));
   if (!(cost > 0)) return;
-  const label = shortModelLabel(modelOf(item));
+  const label = shortModelLabel(modelOf(item, true));
   totals.set(label, (totals.get(label) ?? 0) + cost);
 }
 

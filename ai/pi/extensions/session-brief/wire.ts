@@ -97,7 +97,7 @@ export function wire(pi: ExtensionAPI, deps: Deps): void {
       }
       pi.appendEntry(BRIEF_TYPE, briefData({
         titleSet, name: pi.getSessionName() ?? null, tldr: brief.tldr, facts, at: deps.now(),
-        spend: spendFromEntries(entries),
+        spend: spendFromEntries(ctx.sessionManager.getEntries()),
       }));
     } catch {
       // Best-effort: a provider or exec failure leaves the last brief in place, and

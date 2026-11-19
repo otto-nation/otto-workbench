@@ -13,14 +13,6 @@ import {
   spendFromEntries,
 } from "./detect.ts";
 
-/**
- * `workbench/auto`: a virtual model routing each request to one of the
- * workbench's model tiers — `models.session: auto` in config.yml selects it.
- * How it chooses is in route.ts; where the tiers come from is in detect.ts.
- *
- * Registered in every session, at no cost until it is selected: the tiers are
- * read on the first routed request, not at load.
- */
 function bindSpendFooter(pi: ExtensionAPI): void {
   const apply = (ctx: ExtensionContext) => {
     const ui = ctx.ui as { setFooter?: (factory: unknown) => void } | undefined;
@@ -50,6 +42,14 @@ function bindSpendFooter(pi: ExtensionAPI): void {
   pi.on("model_change", (_event, ctx) => apply(ctx));
 }
 
+/**
+ * `workbench/auto`: a virtual model routing each request to one of the
+ * workbench's model tiers — `models.session: auto` in config.yml selects it.
+ * How it chooses is in route.ts; where the tiers come from is in detect.ts.
+ *
+ * Registered in every session, at no cost until it is selected: the tiers are
+ * read on the first routed request, not at load.
+ */
 export default function (pi: ExtensionAPI) {
   bindSpendFooter(pi);
   // One predicate per working directory: resolving the workspace spawns git and

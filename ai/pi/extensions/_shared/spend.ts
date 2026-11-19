@@ -25,8 +25,8 @@ export function shortModelLabel(name: string): string {
   if (lower.includes("haiku")) return "haiku";
   if (lower.includes("grok")) return "grok";
   if (lower.includes("gemini")) return "gemini";
-  const slash = name.split("/")[0] ?? name;
-  return slash.split(/[-/]/)[0] || name;
+  const model = name.split("/").pop() ?? name;
+  return model.split("-")[0] || name;
 }
 
 export function formatSpend(items: readonly SpendItem[]): string {

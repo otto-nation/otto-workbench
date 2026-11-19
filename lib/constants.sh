@@ -65,8 +65,14 @@ LOCAL_BIN_DIR="$HOME/.local/bin"
 MISE_DATA_ROOT="${MISE_DATA_DIR:-${XDG_DATA_HOME:-$HOME/.local/share}/mise}"
 MISE_SHIMS_DIR="$MISE_DATA_ROOT/shims"
 MISE_INSTALLS_DIR="$MISE_DATA_ROOT/installs"
+# Where sync_mise moves the real mise binary so ~/.local/bin/mise can be the
+# path wrapper. Shims are symlinks to ~/.local/bin/mise; they must keep pointing
+# there. tests/mise_path_wrapper.bats holds the layout together.
+MISE_REAL_BIN="$MISE_DATA_ROOT/bin/mise"
+MISE_WRAPPER_SRC="$WORKBENCH_DIR/mise/path-wrapper.sh"
 # mise's own installer, which puts the binary in ~/.local/bin. Used by the mise
 # component and by the package installer when a machine has neither installer.
+# After that install, sync_mise relocates the binary to MISE_REAL_BIN.
 MISE_INSTALL_URL="https://mise.run"
 # Homebrew's bin dir: Apple Silicon macOS, and Linuxbrew.
 HOMEBREW_BIN_DIR_MACOS="/opt/homebrew/bin"

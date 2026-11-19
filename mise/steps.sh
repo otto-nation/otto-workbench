@@ -27,9 +27,34 @@ step_mise_install() {
   curl -fsSL "$MISE_INSTALL_URL" | sh
 }
 
-# sync_mise — no-op; mise activation is handled by zsh/config.d/tools/mise.zsh.
+# _mise_is_path_wrapper FILE — true when FILE is the workbench path wrapper.
+_mise_is_path_wrapper() {
+  local start
+  start="$(dd if="$1" bs=1024 count=1 2>/dev/null | tr -d '\0')" || true
+  [[ "$start" == *mise-path-wrapper* ]]
+}
+
+# sync_mise — put the path wrapper at ~/.local/bin/mise and the real binary at
+# MISE_REAL_BIN. Shims symlink to ~/.local/bin/mise, so the wrapper is what
+# every mise invocation and every shim runs. Idempotent; relocates a binary
+# that mise.run (or an upgrade) wrote over the wrapper.
 sync_mise() {
-  :
+  local front="$LOCAL_BIN_DIR/mise"
+  local real="$MISE_REAL_BIN"
+  [[ -e "$front" || -L "$front" ]] || return 0
+
+  mkdir -p "$(dirname "$real")"
+  if ! _mise_is_path_wrapper "$front"; then
+    rm -f "$real"
+    mv "$front" "$real"
+    chmod +x "$real" || true
+  fi
+  if [[ ! -x "$real" ]]; then
+    warn "mise wrapper: no binary at $real — skip"
+    return 0
+  fi
+  install_file "$MISE_WRAPPER_SRC" "$front" "mise path wrapper"
+  chmod +x "$front"
 }
 
 # ─── Standalone execution ─────────────────────────────────────────────────────

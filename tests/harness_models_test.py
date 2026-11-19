@@ -194,8 +194,10 @@ def test_auto_runs_opusplan_on_claude_code_behind_the_tier_aliases():
 def test_auto_starts_pi_on_the_router_and_enables_every_tier_beside_it():
     pi = harness_models(_ROUTED).pi
     assert (pi.default_model, pi.default_provider, pi.default_thinking) == ("auto", "workbench", None)
+    # Auto first: Pi uses scopedModels[0] when the saved default is not in scope
+    # (a project defaultProvider that cannot resolve workbench/auto).
     assert pi.enabled == [
-        "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5", "openai/gpt-6-luna", "workbench/auto",
+        "workbench/auto", "anthropic/claude-opus-5-5", "anthropic/claude-sonnet-5-5", "openai/gpt-6-luna",
     ]
 
 

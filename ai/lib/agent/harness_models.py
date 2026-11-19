@@ -26,11 +26,15 @@ Pi:
 - ``defaultModel``, ``defaultProvider`` and ``defaultThinkingLevel`` take
   ``models.session``; each is left out when the session does not name it, so
   Pi keeps the value it has.
-- ``enabledModels`` lists every tier's model and the session's, as ``/model``
-  offers them; ``modelThinkingLevels`` carries each one's level. Both are keyed
-  ``provider/id`` where the reference names a provider and by the bare id where
-  it does not: Pi's sync qualifies a bare id with the ``defaultProvider`` the
-  settings end up with, which only the live file knows.
+- ``enabledModels`` lists every tier, then a named session, as ``/model``
+  offers them; ``modelThinkingLevels`` carries each one's level. Both are
+  keyed ``provider/id`` where the reference names a provider and by the bare
+  id where it does not: Pi's sync qualifies a bare id with the
+  ``defaultProvider`` the settings end up with, which only the live file knows.
+  ``models.session: auto`` is the exception: ``workbench/auto`` is prepended
+  because Pi uses ``scopedModels[0]`` when the saved default is not in that
+  list — a project ``defaultProvider`` that cannot resolve ``auto`` would
+  otherwise open on the deep tier.
 
 ``models.session: auto`` routes instead of naming one model. Claude Code takes
 it as ``opusplan`` — the deep tier (its ``opus`` alias) while planning, the
@@ -219,7 +223,7 @@ def _auto(tiers: dict[Tier, ModelRef]) -> HarnessModels:
     return HarnessModels(
         claude=claude,
         pi=replace(pi, default_model=ROUTER_ID, default_provider=ROUTER_PROVIDER,
-                   enabled=[*pi.enabled, f"{ROUTER_PROVIDER}/{ROUTER_ID}"]),
+                   enabled=[f"{ROUTER_PROVIDER}/{ROUTER_ID}", *pi.enabled]),
         tiers=tiers,
     )
 

@@ -337,7 +337,7 @@ _live() {
   run _run_step
   [ "$status" -eq 0 ]
   [ "$(_live '.defaultProvider + "/" + .defaultModel')" = "workbench/auto" ]
-  [ "$(_live '.enabledModels | join(",")')" = "anthropic/claude-opus-5-5,anthropic/claude-sonnet-5-5,anthropic/claude-haiku-5-5,workbench/auto" ]
+  [ "$(_live '.enabledModels | join(",")')" = "workbench/auto,anthropic/claude-opus-5-5,anthropic/claude-sonnet-5-5,anthropic/claude-haiku-5-5" ]
 }
 
 @test "a bare id is qualified with the provider the settings end up with" {

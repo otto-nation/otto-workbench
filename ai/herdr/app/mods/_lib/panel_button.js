@@ -1,6 +1,6 @@
 /**
  * Tab-bar toggle that selects a panel-body child. herdr's tabs mod hard-codes
- * Files/Changes, so each workbench panel is a sibling block in tabs-row; the
+ * Files/Changes, so the workbench panels are sibling blocks in tabs-row; the
  * toggle also drops those two from workspace.panels so the buttons do not show.
  * Cannot be loaded by node tests because it imports herdr.
  */
@@ -11,15 +11,15 @@ import { PANEL_BUTTON, RADIUS, SP } from "./tokens.js";
 import { type } from "../_ui/ui.js";
 import { fullscreenState, healDue } from "./fullscreen.js";
 import { exitFullscreen } from "./fullscreen_run.js";
-import { panelOn, syncWorkspacePanels, clickSteps } from "./panel_toggle.js";
+import { groupOn, enableWorkspacePanels, groupClickSteps, panelActive } from "./panel_toggle.js";
 
-export function panelButton({ child, label, icon, buttonId }) {
+export function panelButton({ children, hub, label, icon, buttonId }) {
   return class PanelButton extends View {
     init(_props, cx) {
       // herdr's tabs mod remembers each space's panel only among `workspace.panels`;
-      // without this child listed there, switching spaces closes it. The helper
+      // without these children listed there, switching spaces closes it. The helper
       // also drops files/changes so those hard-coded buttons disappear.
-      const next = syncWorkspacePanels(shared("workspace.panels"), child);
+      const next = enableWorkspacePanels(shared("workspace.panels"), children);
       if (next) setShared("workspace.panels", next);
       this.healUntil = 0;
       this.on = null;
@@ -31,7 +31,7 @@ export function panelButton({ child, label, icon, buttonId }) {
           this.healUntil = Date.now() + 1500;
           exitFullscreen();
         }
-        const on = panelOn(root, child);
+        const on = groupOn(layout(), children);
         if (on !== this.on) {
           this.on = on;
           cx.notify();
@@ -41,7 +41,7 @@ export function panelButton({ child, label, icon, buttonId }) {
 
     render(_cx) {
       const t = theme();
-      const on = panelOn(layout(), child);
+      const on = groupOn(layout(), children);
       return h_flex().size_full().items_center().pr(SP.sm).bg(t.chrome).border_b_1().border_color(t.border)
         .child(type(h_flex().id(buttonId).h(PANEL_BUTTON.h).px(PANEL_BUTTON.px).gap(PANEL_BUTTON.gap).flex_none().items_center()
           .rounded(RADIUS.control).cursor_pointer()
@@ -52,7 +52,8 @@ export function panelButton({ child, label, icon, buttonId }) {
           .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
           .on_click(() => {
             if (fullscreenState(layout()) !== "off") exitFullscreen();
-            for (const step of clickSteps(on, child)) run(step.command, step.args);
+            const active = panelActive(layout());
+            for (const step of groupClickSteps(active, hub, children)) run(step.command, step.args);
           })
           .child(svg(icon).size(PANEL_BUTTON.icon))
           .child(label), "label"));

@@ -61,13 +61,8 @@ export function spendText(spend) {
     .map((item) => `${item.label} ${formatCost(item.cost)}`).join(' · ');
 }
 
-function basename(path) {
-  const p = String(path ?? '').replace(/\/+$/, '');
-  return p.slice(p.lastIndexOf('/') + 1) || p;
-}
-
 export function titleOf(session) {
-  return session.name || session.title_set || `${basename(session.cwd)} · ${String(session.id).slice(0, 8)}`;
+  return session.name || session.title_set || `${folderBasename(session.cwd)} · ${String(session.id).slice(0, 8)}`;
 }
 
 export function rowModel(session, on, nowMs) {
@@ -120,4 +115,60 @@ export function machineSessions({ key, on = null, title, result, since }, nowMs)
   if (result == null) return { ...base, status: 'loading' };
   if (!result.ok) return { ...base, status: 'error', error: result.error?.message ?? 'failed' };
   return { ...base, status: 'ready', groups: groupsOf(result.doc.sessions, on, nowMs) };
+}
+
+export function folderBasename(key) {
+  const p = String(key ?? '').replace(/\/+$/, '');
+  return p.slice(p.lastIndexOf('/') + 1) || p;
+}
+
+export function machineCountsLine(machine) {
+  if (machine?.status !== 'ready') return '';
+  let live = 0;
+  let cand = 0;
+  let n = 0;
+  for (const g of machine.groups ?? []) {
+    for (const r of g.rows ?? []) {
+      n += 1;
+      if (r.live) live += 1;
+      if (r.candidate) cand += 1;
+    }
+  }
+  if (live > 0 || cand > 0) {
+    const parts = [];
+    if (live > 0) parts.push(`${live} live`);
+    if (cand > 0) parts.push(`${cand} close candidate${cand === 1 ? "" : "s"}`);
+    return parts.join(" · ");
+  }
+  return n === 1 ? "1 session" : `${n} sessions`;
+}
+
+export function homeCards(machines) {
+  return (machines ?? []).map((m) => ({
+    key: m.key,
+    title: m.title,
+    counts: machineCountsLine(m),
+    status: m.status === 'error' ? { kind: 'fail', word: 'error' } : undefined,
+  }));
+}
+
+export function isFolderOpen(open, key, groupCount) {
+  if (open == null) return groupCount === 1;
+  return (open ?? []).includes(key);
+}
+
+export function ensureOpenState(open, keys) {
+  if (open != null) return open;
+  if (keys.length === 1) return [keys[0]];
+  return null;
+}
+
+export function toggleFolder(open, key, groupCount, allKeys) {
+  const current = open == null
+    ? (groupCount === 1 ? [...(allKeys ?? [])] : [])
+    : [...open];
+  const i = current.indexOf(key);
+  if (i >= 0) current.splice(i, 1);
+  else current.push(key);
+  return current;
 }

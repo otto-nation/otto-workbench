@@ -3,18 +3,23 @@
 // action. Python owns every fact; _lib/sessions.js words and orders them.
 import { View } from "gpui-kit";
 import { InputState } from "gpui-base";
-import { exec, run, panes, spaces, terminals, layout } from "herdr";
+import { exec, run, panes, spaces, terminals, layout, shared, setShared } from "herdr";
 import { eachByMachine, machineOf } from "./_lib/board_pull.js";
 import { LOAD_DELAY_MS } from "./_lib/load_state.js";
+import { clearMachine, navStateOf, pageOf, selectMachine } from "./_lib/machine_nav.js";
 import { panelOn } from "./_lib/panel_toggle.js";
 import { remoteOns } from "./_lib/machines.js";
 import { refreshSpinning } from "./_lib/queue_lanes.js";
-import { SINCE_STEP_DAYS, loadSessions, machineSessions } from "./_lib/sessions.js";
+import {
+  SINCE_STEP_DAYS, ensureOpenState, homeCards, isFolderOpen, loadSessions, machineSessions,
+  toggleFolder as foldToggle,
+} from "./_lib/sessions.js";
 import { closePiSession, openPiSession } from "./_lib/sessions_open.js";
 import { renderSessions } from "./view.js";
 
 const PANEL = "sessions-panel";
 const WATCH_MS = 1000;
+const navState = () => navStateOf(shared("sessions.machine"));
 
 export default class Sessions extends View {
   // Handlers run after the render that built them, so they use the long-lived context init receives.
@@ -94,6 +99,23 @@ export default class Sessions extends View {
     this.refreshNow();
   }
 
+  openMachine(key) {
+    setShared("sessions.machine", selectMachine(navState(), key).machine);
+    setShared("sessions.open", null);
+    this.acx.notify();
+  }
+
+  back() {
+    setShared("sessions.machine", clearMachine(navState()).machine);
+    this.acx.notify();
+  }
+
+  toggleFolder(key, groupCount, allKeys) {
+    const next = foldToggle(shared("sessions.open"), key, groupCount, allKeys);
+    setShared("sessions.open", next);
+    this.acx.notify();
+  }
+
   deps(cx) {
     return { exec, run, panes, spaces, terminals, sleep: (ms) => cx.sleep(ms) };
   }
@@ -152,12 +174,24 @@ export default class Sessions extends View {
 
   render(_cx) {
     const nowMs = Date.now();
+    const machines = this.machines(nowMs);
+    const page = pageOf(navState(), machines);
+    const cards = homeCards(machines);
+    const groups = page?.groups ?? [];
+    const allKeys = groups.map((g) => g.key);
+    const open = ensureOpenState(shared("sessions.open"), allKeys);
+    if (open != null && shared("sessions.open") == null) setShared("sessions.open", open);
     return renderSessions({
-      machines: this.machines(nowMs),
+      cards,
+      page,
       spinning: refreshSpinning(this.refreshSince, nowMs),
       renaming: this.renaming,
       renameInput: this.renameInput,
       noteOf: (key) => this.notes.get(key) ?? null,
+      isOpen: (key) => isFolderOpen(open ?? shared("sessions.open"), key, groups.length),
+      onSelectMachine: (key) => this.openMachine(key),
+      onBack: () => this.back(),
+      onToggleFolder: (key) => this.toggleFolder(key, groups.length, allKeys),
       onRefresh: () => this.refreshNow(),
       onOlder: (key) => this.older(key),
       onOpen: (row) => this.open(row),

@@ -179,7 +179,8 @@ export function hoverRow(id, { selected = false } = {}) {
 // fills, the border stays, the card is a click target. A section card passes linked: false.
 export function card(id, { linked = true } = {}) {
   const t = theme();
-  const el = v_flex().id(id).p(SP.md).rounded(RADIUS.card).border_1().border_color(t.border);
+  const el = v_flex().id(id).min_w(0).overflow_hidden().p(SP.md).rounded(RADIUS.card)
+    .border_1().border_color(t.border);
   if (!linked) return el;
   return el.cursor_pointer().hover((s) => s.bg(t.hover));
 }

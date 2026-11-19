@@ -65,12 +65,14 @@ _run_step() {
 @test "jq puts the workbench panels on panel-body without files and changes" {
   run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
   [ "$status" -eq 0 ]
-  jq -e '[.. | objects | select(.id? == "panel-body") | .children | map(.id)] == [["prs-panel","queue-panel","hosts-panel","sessions-panel"]]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "panel-body") | .active] == ["prs-panel"]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "panel-body") | .children | map(.id)] == [["workbench-panel","prs-panel","queue-panel","hosts-panel","sessions-panel","settings-panel"]]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "panel-body") | .active] == ["workbench-panel"]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "prs-panel") | .content.mod] == ["prs"]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "queue-panel") | .content] == [{"mod":"queue"}]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "hosts-panel") | .content] == [{"mod":"hosts"}]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "sessions-panel") | .content] == [{"mod":"sessions"}]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "workbench-panel") | .content] == [{"mod":"workbench"}]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "settings-panel") | .content.mod] == ["settings"]' <<< "$output"
 }
 
 @test "jq marks the panel copy of the board so it offers Full screen" {
@@ -87,27 +89,22 @@ _run_step() {
   jq -e '[.. | objects | select(.id? == "panel") | [.min, .size]] == [[280, {"px": 368}]]' <<< "$output"
 }
 
-@test "jq wraps the tab bar in a row with the PRs, Queue, Hosts and Sessions toggles" {
+@test "jq wraps the tab bar in a row with the Workbench toggle" {
   run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
   [ "$status" -eq 0 ]
   jq -e '[.. | objects | select(.id? == "work") | .children | map(.id) | .[0]] == ["tabs-row"]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "tabs-row") | .children | map(.id)] == [["tabs","prs-button","queue-button","hosts-button","sessions-button"]]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "tabs-row") | .children | map(.id)] == [["tabs","workbench-button"]]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "tabs-row") | .size] == [{"px":42}]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "prs-button") | .content.mod] == ["prs-button"]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "queue-button") | .content.mod] == ["queue-button"]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "queue-button") | .size] == [{"px":88}]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "hosts-button") | .content.mod] == ["hosts-button"]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "hosts-button") | .size] == [{"px":88}]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "sessions-button") | .content.mod] == ["sessions-button"]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "sessions-button") | .size] == [{"px":104}]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "workbench-button") | .content.mod] == ["workbench-button"]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "workbench-button") | .size] == [{"px":112}]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "tabs") | .size] == [{"weight":1}]' <<< "$output"
 }
 
-@test "jq twice yields one sessions-panel and one sessions-button" {
+@test "jq twice yields one workbench-panel and one workbench-button" {
   once=$(jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE")
   twice=$(jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" <<< "$once")
-  jq -e '[.. | objects | select(.id? == "sessions-panel")] | length == 1' <<< "$twice"
-  jq -e '[.. | objects | select(.id? == "sessions-button")] | length == 1' <<< "$twice"
+  jq -e '[.. | objects | select(.id? == "workbench-panel")] | length == 1' <<< "$twice"
+  jq -e '[.. | objects | select(.id? == "workbench-button")] | length == 1' <<< "$twice"
 }
 
 @test "jq errors when panel-body is missing" {
@@ -299,7 +296,7 @@ _run_step() {
   _seed_main
   run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *'herdr-app: show the workbench layout (PRs, Queue, Hosts and Sessions toggles open those panels) with: herdr-app do layout.switch --name workbench'* ]]
+  [[ "$output" == *'herdr-app: show the workbench layout (one Workbench toggle / hub tiles) with: herdr-app do layout.switch --name workbench'* ]]
   run _run_step
   [ "$status" -eq 0 ]
   [[ "$output" != *'layout.switch --name workbench'* ]]

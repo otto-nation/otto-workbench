@@ -40,8 +40,8 @@ def test_ff_pushes_a_clean_fast_forward():
     item = h.run.items[0]
     assert h.published
     push = h.published[0]
-    assert push[:3] == ["pr", "push", "--expect"]
-    assert push[3] == "h"
+    assert push[:4] == ["pr", "--no-queue", "push", "--expect"]
+    assert push[4] == "h"
     assert push[-2:] == ["--repo-dir", "/wt/b1"]
     assert item.status is ItemStatus.DONE
     assert item.findings == []

@@ -43,7 +43,16 @@ def test_queues_itself_matches_the_cli_registry(step, ai):
     argv = batch.steps.step_argv(step, "/b/pr", "/wt", ai=ai)
     command = "ci" if Path(argv[0]).name == "ci-check" else argv[1]
     queued = cli.queue_gate.class_for(command, argv) is not None
-    assert queued is batch.steps.queues_itself(step, ai)
+    assert queued is batch.steps.queues_itself(step)
+
+
+@pytest.mark.parametrize("step", list(Step))
+@pytest.mark.parametrize("ai", [True, False])
+def test_is_heavy_matches_ticket_class(step, ai):
+    argv = batch.steps.step_argv(step, "/b/pr", "/wt", ai=ai)
+    command = "ci" if Path(argv[0]).name == "ci-check" else argv[1]
+    cls = cli.queue_gate.class_for(command, argv)
+    assert (cls.name == "HEAVY") is batch.steps.is_heavy(step, ai)
 
 
 def test_v1_state_without_with_ai_uses_ai_for_every_step():

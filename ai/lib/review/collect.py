@@ -767,8 +767,8 @@ def _collect_project_context(
     instructions_md = _read_file_safe(wt / instructions.path) if instructions.found else ""
 
     architecture_md = ""
-    arch_path = wt / ".claude" / "architecture.md"
-    if arch_path.exists():
+    arch_path = core.project_context.architecture_path(wt)
+    if arch_path is not None:
         architecture_md = _read_file_safe(arch_path)
 
     review_checklists: dict[str, str] = {}
@@ -1007,7 +1007,7 @@ def build_project_context(
 ) -> str:
     """The repository's own review guidance, scoped to ``file_filter``.
 
-    The repo's instructions file (AGENTS.md), `.claude/architecture.md`,
+    The repo's instructions file (AGENTS.md), `.agents/architecture.md`,
     the review checklists, and the review
     profiles whose globs the filtered files match. An unfiltered call falls back
     to every profile rather than none, since a whole-review prompt has no group
@@ -1020,7 +1020,7 @@ def build_project_context(
     if data.instructions_md:
         parts += ["", f"#### {data.instructions_path or core.project_context.AGENTS_FILE}", "", data.instructions_md]
     if data.architecture_md:
-        parts += ["", "#### .claude/architecture.md", "", data.architecture_md]
+        parts += ["", "#### .agents/architecture.md", "", data.architecture_md]
     if data.review_checklists:
         parts.append("\n#### Review checklists")
         for name, content in data.review_checklists.items():

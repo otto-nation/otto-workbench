@@ -14,6 +14,7 @@ Not: transcript discovery, record shapes or automation filtering
 from __future__ import annotations
 
 import re
+import sys
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -219,7 +220,20 @@ def _format_signals_section(signals: list[dict]) -> list[str]:
     return lines
 
 
-def list_transcripts(home: Path, days: int) -> int:
+def _session_repo_key(session) -> str | None:
+    """Repo identity of a session's cwd, or None when absent or not a repo."""
+    cwd = core.sessions.project_path_of(session)
+    if cwd is None:
+        return None
+    try:
+        return core.memory.repo_key(cwd)
+    except ValueError:
+        return None
+
+
+def list_transcripts(
+    home: Path, days: int, repo: Path | str | None = None,
+) -> int:
     """Print every transcript path in the window, one per line.
 
     Phases 5 and 5b of the dream skill grep the corpus for architectural and
@@ -227,10 +241,23 @@ def list_transcripts(home: Path, days: int) -> int:
     Printing it here keeps one answer to "where are the sessions": a skill
     globbing a harness directory itself is what went blind when work moved to
     Pi.
+
+    ``repo`` keeps sessions whose cwd shares that checkout's git identity, so
+    the architecture skill cannot pick up another project's transcripts from
+    global recency. Identity is ``core.memory.repo_key``, the same map as the
+    memory store. A transcript with no cwd is dropped rather than guessed.
     """
     cutoff = datetime.now() - timedelta(days=days)
+    want = None
+    if repo is not None:
+        try:
+            want = core.memory.repo_key(repo)
+        except ValueError as e:
+            print(f"dream-scan: --repo {repo}: {e}", file=sys.stderr)
+            return 2
     for session in core.sessions.discover_sessions(home, since=cutoff):
-        print(session.path)
+        if want is None or _session_repo_key(session) == want:
+            print(session.path)
     return 0
 
 

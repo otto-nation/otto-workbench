@@ -209,6 +209,33 @@ PI
   [[ "$output" != *"Session Signals"* ]]
 }
 
+@test "dream-scan --list-transcripts --repo keeps only that repo's sessions" {
+  local alpha="$TMPDIR/repos/alpha"
+  local beta="$TMPDIR/repos/beta"
+  mkdir -p "$alpha" "$beta"
+  git -C "$alpha" init -q
+  git -C "$beta" init -q
+
+  mkdir -p "$TMPDIR/.pi/agent/sessions/--alpha--" "$TMPDIR/.pi/agent/sessions/--beta--"
+  printf '{"type":"session","cwd":"%s"}\n' "$alpha" > "$TMPDIR/.pi/agent/sessions/--alpha--/a.jsonl"
+  printf '{"type":"session","cwd":"%s"}\n' "$beta" > "$TMPDIR/.pi/agent/sessions/--beta--/b.jsonl"
+
+  run "$DREAM_SCAN" --home "$TMPDIR" --days 30 --list-transcripts --repo "$alpha"
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"/--alpha--/a.jsonl"* ]]
+  [[ "$output" != *"/--beta--/b.jsonl"* ]]
+}
+
+@test "dream-scan --repo without --list-transcripts is a usage error" {
+  local repo="$TMPDIR/repos/plain"
+  mkdir -p "$repo"
+  git -C "$repo" init -q
+
+  run "$DREAM_SCAN" --home "$TMPDIR" --repo "$repo"
+  [[ "$status" -ne 0 ]]
+  [[ "$output" == *"--repo requires --list-transcripts"* ]]
+}
+
 # ── Session scanning (integration) ──────────────────────────────────────────
 
 @test "scan: finds correction in session file" {

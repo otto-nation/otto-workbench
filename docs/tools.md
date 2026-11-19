@@ -616,7 +616,7 @@ count, so a harness that has stopped being discovered reads as a zero.
 
 ```
 dream-scan [--days N] [--home DIR]
-dream-scan [--days N] [--home DIR] --list-transcripts
+dream-scan [--days N] [--home DIR] --list-transcripts [--repo DIR]
 dream-scan --memory-dir REPO
 ```
 
@@ -626,7 +626,8 @@ registered repo), and Session Signals grouped by category (correction,
 preference, decision, pattern, review_feedback).
 
 `--list-transcripts` prints every transcript path in the window, one per line,
-and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
+and exits. `--repo DIR` keeps only sessions whose cwd shares that checkout's
+git identity. `--memory-dir REPO` prints that repo's memory directory and exits.
 
 **Flags**
 
@@ -637,6 +638,7 @@ and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
 | `--home` `<dir>` | home directory override (for testing; default: `$HOME`). |
 | `--list-transcripts` | print transcript paths for the window, one per line, and exit. Not with `--memory-dir`. |
 | `--memory-dir` `<repo>` | print the memory directory for the repo at REPO, and exit. Not with `--list-transcripts`. |
+| `--repo` `<dir>` | with --list-transcripts, only sessions for this checkout. |
 
 ### `dream-verify`
 

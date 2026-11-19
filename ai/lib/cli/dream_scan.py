@@ -6,12 +6,13 @@ globbing a harness tree.
 
 ```
 dream-scan [--days N] [--home DIR]
-dream-scan [--days N] [--home DIR] --list-transcripts
+dream-scan [--days N] [--home DIR] --list-transcripts [--repo DIR]
 dream-scan --memory-dir REPO
 ```
 
 `--list-transcripts` prints every transcript path in the window, one per line,
-and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
+and exits. `--repo DIR` keeps only sessions whose cwd shares that checkout's
+git identity. `--memory-dir REPO` prints that repo's memory directory and exits.
 """
 
 # doc-group: cli
@@ -49,6 +50,11 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="REPO",
         help="print the memory directory for the repo at REPO, and exit",
     )
+    parser.add_argument(
+        "--repo",
+        metavar="DIR",
+        help="with --list-transcripts, only sessions for this checkout",
+    )
     add_trail_args(parser)
     return parser
 
@@ -62,8 +68,11 @@ def main(argv: list[str] | None = None) -> int:
 
     home = Path(args.home)
 
+    if args.repo is not None and not args.list_transcripts:
+        build_parser().error("--repo requires --list-transcripts")
+
     if args.list_transcripts:
-        return memory.dream.list_transcripts(home, args.days)
+        return memory.dream.list_transcripts(home, args.days, repo=args.repo)
 
     if args.memory_dir is not None:
         return memory.dream.print_memory_dir(args.memory_dir)

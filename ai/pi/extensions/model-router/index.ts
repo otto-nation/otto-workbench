@@ -30,7 +30,9 @@ function bindSpendStatus(pi: ExtensionAPI): void {
   pi.on("session_start", (_event, ctx) => apply(ctx));
   pi.on("model_select", (_event, ctx) => apply(ctx));
   pi.on("agent_end", (_event, ctx) => apply(ctx));
-  pi.on("message_end", (_event, ctx) => apply(ctx));
+  // turn_end, not message_end: Pi emits message_end before it appends the
+  // assistant entry, so getEntries() would still be one message behind.
+  pi.on("turn_end", (_event, ctx) => apply(ctx));
 }
 
 /**

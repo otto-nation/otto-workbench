@@ -168,8 +168,11 @@ are left alone (`shouldBrief`).
   are mechanical, from `pi-sessions facts` (`ai/lib/pi_sessions/facts.py` over the
   session file, `pr.agent_worktree` for worktrees, the cached `pr board` listing
   for each worktree branch's open PR, plus PRs its `pr` / `gh pr` commands named).
+  Per-model spend is rolled up from the session entries' `usage.cost`.
 - **Where.** A `session-brief` custom entry `{title_set, name, tldr, worktrees, prs,
-  at}` in the session file; custom entries never reach the model. The title goes
+  at, spend}` in the session file; custom entries never reach the model. `spend`
+  is mechanical (`_shared/spend.ts` over entry `usage.cost`), not the light-tier
+  brief. The title goes
   through `pi.setSessionName()` only when the session is unnamed or still carries
   the title this extension last set (`title_set`); a name a person chose is never
   touched, and the TL;DR always refreshes.

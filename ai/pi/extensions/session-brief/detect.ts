@@ -1,13 +1,16 @@
 /**
  * The session brief's pure half: when a brief is due, what the model is shown and
  * asked, how its answer is read, whether the session title may change, and the
- * `pi-sessions` command lines. Node built-ins only, so
+ * `pi-sessions` command lines. Node built-ins and `_shared/spend.ts` only, so
  * tests/pi_extensions_session_brief.bats loads it under plain `node`; wire.ts
  * holds the handlers.
  */
 
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import type { SpendItem } from "../_shared/spend.ts";
+
+export { spendFromEntries } from "../_shared/spend.ts";
 
 export const BRIEF_TYPE = "session-brief";
 /** T3-a: a brief is written after this long with no new input. */
@@ -32,6 +35,7 @@ export interface BriefData {
   worktrees: string[];
   prs: PrRef[];
   at: string;
+  spend: SpendItem[];
 }
 export interface TierRef { provider: string | null; id: string }
 interface Entry {
@@ -229,6 +233,7 @@ export function parseFacts(stdout: string): Facts {
 
 export function briefData(fields: {
   titleSet: string | null; name: string | null; tldr: string; facts: Facts; at: Date;
+  spend?: SpendItem[];
 }): BriefData {
   return {
     title_set: fields.titleSet,
@@ -237,5 +242,6 @@ export function briefData(fields: {
     worktrees: fields.facts.worktrees,
     prs: fields.facts.prs,
     at: fields.at.toISOString(),
+    spend: fields.spend ?? [],
   };
 }

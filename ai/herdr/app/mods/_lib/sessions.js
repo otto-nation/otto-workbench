@@ -1,6 +1,6 @@
 /**
  * The Sessions panel's model: pi sessions per machine from `pi-sessions list --json`.
- * Pure. Python owns the facts — title, TL;DR, PRs, worktrees, live RSS and idle, and the
+ * Pure. Python owns the facts — title, TL;DR, PRs, worktrees, live RSS and idle, spend, and the
  * close-candidate verdict (ai/lib/pi_sessions/live.py) — this only loads, words, groups and
  * orders them.
  */
@@ -46,6 +46,21 @@ export function rssText(mb) {
   return n >= 1024 ? `${(n / 1024).toFixed(1)} GB` : `${Math.round(n)} MB`;
 }
 
+// Breakpoints match ai/pi/extensions/_shared/spend.ts — herdr cannot import that tree.
+export function formatCost(cost) {
+  const n = Number(cost);
+  if (!(n > 0)) return '$0.00';
+  if (n < 0.001) return '<$0.001';
+  if (n < 0.01) return `$${n.toFixed(3)}`;
+  return `$${n.toFixed(2)}`;
+}
+
+export function spendText(spend) {
+  if (!Array.isArray(spend) || spend.length === 0) return '';
+  return spend.filter((item) => item && item.cost > 0)
+    .map((item) => `${item.label} ${formatCost(item.cost)}`).join(' · ');
+}
+
 function basename(path) {
   const p = String(path ?? '').replace(/\/+$/, '');
   return p.slice(p.lastIndexOf('/') + 1) || p;
@@ -59,6 +74,10 @@ export function rowModel(session, on, nowMs) {
   const live = session.live ?? null;
   const lastMs = Date.parse(session.last_active);
   const known = Number.isFinite(lastMs);
+  const spend = spendText(session.spend);
+  const base = live
+    ? `live · ${rssText(live.rss_mb)} · idle ${durationText(live.idle_s)}`
+    : `closed · ${known ? durationText((nowMs - lastMs) / 1000) : '?'} ago`;
   return {
     key: `${on ?? ''}:${session.id}`,
     id: session.id,
@@ -71,9 +90,7 @@ export function rowModel(session, on, nowMs) {
     live: live != null,
     pid: live?.pid ?? null,
     candidate: Boolean(live?.close_candidate),
-    state: live
-      ? `live · ${rssText(live.rss_mb)} · idle ${durationText(live.idle_s)}`
-      : `closed · ${known ? durationText((nowMs - lastMs) / 1000) : '?'} ago`,
+    state: spend ? `${base} · ${spend}` : base,
     lastMs: known ? lastMs : 0,
   };
 }

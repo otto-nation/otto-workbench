@@ -1,12 +1,16 @@
-import type { ExtensionAPI, ModelRoute } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, ModelRoute } from "@earendil-works/pi-coding-agent";
 import {
   ROUTER_ID,
   ROUTER_PROVIDER,
   type RouteMessage,
   type RouterState,
   decide,
+  footerLines,
+  isAutoModel,
+  lastPhysicalId,
   loadTiers,
   planFileTest,
+  spendFromEntries,
 } from "./detect.ts";
 
 /**
@@ -17,7 +21,37 @@ import {
  * Registered in every session, at no cost until it is selected: the tiers are
  * read on the first routed request, not at load.
  */
+function bindSpendFooter(pi: ExtensionAPI): void {
+  const apply = (ctx: ExtensionContext) => {
+    const ui = ctx.ui as { setFooter?: (factory: unknown) => void } | undefined;
+    if (!ui?.setFooter) return;
+    if (!isAutoModel(ctx.model)) {
+      ui.setFooter(undefined);
+      return;
+    }
+    ui.setFooter((_tui: unknown, theme: { fg: (kind: string, text: string) => string }) => ({
+      dispose() {},
+      invalidate() {},
+      render(_width: number) {
+        const session = ctx.sessionManager as {
+          getBranch?: () => unknown[];
+          getEntries?: () => unknown[];
+        };
+        const entries = session.getBranch?.() ?? session.getEntries?.() ?? [];
+        const [who, strip] = footerLines({
+          physicalId: lastPhysicalId(entries),
+          spend: spendFromEntries(entries),
+        });
+        return [theme.fg("dim", who), theme.fg("dim", strip)];
+      },
+    }));
+  };
+  pi.on("session_start", (_event, ctx) => apply(ctx));
+  pi.on("model_change", (_event, ctx) => apply(ctx));
+}
+
 export default function (pi: ExtensionAPI) {
+  bindSpendFooter(pi);
   // One predicate per working directory: resolving the workspace spawns git and
   // resolve-workspace, and a session asks on every request.
   const planTests = new Map<string, (path: string) => boolean>();

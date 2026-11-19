@@ -318,7 +318,7 @@ print(','.join(Thinking))
     const ui = { setStatus: (key, text) => { calls.push([key, text]); } };
     const auto = { model: { provider: "workbench", id: "auto" }, ui, sessionManager };
     await handlers.session_start({}, auto);
-    await handlers.message_end({}, auto);
+    await handlers.turn_end({}, auto);
     await handlers.agent_end({}, auto);
     await handlers.model_select({}, { model: { provider: "x", id: "y" }, ui, sessionManager });
     console.log(JSON.stringify({
@@ -330,5 +330,26 @@ print(','.join(Thinking))
     }));
   ' -- "$ROUTER/index.ts"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"events":["agent_end","message_end","model_select","session_start"],"start":["spend","opus $1.50"],"refreshed":["spend","opus $1.50"],"settled":["spend","opus $1.50"],"cleared":["spend",null]}' ]
+  [ "$output" = '{"events":["agent_end","model_select","session_start","turn_end"],"start":["spend","opus $1.50"],"refreshed":["spend","opus $1.50"],"settled":["spend","opus $1.50"],"cleared":["spend",null]}' ]
+}
+
+@test "spend status on turn_end sees entries appended after message_end" {
+  run node --input-type=module -e '
+    const { default: register } = await import(process.argv[1]);
+    const handlers = {};
+    const calls = [];
+    register({ registerVirtualModel() {}, on(event, fn) { handlers[event] = fn; } });
+    const entries = [];
+    const sessionManager = { getEntries: () => entries };
+    const ui = { setStatus: (key, text) => { calls.push([key, text]); } };
+    const auto = { model: { provider: "workbench", id: "auto" }, ui, sessionManager };
+    await handlers.session_start({}, auto);
+    if (handlers.message_end) await handlers.message_end({}, auto);
+    const beforeAppend = calls[calls.length - 1];
+    entries.push({ message: { role: "assistant", model: "claude-opus-5-5", usage: { cost: { total: 1.5 } } } });
+    await handlers.turn_end({}, auto);
+    console.log(JSON.stringify({ events: Object.keys(handlers).sort(), beforeAppend, afterTurnEnd: calls[calls.length - 1] }));
+  ' -- "$ROUTER/index.ts"
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"events":["agent_end","model_select","session_start","turn_end"],"beforeAppend":["spend","$0.00"],"afterTurnEnd":["spend","opus $1.50"]}' ]
 }

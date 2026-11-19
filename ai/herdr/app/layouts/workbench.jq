@@ -21,7 +21,7 @@ if ([.. | objects | select(.id? == "panel-body")] | length) != 1
 then error("main layout has no single panel-body node")
 else
   (.. | objects | select(.id? == "panel-body") | .children) |= (map(select(.id != "prs-panel" and .id != "queue-panel" and .id != "hosts-panel" and .id != "sessions-panel" and .id != "files" and .id != "changes")) + [prs_panel, queue_panel, hosts_panel, sessions_panel])
-  | (.. | objects | select(.id? == "panel-body")) |= if (.active == "files" or .active == "changes") then del(.active) else . end
+  | (.. | objects | select(.id? == "panel-body")) |= if (.active == "files" or .active == "changes") then .active = "prs-panel" else . end
   # Full screen hides main and sets the panel to weight 1; Herdr still clamps a node to its max,
   # so main's 900px panel cap would hold the board to 900px of the freed width.
   | (.. | objects | select(.id? == "panel")) |= del(.max)

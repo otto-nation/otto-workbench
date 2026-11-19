@@ -184,22 +184,18 @@ def test_the_light_limit_is_every_core_but_one():
     assert otto_queue.admission.class_limit(EntryClass.LIGHT, platform="linux", cores=4) == 3
 
 
-def _admit(sample, entry_class, running):
-    return otto_queue.admission.admit_entry(sample, entry_class=entry_class, running=running, cfg=CFG)
+def _admit(sample, entry_class):
+    return otto_queue.admission.admit_entry(sample, entry_class=entry_class, cfg=CFG)
 
 
 def test_light_work_is_admitted_on_a_starved_host():
-    assert _admit(BUSY, EntryClass.LIGHT, running=1).admit
+    assert _admit(BUSY, EntryClass.LIGHT).admit
 
 
-def test_one_heavy_entry_is_always_admitted_when_none_is_running():
-    assert _admit(BUSY, EntryClass.HEAVY, running=0).admit
-
-
-def test_a_second_heavy_entry_needs_room():
-    assert not _admit(BUSY, EntryClass.HEAVY, running=1).admit
-    assert _admit(HEALTHY, EntryClass.HEAVY, running=1).admit
-    assert _admit(MAC, EntryClass.HEAVY, running=1).admit
+def test_a_heavy_entry_needs_room():
+    assert not _admit(BUSY, EntryClass.HEAVY).admit
+    assert _admit(HEALTHY, EntryClass.HEAVY).admit
+    assert _admit(MAC, EntryClass.HEAVY).admit
 
 
 def test_queue_policy_reads_the_host_and_its_platform_limit():

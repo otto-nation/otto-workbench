@@ -24,7 +24,6 @@ KIND_CASES = (
     ("memory pressure 41.2% >= 40%", WaitKind.MEMORY),
     ("host has room", WaitKind.OTHER),
     ("light work is bounded by count alone", WaitKind.OTHER),
-    ("no other heavy entry is running; one is always admitted", WaitKind.OTHER),
     ("all 4 heavy slots are taken", WaitKind.SLOTS),
     ("behind entry 107, which queued first", WaitKind.BEHIND),
 )

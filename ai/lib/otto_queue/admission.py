@@ -2,7 +2,7 @@
 
 `QueuePolicy` is what `otto_queue.slots` asks, so "is there room" has one owner
 (`room`). A queue entry is admitted by `admit_entry`: light work on count
-alone, heavy work on `room` beyond the first. The class limits are
+alone, heavy work on `room`. The class limits are
 `class_limit`: heavy entries per platform (`HEAVY_LIMITS`), light ones every
 core but one.
 
@@ -229,21 +229,16 @@ def class_limit(entry_class: EntryClass, *, platform: str, cores: int) -> int:
     return HEAVY_LIMITS.get(platform, DEFAULT_HEAVY_LIMIT)
 
 
-def admit_entry(sample: HostSample, *, entry_class: EntryClass, running: int,
+def admit_entry(sample: HostSample, *, entry_class: EntryClass,
                 cfg: BatchConfig) -> Verdict:
-    """Whether one more queue entry may start, with *running* of its class already running.
+    """Whether one more queue entry may start.
 
     Light entries are admitted on count alone: refusing a board read for memory a
-    review is using would stall the board, not save the host. Plain rebase takes
-    a light ticket and is bounded the same way. A heavy entry with no other
-    heavy one running is always admitted — the floor, so a starved host still
-    makes progress one entry at a time. Otherwise `room` decides.
+    review is using would stall the board, not save the host. Heavy work needs
+    `room`, including the first entry. Slot counts stay in `otto_queue.slots`.
     """
-    # Light work (board reads, plain rebase) is bounded by count alone.
     if entry_class is EntryClass.LIGHT:
         return Verdict(True, "light work is bounded by count alone")
-    if running == 0:
-        return Verdict(True, "no other heavy entry is running; one is always admitted")
     return room(sample, estimate=QUEUE_HEAVY_ESTIMATE, cfg=cfg)
 
 
@@ -260,5 +255,5 @@ class QueuePolicy:
         return class_limit(entry_class, platform=self.platform, cores=self.cores)
 
     def verdict(self, entry_class: EntryClass, running: int) -> Verdict:
-        return admit_entry(self.host(), entry_class=entry_class, running=running,
-                           cfg=self.cfg)
+        del running
+        return admit_entry(self.host(), entry_class=entry_class, cfg=self.cfg)

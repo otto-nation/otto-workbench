@@ -1,9 +1,11 @@
 """Linux integration: a job runs in the worker's slice, and an over-cap job is OOM-killed while the worker lives.
 
 Skipped wherever `systemd-run --user --scope` cannot place a process in a
-memory-capped scope: CI's ubuntu-24.04 has no user bus, and macOS has no
-systemd. The slice is a runtime unit under $XDG_RUNTIME_DIR, named without a
+memory-capped scope: macOS has no systemd, and some Linux hosts have no user
+bus. The slice is a runtime unit under $XDG_RUNTIME_DIR, named without a
 dash (systemd reads a dash as nesting), and removed afterwards.
+Jobs are light: a 64 MiB cap (and a busy CI runner) fail heavy `room()`, so
+the worker would never start them and never go idle.
 """
 
 import os
@@ -59,8 +61,10 @@ def capped_slice():
 
 
 def _enqueue(argv):
-    return Ledger.open().resolve(NewEntry(argv=tuple(argv), cwd="/", kind=EntryKind.JOB),
-                                 force=False, pid=None).entry.id
+    return Ledger.open().resolve(
+        NewEntry(argv=tuple(argv), cwd="/", kind=EntryKind.JOB,
+                 entry_class=EntryClass.LIGHT),
+        force=False, pid=None).entry.id
 
 
 def _await_terminal(entry_id):
@@ -115,10 +119,10 @@ def test_a_running_scoped_job_holds_its_slot(capped_slice):
     worker = subprocess.Popen([str(SHIM), "worker", "--idle", "3", "--slice", capped_slice])
     try:
         _await_running(entry_id)
-        refused = otto_queue.slots.try_admit(Ledger.open().root, _OneHeavy(), EntryClass.HEAVY)
+        refused = otto_queue.slots.try_admit(Ledger.open().root, _OneHeavy(), EntryClass.LIGHT)
         assert not refused.admitted
         _await_terminal(entry_id)
-        granted = otto_queue.slots.try_admit(Ledger.open().root, _OneHeavy(), EntryClass.HEAVY)
+        granted = otto_queue.slots.try_admit(Ledger.open().root, _OneHeavy(), EntryClass.LIGHT)
         assert granted.admitted
         granted.slot.release()
     finally:

@@ -118,7 +118,7 @@ TEAM_LANE_CASES = [
 ]
 
 
-# 17 Python mine-lane cases minus the reviewing overlay (tested separately).
+# Python mine-lane cases minus the reviewing overlay (tested separately).
 MINE_LANE_CASES = [
     ("merged", dict(state=PrState.MERGED), MineLane.MERGED),
     ("inMergeQueue -> in-queue", dict(in_merge_queue=True), MineLane.IN_QUEUE),
@@ -191,6 +191,15 @@ MINE_LANE_CASES = [
     (
         "APPROVED + none -> approved",
         dict(review_decision="APPROVED", ci_status=CiStatus.NONE),
+        MineLane.APPROVED,
+    ),
+    (
+        "APPROVED + owed feedback -> approved (approve-with-comment)",
+        dict(
+            owed="1 unanswered review body",
+            review_decision="APPROVED",
+            ci_status=CiStatus.PASSING,
+        ),
         MineLane.APPROVED,
     ),
     (

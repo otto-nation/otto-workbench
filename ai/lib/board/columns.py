@@ -105,15 +105,16 @@ def mine_lane(row: Row) -> MineLane:
         return MineLane.HAS_CONFLICTS
     if row.ci_status is CiStatus.FAILING:
         return MineLane.CI_FAILING
-    if row.owed:
-        return MineLane.HAS_COMMENTS
-    if row.review_decision == "CHANGES_REQUESTED":
-        return MineLane.CHANGES_REQUESTED
+    # Approve-with-comment is the usual review; those PRs sit in Approved.
     if row.review_decision == "APPROVED" and row.ci_status in {
         CiStatus.PASSING,
         CiStatus.NONE,
     }:
         return MineLane.APPROVED
+    if row.owed:
+        return MineLane.HAS_COMMENTS
+    if row.review_decision == "CHANGES_REQUESTED":
+        return MineLane.CHANGES_REQUESTED
     return MineLane.AWAITING_REVIEW
 
 

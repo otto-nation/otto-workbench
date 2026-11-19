@@ -112,6 +112,14 @@ _spend() {
   [ "$output" = '["grok-4.6",null]' ]
 }
 
+@test "lastPhysicalId: ignores a bare top-level model (subagent result shape)" {
+  _spend '
+    out([m.lastPhysicalId([{ model: "sub-model" }])]);
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[null]' ]
+}
+
 @test "footerLines: auto, then the strip; physical id when known; empty spend is \$0.00" {
   _spend '
     out([m.footerLines({ physicalId: "claude-sonnet-5-5", spend: [{ label: "sonnet", cost: 1 }] }),

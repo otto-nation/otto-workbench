@@ -35,7 +35,7 @@ _spend() {
     m.shortModelLabel("gemini-4-carbon"), m.shortModelLabel("google-vertex/gemini-4-carbon"),
     m.shortModelLabel("provider/other-id")])'
   [ "$status" -eq 0 ]
-  [ "$output" = '["opus","sonnet","haiku","grok","gemini","carbon","carbon","provider"]' ]
+  [ "$output" = '["opus","sonnet","haiku","grok","gemini","carbon","carbon","other"]' ]
 }
 
 @test "spendFromEntries: sums by label, drops zero, highest first" {

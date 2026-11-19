@@ -88,7 +88,7 @@ drops it still works: each record simply stands alone.
    - Signs it belongs here: "Colima stopped", "upgraded to Node 22", "brew installed X", "not running"
    - Flag for Phase 5 (Machine Update) rather than writing to memory or architecture.md
 
-   **architecture.md** (`.claude/architecture.md` in the project) — stable project architectural truth:
+   **architecture.md** (`.agents/architecture.md` in the project) — stable project architectural truth:
    - Software identity (what software actually runs), container tool constraints, conventions
    - Signs it belongs here: "X is not Y", "doesn't have curl", "use conduit.toml not homeserver.yaml"
    - Flag for Phase 5 (Architecture Update)
@@ -173,12 +173,14 @@ After verification, print a summary: entries added, updated, archived, contradic
 
 ## Phase 5: ARCHITECTURE UPDATE
 
-**Goal:** Push architectural facts discovered in sessions into `.claude/architecture.md`.
+**Goal:** Push architectural facts discovered in sessions into `.agents/architecture.md`.
 Memory captures behavior; architecture.md captures stable truth about the project.
+Writes go to `.agents/architecture.md`. Do not write `.claude/architecture.md`.
 
 ### When to run
 
-Only if `.claude/architecture.md` exists in the project directory. Skip silently otherwise.
+Only if `.agents/architecture.md` or a leftover `.claude/architecture.md` exists
+in the project directory. Skip silently otherwise.
 
 ### What to scan for
 

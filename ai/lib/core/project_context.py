@@ -43,6 +43,12 @@ import core.timeouts  # noqa: E402
 # The only instructions file, and the one the workbench writes.
 AGENTS_FILE = "AGENTS.md"
 
+# Agent-facing architecture narrative. Not product docs (`docs/architecture.md`)
+# and not Claude Code config. Writes go here; a leftover `.claude/` copy is
+# read until the repo moves it.
+ARCHITECTURE_FILE = ".agents/architecture.md"
+LEGACY_ARCHITECTURE_FILE = ".claude/architecture.md"
+
 # Root-level names Claude Code reads as project instructions ahead of AGENTS.md.
 # `.claude/CLAUDE.md` is where the scaffold once put it.
 SHADOW_FILES = ("CLAUDE.md", ".claude/CLAUDE.md")
@@ -116,6 +122,22 @@ def resolve(root: Path) -> ProjectContext:
     if shadows:
         return ProjectContext("", ContextState.LEGACY, shadows)
     return ProjectContext("", ContextState.NONE)
+
+
+def architecture_path(root: Path) -> Path | None:
+    """The architecture file for the checkout at ``root``, if one exists.
+
+    Prefers ``ARCHITECTURE_FILE``. A file only at ``LEGACY_ARCHITECTURE_FILE``
+    is still returned so a repo that has not moved it stays readable; callers
+    that write use ``ARCHITECTURE_FILE``.
+    """
+    preferred = root / ARCHITECTURE_FILE
+    if preferred.is_file():
+        return preferred
+    legacy = root / LEGACY_ARCHITECTURE_FILE
+    if legacy.is_file():
+        return legacy
+    return None
 
 
 def migration_hint(ctx: ProjectContext) -> str:

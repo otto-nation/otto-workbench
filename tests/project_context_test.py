@@ -150,3 +150,21 @@ def test_hint_prefers_root_claude_md_and_pluralises():
         "AGENTS.md", core.project_context.ContextState.SPLIT, ("CLAUDE.md", "a/CLAUDE.md"))
     hint = core.project_context.migration_hint(split)
     assert "fold them" in hint and "delete them" in hint
+
+
+def test_architecture_prefers_agents_over_legacy_claude(tmp_path):
+    _write(tmp_path, ".agents/architecture.md", "new\n")
+    _write(tmp_path, ".claude/architecture.md", "old\n")
+    path = core.project_context.architecture_path(tmp_path)
+    assert path == tmp_path / ".agents" / "architecture.md"
+    assert path.read_text() == "new\n"
+
+
+def test_architecture_falls_back_to_legacy_claude(tmp_path):
+    _write(tmp_path, ".claude/architecture.md", "old\n")
+    path = core.project_context.architecture_path(tmp_path)
+    assert path == tmp_path / ".claude" / "architecture.md"
+
+
+def test_architecture_missing_is_none(tmp_path):
+    assert core.project_context.architecture_path(tmp_path) is None

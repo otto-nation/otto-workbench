@@ -218,8 +218,9 @@ scaffold_project_claude() {
     local arch_tmpl="$CLAUDE_TEMPLATES_DIR/architecture/${s}.md"
     if [[ -f "$arch_tmpl" ]]; then
       echo
-      info "Scaffolding .claude/architecture.md"
-      _scaffold_file "$arch_tmpl" ".claude/architecture.md" "architecture.md" "$force"
+      mkdir -p .agents
+      info "Scaffolding .agents/architecture.md"
+      _scaffold_file "$arch_tmpl" ".agents/architecture.md" "architecture.md" "$force"
       break
     fi
   done

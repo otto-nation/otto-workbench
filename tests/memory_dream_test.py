@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -38,6 +39,27 @@ def test_list_transcripts_returns_0_rather_than_exiting(tmp_path, capsys):
     dest.write_text('{"type":"user","message":{"role":"user","content":"hello"}}\n')
     assert memory.dream.list_transcripts(tmp_path, 30) == 0
     assert str(dest) in capsys.readouterr().out
+
+
+def test_list_transcripts_repo_keeps_sessions_of_that_git_identity(
+    tmp_path, capsys,
+):
+    alpha = tmp_path / "alpha"
+    beta = tmp_path / "beta"
+    alpha.mkdir()
+    beta.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=alpha, check=True)
+    subprocess.run(["git", "init", "-q"], cwd=beta, check=True)
+    a = tmp_path / ".pi" / "agent" / "sessions" / "--alpha--" / "a.jsonl"
+    b = tmp_path / ".pi" / "agent" / "sessions" / "--beta--" / "b.jsonl"
+    a.parent.mkdir(parents=True)
+    b.parent.mkdir(parents=True)
+    a.write_text(json.dumps({"type": "session", "cwd": str(alpha)}) + "\n")
+    b.write_text(json.dumps({"type": "session", "cwd": str(beta)}) + "\n")
+    assert memory.dream.list_transcripts(tmp_path, 30, repo=alpha) == 0
+    out = capsys.readouterr().out
+    assert str(a) in out
+    assert str(b) not in out
 
 
 def test_print_memory_dir_returns_0_rather_than_exiting(tmp_path, monkeypatch, capsys):

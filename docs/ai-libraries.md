@@ -9350,12 +9350,13 @@ globbing a harness tree.
 
 ```
 dream-scan [--days N] [--home DIR]
-dream-scan [--days N] [--home DIR] --list-transcripts
+dream-scan [--days N] [--home DIR] --list-transcripts [--repo DIR]
 dream-scan --memory-dir REPO
 ```
 
 `--list-transcripts` prints every transcript path in the window, one per line,
-and exits. `--memory-dir REPO` prints that repo's memory directory and exits.
+and exits. `--repo DIR` keeps only sessions whose cwd shares that checkout's
+git identity. `--memory-dir REPO` prints that repo's memory directory and exits.
 
 ### cli/eval_models.py
 

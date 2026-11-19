@@ -219,7 +219,9 @@ def _format_signals_section(signals: list[dict]) -> list[str]:
     return lines
 
 
-def list_transcripts(home: Path, days: int) -> int:
+def list_transcripts(
+    home: Path, days: int, repo: Path | str | None = None,
+) -> int:
     """Print every transcript path in the window, one per line.
 
     Phases 5 and 5b of the dream skill grep the corpus for architectural and
@@ -227,9 +229,26 @@ def list_transcripts(home: Path, days: int) -> int:
     Printing it here keeps one answer to "where are the sessions": a skill
     globbing a harness directory itself is what went blind when work moved to
     Pi.
+
+    ``repo`` keeps sessions whose cwd shares that checkout's git identity, so
+    the architecture skill cannot pick up another project's transcripts from
+    global recency. Identity is ``core.memory.repo_key``, the same map as the
+    memory store. A transcript with no cwd is dropped rather than guessed.
     """
     cutoff = datetime.now() - timedelta(days=days)
+    want = None
+    if repo is not None:
+        want = core.memory.repo_key(repo)
     for session in core.sessions.discover_sessions(home, since=cutoff):
+        if want is not None:
+            cwd = core.sessions.project_path_of(session)
+            if cwd is None:
+                continue
+            try:
+                if core.memory.repo_key(cwd) != want:
+                    continue
+            except ValueError:
+                continue
         print(session.path)
     return 0
 

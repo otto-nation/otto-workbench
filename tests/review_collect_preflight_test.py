@@ -241,10 +241,11 @@ class TestCollectPreflightData:
     def test_success_path_collects_all_data(self, tmp_path):
         repo = tmp_path / "repo"
         (repo / ".claude" / "review").mkdir(parents=True)
+        (repo / ".agents").mkdir(parents=True)
         init_repo(repo)
         (repo / "main.go").write_text("package main\n")
         (repo / "AGENTS.md").write_text("# Project\n")
-        (repo / ".claude" / "architecture.md").write_text("## Known Constraints\n")
+        (repo / ".agents" / "architecture.md").write_text("## Known Constraints\n")
         (repo / ".claude" / "review" / "security.md").write_text("# Security\n")
         commit_all(repo, "init")
         add_self_origin(repo)
@@ -268,6 +269,27 @@ class TestCollectPreflightData:
         assert len(data.diff) > 0
         assert len(data.commit_log) > 0
         assert data.omitted_files == []
+
+    def test_architecture_legacy_claude_path_is_still_read(self, tmp_path):
+        repo = tmp_path / "repo"
+        init_repo(repo)
+        (repo / "main.go").write_text("package main\n")
+        (repo / ".claude").mkdir()
+        (repo / ".claude" / "architecture.md").write_text("## Legacy\n")
+        commit_all(repo, "init")
+        add_self_origin(repo)
+        git_out(repo, "checkout", "-b", "feat", "-q")
+        (repo / "main.go").write_text("package main\nfunc hello() {}\n")
+        commit_all(repo, "add hello")
+
+        job = _job(
+            tmp_path, [{"path": "main.go", "additions": 1, "deletions": 0}],
+            wt_path=str(repo),
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            data = review.collect.collect_preflight_data(job)
+        assert data is not None
+        assert "## Legacy" in data.architecture_md
 
     def test_agents_md_is_read_and_a_shadowing_claude_md_is_not(self, tmp_path):
         # The name belongs to core.project_context; what this pins is that the

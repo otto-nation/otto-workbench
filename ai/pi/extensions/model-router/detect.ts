@@ -6,7 +6,7 @@ import { nearestExistingDir, workspaceFor } from "../_shared/workspace.ts";
 import { ROUTER_ID, ROUTER_PROVIDER, type Tier } from "./route.ts";
 
 export * from "./route.ts";
-export { footerLines, lastPhysicalId, spendFromEntries } from "../_shared/spend.ts";
+export { formatSpend, spendFromEntries } from "../_shared/spend.ts";
 
 export function isAutoModel(model: { provider?: string; id?: string } | null | undefined): boolean {
   return model?.provider === ROUTER_PROVIDER && model?.id === ROUTER_ID;

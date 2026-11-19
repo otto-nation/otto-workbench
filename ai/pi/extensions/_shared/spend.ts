@@ -1,5 +1,5 @@
 /**
- * Per-physical-model spend for a Pi session: Auto's footer and session-brief.
+ * Per-physical-model spend for a Pi session: Auto's status line and session-brief.
  *
  * Imports nothing, so a test loads it under plain `node`. Cost is what Pi
  * already stored on the entry (`usage.cost`) or on a tool result's
@@ -35,20 +35,6 @@ export function formatSpend(items: readonly SpendItem[]): string {
     .filter((item) => item.cost > 0)
     .map((item) => `${item.label} ${formatCost(item.cost)}`)
     .join(" · ");
-}
-
-/** Newest model id that produced an entry, or undefined. */
-export function lastPhysicalId(entries: readonly unknown[]): string | undefined {
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const id = modelOf(entries[i]);
-    if (id !== "unknown") return id;
-  }
-  return undefined;
-}
-
-export function footerLines(input: { physicalId?: string; spend: readonly SpendItem[] }): [string, string] {
-  const who = input.physicalId ? `auto → ${input.physicalId}` : "auto";
-  return [who, formatSpend(input.spend) || "$0.00"];
 }
 
 function costOf(usage: unknown): number {

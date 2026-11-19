@@ -34,7 +34,7 @@ from batch.model import (STEP_ORDER, CancelState, DecisionKind, DirtyReason,
 from batch.plan import PlanRow
 from batch.requests import Cancel, Outcome, Release
 from batch.steps import (StepProcess, WorktreeResult, checked_out_branch, ensure_worktree,
-                         queues_itself, restore_generated_dirt, step_argv)
+                         is_heavy, queues_itself, restore_generated_dirt, step_argv)
 from config.workbench_config import BatchConfig
 from pr.comments_fix import CloseoutDebt
 
@@ -589,10 +589,12 @@ class Scheduler:
 
     def _accept(self, item: Item, rec: StepRecord, argv: list[str]
                 ) -> batch.queue_entries.Accepted | None:
-        # AI -> HEAVY else LIGHT. Matches cli.needs.ticket_class and
-        # test_queues_itself_matches_the_cli_registry; batch cannot import cli.
+        # Review and comments always carry --fix (HEAVY); rebase and CI are
+        # HEAVY only with AI. Matches cli.needs.ticket_class (held by
+        # test_accept_class_matches_ticket_class); batch cannot import cli.
         entry_class = (
-            otto_queue.model.EntryClass.HEAVY if self.run.uses_ai(rec.step)
+            otto_queue.model.EntryClass.HEAVY
+            if is_heavy(rec.step, self.run.uses_ai(rec.step))
             else otto_queue.model.EntryClass.LIGHT)
         return self._queue.accept(
             argv=tuple(argv), cwd=item.worktree,
@@ -605,7 +607,7 @@ class Scheduler:
         wait = rec.step is Step.CI and fresh.ci_state in pr.ci_need.RUNNING
         argv = step_argv(rec.step, self.pr_bin, item.worktree, remote_sha=item.remote_sha,
                          wait=wait, focus=self.run.focus, ai=self.run.uses_ai(rec.step))
-        queued = queues_itself(rec.step, self.run.uses_ai(rec.step))
+        queued = queues_itself(rec.step)
         adopted = None
         if queued:
             try:

@@ -16,6 +16,7 @@ import os
 from collections.abc import Sequence
 
 import cli.needs
+import cli.review_modes
 import core.log
 import git.client
 import pr.target
@@ -30,7 +31,6 @@ _LABEL_FLAGS = ("--self", "--fix", "--triage", "--recover")
 
 def class_for(command: str, argv: Sequence[str]) -> EntryClass | None:
     """The queue class this invocation takes, derived from its Need."""
-    import cli.review_modes
     spec = COMMANDS[command]
     return cli.needs.ticket_class(
         need_for(spec, argv), command, argv, cli.review_modes.MODES,

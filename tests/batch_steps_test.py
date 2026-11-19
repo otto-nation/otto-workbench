@@ -29,7 +29,7 @@ from conftest import add_self_origin, commit_all, git_in, git_out, init_repo, se
     (Step.CI, False, True),
 ])
 def test_queues_itself(step, ai, want):
-    assert batch.steps.queues_itself(step, ai) is want
+    assert batch.steps.queues_itself(step) is want
 
 
 def test_every_step_runs_drafted():

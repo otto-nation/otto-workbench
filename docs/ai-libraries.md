@@ -9443,7 +9443,7 @@ What a `pr` subcommand needs of dispatch before its handler runs.
 
 `Need` is the declaration; `review_need` is the one resolver that reads a mode
 flag off an argv. `ticket_class` is derived from that Need plus whether the
-argv runs an agent or git-pushes — it does not live on `CommandSpec`.
+argv runs an agent or a hook-on git-push — it does not live on `CommandSpec`.
 This module does not import `cli.review_modes`; the modes mapping is an
 argument, which is also what lets a test declare a table of its own.
 

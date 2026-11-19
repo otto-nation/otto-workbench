@@ -354,6 +354,7 @@ def test_ticket_class_heavy_for_agent_or_push():
     target = Need(REMOTE, update=False, locks=TARGET_ONLY)
     assert ticket_class(locked, "rebase", ["--push-only"], MODES) is EntryClass.HEAVY
     assert ticket_class(locked, "push", [], MODES) is EntryClass.HEAVY
+    assert ticket_class(locked, "rebase", ["--fix", "--no-verify"], MODES) is EntryClass.HEAVY
     assert ticket_class(locked, "rebase", [], MODES) is EntryClass.HEAVY
     assert ticket_class(locked, "create", [], MODES) is EntryClass.HEAVY
     assert ticket_class(locked, "rebase", ["--fix"], MODES) is EntryClass.HEAVY
@@ -366,6 +367,9 @@ def test_ticket_class_light_when_locked_but_neither():
     target = Need(REMOTE, update=False, locks=TARGET_ONLY)
     assert ticket_class(locked, "rebase", ["--abort"], MODES) is EntryClass.LIGHT
     assert ticket_class(locked, "rebase", ["--no-push"], MODES) is EntryClass.LIGHT
+    assert ticket_class(locked, "rebase", ["--push-only", "--no-verify"], MODES) is EntryClass.LIGHT
+    assert ticket_class(locked, "push", ["--no-verify"], MODES) is EntryClass.LIGHT
+    assert ticket_class(locked, "create", ["--no-verify"], MODES) is EntryClass.LIGHT
     assert ticket_class(locked, "describe", ["--body", "x"], MODES) is EntryClass.LIGHT
     assert ticket_class(locked, "comments", ["--finish"], MODES) is EntryClass.LIGHT
     assert ticket_class(target, "ci", [], MODES) is EntryClass.LIGHT

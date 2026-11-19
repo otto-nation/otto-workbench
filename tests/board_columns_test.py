@@ -118,7 +118,7 @@ TEAM_LANE_CASES = [
 ]
 
 
-# 18 Python mine-lane cases minus the reviewing overlay (tested separately).
+# Python mine-lane cases minus the reviewing overlay (tested separately).
 MINE_LANE_CASES = [
     ("merged", dict(state=PrState.MERGED), MineLane.MERGED),
     ("inMergeQueue -> in-queue", dict(in_merge_queue=True), MineLane.IN_QUEUE),

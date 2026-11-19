@@ -1,6 +1,7 @@
 /**
  * Tab-bar toggle that selects a panel-body child. herdr's tabs mod hard-codes
- * Files/Changes, so each extra panel is a sibling block in tabs-row.
+ * Files/Changes, so each workbench panel is a sibling block in tabs-row; the
+ * toggle also drops those two from workspace.panels so the buttons do not show.
  * Cannot be loaded by node tests because it imports herdr.
  */
 import { View, svg } from "gpui-kit";
@@ -16,7 +17,8 @@ export function panelButton({ child, label, icon, buttonId }) {
   return class PanelButton extends View {
     init(_props, cx) {
       // herdr's tabs mod remembers each space's panel only among `workspace.panels`;
-      // without this child listed there, switching spaces closes it.
+      // without this child listed there, switching spaces closes it. The helper
+      // also drops files/changes so those hard-coded buttons disappear.
       const next = enableWorkspacePanel(shared("workspace.panels"), child);
       if (next) setShared("workspace.panels", next);
       this.healUntil = 0;

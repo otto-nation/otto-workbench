@@ -5,7 +5,8 @@ def prs_panel: {id: "prs-panel", type: "block", content: {mod: "prs", props: {pl
 def queue_panel: {id: "queue-panel", type: "block", content: {mod: "queue"}};
 def hosts_panel: {id: "hosts-panel", type: "block", content: {mod: "hosts"}};
 def sessions_panel: {id: "sessions-panel", type: "block", content: {mod: "sessions"}};
-# Herdr's tabs mod hard-codes Files/Changes, so the extra toggles are sibling blocks.
+# Herdr's tabs mod hard-codes Files/Changes; the workbench toggles are sibling blocks
+# and those two panels are dropped so the buttons have nothing to select.
 # Button width: 2*px 8 + icon 14 + gap 5 + label + pr(SP.sm). 72/88/104 leave slack.
 def tabs_row:
   {id: "tabs-row", type: "row", size: .size, children: [
@@ -19,7 +20,8 @@ def tabs_row:
 if ([.. | objects | select(.id? == "panel-body")] | length) != 1
 then error("main layout has no single panel-body node")
 else
-  (.. | objects | select(.id? == "panel-body") | .children) |= (map(select(.id != "prs-panel" and .id != "queue-panel" and .id != "hosts-panel" and .id != "sessions-panel")) + [prs_panel, queue_panel, hosts_panel, sessions_panel])
+  (.. | objects | select(.id? == "panel-body") | .children) |= (map(select(.id != "prs-panel" and .id != "queue-panel" and .id != "hosts-panel" and .id != "sessions-panel" and .id != "files" and .id != "changes")) + [prs_panel, queue_panel, hosts_panel, sessions_panel])
+  | (.. | objects | select(.id? == "panel-body")) |= if (.active == "files" or .active == "changes") then del(.active) else . end
   # Full screen hides main and sets the panel to weight 1; Herdr still clamps a node to its max,
   # so main's 900px panel cap would hold the board to 900px of the freed width.
   | (.. | objects | select(.id? == "panel")) |= del(.max)

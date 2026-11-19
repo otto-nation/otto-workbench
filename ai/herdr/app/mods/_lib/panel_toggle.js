@@ -6,7 +6,8 @@
  *
  * enableWorkspacePanel(enabled, child) -> the workspace.panels list with child
  * included, or null when it is already there (caller skips setShared).
- * A missing or non-array enabled starts from ["files", "changes"].
+ * A missing or non-array enabled starts empty. "files" and "changes" are
+ * dropped so herdr's tabs mod does not draw those buttons.
  *
  * clickSteps(on, child) -> hide the panel when on; otherwise select child and
  * show the panel. The caller exits full screen before running these.
@@ -20,8 +21,10 @@ export function panelOn(root, child) {
 }
 
 export function enableWorkspacePanel(enabled, child) {
-  const list = Array.isArray(enabled) ? enabled : ["files", "changes"];
-  if (list.includes(child)) return null;
+  const raw = Array.isArray(enabled) ? enabled : [];
+  const list = raw.filter((id) => id !== "files" && id !== "changes");
+  if (list.includes(child) && list.length === raw.length) return null;
+  if (list.includes(child)) return list;
   return [...list, child];
 }
 

@@ -25,9 +25,9 @@ _js() {
   [ "$output" = '[true,false,false,false]' ]
 }
 
-@test "enableWorkspacePanel adds the child once and leaves an existing list" {
-  _js '[m.enableWorkspacePanel(undefined, "queue-panel"), m.enableWorkspacePanel(["files","changes","queue-panel"], "queue-panel"), m.enableWorkspacePanel(["files","changes","prs-panel"], "queue-panel")]'
-  [ "$output" = '[["files","changes","queue-panel"],null,["files","changes","prs-panel","queue-panel"]]' ]
+@test "enableWorkspacePanel drops files and changes and adds the child once" {
+  _js '[m.enableWorkspacePanel(undefined, "queue-panel"), m.enableWorkspacePanel(["files","changes","queue-panel"], "queue-panel"), m.enableWorkspacePanel(["files","changes","prs-panel"], "queue-panel"), m.enableWorkspacePanel(["queue-panel"], "queue-panel")]'
+  [ "$output" = '[["queue-panel"],["queue-panel"],["prs-panel","queue-panel"],null]' ]
 }
 
 @test "clickSteps hide the panel when on and select the child when off" {

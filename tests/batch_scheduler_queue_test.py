@@ -62,18 +62,20 @@ def test_a_plain_rebase_accepts_a_light_ticket():
     assert h.pass_fds == [(adopted.fd,)]
 
 
-def test_plain_ci_does_not_accept_a_ticket():
+def test_plain_ci_accepts_a_light_ticket():
     q = FakeQueueEntries()
     h = Harness([row(1, {batch.model.Step.CI: NEED})], with_ai=[], queue_entries=q)
     h.sched._once()
     assert h.spawned
-    assert q.accept_calls == []
-    assert q.accepted == []
-    assert otto_queue.model.ADOPT_ENV not in h.envs[0]
-    assert otto_queue.model.LEASE_FD_ENV not in h.envs[0]
-    assert otto_queue.model.LABEL_ENV not in h.envs[0]
-    assert otto_queue.model.WAIT_ENV not in h.envs[0]
-    assert h.pass_fds == [()]
+    assert len(q.accept_calls) == 1
+    call = q.accept_calls[0]
+    assert call["entry_class"] is otto_queue.model.EntryClass.LIGHT
+    assert call["action"] == "batch:ci"
+    adopted = q.accepted[0]
+    env = h.envs[0]
+    assert env[otto_queue.model.ADOPT_ENV] == str(adopted.entry_id)
+    assert env[otto_queue.model.LEASE_FD_ENV] == str(adopted.fd)
+    assert h.pass_fds == [(adopted.fd,)]
 
 
 def test_an_ai_step_accepts_a_heavy_ticket():

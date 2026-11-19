@@ -1,15 +1,10 @@
 """What a `pr` subcommand needs of dispatch before its handler runs.
 
 `Need` is the declaration; `review_need` is the one resolver that reads a mode
-flag off an argv. Both were written inside `ai/bin/pr`, where nothing could
-import them and no test could reach them without executing the binary. The
-queue-class resolvers next to them (`ci_queue`, `comments_queue`, …) are the
-same kind of declaration, read off the same flags with `has_flag`.
-
-The mode table itself lives in `cli.review_modes`, beside the handlers it
-names. The resolvers here still take a table rather than reaching for one:
-`review_modes` would otherwise have to be imported from below it, and taking it
-as an argument is also what lets a test declare a table of its own.
+flag off an argv. `ticket_class` is derived from that Need plus whether the
+argv runs an agent or git-pushes — it does not live on `CommandSpec`.
+This module does not import `cli.review_modes`; the modes mapping is an
+argument, which is also what lets a test declare a table of its own.
 """
 
 # doc-group: cli
@@ -318,66 +313,47 @@ def rebase_need(argv: Sequence[str]) -> Need:
     )
 
 
-def ci_queue(argv: Sequence[str]) -> EntryClass | None:
-    """`ci`'s queue class: only `--fix` runs an agent."""
-    return EntryClass.HEAVY if has_flag(argv, "--fix") else None
+def git_pushes(command: str, argv: Sequence[str]) -> bool:
+    """Whether this argv performs a git push (hook or ``--no-verify``)."""
+    if command == "push":
+        return True
+    if command == "rebase":
+        return not has_flag(argv, "--abort") and not has_flag(argv, "--no-push")
+    if command == "create":
+        return not has_flag(argv, "--dry-run")
+    return False
 
 
-def comments_queue(argv: Sequence[str]) -> EntryClass | None:
-    """`comments`' queue class, keyed on `--triage` / `--fix`, never on `--finish`.
-
-    `--fix` is heavy even beside `--finish` (the fix still runs). `--triage` is
-    light. Bare `--finish` / `--finish --post` / `--reply` / `--settle` use no
-    agent and take no ticket.
-    """
-    if has_flag(argv, "--fix"):
-        return EntryClass.HEAVY
-    if has_flag(argv, "--triage"):
-        return EntryClass.LIGHT
-    return None
-
-
-def rebase_queue(argv: Sequence[str]) -> EntryClass | None:
-    """`rebase`'s queue class: LIGHT unless `--abort` or `--push-only`; `--fix` is heavy.
-
-    `--abort` and `--push-only` take no ticket even with `--fix`. A plain rebase
-    (no `--fix`) takes a light ticket.
-    """
-    if has_flag(argv, "--abort") or has_flag(argv, "--push-only"):
-        return None
-    if has_flag(argv, "--fix"):
-        return EntryClass.HEAVY
-    return EntryClass.LIGHT
-
-
-def create_queue(argv: Sequence[str]) -> EntryClass | None:
-    """`create`'s queue class: none when both `--title` and `--body` skip AI."""
-    if has_flag(argv, "--title") and has_flag(argv, "--body"):
-        return None
-    return EntryClass.LIGHT
-
-
-def describe_queue(argv: Sequence[str]) -> EntryClass | None:
-    """`describe`'s queue class: none when `--body` or `--body-file` skips AI."""
-    if has_flag(argv, "--body") or has_flag(argv, "--body-file"):
-        return None
-    return EntryClass.LIGHT
-
-
-def review_queue(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> EntryClass | None:
-    """`review`'s queue class, which its mode flag decides.
-
-    A mode with a local handler (`--post`, `--publish`, `--repair`, `--summary`,
-    `--dismiss`, `--list`) runs no agent. `--recover` has no local handler and
-    re-runs agents, so it is heavy. `--self --track` without `--fix` files from
-    a record already on disk. Everything else is heavy.
-    """
-    found = review_modes(argv, modes)
+def runs_agent(
+    command: str, argv: Sequence[str],
+    review_modes_table: Mapping[str, ReviewMode],
+) -> bool:
+    """Whether this argv runs a long coding agent."""
+    if command == "fix" or has_flag(argv, "--fix"):
+        return True
+    if command != "review":
+        return False
+    found = review_modes(argv, review_modes_table)
     if found:
-        return None if modes[found[0]].handler is not None else EntryClass.HEAVY
-    if has_flag(argv, "--self") and has_flag(argv, "--track") and not has_flag(argv, "--fix"):
+        return review_modes_table[found[0]].handler is None
+    if has_flag(argv, "--self") and has_flag(argv, "--track"):
+        return False
+    return True
+
+
+def ticket_class(
+    need: Need, command: str, argv: Sequence[str],
+    review_modes_table: Mapping[str, ReviewMode],
+) -> EntryClass | None:
+    """Queue class for this invocation, or None to run unqueued.
+
+    No locks → None. Agent or git-push → HEAVY. Otherwise LIGHT.
+    """
+    if not need.locks:
         return None
-    return EntryClass.HEAVY
+    if runs_agent(command, argv, review_modes_table) or git_pushes(command, argv):
+        return EntryClass.HEAVY
+    return EntryClass.LIGHT
 
 
 def review_need(argv: Sequence[str], modes: Mapping[str, ReviewMode]) -> Need:

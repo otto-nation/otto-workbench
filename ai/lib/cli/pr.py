@@ -55,7 +55,7 @@ from cli.pr_commands import (
     cmd_gc,
     cmd_status,
 )
-from cli.registry import COMMANDS, CommandSpec, contract_for, need_for, queue_for
+from cli.registry import COMMANDS, CommandSpec, contract_for, need_for
 from cli.schema import (
     EXIT_USAGE,
     checked_schema_version,
@@ -812,7 +812,7 @@ def main(argv: list[str] | None = None, *, bin_dir: Path) -> int:
     queued = cli.queue_gate.gate(
         args.command, extra,
         reexec=(sys.executable, str(bin_dir / SCRIPT), *argv),
-        entry_class=queue_for(spec, extra),
+        entry_class=cli.queue_gate.class_for(args.command, extra),
         label=cli.queue_gate.label_for(
             args.command, extra, pr_ref=original_pr,
             branch=original_branch, repo_dir=original_repo_dir),

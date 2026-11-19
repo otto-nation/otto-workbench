@@ -19,8 +19,8 @@ import cli.review_modes  # noqa: E402
 from cli.needs import (  # noqa: E402
     LOCAL, NO_LOCK, NONE, REMOTE, REVIEW_DEFAULT_NEED, REVIEW_MODE_NEED, REVIEW_SELF_NEED,
     TARGET_AND_CHECKOUT, TARGET_ONLY, Need, ReviewMode, argv_without_mode, ci_need,
-    ci_queue, comments_need, comments_queue, create_queue, describe_queue, has_flag,
-    rebase_need, rebase_queue, review_modes, review_need, review_queue,
+    comments_need, git_pushes, has_flag, rebase_need, review_modes, review_need,
+    runs_agent, ticket_class,
 )
 from otto_queue.model import EntryClass  # noqa: E402
 import pr.context  # noqa: E402
@@ -313,44 +313,61 @@ def test_need_allows_create_at_remote():
     assert Need(REMOTE, update=True, locks=TARGET_ONLY, worktree=CREATE).worktree is CREATE
 
 
-def test_comments_queue_keys_on_triage_and_fix_never_finish():
-    assert comments_queue(["--finish"]) is None
-    assert comments_queue(["--finish", "--post"]) is None
-    assert comments_queue(["--triage", "--finish"]) is EntryClass.LIGHT
-    assert comments_queue(["--fix", "--finish"]) is EntryClass.HEAVY
-    assert comments_queue(["--reply", "1"]) is None
+def test_git_pushes():
+    assert git_pushes("push", [])
+    assert git_pushes("rebase", [])
+    assert git_pushes("rebase", ["--push-only"])
+    assert git_pushes("rebase", ["--fix"])
+    assert not git_pushes("rebase", ["--no-push"])
+    assert not git_pushes("rebase", ["--abort"])
+    assert not git_pushes("rebase", ["--fix", "--no-push"])
+    assert git_pushes("create", [])
+    assert git_pushes("create", ["--title", "t", "--body", "b"])
+    assert not git_pushes("create", ["--dry-run"])
+    assert not git_pushes("ci", [])
+    assert not git_pushes("describe", ["--body", "x"])
 
 
-def test_create_queue_is_none_only_with_title_and_body():
-    assert create_queue([]) is EntryClass.LIGHT
-    assert create_queue(["--title", "t", "--body", "b"]) is None
-    assert create_queue(["--title", "t"]) is EntryClass.LIGHT
+def test_runs_agent():
+    assert runs_agent("fix", [], MODES)
+    assert runs_agent("ci", ["--fix"], MODES)
+    assert runs_agent("comments", ["--fix"], MODES)
+    assert runs_agent("rebase", ["--fix"], MODES)
+    assert runs_agent("review", [], MODES)
+    assert runs_agent("review", ["--recover"], MODES)
+    assert runs_agent("review", ["--self", "--fix"], MODES)
+    assert not runs_agent("review", ["--post"], MODES)
+    assert not runs_agent("review", ["--self", "--track"], MODES)
+    assert runs_agent("review", ["--self", "--track", "--fix"], MODES)
+    assert not runs_agent("comments", ["--triage"], MODES)
+    assert not runs_agent("create", [], MODES)
 
 
-def test_describe_queue_is_none_with_body_or_body_file():
-    assert describe_queue([]) is EntryClass.LIGHT
-    assert describe_queue(["--body", "x"]) is None
-    assert describe_queue(["--body-file", "f"]) is None
+def test_ticket_class_skips_when_no_locks():
+    need = Need(NONE, update=False, locks=NO_LOCK)
+    assert ticket_class(need, "board", [], MODES) is None
+    assert ticket_class(need, "push", [], MODES) is None
 
 
-def test_ci_and_rebase_queue_are_heavy_only_for_fix():
-    assert ci_queue([]) is None
-    assert ci_queue(["--fix"]) is EntryClass.HEAVY
-    assert rebase_queue(["--fix"]) is EntryClass.HEAVY
-    assert rebase_queue(["--fix", "--abort"]) is None
-    assert rebase_queue(["--fix", "--push-only"]) is None
+def test_ticket_class_heavy_for_agent_or_push():
+    locked = Need(REMOTE, update=False, locks=TARGET_AND_CHECKOUT)
+    target = Need(REMOTE, update=False, locks=TARGET_ONLY)
+    assert ticket_class(locked, "rebase", ["--push-only"], MODES) is EntryClass.HEAVY
+    assert ticket_class(locked, "push", [], MODES) is EntryClass.HEAVY
+    assert ticket_class(locked, "rebase", [], MODES) is EntryClass.HEAVY
+    assert ticket_class(locked, "create", [], MODES) is EntryClass.HEAVY
+    assert ticket_class(locked, "rebase", ["--fix"], MODES) is EntryClass.HEAVY
+    assert ticket_class(target, "ci", ["--fix"], MODES) is EntryClass.HEAVY
+    assert ticket_class(target, "review", [], MODES) is EntryClass.HEAVY
 
 
-def test_rebase_queue_is_light_unless_abort_push_only_or_fix():
-    assert rebase_queue([]) is EntryClass.LIGHT
-    assert rebase_queue(["--fix"]) is EntryClass.HEAVY
-    assert rebase_queue(["--abort"]) is None
-    assert rebase_queue(["--push-only"]) is None
-    assert rebase_queue(["--fix", "--abort"]) is None
-
-
-def test_review_queue_skips_local_handlers():
-    assert review_queue(["--post"], MODES) is None
-    assert review_queue(["--recover"], MODES) is EntryClass.HEAVY
-    assert review_queue(["--self", "--track"], MODES) is None
-    assert review_queue([], MODES) is EntryClass.HEAVY
+def test_ticket_class_light_when_locked_but_neither():
+    locked = Need(REMOTE, update=False, locks=TARGET_AND_CHECKOUT)
+    target = Need(REMOTE, update=False, locks=TARGET_ONLY)
+    assert ticket_class(locked, "rebase", ["--abort"], MODES) is EntryClass.LIGHT
+    assert ticket_class(locked, "rebase", ["--no-push"], MODES) is EntryClass.LIGHT
+    assert ticket_class(locked, "describe", ["--body", "x"], MODES) is EntryClass.LIGHT
+    assert ticket_class(locked, "comments", ["--finish"], MODES) is EntryClass.LIGHT
+    assert ticket_class(target, "ci", [], MODES) is EntryClass.LIGHT
+    assert ticket_class(target, "gc", [], MODES) is EntryClass.LIGHT
+    assert ticket_class(target, "review", ["--post"], MODES) is EntryClass.LIGHT

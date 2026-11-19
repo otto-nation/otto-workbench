@@ -78,15 +78,22 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
     return argv + ["--repo-dir", worktree]
 
 
-def queues_itself(step: Step, ai: bool) -> bool:
+def queues_itself(step: Step) -> bool:
     """Whether the child takes an otto-queue ticket.
 
-    True for review, comments, and rebase (any); CI only when *ai*. Must agree
-    with `cli.registry`'s `queue=` for the argv `step_argv` builds — held by a
-    test.
+    True for every step `step_argv` builds. Must agree with
+    `cli.queue_gate.class_for` for that argv; held by
+    `test_queues_itself_matches_the_cli_registry`.
     """
-    return step in (Step.REVIEW, Step.COMMENTS, Step.REBASE) or (
-        ai and step is Step.CI)
+    return step in (Step.REVIEW, Step.COMMENTS, Step.REBASE, Step.CI)
+
+
+def is_heavy(step: Step, ai: bool) -> bool:
+    """Whether the ticket is HEAVY: review and comments always carry
+    `--fix`; rebase and CI are HEAVY only with AI. Must agree with
+    `cli.needs.ticket_class`; held by `test_is_heavy_matches_ticket_class`.
+    """
+    return step in (Step.REVIEW, Step.COMMENTS) or ai
 
 
 @dataclass(frozen=True)

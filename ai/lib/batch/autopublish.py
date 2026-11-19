@@ -89,7 +89,10 @@ def fast_forward(run: Run, item: Item, debt: CloseoutDebt, *, unpublished: bool,
     if not (plan.ok and plan.pushes and plan.commands[0][1] == "push"):
         return FastForward.SKIPPED
     log = batch.store.attempt_log_path(run.id, item.repo, item.pr, "publish")
-    if runner(plan.commands[0], log_path=log) != 0:
+    # --no-queue: the scheduler blocks on this child, so a heavy ticket could
+    # wait on slots its own adopted children hold.
+    push = [plan.commands[0][0], "--no-queue", *plan.commands[0][1:]]
+    if runner(push, log_path=log) != 0:
         lines = log.read_text(errors="replace").splitlines() if log.is_file() else []
         found = batch.outcomes.classify_failure(last_command(lines))
         batch.findings.record(

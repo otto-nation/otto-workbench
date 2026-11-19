@@ -31,9 +31,8 @@ from cli.needs import (  # noqa: E402
     LOCAL, NO_LOCK, NONE, REMOTE, TARGET_AND_CHECKOUT, TARGET_ONLY, Need,
 )
 from cli.registry import (  # noqa: E402
-    COMMANDS, CommandSpec, need_for, queue_for, validate_needs, validate_queue_classes,
+    COMMANDS, CommandSpec, need_for, validate_needs,
 )
-from otto_queue.model import EntryClass  # noqa: E402
 import core.timeouts  # noqa: E402
 import core.tool_parser  # noqa: E402
 import pr.context  # noqa: E402
@@ -424,26 +423,6 @@ def test_a_spec_cannot_be_built_without_a_need():
         CommandSpec(name="listing", help="list reviews")
 
 
-def test_a_spec_cannot_be_built_without_a_queue():
-    """`queue` is required like `need`, so a command silent about its class cannot exist."""
-    with pytest.raises(TypeError):
-        CommandSpec(name="listing", help="list reviews",
-                    need=Need(REMOTE, update=False, locks=NO_LOCK),
-                    contract="cli.pr_commands:STATUS_CONTRACT")
-
-
-def test_a_resolver_returning_a_non_class_is_rejected():
-    with pytest.raises(RuntimeError, match="listing"):
-        validate_queue_classes({
-            "listing": command_spec(name="listing", queue=lambda argv: True),
-        })
-
-
-def test_every_command_declares_a_queue():
-    for name, spec in COMMANDS.items():
-        assert isinstance(queue_for(spec, []), (EntryClass, type(None))), name
-
-
 def test_a_resolver_returning_a_non_need_is_rejected():
     """A callable declaration is checked by resolving it, not by trusting it."""
     with pytest.raises(RuntimeError, match="listing"):
@@ -502,7 +481,7 @@ def test_the_check_runs_at_this_module_s_import(tmp_path):
         "COMMANDS: dict[str, CommandSpec] = dict(\n"
         "    {s.name: s for s in _SPECS},\n"
         "    listing=CommandSpec('listing', 'list reviews', need=None, "
-        "contract='cli.pr_commands:STATUS_CONTRACT', queue=None),\n"
+        "contract='cli.pr_commands:STATUS_CONTRACT'),\n"
         ")",
     )
     assert broken != source, "the registry no longer keys _SPECS as expected"

@@ -38,10 +38,8 @@ import cli.review_modes
 import pr.context
 from cli.needs import (
     LOCAL, NO_LOCK, NONE, REMOTE, TARGET_AND_CHECKOUT, TARGET_ONLY, Need,
-    ci_need, ci_queue, comments_need, comments_queue, create_queue,
-    describe_queue, has_flag, rebase_need, rebase_queue,
+    ci_need, comments_need, has_flag, rebase_need,
 )
-from otto_queue.model import EntryClass
 
 if TYPE_CHECKING:
     from core.command_contract import CommandContract
@@ -60,10 +58,6 @@ class CommandSpec:
       silent about the four axes is exactly what `validate_needs` refuses, and
       a default would answer for it before the check ever ran. (`Need` itself
       refuses CREATE at LOCAL and NONE, so no declaration can carry it.)
-    * ``queue`` — which otto-queue class this invocation waits in, or None to
-      run without a ticket. A command whose class varies by flag declares a
-      callable over its argv; `queue_for` reads both shapes. No default: a
-      command silent about its class is refused like a missing `need`.
     * ``handler`` — ``"<module>:<attr>"`` naming the in-process callable, or
       None when the wrapper is still binary-local. A string, not a callable:
       dispatch imports it at call time so `pr --help` does not. Defaulted to
@@ -112,7 +106,6 @@ class CommandSpec:
     help: str
     need: Need | Callable[[Sequence[str]], Need]
     contract: str
-    queue: EntryClass | None | Callable[[Sequence[str]], EntryClass | None]
     script: str | None = None
     takes_target: bool = True
     handler: str | None = None
@@ -121,8 +114,8 @@ class CommandSpec:
 
 
 # `ci_need`, `comments_need` and `rebase_need` live in `cli.needs` because the
-# delegates import them to pass `worktree=` to `pr.context.resolve`. These two
-# are read only by this table, so they stay beside it.
+# delegates import them to pass `worktree=` to `pr.context.resolve`. `_create_need`
+# is read only by this table, so it stays beside it.
 def _create_need(argv: Sequence[str]) -> Need:
     """`create`'s need: a `--dry-run` pushes and creates nothing, so it takes no lock."""
     locks = NO_LOCK if has_flag(argv, "--dry-run") else TARGET_AND_CHECKOUT
@@ -136,15 +129,15 @@ _SPECS: tuple[CommandSpec, ...] = (
     # from reading a flag value — `pr create --title 3057` — as a PR target.
     # Its need varies by flag, like review's: a preview holds no run lock.
     CommandSpec("create",   "Create a PR, or preview it with --dry-run",
-                _create_need, takes_target=False, queue=create_queue,
+                _create_need, takes_target=False,
                 handler="cli.pr_create:cmd_create",
                 contract="cli.pr_create:CONTRACT"),
     CommandSpec("status",   "Show CI, review, and comment status dashboard",
-                Need(LOCAL,  update=False, locks=NO_LOCK), queue=None,
+                Need(LOCAL,  update=False, locks=NO_LOCK),
                 handler="cli.pr_commands:cmd_status",
                 contract="cli.pr_commands:STATUS_CONTRACT"),
     CommandSpec("ci",       "Check CI failures",
-                ci_need,  script="ci-check", queue=ci_queue,
+                ci_need,  script="ci-check",
                 handler="cli.ci_check:main",
                 contract="cli.ci_check:CONTRACT"),
     # Like create, a spec whose declaration its own argv resolves. `cli.review_modes`
@@ -157,48 +150,44 @@ _SPECS: tuple[CommandSpec, ...] = (
     # performs the command.
     CommandSpec("review",   "Run code review",
                 cli.review_modes.need_for,              script="review",
-                queue=cli.review_modes.queue_for,
                 handler="cli.review_entry:main",
                 contract="cli.review_entry:CONTRACT"),
     CommandSpec("comments", "Fetch and manage PR review threads",
-                comments_need,  script="review-threads", queue=comments_queue,
+                comments_need,  script="review-threads",
                 handler="cli.review_threads:main",
                 contract="cli.review_threads:CONTRACT"),
     CommandSpec("fix",      "Fix CI + review + comments",
                 Need(REMOTE, update=True,  locks=TARGET_AND_CHECKOUT,
                      worktree=pr.context.WorktreeNeed.CREATE),
-                queue=EntryClass.HEAVY,
                 handler="cli.pr_commands:cmd_fix",
                 contract="cli.pr_commands:FIX_CONTRACT"),
     CommandSpec("rebase",   "Rebase onto the branch's base",
-                rebase_need,  script="pr-rebase", queue=rebase_queue,
+                rebase_need,  script="pr-rebase",
                 handler="cli.pr_rebase:main",
                 contract="cli.pr_rebase:CONTRACT"),
     # A plain leased push of HEAD. Git alone answers it, so LOCAL; an explicit
     # --pr still escalates through resolve_at. No backing script: the handler
     # and its parser are the whole command, as with create.
     CommandSpec("push",     "Push HEAD with a lease on the remote head you expect",
-                Need(LOCAL,  update=False, locks=TARGET_AND_CHECKOUT), queue=None,
+                Need(LOCAL,  update=False, locks=TARGET_AND_CHECKOUT),
                 handler="cli.pr_push:main",
                 contract="cli.pr_push:CONTRACT"),
     CommandSpec("describe", "Revise the PR description",
                 Need(REMOTE, update=True,  locks=TARGET_AND_CHECKOUT),
-                script="pr-describe", queue=describe_queue,
+                script="pr-describe",
                 handler="cli.pr_describe:main",
                 contract="cli.pr_describe:CONTRACT"),
     # A read of GitHub and the local refs; no lock, no fetch of its own.
     CommandSpec("stack",    "Show the repo's PR stack graph (JSON)",
-                Need(LOCAL,  update=False, locks=NO_LOCK), queue=None,
+                Need(LOCAL,  update=False, locks=NO_LOCK),
                 handler="cli.pr_stack:main",
                 contract="cli.pr_stack:CONTRACT"),
     CommandSpec("board",    "PR board document: facts, lanes, badges (JSON)",
                 Need(NONE, update=False, locks=NO_LOCK), takes_target=False,
-                queue=None,
                 handler="cli.pr_board:cmd_board",
                 contract="cli.pr_board:CONTRACT"),
     CommandSpec("models",   "Models a phase can be set to (JSON)",
                 Need(NONE, update=False, locks=NO_LOCK), takes_target=False,
-                queue=None,
                 handler="cli.pr_models:cmd_models",
                 contract="cli.pr_models:CONTRACT"),
     # Orchestrates other commands across many PRs, so it resolves no target of
@@ -211,7 +200,6 @@ _SPECS: tuple[CommandSpec, ...] = (
     # on `git.client`'s fetch mutex.
     CommandSpec("batch",    "Run rebase, CI fixes, comments and self-review across my open PRs",
                 Need(NONE, update=False, locks=NO_LOCK), takes_target=False,
-                queue=None,
                 handler="cli.pr_batch:cmd_batch", parses_own_argv=True,
                 parser="cli.pr_batch:build_parser",
                 contract="cli.pr_batch:CONTRACT"),
@@ -220,12 +208,11 @@ _SPECS: tuple[CommandSpec, ...] = (
     # line to the target's history with a single O_APPEND write.
     CommandSpec("target",   "One PR target's session: report, session, note",
                 Need(LOCAL, update=False, locks=NO_LOCK), takes_target=False,
-                queue=None,
                 handler="cli.pr_target:cmd_target", parses_own_argv=True,
                 parser="cli.pr_target:build_parser",
                 contract="cli.pr_target:CONTRACT"),
     CommandSpec("gc",       "Clean up stale PR artifacts",
-                Need(REMOTE, update=False, locks=TARGET_ONLY), queue=None,
+                Need(REMOTE, update=False, locks=TARGET_ONLY),
                 handler="cli.pr_commands:cmd_gc",
                 contract="cli.pr_commands:GC_CONTRACT"),
 )
@@ -241,14 +228,6 @@ def need_for(spec: CommandSpec, argv: Sequence[str]) -> Need:
     shapes, so nothing downstream has to know which kind a spec carries.
     """
     return spec.need(argv) if callable(spec.need) else spec.need
-
-
-def queue_for(spec: CommandSpec, argv: Sequence[str]) -> EntryClass | None:
-    """The queue class this invocation declares, or None to run unqueued.
-
-    Same two shapes as `need_for`: a constant, or a callable over argv.
-    """
-    return spec.queue(argv) if callable(spec.queue) else spec.queue
 
 
 def contract_for(spec: CommandSpec) -> "CommandContract":
@@ -287,24 +266,4 @@ def validate_needs(commands: dict[str, CommandSpec]) -> None:
         )
 
 
-def validate_queue_classes(commands: dict[str, CommandSpec]) -> None:
-    """Raise unless every command declares a queue class or None.
-
-    A callable is resolved over an empty argv, so a resolver that returns
-    something other than an EntryClass or None for the plain invocation fails
-    at import rather than at the first dispatch.
-    """
-    undeclared = [
-        name for name, spec in commands.items()
-        if not isinstance(queue_for(spec, []), (EntryClass, type(None)))
-    ]
-    if undeclared:
-        raise RuntimeError(
-            "pr: commands declare no queue class: " + ", ".join(undeclared)
-            + " — add queue=EntryClass.HEAVY (or LIGHT, None, or a callable) "
-            "to each CommandSpec"
-        )
-
-
 validate_needs(COMMANDS)
-validate_queue_classes(COMMANDS)

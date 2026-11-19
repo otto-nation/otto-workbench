@@ -62,10 +62,11 @@ _run_step() {
   ' _ "$REPO_ROOT" "$SRC" "$UNTRUSTED" "$MANIFEST"
 }
 
-@test "jq adds the board to panel-body after files and changes" {
+@test "jq puts the workbench panels on panel-body without files and changes" {
   run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
   [ "$status" -eq 0 ]
-  jq -e '[.. | objects | select(.id? == "panel-body") | .children | map(.id)] == [["files","changes","prs-panel","queue-panel","hosts-panel","sessions-panel"]]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "panel-body") | .children | map(.id)] == [["prs-panel","queue-panel","hosts-panel","sessions-panel"]]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "panel-body") | .active] == ["prs-panel"]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "prs-panel") | .content.mod] == ["prs"]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "queue-panel") | .content] == [{"mod":"queue"}]' <<< "$output"
   jq -e '[.. | objects | select(.id? == "hosts-panel") | .content] == [{"mod":"hosts"}]' <<< "$output"
@@ -298,7 +299,7 @@ _run_step() {
   _seed_main
   run _run_step
   [ "$status" -eq 0 ]
-  [[ "$output" == *'herdr-app: show the workbench layout (PRs, Queue, Hosts and Sessions toggles beside Files/Changes open those panels) with: herdr-app do layout.switch --name workbench'* ]]
+  [[ "$output" == *'herdr-app: show the workbench layout (PRs, Queue, Hosts and Sessions toggles open those panels) with: herdr-app do layout.switch --name workbench'* ]]
   run _run_step
   [ "$status" -eq 0 ]
   [[ "$output" != *'layout.switch --name workbench'* ]]

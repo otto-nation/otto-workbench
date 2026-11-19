@@ -197,14 +197,68 @@ teardown() {
   [ "$status" -eq 0 ]
 }
 
-@test "path_matches: directory containment" {
+@test "path_matches: a directory prefix is not a match" {
   run _path_matches "lib/ai/session-count.sh" "lib/ai"
-  [ "$status" -eq 0 ]
+  [ "$status" -ne 0 ]
 }
 
 @test "path_matches: no match across directories" {
   run _path_matches "bin/otto-workbench" "lib/ui.sh"
   [ "$status" -ne 0 ]
+}
+
+@test "path_matches: a sibling in the same directory is not a match" {
+  run _path_matches "bin/local/select-tests" "bin/local/validate-all"
+  [ "$status" -ne 0 ]
+}
+
+@test "path_matches: a nested file is not under a parent directory ref" {
+  run _path_matches "lib/ai/session-count.sh" "lib"
+  [ "$status" -ne 0 ]
+  run _path_matches "ai/lib/pi_sessions/listing.py" "ai/lib"
+  [ "$status" -ne 0 ]
+  run _path_matches "ai/lib/core.py" "ai/lib"
+  [ "$status" -ne 0 ]
+}
+
+@test "select-on star does not cross a directory" {
+  local f="$BATS_TEST_TMPDIR/ext.bats"
+  printf '# select-on: ai/pi/extensions/*\n@test "x" { true; }\n' > "$f"
+  run _test_matches_changes "$f" "ai/pi/extensions/README.md"
+  [ "$status" -eq 0 ]
+  run _test_matches_changes "$f" "ai/pi/extensions/_shared/spend.ts"
+  [ "$status" -ne 0 ]
+}
+
+@test "select-on glob with named files does not select a sibling" {
+  local f="$BATS_TEST_TMPDIR/queue.bats"
+  printf '%s\n' \
+    '# select-on: ai/herdr/app/mods/_lib/*.js' \
+    'import q from "ai/herdr/app/mods/_lib/queue.js"' > "$f"
+  run _test_matches_changes "$f" "ai/herdr/app/mods/_lib/queue.js"
+  [ "$status" -eq 0 ]
+  run _test_matches_changes "$f" "ai/herdr/app/mods/_lib/sessions.js"
+  [ "$status" -ne 0 ]
+}
+
+@test "select-on glob with basename imports does not select a sibling" {
+  local f="$BATS_TEST_TMPDIR/view.bats"
+  printf '%s\n' \
+    '# select-on: ai/herdr/app/mods/_lib/*.js' \
+    'import(L + "/queue.js")' > "$f"
+  run _test_matches_changes "$f" "ai/herdr/app/mods/_lib/queue.js"
+  [ "$status" -eq 0 ]
+  run _test_matches_changes "$f" "ai/herdr/app/mods/_lib/sessions.js"
+  [ "$status" -ne 0 ]
+}
+
+@test "select-on glob with no named files still selects every match" {
+  local f="$BATS_TEST_TMPDIR/scan.bats"
+  printf '%s\n' \
+    '# select-on: ai/herdr/app/mods/_lib/*.js' \
+    'grep x "$MODS"/_lib/*.js' > "$f"
+  run _test_matches_changes "$f" "ai/herdr/app/mods/_lib/sessions.js"
+  [ "$status" -eq 0 ]
 }
 
 @test "extract_refs: a packages/setup.sh path is a source ref" {
@@ -229,17 +283,20 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
-@test "run-tests, the selectors, Taskfile and conftest trigger the full suite" {
+@test "run-tests, Taskfile and conftest trigger the full suite" {
   run _is_full_suite_trigger "bin/local/run-tests"
-  [ "$status" -eq 0 ]
-  run _is_full_suite_trigger "bin/local/select-tests"
-  [ "$status" -eq 0 ]
-  run _is_full_suite_trigger "bin/local/select-pytest"
   [ "$status" -eq 0 ]
   run _is_full_suite_trigger "Taskfile.yml"
   [ "$status" -eq 0 ]
   run _is_full_suite_trigger "tests/conftest.py"
   [ "$status" -eq 0 ]
+}
+
+@test "the selectors are not full-suite triggers" {
+  run _is_full_suite_trigger "bin/local/select-tests"
+  [ "$status" -ne 0 ]
+  run _is_full_suite_trigger "bin/local/select-pytest"
+  [ "$status" -ne 0 ]
 }
 
 @test "the per-area suites for run-tests and select-tests are selected by their refs" {

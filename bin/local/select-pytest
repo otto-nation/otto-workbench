@@ -87,8 +87,6 @@ FULL_SUITE_TRIGGERS = {
     "tests/test_nesting/conftest.py",
     "pyproject.toml",
     "bin/local/run-tests",
-    "bin/local/select-pytest",
-    "bin/local/select-tests",
     "tests/test_helper.bash",
     "Taskfile.yml",
 }

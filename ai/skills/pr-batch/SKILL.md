@@ -9,11 +9,13 @@ skip: "Do not use for a single PR (use pr-rebase, pr-comments, or ci-failures in
 
 # PR Batch
 
-Sweeps the viewer's open PRs with `pr batch`: rebase, CI, comments, and
-opt-in self-review, each as a drafted child. Nothing is pushed unless
-`--auto-publish ff`. A default run never waits on a decision: it exits 0 and
-`pr batch report` / `<run-dir>/report.md` prints what needs a person.
-This skill adds no lifecycle of its own — it wraps the CLI.
+Sweeps the viewer's open PRs with `pr batch`: rebase, CI, and comments, each as
+a drafted child. Nothing is pushed unless `--auto-publish ff`. `run` submits
+ready jobs and returns. A default run never waits on a decision: it exits 0
+when every still-needed step was submitted or already succeeded, 1 when
+something needed remains unsubmitted. `pr batch report` / `<run-dir>/report.md`
+prints what needs a person. This skill adds no lifecycle of its own — it wraps
+the CLI.
 
 Run with `/pr-batch`.
 
@@ -21,8 +23,8 @@ Run with `/pr-batch`.
 
 ## When to use
 
-Several open PRs need updating, rebasing, CI, comments, or self-review in one
-pass. For one PR, use `pr-rebase`, `pr-comments`, or `ci-failures` instead.
+Several open PRs need updating, rebasing, CI, or comments in one pass. For one
+PR, use `pr-rebase`, `pr-comments`, or `ci-failures` instead.
 
 ---
 
@@ -47,39 +49,40 @@ Do these before `pr batch run`. They are not automatic.
 
 ## Run
 
-Start as a background job; it streams NDJSON and can run a long time:
+`run` is one-shot: it plans (unless `--plan` or `--continue`), submits ready
+jobs to otto-queue, and returns. It is not a long-running driver.
 
 ```bash
 pr batch run --checkout DIR
 ```
 
-`run` plans for itself. Default `--steps` is rebase,ci,comments (no AI, no
-review). Last line is `run_summary`. Exit 0 is done or cancelled. Read
-`<run-dir>/report.md`. Per PR, run its printed commands, or re-run that PR
-with AI:
+`run` plans for itself. Default `--steps` is rebase,ci,comments (no AI). Review
+is not in the thin orchestrator yet (`--with-review` is a usage error). It
+emits `run_started` and returns. Exit 0 is every still-needed step submitted or already
+succeeded; 1 is something needed left unsubmitted. `pr batch report ID` joins
+live queue + git + GitHub.
+Per PR, run its printed commands, or submit again on that run:
+`pr batch run --continue ID`. To limit a new run:
 `pr batch run --checkout DIR --prs o/r#N --select o/r#N=rebase --with-ai=rebase`.
 
-`--with-ai=rebase,ci,comments` restores today's AI argv. `--with-review` adds
-review. `--prs` limits keys; `--select KEY=STEPS` runs exactly those steps for
-one PR. `--rebase behind` also rebases PRs that are only behind their base;
-by default the rebase step takes only PRs that conflict with it.
-`--auto-publish ff` (fast-forward only). `--no-verify` skips
-the pre-push hook on publishes the batch makes; persist it only when the user
-has already read a hook failure.
+`--with-ai=rebase,ci,comments` restores today's AI argv. `--prs` limits keys;
+`--select KEY=STEPS` runs exactly those steps for one PR. `--rebase behind`
+also rebases PRs that are only behind their base; by default the rebase step
+takes only PRs that conflict with it. `--auto-publish ff` (fast-forward only).
+`--no-verify` skips the pre-push hook on publishes the batch makes; persist it
+only when the user has already read a hook failure. `--continue ID` is the
+idempotent submit: ready jobs on an existing run, no new id.
 
 ---
 
 ## Cost control
 
-- Prefer `--steps rebase,ci,comments` unless the user asked for review.
-- `--select o/r#N=review` reviews one PR without reviewing the rest.
-- `pr batch resume --steps rebase,ci,comments` **may only narrow** an
-  interrupted run. Excluded pending steps become skipped; a later rebase
-  commit does not re-queue a dropped review. Adding a step is refused
-  (exit 2): start a new run to add one.
-- `pr batch release RUN_ID PR` drops one non-terminal PR and frees its
-  locks; the worktree stays. Terminal items are refused. `pr batch cancel RUN_ID`
-  stops the whole run.
+- Prefer `--steps rebase,ci,comments` unless the user asked for more.
+- `--select o/r#N=ci` runs one step on one PR without touching the rest.
+- `pr batch run --continue ID` submits what is now ready on that run. It does
+  not add steps; start a new run to change the set.
+- `pr batch cancel RUN_ID` stops the run's queue jobs; a recorded cancel is
+  final.
 
 ---
 
@@ -101,7 +104,6 @@ command: read the log or wait.
 | `ready_to_push` | local work is ready under the lease | printed `pr push --expect` / `pr rebase --push-only --expect` |
 | `wrong_branch` | worktree is on another branch | `git -C WT switch <branch>` |
 | `push_refused` | `publish.plan` refused | refusal names only the rewritten commits: see `ready_to_push` and § Push protocol; otherwise read the refusal |
-| `stack_wait_base` | base PR is still open | none — wait for it to merge |
 | `dirty_worktree` | paused rebase or dirty tree | none — stash, or `pr rebase --abort` when paused |
 | `worktree_collision` | another worktree occupies the path | none — `git worktree move` |
 | `budget_exhausted` | AI quota or spend limit | none — wait for it to reset |
@@ -111,24 +113,11 @@ command: read the log or wait.
 
 ---
 
-## Run session
-
-`pr batch session RUN_ID` opens the run's own pi session in its checkout
-(`pr batch session RUN_ID --json` prints how, for a UI). There the run's history
-and the report's Now block are shown, and the model records each verdict with
-`record_decision`, which runs `pr batch note RUN_ID PR` with `--finding`,
-`--verdict`, `--reason` and `--command`. A note changes no item state: a PR stops
-needing a person only when the report stops showing its finding. Outside that
-session, record a verdict with `pr batch note` directly.
-
----
-
 ## Stacks
 
-`stack_wait_base` waits for the base PR to merge. Then rebase the child;
-`pr rebase` skips the landed parent itself and publish refuses
-`not_incorporated_remote` naming the skipped commits for you to confirm. Do not
-rebase a child onto a base that is still open.
+A stacked child rebases onto its still-open parent. Do not wait for the parent
+to merge. The child's rebase job is ready after the parent's rebase job
+succeeds in the same run; there is no wait-for-merge `stack_wait_base`.
 
 ---
 
@@ -174,4 +163,4 @@ only when the user explicitly asks. Never file because deferred threads exist.
 
 ## Rules
 
-- Never kill a live batch driver; `pr batch status RUN_ID` / `pr batch cancel`.
+- Never kill otto-queue workers to stop a batch; `pr batch cancel RUN_ID`.

@@ -253,3 +253,9 @@ _trail() {
   [[ "$output" == *'otto-log show "$1"'* ]]
   [[ "$output" == *'exec "${SHELL:-/bin/sh}"'* ]]
 }
+
+@test "pr batch session is absent from herdr mods" {
+  run grep -R -l -- 'pr batch session' "$REPO_ROOT/ai/herdr/app/mods"
+  [ "$status" -eq 1 ]
+  [ -z "$output" ]
+}

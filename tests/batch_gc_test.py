@@ -47,10 +47,11 @@ def _item(status=ItemStatus.DONE, step_status=StepStatus.DONE, drafted=False,
 
 
 def _save(run_id, status=RunStatus.DONE, item=None, decisions=(), age_days=10.0,
-          namespace="refs/pr-batch/abcd", ref_dirs=("/r",)):
+          namespace="refs/pr-batch/abcd", ref_dirs=("/r",), schema_version=3):
     run = Run(id=run_id, started_at="t", steps=[Step.REBASE], pool=1, auto_publish=[],
               status=status, items=[item or _item()], decisions=list(decisions),
-              ref_namespace=namespace, ref_dirs=list(ref_dirs))
+              ref_namespace=namespace, ref_dirs=list(ref_dirs),
+              schema_version=schema_version)
     core.serde.write_json(batch.store.run_dir(run.id) / batch.store.STATE_FILE,
                           core.serde.to_dict(run))
     stamp = NOW - age_days * DAY
@@ -79,6 +80,14 @@ def test_only_finished_runs_are_removed(status, removed, dropped_refs):
     _save("r1", status=status, age_days=365)
     assert batch.gc.gc_runs(now=NOW) == int(removed)
     assert _remaining() == ([] if removed else ["r1"])
+
+
+def test_gc_drops_pre_v3_in_flight_runs_past_retention(dropped_refs):
+    _save("driver", status=RunStatus.RUNNING, age_days=365, schema_version=2)
+    _save("young", status=RunStatus.RUNNING, age_days=0.1, schema_version=2)
+    _save("thin", status=RunStatus.RUNNING, age_days=365, schema_version=3)
+    assert batch.gc.gc_runs(now=NOW) == 1
+    assert _remaining() == ["thin", "young"]
 
 
 def test_a_clean_run_is_kept_until_the_stale_window(dropped_refs):

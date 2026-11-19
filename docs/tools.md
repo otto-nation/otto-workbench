@@ -1147,28 +1147,19 @@ Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [con
 
 | Flag | Description |
 |------|-------------|
-| `--checkout` `<dir>` | A checkout whose open PRs to run on; repeatable. Not with `--plan`. |
-| `--plan` `<file>` | A saved `pr batch plan` document. Not with `--checkout`. |
-| `--steps` `<steps>` | Comma-separated steps, any of rebase,ci,comments,review (default: rebase,ci,comments; review needs --with-review). Each runs only on PRs the plan marks as needing it. |
-| `--with-ai` `<steps>` | Run these steps with today's AI argv; any of rebase,ci,comments. review needs --with-review. |
-| `--with-review` | Add the review step (today's argv). |
-| `--pool` `<pool>` | Concurrency ceiling. |
+| `--checkout` `<dir>` | A checkout whose open PRs to run on; repeatable. Not with `--plan`, `--continue`. |
+| `--plan` `<file>` | A saved `pr batch plan` document. Not with `--checkout`, `--continue`. |
+| `--continue` `<id>` | Submit ready jobs on an existing run; do not mint a new id. Not with `--checkout`, `--plan`. |
+| `--steps` `<steps>` | Comma-separated steps, any of rebase,ci,comments,review (default: rebase,ci,comments; review is not in the thin orchestrator yet). Each runs only on PRs the plan marks as needing it. |
+| `--with-ai` `<steps>` | Run these steps with today's AI argv; any of rebase,ci,comments. |
 | `--auto-publish` `<ff>` | Push a clean fast-forward (`pr push --expect`) when an item closes with no findings; never a force push, closeout post or issue filing. |
 | `--rebase` `<conflicts\|behind>` | Which PRs the rebase step takes: only those that conflict with their base (default), or every PR behind it. |
 | `--prs` `<prs>` | Comma-separated repo#number keys to include. |
 | `--select` `<key=steps>` | Run exactly these steps for one PR. Repeatable. |
-| `--no-verify` | Skip the pre-push hook on every publish push (CI still runs the gates). Persisted on the run so resume honors it. |
+| `--no-verify` | Skip the pre-push hook on every publish push (CI still runs the gates). Persisted on the run so --continue honors it. |
 | `--focus` `<text>` | An area the review must cover (repeatable; each text at most 4096 bytes; at most 5 texts). |
 | `--focus-file` `<path>` | A file whose contents are a focus area (repeatable; each file at most 4096 bytes; at most 5 texts). |
 | `--verbose` | Also stream each step's stderr as step_log events (it is always in the run's logs/). |
-
-**`pr batch resume`** — Continue a run
-
-| Flag | Description |
-|------|-------------|
-| `[<run-id>]` | Run to continue (default: this repo's newest unfinished covering run, else its newest covering; refused when several unfinished runs cover this repo). |
-| `--steps` `<steps>` | Narrow the run to these steps (a subset of the run's). Each excluded pending step becomes skipped; a later commit does not re-queue a dropped review. Adding a step is refused. |
-| `--verbose` | Also stream each step's stderr as step_log events. |
 
 **`pr batch cancel`** — Stop the run; a recorded cancel is final
 
@@ -1177,14 +1168,6 @@ Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [con
 | `[<run-id>]` | Run to cancel (default: this repo's newest unfinished covering run, else its newest covering; refused when several unfinished runs cover this repo). |
 | `--kill` | Also terminate running steps. |
 
-**`pr batch release`** — Free one PR from a run without cancelling it
-
-| Flag | Description |
-|------|-------------|
-| `<run-id>` | Run holding the PR. |
-| `<pr>` | Item key owner/repo#N, or a PR number unique in the run. |
-| `--kill` | Also terminate the item's running step. |
-
 **`pr batch status`** — Print a run's report: what needs action, and why (JSON)
 
 | Flag | Description |
@@ -1192,7 +1175,7 @@ Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [con
 | `[<run-id>]` | Run to show (default: this repo's newest unfinished covering run, else its newest covering, else the latest). |
 | `--full` | Print the raw run state instead of the report. |
 | `--list` | List this machine's runs, newest first, instead of one run's report. |
-| `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. Without it, a read runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), even while a driver holds the run. |
+| `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. Without it, a read runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), even while a job is RUNNING. |
 
 **`pr batch report`** — Print per-PR session commands for a run
 
@@ -1200,25 +1183,7 @@ Exit codes: `0` ok · `1` failure · `2` usage — writes nothing remotely; [con
 |------|-------------|
 | `[<run-id>]` | Run to show (default: this repo's newest unfinished covering run, else its newest covering, else the latest). |
 | `--format` `<json\|md>` | Print JSON or markdown (default: one line per PR, then the report path). |
-| `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. Without it, a read runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), even while a driver holds the run. |
-
-**`pr batch session`** — Open a run's pi session, or print how to (--json)
-
-| Flag | Description |
-|------|-------------|
-| `<run-id>` | Run whose session to open. |
-| `--json` | Print {schema_version, session_id, name, cwd, argv, env} instead of starting pi; UIs open the session from this, never their own argv. |
-
-**`pr batch note`** — Record a verdict on one finding in the run's history; changes no item state
-
-| Flag | Description |
-|------|-------------|
-| `<run-id>` | Run holding the PR. |
-| `<pr>` | Item key owner/repo#N, or a PR number unique in the run. |
-| `--finding` `<reason:step>` | The finding as the report names it: its reason and step. Required. |
-| `--verdict` `<fixed\|dismissed\|deferred\|handed_off>` | What was decided. Required. |
-| `--reason` `<reason>` | Why, in a sentence; must not be empty. Required. |
-| `--command` `<cmd>` | A command run to act on it, as typed; repeatable. |
+| `--offline` | Skip the `github` section: report only what this machine saved, without asking GitHub for the run's repos' open PRs. Without it, a read runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), even while a job is RUNNING. |
 
 **`pr target report`** — Print what this target waits on (JSON), read offline
 

@@ -101,3 +101,26 @@ def test_a_merge_tree_failure_is_unresolved_rather_than_clean(tmp_path, monkeypa
     got = rebase.need.conflict_need(str(repo), "refs/heads/feat", "refs/heads/main",
                                     base_label="main")
     assert got.resolved is False and got.needed is False
+
+
+def test_conflict_paths_returns_the_conflicted_file(tmp_path):
+    repo = _repo_with_feat_conflicting(tmp_path)
+    got = rebase.need.conflict_paths(str(repo), "refs/heads/feat", "refs/heads/main")
+    assert "a.txt" in got
+
+
+def test_conflict_paths_is_empty_on_a_clean_merge(tmp_path):
+    repo = _repo_with_feat_one_behind(tmp_path)
+    got = rebase.need.conflict_paths(str(repo), "refs/heads/feat", "refs/heads/main")
+    assert got == ()
+
+
+def test_conflict_paths_ignores_modify_delete_in_tree_suffix(monkeypatch):
+    class _Merged:
+        returncode = 1
+        stdout = ("CONFLICT (modify/delete): foo.py deleted in HEAD "
+                  "and modified in tree.\n")
+        stderr = ""
+
+    monkeypatch.setattr(rebase.need.git.client, "run", lambda *a, **k: _Merged())
+    assert rebase.need.conflict_paths("/x", "h", "b") == ()

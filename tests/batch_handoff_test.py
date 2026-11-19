@@ -14,14 +14,12 @@ import json
 import os
 import subprocess
 import sys
-import textwrap
 import threading
 import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
-TESTS_DIR = REPO_ROOT / "tests"
 BIN_DIR = REPO_ROOT / "ai" / "bin"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
@@ -29,6 +27,7 @@ if str(LIB_DIR) not in sys.path:
 import pytest  # noqa: E402
 
 import batch.inbox  # noqa: E402
+import batch.orchestrate  # noqa: E402
 import batch.plan  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
@@ -40,7 +39,7 @@ from batch.model import (Decision, DecisionKind, Item, ItemStatus, Run,  # noqa:
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from batch.requests import Cancel, Release  # noqa: E402
 from batch.store import Role  # noqa: E402
-from batch_session_support import NullInbox, open_session, seed, seed_raw, stops_at  # noqa: E402
+from batch_session_support import NullInbox, open_session, seed, seed_raw  # noqa: E402
 from run_lock_support import held_elsewhere  # noqa: E402
 
 RID = "20261014T130000-beef"
@@ -48,7 +47,6 @@ RID = "20261014T130000-beef"
 # loaded runner schedules a fresh interpreter slowly, and a flake here would
 # read as a lock bug.
 _PROC_TIMEOUT = 60
-_POLL_S = 0.05
 # How long a prober keeps the flock: well inside core's retry budget and well
 # past its first pauses, so a take that gets in has really waited.
 _PROBE_S = 0.3
@@ -56,7 +54,7 @@ _POLLER = "batch-status-poller"
 # A record with `released` set reads as vacated whatever its pid.
 _VACATED = {"pid": os.getpid(), "command": "probe", "started": "t", "released": "t"}
 _STRANDED = ("pr batch: run {rid} still has {n} queued request(s) nobody could apply; "
-             "`pr batch resume {rid}` or another resolve will apply them")
+             "`pr batch run --continue {rid}` or `pr batch cancel {rid}`")
 
 
 def _no_command(*args, **kwargs) -> int:
@@ -255,87 +253,6 @@ def test_a_hand_off_that_cannot_get_in_warns_and_leaves_the_request(holder, othe
     assert next(d for d in batch.store.load(RID).decisions if d.id == "d1").open
 
 
-# ── two real processes ────────────────────────────────────────────────────────
-
-# One process holding the run open through `batch.store.session`, parked until
-# the test writes `release`.
-# - "applier" queues a `park` request inside its own block. Its `finish`
-#   drain parks in that request's apply, after the peek that will not see
-#   anything submitted later.
-# - "driver" calls `finish()` itself and parks after it, still inside the
-#   block.
-# Either way the run's lock is held while the test submits, and the last
-# drain never sees what the test submitted.
-_PARKED_HARNESS = textwrap.dedent("""\
-    import pathlib, sys, time
-    lib, tests, signals, run_id, mode = sys.argv[1:6]
-    sys.path[:0] = [lib, tests]
-    import batch.store
-    from batch.requests import Outcome, Release
-    from batch.store import Role
-    from batch_session_support import NullInbox
-    signals = pathlib.Path(signals)
-
-    def park():
-        (signals / "parked").touch()
-        deadline = time.monotonic() + 30
-        while not (signals / "release").exists() and time.monotonic() < deadline:
-            time.sleep(0.05)
-
-    class ParkingInbox(NullInbox):
-        def apply(self, run, envelope):
-            request = envelope.request
-            if not (isinstance(request, Release) and request.item == "park"):
-                return super().apply(run, envelope)
-            park()
-            return Outcome(name=envelope.name, request=request)
-
-    role = Role.APPLIER if mode == "applier" else Role.DRIVER
-    with batch.store.session(run_id, role, inbox=ParkingInbox(),
-                             command=f"test {mode}") as opened:
-        if mode == "applier":
-            batch.store.write_request(run_id, Release("park"))
-        else:
-            opened.finish()
-            park()
-""")
-
-
-def _parked(signals, mode):
-    argv = [sys.executable, "-c", _PARKED_HARNESS, str(LIB_DIR), str(TESTS_DIR),
-            str(signals), RID, mode]
-    return subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-
-
-def _wait_for(path, proc):
-    """Poll for *path* while *proc* is alive; fail naming what *proc* printed if it never appears."""
-    deadline = time.monotonic() + _PROC_TIMEOUT
-    while not path.exists() and proc.poll() is None and time.monotonic() < deadline:
-        time.sleep(_POLL_S)
-    assert path.exists(), f"never saw {path.name}: {proc.communicate(timeout=_PROC_TIMEOUT)}"
-
-
-def test_a_cancel_queued_against_a_parked_applier_is_applied_by_its_hand_off(tmp_path, capsys):
-    seed(_run())
-    child = _parked(tmp_path, "applier")
-    try:
-        _wait_for(tmp_path / "parked", child)
-        code = _main(["batch", "cancel", RID])
-        parked = batch.store.load(RID)
-    finally:
-        (tmp_path / "release").touch()
-        _, err = child.communicate(timeout=_PROC_TIMEOUT)
-    out = json.loads(capsys.readouterr().out)
-    assert code == 0
-    assert out["queued"] is True and out["run"] == RID
-    assert parked.status is RunStatus.WAITING
-    assert child.returncode == 0, err
-    saved = batch.store.load(RID)
-    assert saved.status is RunStatus.CANCELLED
-    assert saved.cancel is not None
-    assert batch.store.pending_requests(RID) == 0
-
-
 # ── probers never yield `queued` ──────────────────────────────────────────────
 
 def test_deliver_waits_out_a_prober_and_applies_the_request():
@@ -397,8 +314,7 @@ def test_status_polling_never_refuses_a_resume(monkeypatch, capsys):
                    auto_publish=[], status=RunStatus.WAITING, items=[item])
 
     seed(waiting())
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        stops_at(RunStatus.DONE))
+    monkeypatch.setattr(batch.orchestrate, "submit_ready", lambda run, **kwargs: 0)
     real_flock = fcntl.flock
     flocked_by = []
 
@@ -415,7 +331,7 @@ def test_status_polling_never_refuses_a_resume(monkeypatch, capsys):
         assert first.wait(_PROC_TIMEOUT)
         for _ in range(10):
             seed_raw(waiting())
-            resumes.append(_main(["batch", "resume", RID]))
+            resumes.append(_main(["batch", "run", "--continue", RID]))
     finally:
         stop.set()
         poller.join(_PROC_TIMEOUT)
@@ -429,23 +345,14 @@ def test_status_polling_never_refuses_a_resume(monkeypatch, capsys):
 
 def test_a_drivers_finish_that_applies_a_late_cancel_ends_cancelled_and_exits_0(monkeypatch,
                                                                               capsys):
-    row = PlanRow("o/r", "/r", 1, "t", "b", "h", False, {Step.REVIEW: StepNeed(True, "x")})
+    row = PlanRow("o/r", "/r", 1, "t", "b", "h", False, {Step.REBASE: StepNeed(True, "x")})
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", [row]))
 
-    def late_cancel(self):
-        batch.store.write_request(self.run.id, Cancel())
-        return RunStatus.WAITING
+    def late_cancel(run, **kwargs):
+        batch.store.write_request(run.id, Cancel())
+        return 0
 
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", late_cancel)
-    code = _main(["batch", "run", "--checkout", "/r"])
-    lines = capsys.readouterr().out.splitlines()
-    events = [json.loads(line) for line in lines if line.startswith("{")]
-    kinds = [event["kind"] for event in events]
+    monkeypatch.setattr(batch.orchestrate, "submit_ready", late_cancel)
+    code = _main(["batch", "run", "--checkout", "/r", "--steps", "rebase"])
     assert code == 0
     assert batch.store.load(batch.store.latest_run_id()).status is RunStatus.CANCELLED
-    finished = [event for event in events if event["kind"] == "run_finished"]
-    assert finished and finished[-1]["status"] == "cancelled"
-    # The summary is the last line, so the run_finished found above precedes it.
-    assert kinds[-1] == "run_summary"
-    assert events[-1]["run"]["status"] == "cancelled"
-    assert events[-1]["run"]["exit_hint"] == 0

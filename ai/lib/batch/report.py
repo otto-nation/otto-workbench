@@ -4,16 +4,16 @@ One builder: `build` is the whole report.
 
 | Section | Content |
 |---|---|
-| `run` | `id`, `status`, `active` (a scheduler is driving it), `exit_hint`, `hint`, `pending_requests` (requests waiting in its inbox), `failed_requests` (`name` and `error` of each request a drain rejected) |
+| `run` | `id`, `status`, `active` (an indexed job is RUNNING in otto-queue, not a driver lock), `exit_hint`, `hint`, `pending_requests` (requests waiting in its inbox), `failed_requests` (`name` and `error` of each request a drain rejected) |
 | `counts` | items by status |
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses, `wait_reason` |
 | `github` | `pr batch status` only: what GitHub says about the run's repos now (see `batch.live`) |
 | `sessions` | `pr batch report` only: per-PR findings and session commands (`batch.session_report`) |
 
-`exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
+`exit_hint` is what `run`/`--continue` exit with for the run as it stands: 0 once
 it is `done` or `cancelled`, 1 when it stopped without settling (interrupted —
-`pr batch resume` it) or when a stored waiting v1 run has not been resumed, and
-null while a scheduler holds the run.
+`pr batch run --continue` it) or when a stored waiting v1 run has not been
+continued, and null while an indexed job is RUNNING.
 """
 
 # doc-group: batch
@@ -35,7 +35,7 @@ _STATUS_EXIT = {RunStatus.DONE: EXIT_OK, RunStatus.CANCELLED: EXIT_OK}
 
 
 def exit_code(status: RunStatus) -> int:
-    """What `run`/`resume` exit with for a run that stopped at *status*."""
+    """What `run`/`--continue` exit with for a run that stopped at *status*."""
     return _STATUS_EXIT.get(status, EXIT_FAILED)
 
 
@@ -57,10 +57,10 @@ def _waiting_hint(run: Run, n: int) -> str:
 def _hint(run: Run, active: bool, github: dict | None = None,
           sessions: list | None = None) -> str:
     if active:
-        return "a scheduler is driving this run; wait for its run_summary line"
+        return "a batch job is running"
     if run.status not in (RunStatus.DONE, RunStatus.CANCELLED):
-        return (f"continue with `pr batch resume {run.id}`; its decisions become "
-                "findings (`pr batch report`)")
+        return (f"continue with `pr batch run --continue {run.id}` "
+                f"(`pr batch report`)")
     if batch.live.owes(github):
         return f"the run is {run.status.value}; {_github_hint(github)}"
     if sessions is not None:
@@ -86,7 +86,7 @@ def build(run: Run, *, active: bool,
           failed_requests: Sequence[FailedRequest] = (),
           github: dict | None = None,
           sessions: list | None = None) -> dict:
-    """The whole report. *active* is whether a scheduler is driving the run.
+    """The whole report. *active* is whether an indexed job is RUNNING, not a driver.
 
     *github* is the `batch.live` section; None leaves the key out, which is
     what a `run_summary` event carries.

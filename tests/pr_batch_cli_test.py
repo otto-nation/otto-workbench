@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -12,11 +13,12 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.live  # noqa: E402
 import batch.model  # noqa: E402
+import batch.orchestrate  # noqa: E402
 import batch.outcomes  # noqa: E402
 import batch.publish  # noqa: E402
+import batch.queue_entries  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
-from batch.requests import Cancel  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
 from pr.comments_fix import CloseoutDebt  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
@@ -25,7 +27,8 @@ import core.tool_parser  # noqa: E402
 import cli.pr_batch  # noqa: E402
 import pr.target  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
-from batch_session_support import holding, open_session, seed, stops_at  # noqa: E402
+from batch_session_support import seed, seed_raw  # noqa: E402
+from otto_queue.model import EntryState  # noqa: E402
 from cli.registry import COMMANDS  # noqa: E402
 from config.workbench_config import BatchConfig  # noqa: E402
 
@@ -38,6 +41,17 @@ def _main(argv):
         return cli.pr.main(list(argv), bin_dir=BIN_DIR)
     except SystemExit as exc:
         return exc.code
+
+
+def _stub_submit_ready(monkeypatch, result=0):
+    called = []
+
+    def fake_submit_ready(*args, **kwargs):
+        called.append(args[0] if args else kwargs["run"])
+        return result
+
+    monkeypatch.setattr(batch.orchestrate, "submit_ready", fake_submit_ready)
+    return called
 
 
 def test_ceiling_clamps_to_pool_max_with_a_floor_of_one():
@@ -76,19 +90,58 @@ def test_plan_prints_the_matrix(monkeypatch, capsys):
 def test_run_honours_select_and_prs(monkeypatch):
     rows = [PlanRow("o/r", "/r", n, "t", f"b{n}", "h", False,
                     {s: StepNeed(False, "x") for s in batch.model.STEP_ORDER}) for n in (1, 2)]
-    seen = {}
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
-
-    def fake_run(self):
-        seen["items"] = [(i.key, [s.step.value for s in i.steps
-                                  if s.status is batch.model.StepStatus.PENDING]) for i in self.run.items]
-        self.run.status = batch.model.RunStatus.DONE
-        return batch.model.RunStatus.DONE
-
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    called = _stub_submit_ready(monkeypatch)
     assert _main(["batch", "run", "--checkout", "/r", "--prs", "o/r#2",
-                  "--select", "o/r#2=review"]) == 0
-    assert seen["items"] == [("o/r#2", ["review"])]
+                  "--select", "o/r#2=rebase"]) == 0
+    assert [(i.key, [s.step.value for s in i.steps
+                     if s.status is batch.model.StepStatus.PENDING]) for i in called[0].items] == [
+        ("o/r#2", ["rebase"])]
+
+
+def test_run_submits_and_returns(monkeypatch):
+    rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
+                    {batch.model.Step.REBASE: StepNeed(True, "x")})]
+    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
+    called = []
+
+    def fake_submit_ready(*args, **kwargs):
+        called.append((args, kwargs))
+        return 0
+
+    monkeypatch.setattr(batch.orchestrate, "submit_ready", fake_submit_ready)
+    assert _main(["batch", "run", "--checkout", "/r", "--steps", "rebase"]) == 0
+    assert len(called) == 1
+
+
+def test_continue_calls_submit_ready_on_the_existing_run(monkeypatch):
+    rows = [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
+                    {batch.model.Step.REBASE: StepNeed(True, "x")})]
+    run = batch.scheduler.new_run(rows, steps=[batch.model.Step.REBASE], selected=None,
+                                  pool=1)
+    seed(run)
+    called = _stub_submit_ready(monkeypatch)
+    assert _main(["batch", "run", "--continue", run.id]) == 0
+    assert called[0].id == run.id
+    dirs = sorted(p.name for p in batch.store.batch_root().iterdir() if p.is_dir())
+    assert dirs == [run.id]
+
+
+@pytest.mark.parametrize("status", [
+    batch.model.RunStatus.DONE, batch.model.RunStatus.CANCELLED,
+])
+def test_continue_refuses_a_finished_run(monkeypatch, capsys, status):
+    rows = [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
+                    {batch.model.Step.REBASE: StepNeed(True, "x")})]
+    run = batch.scheduler.new_run(rows, steps=[batch.model.Step.REBASE], selected=None,
+                                  pool=1)
+    run.status = status
+    seed_raw(run)
+    called = _stub_submit_ready(monkeypatch)
+    assert _main(["batch", "run", "--continue", run.id]) == 1
+    assert called == []
+    assert run.id in capsys.readouterr().err
+    assert batch.store.load(run.id).status is status
 
 
 def _run_with_decisions(n=1, *, kind=batch.model.DecisionKind.OPEN_FINDINGS):
@@ -115,29 +168,20 @@ def _saved_run_with_decision():
     return _saved_run_with_decisions(1)
 
 
-def _saved_v2_waiting():
-    """A schema-2 WAITING run with one queued item and no decisions."""
-    rows = [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
-                    {batch.model.Step.REVIEW: StepNeed(True, "x")})]
-    run = batch.scheduler.new_run(rows, steps=[batch.model.Step.REVIEW], selected=None,
-                                  pool=1)
-    run.items[0].worktree = "/wt"
-    run.status = batch.model.RunStatus.WAITING
-    return seed(run)
-
-
 def _origin(monkeypatch, label):
     monkeypatch.setattr(
         pr.target, "repo_identity_from_origin",
         lambda cwd=None: pr.target.RepoIdentity(label=label, key="r", host="github.com"))
 
 
-def _seeded(run_id, *, repo="o/r", status=batch.model.RunStatus.WAITING):
+def _seeded(run_id, *, repo="o/r", status=batch.model.RunStatus.WAITING, jobs=None):
     run = _run_with_decisions(1)
     run.id = run_id
     run.items[0].repo = repo
     run.items[0].key = f"{repo}#1"
     run.status = status
+    if jobs is not None:
+        run.items[0].jobs = list(jobs)
     return seed(run)
 
 
@@ -210,10 +254,14 @@ def test_status_defaults_to_this_repos_waiting_run(monkeypatch, capsys):
 
 def test_status_names_other_active_runs_on_stderr(monkeypatch, capsys):
     waiting = _seeded("20261001T120000-wait", repo="o/r")
-    other = _seeded("20261002T120000-live", repo="other/r")
+    other = _seeded(
+        "20261002T120000-live", repo="other/r",
+        jobs=[batch.model.Job(step=batch.model.Step.REVIEW, entry_id=1, submitted_at="t")])
     _origin(monkeypatch, "o/r")
-    with holding(other.id, "driver", "pr batch resume"):
-        assert _main(["batch", "status", "--offline"]) == 0
+    monkeypatch.setattr(
+        batch.queue_entries.QueueEntries, "states",
+        lambda self, ids: {1: EntryState.RUNNING})
+    assert _main(["batch", "status", "--offline"]) == 0
     captured = capsys.readouterr()
     assert json.loads(captured.out)["run"]["id"] == waiting.id
     assert f"other active run {other.id}" in captured.err
@@ -243,11 +291,9 @@ def test_cancel_without_id_picks_the_unfinished_matching_run(monkeypatch, capsys
 def test_cancel_an_idle_run_marks_it_cancelled(capsys):
     run = _saved_run_with_decision()
     assert _main(["batch", "cancel", run.id]) == 0
-    assert json.loads(capsys.readouterr().out) == {"cancelled": True, "run": run.id,
-                                                    "queued": False}
+    assert json.loads(capsys.readouterr().out) == {"cancelled": True, "run": run.id}
     saved = batch.store.load(run.id)
     assert saved.status is batch.model.RunStatus.CANCELLED
-    assert saved.cancel is not None and saved.cancel.kill is False
 
 
 def test_cancel_does_not_overwrite_a_terminal_status(capsys):
@@ -261,20 +307,21 @@ def test_cancel_does_not_overwrite_a_terminal_status(capsys):
 
 def test_a_cancel_that_loses_to_completion_reports_the_real_status(monkeypatch, capsys):
     run = _saved_run_with_decision()
-    real = batch.store.write_request
+    real = batch.store.session
 
-    def finish_first(run_id, request):
-        # The scheduler settles DONE between cancel's check and its request.
-        with open_session(run_id) as session:
-            session.run.status = batch.model.RunStatus.DONE
-        return real(run_id, request)
+    @contextmanager
+    def finish_first(run_id, role, *, inbox, command):
+        # Another session settles DONE between cancel's unlocked check and its lock.
+        with real(run_id, batch.store.Role.DRIVER, inbox=inbox,
+                  command="test finish") as other:
+            other.run.status = batch.model.RunStatus.DONE
+            other.commit()
+        with real(run_id, role, inbox=inbox, command=command) as session:
+            yield session
 
-    monkeypatch.setattr(batch.store, "write_request", finish_first)
+    monkeypatch.setattr(batch.store, "session", finish_first)
     assert _main(["batch", "cancel", run.id]) == 1
-    captured = capsys.readouterr()
-    assert json.loads(captured.out) == {"cancelled": False, "run": run.id, "queued": False,
-                                        "status": "done"}
-    assert f"run {run.id} is done" in captured.err
+    assert f"run {run.id} is done" in capsys.readouterr().err
     assert batch.store.load(run.id).status is batch.model.RunStatus.DONE
 
 
@@ -285,59 +332,10 @@ def test_cancel_unknown_run_exits_1_without_creating_a_dir(tmp_path, capsys):
     assert not (batch.store.batch_root() / missing).exists()
 
 
-def test_a_refused_resume_of_a_done_run_does_not_touch_state_mtime(monkeypatch, capsys):
-    run = _run_with_decisions(1)
-    run.status = batch.model.RunStatus.DONE
-    seed(run)
-    path = batch.store.run_dir(run.id) / batch.store.STATE_FILE
-    before = path.stat()
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        lambda self: batch.model.RunStatus.DONE)
-    assert _main(["batch", "resume", run.id]) == 1
-    assert f"run {run.id} is done" in capsys.readouterr().err
-    after = path.stat()
-    assert batch.store.state_mtime(run.id) == before.st_mtime
-    assert after.st_mtime_ns == before.st_mtime_ns
-    assert after.st_ino == before.st_ino
-
-
-def test_resume_after_a_queued_cancel_refuses_and_the_run_is_cancelled(monkeypatch, capsys):
-    run = _saved_run_with_decision()
-    batch.store.write_request(run.id, Cancel())
-    driven = []
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        lambda self: driven.append(1) or batch.model.RunStatus.WAITING)
-    assert _main(["batch", "resume", run.id]) == 1
-    assert f"run {run.id} is cancelled" in capsys.readouterr().err
-    assert driven == []
-    assert batch.store.load(run.id).status is batch.model.RunStatus.CANCELLED
-
-
-def test_resume_reports_an_unknown_run(capsys):
-    assert _main(["batch", "resume", "nope"]) == 1
-    err = capsys.readouterr().err
-    assert err.startswith("pr batch:")
-    assert "nope" in err
-
-
-def test_resume_emits_interrupted_for_a_running_step(monkeypatch, capsys):
-    rows = [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
-                    {batch.model.Step.REVIEW: StepNeed(True, "x")})]
-    run = batch.scheduler.new_run(rows, steps=[batch.model.Step.REVIEW], selected=None,
-                                  pool=1)
-    rec = run.items[0].step(batch.model.Step.REVIEW)
-    rec.status = batch.model.StepStatus.RUNNING
-    rec.log_path = "/tmp/x.log"
-    run.items[0].worktree = "/wt"
-    run.status = batch.model.RunStatus.INTERRUPTED
-    seed(run)
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        stops_at(batch.model.RunStatus.DONE))
-    assert _main(["batch", "resume", run.id]) == 0
-    lines = [json.loads(line) for line in capsys.readouterr().out.splitlines() if line.strip()]
-    assert all(e.get("kind") != "decision_created" for e in lines)
-    loaded = batch.store.load(run.id)
-    assert loaded.items[0].step(batch.model.Step.REVIEW).status is batch.model.StepStatus.PENDING
+def test_batch_resume_fails_usage(capsys):
+    assert _main(["batch", "resume", "nope"]) == 2
+    err = capsys.readouterr().err.lower()
+    assert "invalid choice" in err or "unrecognized" in err or "invalid" in err
 
 
 def test_batch_subcommand_help_reaches_the_batch_parser(capsys):
@@ -404,18 +402,10 @@ def test_run_drops_the_plans_refs_when_it_fails_before_saving(monkeypatch):
 def test_no_verify_reaches_the_run(monkeypatch):
     rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
-    seen = {}
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
-
-    settle = stops_at(batch.model.RunStatus.DONE)
-
-    def fake_run(self):
-        seen["no_verify"] = self.run.no_verify
-        return settle(self)
-
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    called = _stub_submit_ready(monkeypatch)
     assert _main(["batch", "run", "--checkout", "/r", "--no-verify"]) == 0
-    assert seen["no_verify"] is True
+    assert called[0].no_verify is True
 
 
 def test_an_oversized_focus_file_refuses_the_run_before_planning(tmp_path, monkeypatch, capsys):
@@ -443,18 +433,10 @@ def test_an_untitled_focus_text_refuses_the_run_before_planning(monkeypatch, cap
 def test_run_stores_the_focus(monkeypatch):
     rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
-    seen = {}
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
-
-    settle = stops_at(batch.model.RunStatus.DONE)
-
-    def fake_run(self):
-        seen["focus"] = list(self.run.focus)
-        return settle(self)
-
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    called = _stub_submit_ready(monkeypatch)
     assert _main(["batch", "run", "--checkout", "/r", "--focus", "x"]) == 0
-    assert seen["focus"] == ["x"]
+    assert list(called[0].focus) == ["x"]
 
 
 def test_focus_warns_about_items_without_a_review_step(monkeypatch, capsys):
@@ -466,8 +448,7 @@ def test_focus_warns_about_items_without_a_review_step(monkeypatch, capsys):
                  batch.model.Step.REVIEW: StepNeed(False, "current")}),
     ]
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        stops_at(batch.model.RunStatus.DONE))
+    _stub_submit_ready(monkeypatch)
     assert _main(["batch", "run", "--checkout", "/r", "--focus", "x"]) == 0
     warns = [line for line in capsys.readouterr().err.splitlines()
              if "--focus applies only to review steps" in line]
@@ -478,77 +459,19 @@ def test_focus_warns_about_items_without_a_review_step(monkeypatch, capsys):
     assert "--focus applies only to review steps" not in capsys.readouterr().err
 
 
-def test_run_ends_with_a_run_summary_naming_what_needs_action(monkeypatch, capsys):
-    # Revert: re-add next= to run_summary.
-    row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
-                  {batch.model.Step.REVIEW: StepNeed(True, "x")})
-    monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", [row]))
-
-    def fake_run(self):
-        self.run.status = batch.model.RunStatus.DONE
-        return batch.model.RunStatus.DONE
-
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+def test_with_review_is_not_in_the_thin_orchestrator(capsys):
     assert _main(["batch", "run", "--checkout", "/r", "--steps", "review",
-                  "--with-review"]) == 0
-    last = json.loads(capsys.readouterr().out.splitlines()[-1])
-    assert last["kind"] == "run_summary"
-    assert set(last) >= {"kind", "run", "counts", "report_path"}
-    assert "next" not in last
-    assert (last["run"]["exit_hint"], last["run"]["active"]) == (0, False)
+                  "--with-review"]) == 2
+    assert "review is not in the thin orchestrator yet" in capsys.readouterr().err
 
 
-def test_verbose_reaches_the_scheduler(monkeypatch):
+def test_verbose_run_still_submits(monkeypatch):
     rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
-    seen = {}
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
-
-    def fake_run(self):
-        seen["verbose"] = self._verbose
-        self.run.status = batch.model.RunStatus.DONE
-        return batch.model.RunStatus.DONE
-
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    called = _stub_submit_ready(monkeypatch)
     assert _main(["batch", "run", "--checkout", "/r", "--verbose"]) == 0
-    assert seen["verbose"] is True
-
-
-def test_resume_verbose_reaches_the_scheduler(monkeypatch):
-    run = _saved_v2_waiting()
-    seen = {}
-
-    def fake_run(self):
-        seen["verbose"] = self._verbose
-        return batch.model.RunStatus.WAITING
-
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "resume", run.id, "--verbose"]) == 1
-    assert seen["verbose"] is True
-
-
-def test_resume_ends_with_a_run_summary(monkeypatch, capsys):
-    run = _saved_v2_waiting()
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        stops_at(batch.model.RunStatus.DONE))
-    assert _main(["batch", "resume", run.id]) == 0
-    last = json.loads(capsys.readouterr().out.splitlines()[-1])
-    assert last["kind"] == "run_summary"
-    assert last["run"]["exit_hint"] == 0
-    assert "next" not in last
-
-
-def test_a_run_summary_after_apply_errors_hints_the_real_exit_code(monkeypatch, capsys):
-    run = _saved_v2_waiting()
-    reqs = batch.store.run_dir(run.id) / "requests"
-    reqs.mkdir(exist_ok=True)
-    (reqs / "bad.json").write_text('{"kind": "decide"}', encoding="utf-8")
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        stops_at(batch.model.RunStatus.DONE))
-    assert _main(["batch", "resume", run.id]) == 1
-    last = json.loads(capsys.readouterr().out.splitlines()[-1])
-    assert last["kind"] == "run_summary"
-    assert last["run"]["exit_hint"] == 1
+    assert len(called) == 1
 
 
 def test_a_started_run_takes_over_its_plans_namespace_from_the_claim(monkeypatch):
@@ -562,21 +485,11 @@ def test_a_started_run_takes_over_its_plans_namespace_from_the_claim(monkeypatch
     monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: True)
     seen = {}
 
-    def fake_run(self):
+    def fake_submit_ready(run, **kwargs):
         seen["claim"] = batch.plan.read_claim(plan.ref_namespace)
-        seen["owner"] = self.run.ref_namespace
-        self.run.status = batch.model.RunStatus.DONE
-        return batch.model.RunStatus.DONE
+        seen["owner"] = run.ref_namespace
+        return 0
 
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    monkeypatch.setattr(batch.orchestrate, "submit_ready", fake_submit_ready)
     assert _main(["batch", "run", "--checkout", "/r"]) == 0
     assert seen == {"claim": None, "owner": plan.ref_namespace}
-
-
-def test_resume_without_id_refuses_two_unfinished_matching_runs(monkeypatch, capsys):
-    older = _seeded("20261001T120000-aaaa", repo="o/r")
-    newer = _seeded("20261002T120000-bbbb", repo="o/r")
-    _origin(monkeypatch, "o/r")
-    assert _main(["batch", "resume"]) == 1
-    err = capsys.readouterr().err
-    assert older.id in err and newer.id in err

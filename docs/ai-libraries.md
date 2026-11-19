@@ -4488,10 +4488,10 @@ pending); `with_ai` stays `None` so AI argv does not silently change.
 
 ### batch/gc.py
 
-Remove finished `pr batch` runs once they are old enough; `pr gc` calls it.
+Remove old `pr batch` runs once they are old enough; `pr gc` calls it.
 
-Only `done` and `cancelled` runs are candidates. `running` and `waiting` runs
-are live, and an `interrupted` run is one `pr batch resume` can still pick up.
+Schema-3 runs are candidates only when `done` or `cancelled`. Pre-v3 driver
+runs are not migrated: past retention they are reaped even if still running.
 A run is kept for `review.gc.GC_STALE_DAYS` after its last save, or for
 `review.gc.GC_FAILED_STALE_DAYS` when it kept work a person may come back for —
 see `retention_days`. Removal goes through `batch.store.reap`, which takes the
@@ -4568,6 +4568,10 @@ The persisted shape of a `pr batch` run.
 Enum string values are written to state files and NDJSON events, so they are
 stable: renaming a member is free, changing a value is a schema break and
 bumps `Run.schema_version`.
+
+### batch/orchestrate.py
+
+One-shot submit of ready batch jobs. Does not wait, sleep, or spawn.
 
 ### batch/outcomes.py
 
@@ -4655,6 +4659,13 @@ Accept otto-queue tickets for batch steps, read their states, and cancel waiters
 The scheduler creates each queued step's ticket, holds the lease, and hands the
 child the entry id and lease fd. A pid match against ticket rows is not used.
 
+### batch/ready.py
+
+Whether an (item, step) job may be submitted now.
+
+Predicates join the run index (`Item.jobs`) with a live worktree + queue snapshot.
+They do not submit, and they do not import `cli`.
+
 ### batch/report.py
 
 The compact document `pr batch status` and a run's last line print.
@@ -4663,16 +4674,16 @@ One builder: `build` is the whole report.
 
 | Section | Content |
 |---|---|
-| `run` | `id`, `status`, `active` (a scheduler is driving it), `exit_hint`, `hint`, `pending_requests` (requests waiting in its inbox), `failed_requests` (`name` and `error` of each request a drain rejected) |
+| `run` | `id`, `status`, `active` (an indexed job is RUNNING in otto-queue, not a driver lock), `exit_hint`, `hint`, `pending_requests` (requests waiting in its inbox), `failed_requests` (`name` and `error` of each request a drain rejected) |
 | `counts` | items by status |
 | `items` | non-terminal items only: worktree, branch, `remote_sha`, `pre_rebase_head`, `stacked_on`, `base_ref`, step statuses, `wait_reason` |
 | `github` | `pr batch status` only: what GitHub says about the run's repos now (see `batch.live`) |
 | `sessions` | `pr batch report` only: per-PR findings and session commands (`batch.session_report`) |
 
-`exit_hint` is what `run`/`resume` exit with for the run as it stands: 0 once
+`exit_hint` is what `run`/`--continue` exit with for the run as it stands: 0 once
 it is `done` or `cancelled`, 1 when it stopped without settling (interrupted —
-`pr batch resume` it) or when a stored waiting v1 run has not been resumed, and
-null while a scheduler holds the run.
+`pr batch run --continue` it) or when a stored waiting v1 run has not been
+continued, and null while an indexed job is RUNNING.
 
 ### batch/report_md.py
 
@@ -4700,8 +4711,8 @@ How to open a batch run's pi session, and the operator decisions recorded in it.
 run's one checkout, argv `pi --session-id ID --name NAME`, and
 `WORKBENCH_RUN_DIR` set to the run directory. A bare-repo container checkout
 resolves to its default worktree via `git_layout.worktree_for`; the session
-name still uses the container's directory. `pr batch session` prints or
-executes it; every UI asks that command rather than building the argv. The
+name still uses the container's directory. `SessionRecipe` is the printed
+shape; every UI asks for this recipe rather than building the argv. The
 checkout is `Run.checkouts`, or for a run saved before that field its items'
 `repo_dir`. A run over more than one checkout or repo has no run session and
 raises `RunSessionError`: herdr starts one run per machine and repo
@@ -4718,7 +4729,7 @@ report stops deriving its finding. The latest note per (item, finding) wins
 
 ### batch/scheduler.py
 
-Drive a run: admit steps, reap them, and record findings; the run always settles.
+Build a run from plan rows; emit request outcomes.
 
 ### batch/session_report.py
 
@@ -4762,7 +4773,7 @@ The child processes a batch run spawns — `pr`, or `ci-check` for CI — and th
 Every step is its own process so concurrent steps share no interpreter state,
 and each gets a new session with stdin closed: no prompt in any child can
 reach a terminal, whether the batch runs under a server or in a shell.
-Queued steps wait on their own otto-queue ticket rather than batch's host admission.
+Children run `--no-queue` because the orchestrator already submitted the job.
 
 ### batch/store.py
 
@@ -9558,23 +9569,19 @@ binary to discover the tool; it imports `cli.schema.tool_schema` directly.
 
 ### cli/pr_batch.py
 
-`pr batch` — rebase, CI, comments and (opt-in) self-review across my open PRs.
+`pr batch` — rebase, CI and comments across my open PRs.
 
     pr batch plan   --checkout DIR …           which PRs need which steps (JSON)
     pr batch run    --checkout DIR … [opts]    start a run; NDJSON events on stdout
-    pr batch resume [RUN_ID]                   continue an interrupted run
     pr batch cancel [RUN_ID] [--kill]          stop the run; a recorded cancel is final
-    pr batch release RUN_ID PR [--kill]        drop one PR; frees its locks, leaves the worktree
     pr batch status [RUN_ID] [--full] [--offline]   the run report (JSON)
     pr batch report [RUN_ID] [--offline] [--format json|md]         per-PR session commands
-    pr batch session RUN_ID [--json]           open the run's pi session (--json prints how)
-    pr batch note RUN_ID PR --finding R:S --verdict V --reason TEXT   record a verdict in the run's history
 
-Omitting RUN_ID on resume/cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/report fall back to the newest run on the machine and say so on stderr.
+Omitting RUN_ID on cancel picks this checkout's newest unfinished covering run, else its newest covering, and refuses when none covers this repo or more than one unfinished run does. status/report fall back to the newest run on the machine and say so on stderr.
 
-A default run never opens a decision: items end `done` or `needs_session` with findings, shown by `pr batch report`, and the run exits 0. AI and review are opt-in (`--with-ai`, `--with-review`). Every step runs drafted. Nothing is pushed unless `--auto-publish ff`. --no-verify skips the pre-push hook on those publishes.
+`run` submits ready jobs and returns: 0 when every still-needed step was submitted or already succeeded, 1 when something needed remains unsubmitted (`submit_ready`). AI is opt-in (`--with-ai`). Review is not in the thin orchestrator yet. Every step runs drafted. Nothing is pushed unless `--auto-publish ff`. --no-verify skips the pre-push hook on those publishes. `--continue ID` submits ready jobs on an existing run.
 
-Exit 0 when a run is done or cancelled, 1 when it stopped without settling. resume never clears a recorded cancel. cancel and release write the run's inbox; a live holder that drains applies a queued request.
+cancel stops the run's queue jobs; a recorded cancel is final.
 
 ### cli/pr_batch_common.py
 
@@ -9585,17 +9592,16 @@ A leaf: imported by `cli.pr_batch`, `cli.pr_batch_requests`, and
 
 ### cli/pr_batch_requests.py
 
-Inbox-writing `pr batch` commands: cancel and release.
+`pr batch` cancel. Cancel stops queue jobs.
 
 Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 
 ### cli/pr_batch_session.py
 
-`pr batch session` and `pr batch note`: open a run's pi session, record a verdict in it.
+Shared helpers for `pr target session` / `pr target note`.
 
-Beside `cli.pr_batch` so the dispatcher stays under the file-size cap. What a
-session is and what a note checks live in `batch.run_session`; this module
-parses, prints and maps exits.
+`finding_arg` parses `--finding REASON:STEP`. `exec_recipe` starts a
+session recipe's pi, replacing this process.
 
 ### cli/pr_batch_views.py
 

@@ -158,9 +158,9 @@ class SessionEntry:
 
 def sessions(run: Run, *, closeout: CloseoutFn | None = None,
              tree: TreeFn | None = None) -> list[SessionEntry]:
-    """Focused-session entries for settled items; in-flight items are skipped while running."""
+    """Focused-session entries. Schema 2 hides in-flight items while the run is active."""
     items = run.items
-    if run.status in _ACTIVE:
+    if run.schema_version < 3 and run.status in _ACTIVE:
         items = [item for item in items if item.terminal]
     reader = closeout or batch.plan.closeout_debt
     wanted = [item for item in items if item.status is not ItemStatus.SKIPPED_CLOSED]

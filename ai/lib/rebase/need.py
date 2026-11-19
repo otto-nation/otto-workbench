@@ -68,3 +68,25 @@ def conflict_need(cwd: str, head_ref: str, base_ref: str, *, base_label: str = "
         return RebaseNeed(True, f"conflicts with {label}", behind.behind)
     # Exit >1 is git failing, not a merge verdict.
     return RebaseNeed(False, f"cannot test a merge with {label}")
+
+
+def conflict_paths(cwd: str, head_ref: str, base_ref: str) -> tuple[str, ...]:
+    """Paths merge-tree reports as conflicted; empty if clean or unreadable."""
+    merged = git.client.run("merge-tree", "--write-tree", base_ref, head_ref, cwd=cwd)
+    if merged.returncode != 1:
+        return ()
+    paths: list[str] = []
+    seen: set[str] = set()
+    for line in f"{merged.stdout}\n{merged.stderr}".splitlines():
+        if "CONFLICT" not in line:
+            continue
+        idx = line.rfind(" in ")
+        if idx < 0:
+            continue
+        path = line[idx + 4:].strip()
+        if path.rstrip(".") in {"tree", "HEAD"}:
+            continue
+        if path and path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return tuple(paths)

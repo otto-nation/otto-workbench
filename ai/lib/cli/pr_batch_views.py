@@ -32,7 +32,7 @@ def offline(p: argparse.ArgumentParser) -> None:
                    help="Skip the `github` section: report only what this machine saved, "
                         "without asking GitHub for the run's repos' open PRs. Without it, a read "
                         "runs `git fetch` in every repo and a GraphQL search (slower, uses API quota), "
-                        "even while a driver holds the run")
+                        "even while a job is RUNNING")
 
 
 def report(run: Run, active: bool, github: dict | None = None,
@@ -107,7 +107,7 @@ def write_report(run: Run, *, offline: bool) -> tuple[Path | None, dict]:
 
     Offline skips GitHub and `peek_tree`; the tree is read from local objects.
     A missing worktree is never probed. An active run returns the document
-    without writing files, so a live driver is not racing a report rewrite.
+    without writing files, so a live job is not racing a report rewrite.
     """
     github = _github(run, offline)
     reader = batch.publish.local_tree if offline else batch.publish.peek_tree

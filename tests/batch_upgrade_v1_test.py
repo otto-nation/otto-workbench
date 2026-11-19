@@ -12,29 +12,10 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.findings  # noqa: E402
-import batch.model  # noqa: E402
-import batch.scheduler  # noqa: E402
-import batch.store  # noqa: E402
-import cli.pr  # noqa: E402
 import core.serde  # noqa: E402
-from batch.model import (Decision, DecisionKind, FindingReason, ItemStatus,  # noqa: E402
+from batch.model import (DecisionKind, FindingReason, ItemStatus,  # noqa: E402
                          RunStatus, Step, StepRecord, StepStatus)
-from batch.plan import PlanRow, StepNeed  # noqa: E402
 from batch_report_support import make_decision, make_item, make_run  # noqa: E402
-from batch_session_support import seed, stops_at  # noqa: E402
-# `_close_open_sessions` is an autouse fixture from the scheduler support.
-from batch_scheduler_support import (  # noqa: F401,E402
-    _close_open_sessions, _quiet_outcomes,
-)
-
-BIN_DIR = REPO_ROOT / "ai" / "bin"
-
-
-def _main(argv):
-    try:
-        return cli.pr.main(list(argv), bin_dir=BIN_DIR)
-    except SystemExit as exc:
-        return exc.code
 
 
 def test_waiting_v1_run_converts_one_way():
@@ -95,34 +76,3 @@ def test_finished_or_v2_runs_are_untouched():
     before = core.serde.to_dict(live)
     assert batch.findings.upgrade_v1(live, emit=lambda *a, **k: None) is False
     assert core.serde.to_dict(live) == before
-
-
-def test_resume_converts_before_driving(monkeypatch):
-    # Revert: delete the upgrade_v1 call in _try_resume.
-    rows = [PlanRow("o/r", "/r", 1, "t", "b", "h", False,
-                    {Step.REBASE: StepNeed(True, "x")})]
-    run = batch.scheduler.new_run(rows, steps=[Step.REBASE], selected=None, pool=1)
-    run.schema_version = 1
-    run.status = RunStatus.WAITING
-    item = run.items[0]
-    item.status = ItemStatus.AWAITING_DECISION
-    run.decisions.append(Decision(
-        id="d1", item=item.key, step="rebase", kind=DecisionKind.REBASE_CONFLICT,
-        payload={"aborted": True, "classes": {"a.go": "ai_merge"}, "files": ["a.go"]}))
-    seed(run)
-    seen = {}
-
-    def fake_run(self):
-        seen["schema"] = self.run.schema_version
-        seen["open"] = [d.id for d in self.run.open_decisions()]
-        seen["findings"] = [f.reason for f in self.run.items[0].findings]
-        return stops_at(RunStatus.DONE)(self)
-
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "resume", run.id]) == 0
-    assert seen["schema"] == 2
-    assert seen["open"] == []
-    assert seen["findings"] == [FindingReason.CONFLICT_HANDWRITTEN]
-    loaded = batch.store.load(run.id)
-    assert loaded.schema_version == 2
-    assert not loaded.open_decisions()

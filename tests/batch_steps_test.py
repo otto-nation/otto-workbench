@@ -34,11 +34,11 @@ def test_queues_itself(step, ai, want):
 
 def test_every_step_runs_drafted():
     assert batch.steps.step_argv(Step.REBASE, "pr", "/wt") == \
-        ["pr", "rebase", "--fix", "--no-push", "--repo-dir", "/wt"]
+        ["pr", "rebase", "--fix", "--no-push", "--no-queue", "--repo-dir", "/wt"]
     assert batch.steps.step_argv(Step.COMMENTS, "pr", "/wt") == \
-        ["pr", "comments", "--fix", "--repo-dir", "/wt"]
+        ["pr", "comments", "--fix", "--no-queue", "--repo-dir", "/wt"]
     assert batch.steps.step_argv(Step.REVIEW, "pr", "/wt") == \
-        ["pr", "review", "--self", "--fix", "--force", "--repo-dir", "/wt"]
+        ["pr", "review", "--self", "--fix", "--force", "--no-queue", "--repo-dir", "/wt"]
 
 
 def test_no_step_argv_forces_a_rebase():
@@ -48,13 +48,13 @@ def test_no_step_argv_forces_a_rebase():
 def test_rebase_argv_passes_fork_point_when_set():
     argv = batch.steps.step_argv(Step.REBASE, "pr", "/wt", fork_point="abc")
     assert argv == ["pr", "rebase", "--fix", "--no-push", "--fork-point", "abc",
-                    "--repo-dir", "/wt"]
+                    "--no-queue", "--repo-dir", "/wt"]
     assert "--force" not in argv
 
 
 def test_the_ci_step_fixes_without_rebasing_against_the_remote_head():
     assert batch.steps.step_argv(Step.CI, "pr", "/wt", remote_sha="abc") == \
-        ["ci-check", "--fix", "--no-rebase", "--head-sha", "abc", "--repo-dir", "/wt"]
+        ["ci-check", "--fix", "--no-rebase", "--head-sha", "abc", "--no-queue", "--repo-dir", "/wt"]
 
 
 def test_the_ci_step_runs_ci_check_beside_pr_not_the_pr_dispatcher():
@@ -72,7 +72,7 @@ def test_the_ci_step_waits_when_asked():
 
 def test_the_review_step_carries_every_focus_text():
     argv = batch.steps.step_argv(Step.REVIEW, "pr", "/wt", focus=("a", "-b"))
-    assert argv[-4:] == ["--focus=a", "--focus=-b", "--repo-dir", "/wt"]
+    assert argv[-5:] == ["--focus=a", "--focus=-b", "--no-queue", "--repo-dir", "/wt"]
 
 
 def test_no_other_step_takes_focus():

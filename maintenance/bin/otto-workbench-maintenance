@@ -6,7 +6,7 @@
 # Exit codes:
 #   0  Success (updated or already up-to-date)
 #   1  Error (fetch/pull/sync failed)
-#   75 Deferred (EX_TEMPFAIL): a pr batch run is live; the queue retries it with backoff
+#   75 Deferred (EX_TEMPFAIL): a batch job is RUNNING; the queue retries it with backoff
 
 set -e
 
@@ -76,7 +76,7 @@ _batch_running() {
     <<<"$listing"
 }
 
-# A live `pr batch` run checks out, rebases and pushes with the code this run is
+# When a batch job is RUNNING it checks out, rebases and pushes with the code this run is
 # about to pull and sync over. 75 (EX_TEMPFAIL) is a busy resource, not a
 # failure: the queue runs this job again with backoff.
 if _batch_running; then

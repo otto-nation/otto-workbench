@@ -22,10 +22,16 @@ from batch.model import Run, RunStatus, Step  # noqa: E402
 
 def test_ai_false_rebase_and_ci_have_no_fix():
     rebase = batch.steps.step_argv(Step.REBASE, "pr", "/wt", ai=False)
-    assert rebase == ["pr", "rebase", "--no-push", "--repo-dir", "/wt"]
+    assert rebase == ["pr", "rebase", "--no-push", "--no-queue", "--repo-dir", "/wt"]
     ci = batch.steps.step_argv(Step.CI, "pr", "/wt", remote_sha="abc", ai=False)
-    assert ci == ["ci-check", "--no-rebase", "--head-sha", "abc", "--repo-dir", "/wt"]
+    assert ci == ["ci-check", "--no-rebase", "--head-sha", "abc", "--no-queue", "--repo-dir", "/wt"]
     assert "--fix" not in rebase and "--fix" not in ci
+
+
+@pytest.mark.parametrize("step", list(Step))
+def test_every_step_argv_includes_no_queue(step):
+    argv = batch.steps.step_argv(step, "pr", "/wt", ai=True)
+    assert "--no-queue" in argv
 
 
 @pytest.mark.parametrize("step", list(Step))

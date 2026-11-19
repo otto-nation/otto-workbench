@@ -42,7 +42,7 @@ def test_an_active_run_says_to_wait():
     doc = batch.report.build(run, active=True)
     assert "next" not in doc
     assert doc["run"]["active"] is True and doc["run"]["exit_hint"] is None
-    assert doc["run"]["hint"] == "a scheduler is driving this run; wait for its run_summary line"
+    assert doc["run"]["hint"] == "a batch job is running"
 
 
 _QUIET_GITHUB = {"checked": True, "owed": [], "untracked": [], "moved": []}
@@ -67,7 +67,7 @@ def test_a_finished_run_github_shows_nothing_for_has_nothing_left():
 def test_an_unfinished_run_points_at_resume_and_the_report():
     run = _run([_item(1, status=ItemStatus.QUEUED)], status=RunStatus.INTERRUPTED)
     hint = batch.report.build(run, active=False)["run"]["hint"]
-    assert "pr batch resume r1" in hint
+    assert "pr batch run --continue r1" in hint
     assert "pr batch report" in hint
 
 

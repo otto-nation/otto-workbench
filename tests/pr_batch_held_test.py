@@ -1,4 +1,4 @@
-"""A new `pr batch run` skips PRs an unfinished run still holds."""
+"""A new `pr batch run` is a second index; unfinished items are not skipped."""
 
 import json
 import sys
@@ -12,6 +12,7 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.model  # noqa: E402
+import batch.orchestrate  # noqa: E402
 import batch.plan  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
@@ -31,13 +32,13 @@ def _main(argv):
 
 def _row(pr, *, repo="o/r", repo_key="hold-key-aaaaaaaa", repo_dir="/r"):
     return PlanRow(repo, repo_dir, pr, "t", f"b{pr}", "h", False,
-                   {Step.REVIEW: StepNeed(True, "x")}, repo_key=repo_key)
+                   {Step.REBASE: StepNeed(True, "x")}, repo_key=repo_key)
 
 
 def _seed_holder(row, *, status=RunStatus.WAITING, item_status=ItemStatus.QUEUED,
                  run_id="20261020T164736-afec", started_at=""):
     run = batch.scheduler.new_run(
-        [row], steps=[Step.REVIEW], selected=None, pool=1)
+        [row], steps=[Step.REBASE], selected=None, pool=1)
     run.id = run_id
     run.status = status
     run.items[0].status = item_status
@@ -69,7 +70,7 @@ def test_holds_item_matches_by_repo_key_or_label():
     assert not batch.store.holds_item(unlabeled, 2, "o/r", "")
 
 
-def test_run_skips_a_pr_held_by_repo_key(monkeypatch, capsys):
+def test_run_does_not_skip_a_pr_held_by_an_unfinished_run(monkeypatch, capsys):
     started = (datetime.now(timezone.utc) - timedelta(hours=3, minutes=10)).isoformat(
         timespec="seconds")
     _seed_holder(_row(1), started_at=started)
@@ -77,44 +78,34 @@ def test_run_skips_a_pr_held_by_repo_key(monkeypatch, capsys):
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", planned))
     seen = {}
 
-    def fake_run(self):
-        seen["items"] = [i.key for i in self.run.items]
-        self.run.status = RunStatus.DONE
-        return RunStatus.DONE
+    def fake_submit(run, **kwargs):
+        seen["items"] = [i.key for i in run.items]
+        return 0
 
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", "/r", "--with-review"]) == 0
+    monkeypatch.setattr(batch.orchestrate, "submit_ready", fake_submit)
+    assert _main(["batch", "run", "--checkout", "/r", "--steps", "rebase"]) == 0
     captured = capsys.readouterr()
-    assert seen["items"] == ["o/r#2"]
-    err = captured.err
-    assert "skipping o/r#1" in err
-    assert "run 20261020T164736-afec" in err
-    assert "started 3h ago" in err
-    assert "`pr batch release 20261020T164736-afec o/r#1`" in err
-    assert "`pr batch cancel 20261020T164736-afec`" in err
+    assert seen["items"] == ["o/r#1", "o/r#2"]
+    assert "skipping o/r#1" not in captured.err
     events = [json.loads(line) for line in captured.out.splitlines() if line.startswith("{")]
-    skipped = [e for e in events if e.get("kind") == "item_skipped_held"]
-    assert skipped and skipped[0]["item"] == "o/r#1"
-    assert skipped[0]["holder"] == "20261020T164736-afec"
-    assert "run" not in skipped[0]
+    assert [e for e in events if e.get("kind") == "item_skipped_held"] == []
 
 
-def test_run_skips_a_pr_held_by_label_when_the_seeded_item_has_no_key(
+def test_run_does_not_skip_a_pr_held_by_label_when_the_seeded_item_has_no_key(
         monkeypatch, capsys):
     _seed_holder(_row(1, repo="o/r", repo_key="", repo_dir="/missing"))
     planned = [_row(1, repo="O/R", repo_key="")]
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", planned))
     seen = {}
 
-    def fake_run(self):
-        seen["items"] = [i.key for i in self.run.items]
-        self.run.status = RunStatus.DONE
-        return RunStatus.DONE
+    def fake_submit(run, **kwargs):
+        seen["items"] = [i.key for i in run.items]
+        return 0
 
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", "/r", "--with-review"]) == 0
-    assert seen["items"] == []
-    assert "skipping O/R#1" in capsys.readouterr().err
+    monkeypatch.setattr(batch.orchestrate, "submit_ready", fake_submit)
+    assert _main(["batch", "run", "--checkout", "/r", "--steps", "rebase"]) == 0
+    assert seen["items"] == ["O/R#1"]
+    assert "skipping O/R#1" not in capsys.readouterr().err
 
 
 def test_run_does_not_skip_a_pr_held_only_by_a_finished_run(monkeypatch):
@@ -123,13 +114,12 @@ def test_run_does_not_skip_a_pr_held_only_by_a_finished_run(monkeypatch):
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", planned))
     seen = {}
 
-    def fake_run(self):
-        seen["items"] = [i.key for i in self.run.items]
-        self.run.status = RunStatus.DONE
-        return RunStatus.DONE
+    def fake_submit(run, **kwargs):
+        seen["items"] = [i.key for i in run.items]
+        return 0
 
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", "/r", "--with-review"]) == 0
+    monkeypatch.setattr(batch.orchestrate, "submit_ready", fake_submit)
+    assert _main(["batch", "run", "--checkout", "/r", "--steps", "rebase"]) == 0
     assert seen["items"] == ["o/r#1"]
 
 
@@ -139,11 +129,10 @@ def test_run_does_not_skip_a_pr_whose_item_is_already_terminal(monkeypatch):
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", planned))
     seen = {}
 
-    def fake_run(self):
-        seen["items"] = [i.key for i in self.run.items]
-        self.run.status = RunStatus.DONE
-        return RunStatus.DONE
+    def fake_submit(run, **kwargs):
+        seen["items"] = [i.key for i in run.items]
+        return 0
 
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", "/r", "--with-review"]) == 0
+    monkeypatch.setattr(batch.orchestrate, "submit_ready", fake_submit)
+    assert _main(["batch", "run", "--checkout", "/r", "--steps", "rebase"]) == 0
     assert seen["items"] == ["o/r#1"]

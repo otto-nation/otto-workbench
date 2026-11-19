@@ -166,6 +166,9 @@ def build_parser() -> ToolParser:
                              "agent exercise each claimed fix against the tree and "
                              "demotes the ones that do not hold up; without it "
                              "every fix lands unverified")
+    parser.add_argument("--no-queue", action="store_true",
+                        help="Run now instead of waiting for an otto-queue slot "
+                             "(also WORKBENCH_PR_NO_QUEUE=1)")
     add_trail_args(parser)
     return parser
 
@@ -197,6 +200,7 @@ def main(argv: list[str] | None = None, *,
             label=cli.queue_gate.label_for(
                 "ci", argv, pr_ref=args.pr, branch=args.branch,
                 repo_dir=args.repo_dir),
+            no_queue=args.no_queue,
             pr_ref=args.pr, repo_dir=args.repo_dir)
         if code is not None:
             return code

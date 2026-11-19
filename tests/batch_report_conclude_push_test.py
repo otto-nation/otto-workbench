@@ -12,15 +12,15 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.store  # noqa: E402
-import cli.pr_batch  # noqa: E402
-from batch.model import RunStatus, Step  # noqa: E402
+import cli.pr_batch_views  # noqa: E402
+from batch.model import Step  # noqa: E402
 from batch_git_support import remote_and_clone, remote_tip  # noqa: E402
 from batch_report_support import make_item, make_run  # noqa: E402
 from batch_session_support import seed_raw  # noqa: E402
 from conftest import commit_all  # noqa: E402
 
 
-def test_conclude_offline_report_contains_the_push_argv(tmp_path):
+def test_offline_report_contains_the_push_argv(tmp_path):
     # Revert: write_report(..., offline=True) passing tree=None.
     pair = remote_and_clone(tmp_path)
     (pair.work / "extra.txt").write_text("x\n")
@@ -31,7 +31,8 @@ def test_conclude_offline_report_contains_the_push_argv(tmp_path):
     item.step(Step.REVIEW).drafted = True
     run = make_run([item])
     seed_raw(run)
-    assert cli.pr_batch._conclude(run.id, RunStatus.DONE, cli.pr_batch._Reporter()) == 0
-    md = (batch.store.run_dir(run.id) / "report.md").read_text()
+    path, _doc = cli.pr_batch_views.write_report(run, offline=True)
+    assert path is not None
+    md = path.read_text()
     assert "pr push --expect" in md
     assert remote in md

@@ -44,27 +44,18 @@ def _saved(repo="o/r", repo_key="", run_id="20261001T120000-aaaa"):
 # ── no lock per repo ──────────────────────────────────────────────────────────
 
 
-def test_batch_declares_no_lock_for_a_run_or_resume_over_a_real_repo(tmp_path):
-    """Run and resume over a repo with an origin are where a per-repo lock was declared."""
+def test_batch_declares_no_lock_for_a_run_or_continue_over_a_real_repo(tmp_path):
+    """Run and --continue over a repo with an origin are where a per-repo lock was declared."""
     repo = repo_with_origin(tmp_path / "repo")
     run = _saved(repo_key=pr.target.repo_key_from_origin(str(repo)))
     spec = cli.registry.COMMANDS["batch"]
     empty = Need(NONE, update=False, locks=NO_LOCK)
-    for argv in (["run", "--checkout", str(repo)], ["resume", run.id], ["cancel"], []):
+    for argv in (["run", "--checkout", str(repo)],
+                 ["run", "--continue", run.id], ["cancel"], []):
         assert cli.registry.need_for(spec, argv) == empty
 
 
-# ── no-id resume / cancel / status ────────────────────────────────────────────
-
-
-def test_noid_resume_refuses_when_no_run_covers_the_cwd_repo(monkeypatch, capsys):
-    other = _saved(repo="other/r", repo_key="other-key-dddddddd")
-    monkeypatch.setattr(
-        pr.target, "repo_identity_from_origin",
-        lambda cwd=None: pr.target.RepoIdentity(label="cwd/repo", key="cwd-key-eeeeeeee"))
-    assert _main(["batch", "resume"]) == 1
-    assert "no batch run covers this repo; pass a run id" in capsys.readouterr().err
-    assert batch.store.load(other.id).status is batch.model.RunStatus.WAITING
+# ── no-id cancel / status ─────────────────────────────────────────────────────
 
 
 def test_noid_cancel_refuses_when_no_run_covers_the_cwd_repo(monkeypatch, capsys):
@@ -86,13 +77,12 @@ def _two_covering(monkeypatch):
     return a, b
 
 
-def test_noid_resume_and_cancel_refuse_when_several_runs_cover_the_repo(monkeypatch, capsys):
+def test_noid_cancel_refuses_when_several_runs_cover_the_repo(monkeypatch, capsys):
     a, b = _two_covering(monkeypatch)
-    for verb in ("resume", "cancel"):
-        assert _main(["batch", verb]) == 1
-        err = capsys.readouterr().err
-        assert "more than one unfinished run" in err
-        assert a.id in err and b.id in err
+    assert _main(["batch", "cancel"]) == 1
+    err = capsys.readouterr().err
+    assert "more than one unfinished run" in err
+    assert a.id in err and b.id in err
     for run in (a, b):
         assert batch.store.load(run.id).status is batch.model.RunStatus.WAITING
 

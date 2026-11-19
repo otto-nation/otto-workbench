@@ -238,6 +238,16 @@ class StepRecord:
 
 
 @dataclass
+class Job:
+    """One otto-queue submission for an item step. Index only; not status truth."""
+
+    step: Step
+    entry_id: int
+    argv: list[str] = field(default_factory=list)
+    submitted_at: str = ""
+
+
+@dataclass
 class Decision:
     id: str
     item: str
@@ -300,6 +310,7 @@ class Item:
     is_draft: bool = False
     # Schema-2 recordings; empty in v1 state and until a v2 run records one.
     findings: list[Finding] = field(default_factory=list)
+    jobs: list[Job] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if not self.remote_sha:
@@ -343,7 +354,7 @@ class Run:
     ref_namespace: str = ""
     ref_dirs: list[str] = field(default_factory=list)
     cancel: CancelState | None = None
-    schema_version: int = 1
+    schema_version: int = 3
     # None is a run saved before this field existed and means every step runs
     # with AI. An empty list is a default unattended run: no step uses AI.
     with_ai: list[Step] | None = None

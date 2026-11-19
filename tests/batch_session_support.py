@@ -22,7 +22,6 @@ if str(LIB_DIR) not in sys.path:
 import batch.inbox  # noqa: E402
 import batch.store  # noqa: E402
 import core.serde  # noqa: E402
-from batch.model import RunStatus  # noqa: E402
 from batch.store import Role  # noqa: E402
 from run_lock_support import held_elsewhere  # noqa: E402
 
@@ -97,18 +96,3 @@ def holding(run_id, role, command=None):
     record = {"pid": os.getppid(), "command": command, "started": "t0",
               "role": value, "run": run_id}
     return held_elsewhere(batch.store.run_lock(run_id).path, record)
-
-
-def stops_at(status: RunStatus):
-    """A `Scheduler.run_until_blocked` stand-in that settles the run at *status* without driving it.
-
-    It sets `run.status` as the real loop's settle does. `pr batch run` and
-    `resume` read their exit code from the committed run, so a stand-in that
-    only returned a status would leave the run RUNNING and exit 1.
-    """
-
-    def run_until_blocked(self):
-        self.run.status = status
-        return status
-
-    return run_until_blocked

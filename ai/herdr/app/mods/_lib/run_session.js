@@ -1,9 +1,9 @@
 /**
- * Open a batch run's or a PR target's pi session from herdr.
+ * Open a PR target's pi session from herdr.
  *
- * `pr batch session RUN_ID --json` / `pr --branch B target session --json`, asked on the
- * machine, says which session it is (`session_id`) and where it runs (`cwd`); the matching
- * `pr` module owns that and the argv and env, so nothing here builds a pi command line.
+ * `pr --branch B target session --json`, asked on the machine, says which session it is
+ * (`session_id`) and where it runs (`cwd`); the matching `pr` module owns that and the
+ * argv and env, so nothing here builds a pi command line.
  * A live hc terminal carrying the `otto.session` label for that id is brought forward
  * (its pane's space, tab and pane, or `terminal.keep` when no pane shows it); otherwise
  * a kind with `adoptPane` takes an agent pane in the checkout (`otto.worktree` label
@@ -18,15 +18,9 @@ import {
 } from './launch.js';
 
 export const SESSION_KINDS = {
-  batch: {
-    feature: 'batch-session',
-    outdatedRe: /invalid choice: 'session'/,
-    askArgv: (t) => ['batch', 'session', String(t.runId), '--json'],
-    openArgv: (t) => ['pr', 'batch', 'session', String(t.runId)],
-  },
   target: {
     feature: 'target-session',
-    outdatedRe: /invalid choice: 'target'/,
+    outdatedRe: /invalid choice: 'target'/, 
     askArgv: (t) => ['--branch', String(t.branch), 'target', 'session', '--json'],
     openArgv: () => ['pr', 'target', 'session'],
     adoptPane: true,
@@ -178,7 +172,7 @@ const OUTDATED = Object.freeze({ ok: false, outdated: true, message: OUTDATED_TE
 
 /**
  * deps: {exec, run, panes, spaces, terminals, sleep} (the herdr functions; sleep: the spawn's `cx.sleep`).
- * target: batch {on, cwd, runId, repo, features}; target {on, cwd, branch, repo, features}.
+ * target: {on, cwd, branch, repo, features}.
  * Resolves {ok:true, opened:'focused'|'adopted'|'started'} or {ok:false, outdated, message}; never rejects.
  */
 export async function openSession(deps, kind, target) {

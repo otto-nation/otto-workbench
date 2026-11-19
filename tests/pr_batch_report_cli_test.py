@@ -15,15 +15,16 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.live  # noqa: E402
 import batch.model  # noqa: E402
+import batch.orchestrate  # noqa: E402
 import batch.plan  # noqa: E402
 import batch.publish  # noqa: E402
-import batch.scheduler  # noqa: E402
+import batch.queue_entries  # noqa: E402
 import batch.store  # noqa: E402
 import cli.pr  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from batch_report_support import make_item, make_run  # noqa: E402
-from batch.store import Role  # noqa: E402
-from batch_session_support import holding, seed_raw  # noqa: E402
+from batch_session_support import seed_raw  # noqa: E402
+from otto_queue.model import EntryState  # noqa: E402
 
 BIN_DIR = REPO_ROOT / "ai" / "bin"
 
@@ -53,12 +54,15 @@ def test_report_writes_files_and_prints_path(capsys):
     assert Path(out[-1].split(" ", 1)[1]).is_absolute()
 
 
-def test_active_run_report_writes_no_files(capsys):
-    item = make_item(1)
+def test_active_run_report_writes_no_files(monkeypatch, capsys):
+    item = make_item(1, jobs=[batch.model.Job(
+        step=batch.model.Step.REVIEW, entry_id=1, submitted_at="t")])
     run = make_run([item], status=batch.model.RunStatus.RUNNING)
     seed_raw(run)
-    with holding(run.id, Role.DRIVER):
-        assert _main(["batch", "report", run.id, "--offline", "--format", "json"]) == 0
+    monkeypatch.setattr(
+        batch.queue_entries.QueueEntries, "states",
+        lambda self, ids: {1: EntryState.RUNNING})
+    assert _main(["batch", "report", run.id, "--offline", "--format", "json"]) == 0
     directory = batch.store.run_dir(run.id)
     assert not (directory / "report.md").exists()
     assert not (directory / "report.json").exists()
@@ -76,24 +80,14 @@ def test_offline_calls_neither_github_nor_peek_tree(monkeypatch, capsys):
     assert "report:" in capsys.readouterr().out
 
 
-def test_run_summary_sets_report_path_as_last_line(monkeypatch, capsys):
+def test_run_emits_run_started_as_first_event(monkeypatch, capsys):
     row = PlanRow("o/r", "/r", 1, "t", "b", "h", False,
-                  {batch.model.Step.REVIEW: StepNeed(True, "x")})
+                  {batch.model.Step.REBASE: StepNeed(True, "x")})
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", [row]))
-
-    def fake_run(self):
-        self.run.status = batch.model.RunStatus.DONE
-        self.run.items[0].status = batch.model.ItemStatus.DONE
-        return batch.model.RunStatus.DONE
-
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "run", "--checkout", "/r", "--steps", "review",
-                  "--with-review"]) == 0
-    lines = capsys.readouterr().out.splitlines()
-    last = json.loads(lines[-1])
-    assert last["kind"] == "run_summary"
-    assert last["report_path"]
-    assert Path(last["report_path"]).is_absolute()
-    assert Path(last["report_path"]).name == "report.md"
+    monkeypatch.setattr(batch.orchestrate, "submit_ready", lambda *a, **k: 0)
+    assert _main(["batch", "run", "--checkout", "/r", "--steps", "rebase"]) == 0
+    kinds = [json.loads(line)["kind"] for line in capsys.readouterr().out.splitlines()
+             if line.startswith("{")]
+    assert kinds[0] == "run_started"
 
 

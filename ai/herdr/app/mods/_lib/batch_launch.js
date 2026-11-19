@@ -137,18 +137,12 @@ export function runArgv({
   if (!Array.isArray(keys) || keys.length === 0) throw new Error('keys is empty');
   if (checkout == null || checkout === '') throw new Error('checkout is empty');
 
-  const stepList = steps ?? [];
-  const withoutReview = stepList.filter((s) => s !== 'review');
-  const reviewOnly = withoutReview.length === 0 && stepList.includes('review');
-  const wantsReview = stepList.includes('review')
-    || Object.values(selects).some((list) => Array.isArray(list) && list.includes('review'));
+  const stepList = (steps ?? []).filter((s) => s !== 'review');
 
   // phaseModels is flag argv from model_overrides.js; --phase-model is global, so it leads.
+  if (stepList.length === 0) throw new Error('steps is empty');
   const argv = [...phaseModels, 'batch', 'run', '--checkout', checkout, '--prs', keys.join(',')];
-  if (!reviewOnly && stepList.length > 0) {
-    argv.push('--steps', withoutReview.join(','));
-  }
-  if (wantsReview || reviewOnly) argv.push('--with-review');
+  argv.push('--steps', stepList.join(','));
 
   const ai = withAi.filter((s) => AI_STEPS.includes(s));
   if (ai.length > 0) argv.push('--with-ai', ai.join(','));
@@ -157,15 +151,11 @@ export function runArgv({
   // changes something, so a machine whose pr predates it still runs the default.
   if (rebaseBehind && stepList.includes('rebase')) argv.push('--rebase', 'behind');
 
-  const effectiveSelects = { ...selects };
-  if (reviewOnly) {
-    for (const key of keys) {
-      if (!Object.hasOwn(effectiveSelects, key)) effectiveSelects[key] = ['review'];
-    }
-  }
   for (const key of keys) {
-    if (!Object.hasOwn(effectiveSelects, key)) continue;
-    argv.push('--select', `${key}=${effectiveSelects[key].join(',')}`);
+    if (!Object.hasOwn(selects, key)) continue;
+    const chosen = (selects[key] ?? []).filter((s) => s !== 'review');
+    if (chosen.length === 0) continue;
+    argv.push('--select', `${key}=${chosen.join(',')}`);
   }
   for (const raw of focus) {
     const text = String(raw ?? '').trim();

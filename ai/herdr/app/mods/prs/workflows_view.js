@@ -79,13 +79,9 @@ export function renderRunPanel(state, expanded) {
         trailRoot: state.doc?.run?.trailRoot ?? r.trailRoot,
         cwd: r.cwd ?? r.runDir,
       });
-      const session = state.session ?? null;
-      const actions = trail == null && session == null ? null
+      const actions = trail == null ? null
         : h_flex().pl(SP.xl).py(SP.xxs).gap(SP.sm).flex_wrap().items_center()
-          .when(session != null, (e) => e.child(sessionButton("open-session-run", session)))
-          .when(trail != null, (e) => e
-            .child(button("open-trail", "Open trail", () => state.onOpenTrail?.(r))))
-          .when(session != null, (e) => e.children(sessionState(session)))
+          .child(button("open-trail", "Open trail", () => state.onOpenTrail?.(r)))
           .when(Boolean(state.trailError), (e) => e.child(errorLine(state.trailError)));
       return actions && expanded ? [row, actions, expanded(r)]
         : actions ? [row, actions]
@@ -157,7 +153,6 @@ function renderNeedsYou(item, state) {
         .when(Boolean(cmd.why), (row) => row.child(caption(cmd.why)))))
       .children(fileCmds.map((cmd, i) => button(`file-${i}`, actionLabel(cmd), () => state.onRun?.(cmd))))
       .children(notes.map((n) => text("body", n, t.muted))))
-    .when(Boolean(state.runSession), (e) => e.child(sessionControl("open-session", state.runSession)))
     .when(Boolean(state.onTerminal), (e) => e.child(
       button("open-terminal", "Open terminal", () => state.onTerminal())));
 }

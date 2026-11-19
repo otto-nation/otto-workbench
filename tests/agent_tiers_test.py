@@ -54,7 +54,7 @@ def test_each_claude_tier_carries_its_model_and_effort():
     )).claude
     assert claude.tiers == {
         Tier.DEEP: ClaudeTier("claude-opus-5-5", "xhigh"),
-        Tier.STANDARD: ClaudeTier("claude-sonnet-5-5", None),
+        Tier.STANDARD: ClaudeTier("claude-sonnet-5-5", "high"),
         # Below Claude's lowest effort, as the pipeline runs it.
         Tier.LIGHT: ClaudeTier("claude-haiku-5-5", "low"),
     }

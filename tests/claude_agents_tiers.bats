@@ -56,11 +56,11 @@ _frontmatter() {
 }
 
 @test "a tier with no level sets the model and leaves effort to the session" {
-  _seed_config 'models:' '  standard: claude-sonnet-5-5'
+  _seed_config 'models:' '  standard: claude-sonnet-4-6'
   run _agents_run
   [ "$status" -eq 0 ]
   run _frontmatter "$AGENTS_OUT/reviewer-lite.md"
-  [[ "$output" == *"model: claude-sonnet-5-5"* ]]
+  [[ "$output" == *"model: claude-sonnet-4-6"* ]]
   [[ "$output" != *"effort:"* ]]
 }
 
@@ -88,7 +88,7 @@ _frontmatter() {
   run _agents_run
   [ "$status" -eq 0 ]
   run cat "$AGENTS_OUT/mine.md"
-  [ "$output" = $'---\nname: mine\ndescription: d\nmodel: claude-opus-5-5\n---\n\ntier: not frontmatter' ]
+  [ "$output" = $'---\nname: mine\ndescription: d\nmodel: claude-opus-5-5\neffort: high\n---\n\ntier: not frontmatter' ]
 }
 
 @test "an agent with no tier is installed as written" {

@@ -19,6 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 from agent.harness_models import CLAUDE_MANAGED_ENV, AutoNeedsTiers, AutoTakesNoLevel, harness_models
 from agent.models import UnsetTier
 from config.workbench_config import ModelsConfig
+from core.phases import Tier
 
 from workbench_config_support import roots, _write  # noqa: F401
 
@@ -82,8 +83,9 @@ def test_a_level_below_claudes_lowest_effort_runs_at_low(level):
 
 
 def test_a_session_with_no_level_names_no_effort():
-    claude = harness_models(ModelsConfig(session="claude-opus-5-5")).claude
-    assert (claude.model, claude.effort) == ("claude-opus-5-5", None)
+    # A family without a default still leaves effort to the session / CLI.
+    claude = harness_models(ModelsConfig(session="claude-sonnet-4-6")).claude
+    assert (claude.model, claude.effort) == ("claude-sonnet-4-6", None)
 
 
 def test_a_non_claude_session_leaves_claude_code_its_own_model():
@@ -114,6 +116,30 @@ def test_pi_defaults_come_from_the_session_and_levels_from_every_ref():
         "claude-opus-5-5", "anthropic", "high")
     # A bare id keeps its level under the bare key; the sync qualifies it.
     assert pi.thinking_levels == {"anthropic/claude-opus-5-5": "high", "claude-haiku-5-5": "low"}
+
+
+def test_known_families_fill_thinking_on_the_tiers_auto_and_pi_read():
+    view = harness_models(ModelsConfig(
+        deep="google-vertex/gemini-4-carbon",
+        standard="xai/grok-4.6",
+        light="google-vertex-claude/claude-haiku-4-5@20251001",
+        session="auto",
+    ))
+    assert {tier.value: ref.level for tier, ref in view.tiers.items()} == {
+        "deep": "high", "standard": "high", "light": "low",
+    }
+    assert view.pi.thinking_levels == {
+        "google-vertex/gemini-4-carbon": "high",
+        "xai/grok-4.6": "high",
+        "google-vertex-claude/claude-haiku-4-5@20251001": "low",
+    }
+    assert view.claude.tiers[Tier.LIGHT].effort == "low"
+
+
+def test_a_written_level_on_a_known_family_is_not_replaced():
+    view = harness_models(ModelsConfig(standard="xai/grok-4.6:medium"))
+    assert view.tiers[Tier.STANDARD].level == "medium"
+    assert view.pi.thinking_levels == {"xai/grok-4.6": "medium"}
 
 
 def test_a_bare_session_names_no_provider_so_pi_keeps_its_own():
@@ -226,7 +252,7 @@ models:
     out = json.loads(capsys.readouterr().out)
     assert out["tiers"] == {
         "deep": {"provider": "anthropic", "id": "claude-opus-5-5", "level": "high"},
-        "standard": {"provider": "anthropic", "id": "claude-sonnet-5-5", "level": None},
+        "standard": {"provider": "anthropic", "id": "claude-sonnet-5-5", "level": "high"},
         "light": {"provider": "openai", "id": "gpt-6-luna", "level": None},
     }
     assert out["claude"]["model"] == "opusplan"

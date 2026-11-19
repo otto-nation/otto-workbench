@@ -48,14 +48,14 @@ WRITE_PLAN_OK='{"role":"toolResult","toolCallId":"w1","isError":false,"content":
   [ "$output" = '{"tier":"standard"}' ]
 }
 
-@test "a planning skill loaded with /skill: moves the session to deep" {
+@test "a planning skill loaded with /skill: marks planning, still on standard" {
   run _decide "{\"reason\":\"user\",\"messages\":[$SKILL_COMMAND]}"
-  [ "$output" = '{"tier":"deep","state":{"phase":"planning"}}' ]
+  [ "$output" = '{"tier":"standard","state":{"phase":"planning"}}' ]
 }
 
-@test "a planning skill the model reads moves the session to deep" {
+@test "a planning skill the model reads marks planning, still on standard" {
   run _decide "{\"reason\":\"continuation\",\"hasPrevious\":true,\"messages\":[$SKILL_READ]}"
-  [ "$output" = '{"tier":"deep","state":{"phase":"planning"}}' ]
+  [ "$output" = '{"tier":"standard","state":{"phase":"planning"}}' ]
 }
 
 @test "any other skill leaves the session where it is" {
@@ -65,7 +65,7 @@ WRITE_PLAN_OK='{"role":"toolResult","toolCallId":"w1","isError":false,"content":
 
 @test "writing the plan itself keeps the session planning" {
   run _decide "{\"reason\":\"continuation\",\"hasPrevious\":true,\"state\":{\"phase\":\"planning\"},\"planFiles\":[\"/ws/plans/p.md\"],\"messages\":[$SKILL_COMMAND,$WRITE_PLAN,$WRITE_PLAN_OK]}"
-  [ "$output" = '{"tier":"deep","keep":"previous"}' ]
+  [ "$output" = '{"tier":"standard","keep":"previous"}' ]
 }
 
 @test "the first edit outside the plans moves the session to building, on standard" {
@@ -75,13 +75,13 @@ WRITE_PLAN_OK='{"role":"toolResult","toolCallId":"w1","isError":false,"content":
 
 @test "an edit that failed changed nothing, so the session stays planning" {
   run _decide "{\"reason\":\"continuation\",\"hasPrevious\":true,\"state\":{\"phase\":\"planning\"},\"messages\":[$SKILL_COMMAND,$EDIT_CODE,$EDIT_CODE_FAILED]}"
-  [ "$output" = '{"tier":"deep","keep":"previous"}' ]
+  [ "$output" = '{"tier":"standard","keep":"previous"}' ]
 }
 
-@test "a planning skill loaded after the build brings deep back" {
-  # A second feature in one session, after a small fix, plans on deep again.
+@test "a planning skill loaded after the build marks planning again, still on standard" {
+  # A second feature in one session, after a small fix.
   run _decide "{\"reason\":\"user\",\"state\":{\"phase\":\"building\"},\"messages\":[$EDIT_CODE,$EDIT_CODE_OK,$SKILL_COMMAND]}"
-  [ "$output" = '{"tier":"deep","state":{"phase":"planning"}}' ]
+  [ "$output" = '{"tier":"standard","state":{"phase":"planning"}}' ]
 }
 
 @test "an edit after the planning skill leaves the old load behind" {
@@ -91,12 +91,12 @@ WRITE_PLAN_OK='{"role":"toolResult","toolCallId":"w1","isError":false,"content":
 
 @test "with both events compacted out of view the stored phase stands" {
   run _decide '{"reason":"user","state":{"phase":"planning"},"messages":[{"role":"user","content":"continue"}]}'
-  [ "$output" = '{"tier":"deep"}' ]
+  [ "$output" = '{"tier":"standard"}' ]
 }
 
 @test "a tool follow-up stays on the model that answered" {
   run _decide '{"reason":"continuation","hasPrevious":true,"state":{"phase":"planning"}}'
-  [ "$output" = '{"tier":"deep","keep":"previous"}' ]
+  [ "$output" = '{"tier":"standard","keep":"previous"}' ]
 }
 
 @test "a retry stays on the model that failed" {
@@ -106,7 +106,7 @@ WRITE_PLAN_OK='{"role":"toolResult","toolCallId":"w1","isError":false,"content":
 
 @test "a user turn routes to the phase's tier, not to whatever answered last" {
   run _decide '{"reason":"user","hasPrevious":true,"state":{"phase":"planning"}}'
-  [ "$output" = '{"tier":"deep"}' ]
+  [ "$output" = '{"tier":"standard"}' ]
 }
 
 @test "a request outside the agent loop goes to light and carries no state" {

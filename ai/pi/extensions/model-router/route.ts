@@ -5,29 +5,31 @@
  * only inside a Pi session, and a routing rule that quietly stopped matching
  * would read exactly like one with nothing to do.
  *
- * A session is in one of three phases, each on one tier:
+ * A session is in one of three phases. The driver is always standard:
  *
  *   standard  — where it starts: ordinary questions and small changes
- *   planning  — deep, while the latest of the two events below is a planning
- *               skill loading
+ *   planning  — still standard, while the latest of the two events below is a
+ *               planning skill loading. Deep is a poor long agentic loop, so
+ *               Auto never becomes it for the whole turn.
  *   building  — standard, while the latest is a successful edit outside the
  *               workspace's plans and specs
  *
  * So writing the plan keeps a session planning, the first code edit after it
  * moves it to building, and loading a planning skill again — a second feature
- * in one session — brings deep back. The phase is router state: it follows the
- * session tree, and when compaction has removed both events from view the
- * stored phase stands. Within a phase a tool follow-up stays on the model that
- * answered and a retry on the model that failed, which keeps the prompt cache
- * and thinking signatures valid; a phase change accepts one cache miss.
- * Requests outside the agent loop — compaction summaries, an extension's own
- * model call — go to light and carry no state, unless light cannot hold the
- * conversation (index.ts).
+ * in one session — marks planning again, still on standard. The phase is
+ * router state: it follows the session tree, and when compaction has removed
+ * both events from view the stored phase stands. Within a phase a tool
+ * follow-up stays on the model that answered and a retry on the model that
+ * failed, which keeps the prompt cache and thinking signatures valid; a phase
+ * change accepts one cache miss. Requests outside the agent loop — compaction
+ * summaries, an extension's own model call — go to light and carry no state,
+ * unless light cannot hold the conversation (index.ts).
  *
  * ceiling: an edit is an `edit` or `write` tool call, so a build done entirely
- * through `bash` (sed -i, git apply, a generator) stays on deep. Upgrade to
- * counting bash writes — `_shared/statements.ts` already tokenizes commands —
- * if sessions are seen implementing that way while still planning.
+ * through `bash` (sed -i, git apply, a generator) stays planning. Planning and
+ * building are the same tier today, so the miss is only the stored phase.
+ * Upgrade to counting bash writes — `_shared/statements.ts` already tokenizes
+ * commands — if planning is ever mapped off standard again.
  */
 
 /** Where the virtual model is listed. agent/harness_models.py spells the same two. */
@@ -50,7 +52,7 @@ export interface RouterState {
 
 const PHASE_TIER: Record<Phase, Tier> = {
   standard: "standard",
-  planning: "deep",
+  planning: "standard",
   building: "standard",
 };
 

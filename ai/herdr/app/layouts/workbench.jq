@@ -21,9 +21,8 @@ then error("main layout has no single panel-body node")
 else
   (.. | objects | select(.id? == "panel-body") | .children) |= (map(select(.id != "prs-panel" and .id != "queue-panel" and .id != "hosts-panel" and .id != "sessions-panel" and .id != "workbench-panel" and .id != "settings-panel" and .id != "files" and .id != "changes")) + [workbench_panel, prs_panel, queue_panel, hosts_panel, sessions_panel, settings_panel])
   | (.. | objects | select(.id? == "panel-body")) |= if (.active == "files" or .active == "changes") then .active = "workbench-panel" else . end
-  # Full screen hides main and sets the panel to weight 1; Herdr still clamps a node to its max,
-  # so main's 900px panel cap would hold the board to 900px of the freed width.
-  | (.. | objects | select(.id? == "panel")) |= del(.max)
+  # Keep main's 900px panel cap. Dropping it let Full screen fill the window, but the
+  # everyday panel then had no upper bound and ate the terminals.
   # A second run finds tabs inside tabs-row, not under work, so the wrap is a no-op.
   | if ([.. | objects | select(.id? == "tabs")] | length) == 1
     then (.. | objects | select(.id? == "work") | .children) |= map(if .id == "tabs" then tabs_row else . end)

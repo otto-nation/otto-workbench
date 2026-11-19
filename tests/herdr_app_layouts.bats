@@ -81,12 +81,11 @@ _run_step() {
   jq -e '[.. | objects | select(.id? == "prs-panel") | .content.props] == [{"placement":"panel"}]' <<< "$output"
 }
 
-@test "jq lifts the panel's max so full screen can give the board the whole width" {
-  jq -e '[.. | objects | select(.id? == "panel") | has("max")] == [true]' "$FIXTURE"
+@test "jq keeps the panel's max so the board cannot eat the terminals" {
+  jq -e '[.. | objects | select(.id? == "panel") | .max] == [900]' "$FIXTURE"
   run jq -f "$REPO_ROOT/ai/herdr/app/layouts/workbench.jq" "$FIXTURE"
   [ "$status" -eq 0 ]
-  jq -e '[.. | objects | select(.id? == "panel") | has("max")] == [false]' <<< "$output"
-  jq -e '[.. | objects | select(.id? == "panel") | [.min, .size]] == [[280, {"px": 368}]]' <<< "$output"
+  jq -e '[.. | objects | select(.id? == "panel") | [.min, .max, .size]] == [[280, 900, {"px": 368}]]' <<< "$output"
 }
 
 @test "jq wraps the tab bar in a row with the Workbench toggle" {

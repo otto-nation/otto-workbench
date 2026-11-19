@@ -121,3 +121,64 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = '["loading","error","boom","ready",1,9]' ]
 }
+
+@test "folderBasename is the last path segment" {
+  _js 'out([s.folderBasename("/w/otto-workbench"), s.folderBasename("/w/otto-workbench/"), s.folderBasename("plain"), s.folderBasename("")])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '["otto-workbench","otto-workbench","plain",""]' ]
+}
+
+@test "machineCountsLine: live and candidates, else session count, else empty" {
+  _js '
+    const ready = s.machineSessions({ key: "", on: null, title: "This computer", since: 9,
+      result: { ok: true, doc: { schema: 1, sessions: [
+        sess({ id: "a", live: { pid: 1, rss_mb: 1, idle_s: 1, terminal: "", close_candidate: true } }),
+        sess({ id: "b", live: { pid: 2, rss_mb: 1, idle_s: 1, terminal: "", close_candidate: false } }),
+        sess({ id: "c" }),
+      ] } } }, NOW);
+    const closed = s.machineSessions({ key: "", on: null, title: "T", since: 9,
+      result: { ok: true, doc: { schema: 1, sessions: [sess()] } } }, NOW);
+    const liveOnly = s.machineSessions({ key: "", on: null, title: "T", since: 9,
+      result: { ok: true, doc: { schema: 1, sessions: [
+        sess({ id: "b", live: { pid: 2, rss_mb: 1, idle_s: 1, terminal: "", close_candidate: false } }),
+      ] } } }, NOW);
+    const candOnly = s.machineSessions({ key: "", on: null, title: "T", since: 9,
+      result: { ok: true, doc: { schema: 1, sessions: [
+        sess({ id: "a", live: { pid: 1, rss_mb: 1, idle_s: 1, terminal: "", close_candidate: true } }),
+      ] } } }, NOW);
+    const loading = s.machineSessions({ key: "", on: null, title: "T", since: 9 }, NOW);
+    out([s.machineCountsLine(ready), s.machineCountsLine(closed), s.machineCountsLine(liveOnly), s.machineCountsLine(candOnly), s.machineCountsLine(loading)]);
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["2 live · 1 close candidate","1 session","1 live","1 live · 1 close candidate",""]' ]
+}
+
+@test "isFolderOpen: null open means only a single group starts open" {
+  _js 'out([s.isFolderOpen(null, "/w/a", 1), s.isFolderOpen(null, "/w/a", 2), s.isFolderOpen(["/w/a"], "/w/a", 2), s.isFolderOpen([], "/w/a", 1)])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[true,false,true,false]' ]
+}
+
+@test "ensureOpenState: null plus one key materialises it; two keys stay null; a stored list is kept" {
+  _js 'out([s.ensureOpenState(null, ["/w/a"]), s.ensureOpenState(null, ["/w/a","/w/b"]), s.ensureOpenState(["/w/a"], ["/w/a","/w/b"])])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["/w/a"],null,["/w/a"]]' ]
+}
+
+@test "toggleFolder materialises the default then flips the key" {
+  _js 'out([s.toggleFolder(null, "/w/a", 1, ["/w/a"]), s.toggleFolder(null, "/w/a", 2, ["/w/a","/w/b"]), s.toggleFolder(["/w/a"], "/w/a", 2, ["/w/a","/w/b"])])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[[],["/w/a"],[]]' ]
+}
+
+@test "homeCards: one card per machine with counts; error gets fail status" {
+  _js '
+    const ready = s.machineSessions({ key: "", on: null, title: "This computer", since: 9,
+      result: { ok: true, doc: { schema: 1, sessions: [sess({ live: { pid: 1, rss_mb: 1, idle_s: 1, terminal: "", close_candidate: false } })] } } }, NOW);
+    const failed = s.machineSessions({ key: "h", on: "h", title: "box", since: 9,
+      result: { ok: false, error: { message: "boom" } } }, NOW);
+    out(s.homeCards([ready, failed]).map((c) => [c.key, c.title, c.counts, c.status ?? null]));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[["","This computer","1 live",null],["h","box","",{"kind":"fail","word":"error"}]]' ]
+}

@@ -1,6 +1,6 @@
 # herdr-app mods
 
-Conventions for the mods under this directory (`prs`, `prs-button`, `queue`, `queue-button`, `hosts`, `hosts-button`, `sessions`, `sessions-button`, `_lib`, `_ui`, …).
+Conventions for the mods under this directory (`prs`, `queue`, `hosts`, `sessions`, `workbench`, `workbench-button`, `settings`, `_lib`, `_ui`, …).
 
 ## Where things live
 
@@ -37,6 +37,7 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `queue`, `qu
 ## The Sessions panel
 
 - `sessions/` lists pi sessions per machine (this one, then `_lib/machines.js` `remoteOns`) from `pi-sessions list --json --since N` (`_lib/sessions.js` `loadSessions`; a machine without `pi-sessions` reads as outdated with `OUTDATED_TEXT`). Python owns every fact — title, TL;DR, PRs, worktrees, live RSS and idle, spend, and the close-candidate verdict (idle > 16 h and RSS > 200 MB, `ai/lib/pi_sessions/live.py`); `_lib/sessions.js` `machineSessions`/`groupsOf`/`rowModel` only word, group (first worktree, else cwd) and order them (close candidates first, then most recent). The panel never closes anything on its own
+- Default screen is the machines home: one `card` per machine. A click opens that machine via `selectMachine` into `shared("sessions.machine")`. The machine page rolls sessions into folders (`shared("sessions.open")`; default folded, a single group starts open)
 - Rows show the title (a person's name, else the auto title, else folder · short id), a `close candidate` warn mark, the TL;DR, PR tags, and one state line (`live · RSS · idle N` or `closed · N ago`, plus `opus $12.40 · grok $0.01` when the brief has spend). Actions: Open (`_lib/sessions_open.js` `openPiSession`: a live terminal labelled `otto.session=<id>` is brought forward; a closed session starts as `hc run --bg pi --session <file>` in its cwd and is kept as a tab; a live session with no labelled terminal is never started twice), Close (live only: `pi-sessions close <id>`, SIGTERM; the file stays), Rename (closed only: opens it with `--name`; a live session is renamed with /name inside it). A refusal shows beside the row
 - No polling (T1-a): loads on mount, when the panel comes on screen (a 1 s layout-only watch that spawns nothing), on Refresh and after an action. Show older widens that machine's window by `SINCE_STEP_DAYS` and loads it on demand
 
@@ -58,8 +59,12 @@ Conventions for the mods under this directory (`prs`, `prs-button`, `queue`, `qu
 - Only the panel copy (mounted with `props.placement === "panel"`) offers it. The layout owns "is full screen": `main` hidden (`_lib/fullscreen.js` `fullscreenState` reads it from `layout()`; a shown node's `hidden` is absent, not `false`). Enter hides `main` and sets the panel to weight 1; exit shows `main` and restores the width saved in `shared("prs.panelPx")`. `_lib/fullscreen_run.js` owns that sequence; the board button and each tab-bar toggle (`_lib/panel_button.js`) call it
 - Herdr clamps a node to its `max` even at weight 1, so `ai/herdr/app/layouts/workbench.jq` drops the panel's `max` (900 in Herdr's main layout); with it, full screen holds the board to 900px and leaves the rest of the area empty
 - A render is not re-run by a layout click, but `layout()` read in a `cx.timer.every` callback is current, so anything derived from it is refreshed by a timer, not left to `render`
-- herdr's tabs mod shows or hides the panel per space, so a space switch can leave `main` and the panel both hidden. Each tab-bar toggle (`_lib/panel_button.js`) heals that from a one-second timer (`healDue` is the rule) by exiting full screen, exits at startup so the app never opens with the terminals hidden, and its click exits before it hides the panel. `ai/herdr/app/layouts/workbench.jq` mounts `prs-panel`, `queue-panel`, `hosts-panel` and `sessions-panel` as `panel-body` children (not files or changes) and `prs-button` / `queue-button` / `hosts-button` / `sessions-button` in `tabs-row`; each toggle selects its child with `layout.select`
+- herdr's tabs mod shows or hides the panel per space, so a space switch can leave `main` and the panel both hidden. Each tab-bar toggle (`_lib/panel_button.js`) heals that from a one-second timer (`healDue` is the rule) by exiting full screen, exits at startup so the app never opens with the terminals hidden, and its click exits before it hides the panel. `ai/herdr/app/layouts/workbench.jq` mounts `workbench-panel`, `prs-panel`, `queue-panel`, `hosts-panel`, `sessions-panel`, `settings-panel` as `panel-body` children (not files or changes) and `workbench-button` in `tabs-row`; the toggle is selected while any workbench child is active
 - No Esc to exit: a mod only gets keys when it is focusable
+
+## Workbench hub
+
+- Hub tiles (`HUB_TILES` in `_lib/workbench.js`) open the destination panels; captions are static. The sticky `workbench-button` stays selected on any destination: hidden → hub, hub → hide, destination → hub. Settings is a stub pane
 
 ## Design
 

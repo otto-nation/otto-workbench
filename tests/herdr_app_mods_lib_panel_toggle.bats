@@ -25,12 +25,22 @@ _js() {
   [ "$output" = '[true,false,false,false]' ]
 }
 
-@test "syncWorkspacePanels drops files and changes and adds the child once" {
-  _js '[m.syncWorkspacePanels(undefined, "queue-panel"), m.syncWorkspacePanels(["files","changes","queue-panel"], "queue-panel"), m.syncWorkspacePanels(["files","changes","prs-panel"], "queue-panel"), m.syncWorkspacePanels(["queue-panel"], "queue-panel")]'
-  [ "$output" = '[["queue-panel"],["queue-panel"],["prs-panel","queue-panel"],null]' ]
+@test "panelActive is the shown child or null" {
+  _js '[m.panelActive({id:"r",children:[{id:"panel",children:[{id:"panel-body",active:"queue-panel"}]}]}), m.panelActive({id:"r",children:[{id:"panel",hidden:true,children:[{id:"panel-body",active:"queue-panel"}]}]}), m.panelActive(null)]'
+  [ "$output" = '["queue-panel",null,null]' ]
 }
 
-@test "clickSteps hide the panel when on and select the child when off" {
-  _js '[m.clickSteps(true, "queue-panel"), m.clickSteps(false, "queue-panel")]'
-  [ "$output" = '[[{"command":"layout.hide","args":{"id":"panel"}}],[{"command":"layout.select","args":{"stack":"panel-body","child":"queue-panel"}},{"command":"layout.show","args":{"id":"panel"}}]]' ]
+@test "groupOn is true for any listed child while the panel shows" {
+  _js '[m.groupOn({id:"r",children:[{id:"panel",children:[{id:"panel-body",active:"sessions-panel"}]}]}, ["workbench-panel","sessions-panel"]), m.groupOn({id:"r",children:[{id:"panel",children:[{id:"panel-body",active:"files"}]}]}, ["workbench-panel","sessions-panel"]), m.groupOn({id:"r",children:[{id:"panel",hidden:true,children:[{id:"panel-body",active:"sessions-panel"}]}]}, ["workbench-panel","sessions-panel"])]'
+  [ "$output" = '[true,false,false]' ]
+}
+
+@test "groupClickSteps: hidden shows hub, hub hides, destination returns to hub" {
+  _js '[m.groupClickSteps(null, "workbench-panel", ["workbench-panel","queue-panel"]), m.groupClickSteps("workbench-panel", "workbench-panel", ["workbench-panel","queue-panel"]), m.groupClickSteps("queue-panel", "workbench-panel", ["workbench-panel","queue-panel"])]'
+  [ "$output" = '[[{"command":"layout.select","args":{"stack":"panel-body","child":"workbench-panel"}},{"command":"layout.show","args":{"id":"panel"}}],[{"command":"layout.hide","args":{"id":"panel"}}],[{"command":"layout.select","args":{"stack":"panel-body","child":"workbench-panel"}}]]' ]
+}
+
+@test "enableWorkspacePanels drops files and changes and adds every missing child once" {
+  _js '[m.enableWorkspacePanels(undefined, ["workbench-panel","prs-panel"]), m.enableWorkspacePanels(["files","changes","workbench-panel","prs-panel"], ["workbench-panel","prs-panel"]), m.enableWorkspacePanels(["files","changes","workbench-panel"], ["workbench-panel","prs-panel"]), m.enableWorkspacePanels(["workbench-panel","prs-panel"], ["workbench-panel","prs-panel"])]'
+  [ "$output" = '[["workbench-panel","prs-panel"],["workbench-panel","prs-panel"],["workbench-panel","prs-panel"],null]' ]
 }

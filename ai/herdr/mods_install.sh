@@ -300,5 +300,15 @@ _herdr_app_install_mods() {
     [[ "$name" == _* ]] && continue
     _herdr_mod_install_one "$src_mod" "$mods_home/$name" "$name"
   done
+  local dest
+  for dest in "$mods_home"/*; do
+    [[ -d "$dest" ]] || continue
+    [[ -L "$dest" ]] && continue
+    name=$(basename "$dest")
+    [[ -f "$dest/.workbench-install" ]] || continue
+    [[ -d "$src_root/$name" ]] && continue
+    rm -rf "$dest" || { warn "herdr-app mod $name: could not remove vanished $dest"; continue; }
+    warn "herdr-app mod $name: removed (no longer in source)"
+  done
   return 0
 }

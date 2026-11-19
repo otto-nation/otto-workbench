@@ -10,7 +10,7 @@ export const LABEL_REPO = 'otto.repo';
 // Constant on every terminal the PR surfaces start: the one label `hc ls --label` can select on.
 export const LABEL_APP = 'otto.app';
 export const APP_NAME = 'pr';
-// A batch run's pi session terminal: the session id `pr batch session --json` named.
+// A pi session terminal: the session id the recipe named.
 export const LABEL_SESSION = 'otto.session';
 // Worktree a session claims. Written by ai/lib/pr/agent_worktree.py; overrides the pane cwd.
 export const LABEL_WORKTREE = 'otto.worktree';

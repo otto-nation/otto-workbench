@@ -1,9 +1,6 @@
-"""`pr batch` resume and cancel as run sessions: the races a bare run lock left open."""
+"""`pr batch` cancel: queue jobs and lock races."""
 
-import json
-import os
 import sys
-from dataclasses import dataclass
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -12,20 +9,14 @@ BIN_DIR = REPO_ROOT / "ai" / "bin"
 if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
-import batch.events  # noqa: E402
-import batch.plan  # noqa: E402
 import batch.scheduler  # noqa: E402
 import batch.store  # noqa: E402
 import cli.pr  # noqa: E402
-import cli.pr_batch  # noqa: E402
-import core.run_lock  # noqa: E402
-import pr.target  # noqa: E402
-from batch.model import (Decision, DecisionKind, ItemStatus, RunStatus, Step,  # noqa: E402
-                         StepStatus)
-from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
-from batch.requests import Cancel  # noqa: E402
-from batch_session_support import holding, seed, stops_at  # noqa: E402
-from run_lock_support import held_elsewhere, repo_with_origin  # noqa: E402
+import otto_queue.ticket  # noqa: E402
+from batch.model import (Decision, DecisionKind, ItemStatus, Job, RunStatus,  # noqa: E402
+                         Step, StepStatus)
+from batch.plan import PlanRow, StepNeed  # noqa: E402
+from batch_session_support import holding, seed  # noqa: E402
 
 
 def _main(argv):
@@ -52,168 +43,42 @@ def _run():
     return run
 
 
-def _requests(run_id):
-    reqs = batch.store.run_dir(run_id) / "requests"
-    return sorted(p.name for p in reqs.iterdir()) if reqs.is_dir() else []
-
-
-def _events(out):
-    return [json.loads(line) for line in out.splitlines() if line.strip()]
-
-
-# ── R1/R4: resume loads only under the run lock ──────────────────────────────
-
-def test_resume_drives_only_a_run_it_loaded_under_the_run_lock(monkeypatch):
-    row = PlanRow("o/r", "/r", 1, "t", "b", "h", False, {Step.REVIEW: StepNeed(True, "x")})
-    run = batch.scheduler.new_run([row], steps=[Step.REVIEW], selected=None, pool=1)
-    run.items[0].worktree = "/wt"
-    run.status = RunStatus.WAITING
+def test_cancel_cancels_each_live_job_and_marks_the_run_cancelled(monkeypatch):
+    run = _run()
+    run.items[0].jobs = [Job(step=Step.REVIEW, entry_id=8)]
     seed(run)
-    lock_file = batch.store.run_lock(run.id).path
-    loads = []
-    real = batch.store.load
+    calls = []
 
-    def spy(run_id):
-        loaded = real(run_id)
-        loads.append((core.run_lock.holds(lock_file), loaded))
-        return loaded
+    def fake_cancel(ledger, entry_id):
+        calls.append((ledger, entry_id))
 
-    driven = {}
-
-    def fake_run(self):
-        driven["run"] = self.run
-        self.run.status = RunStatus.DONE
-        return RunStatus.DONE
-
-    monkeypatch.setattr(batch.store, "load", spy)
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "resume", run.id]) == 0
-    # What is driven must be the load made under the run lock.
-    assert any(held for held, _ in loads)
-    assert [held for held, loaded in loads if loaded is driven["run"]] == [True]
+    monkeypatch.setattr(otto_queue.ticket, "cancel_entry", fake_cancel)
+    assert _main(["batch", "cancel", run.id]) == 0
+    assert [entry_id for _, entry_id in calls] == [8]
+    assert batch.store.load(run.id).status is RunStatus.CANCELLED
 
 
 # ── R2: a cancel queued while an applier holds the run is applied ────────────
 
-def test_a_cancel_queued_during_an_applier_hold_is_applied_by_the_next_session(capsys):
+def test_cancel_is_refused_while_another_session_holds_the_run(capsys):
     run = seed(_run())
     with holding(run.id, "applier"):
-        assert _main(["batch", "cancel", run.id]) == 0
-    assert json.loads(capsys.readouterr().out) == {"cancelled": True, "run": run.id,
-                                                    "queued": True}
+        assert _main(["batch", "cancel", run.id]) == 1
+    err = capsys.readouterr().err
+    assert "busy" in err
+    assert "inbox" not in err
     assert batch.store.load(run.id).status is RunStatus.WAITING
-    assert batch.store.pending_requests(run.id) == 1
-    assert _main(["batch", "release", run.id, run.items[0].key]) == 0
-    saved = batch.store.load(run.id)
-    assert saved.status is RunStatus.CANCELLED
-    assert saved.cancel is not None
     assert batch.store.pending_requests(run.id) == 0
 
 
-# ── R5: a busy resume does nothing before it is refused ──────────────────────
-
-def test_a_busy_resume_emits_nothing_and_deletes_nothing(monkeypatch, capsys):
+def test_cancel_fails_when_queue_ledger_is_busy(monkeypatch, capsys):
+    import otto_queue.ledger
     run = _run()
-    run.items[0].step(Step.REVIEW).status = StepStatus.RUNNING
-    run.status = RunStatus.INTERRUPTED
+    run.items[0].jobs = [Job(step=Step.REVIEW, entry_id=8)]
     seed(run)
-    batch.store.write_request(run.id, Cancel())
-    queued = _requests(run.id)
-    emitted = []
-    monkeypatch.setattr(batch.events, "emit", lambda kind, **fields: emitted.append(kind))
-    with holding(run.id, "applier"):
-        code = _main(["batch", "resume", run.id])
-    assert code == 1
-    assert emitted == []
-    assert _requests(run.id) == queued
-    assert batch.store.load(run.id).status is RunStatus.INTERRUPTED
-    assert (f"run {run.id} is busy: applying a request (pr batch cancel, "
-            f"pid {os.getppid()}, started t0)") in capsys.readouterr().err
-
-
-# ── R6: a new run is locked before it exists, and saved only once its items are held ─
-
-@dataclass(frozen=True)
-class _Seen:
-    locked: bool
-    saved: bool
-
-
-def _seen(run_id):
-    """Whether this process holds *run_id*'s lock, and whether its state is on disk."""
-    return _Seen(core.run_lock.holds(batch.store.run_lock(run_id).path),
-                 (batch.store.run_dir(run_id) / batch.store.STATE_FILE).exists())
-
-
-def _row(repo, n, branch):
-    return PlanRow("acme/widget", str(repo), n, "t", branch, "h", False,
-                   {Step.REVIEW: StepNeed(True, "x")})
-
-
-def _target(repo, branch):
-    return pr.target.target_dir(pr.target.repo_key_from_origin(str(repo)), branch)
-
-
-def test_a_new_run_is_locked_before_its_items_and_saved_only_after_them(monkeypatch, tmp_path):
-    repo = repo_with_origin(tmp_path / "repo")
-    monkeypatch.setattr(batch.plan, "build_run_plan",
-                        lambda dirs, prs=None: Plan("me", [_row(repo, 1, "feat/a")]))
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked",
-                        stops_at(RunStatus.DONE))
-    seen = []
-    real = cli.pr_batch._hold_items
-
-    def spy(held, run, verb):
-        seen.append(_seen(run.id))
-        holds = real(held, run, verb)
-        seen.append(_seen(run.id))
-        return holds
-
-    monkeypatch.setattr(cli.pr_batch, "_hold_items", spy)
-    assert _main(["batch", "run", "--checkout", str(repo), "--with-review"]) == 0
-    assert seen == [_Seen(locked=True, saved=False), _Seen(locked=True, saved=False)]
-
-
-# passes-at-base: the old order also refused before its first save; this pins that create() keeps it
-def test_a_run_refused_an_item_leaves_no_run_directory(monkeypatch, tmp_path):
-    repo = repo_with_origin(tmp_path / "repo")
-    monkeypatch.setattr(batch.plan, "build_run_plan",
-                        lambda dirs, prs=None: Plan("me", [_row(repo, 1, "feat/a")]))
-    record = {"pid": os.getppid(), "command": "pr fix", "started": "t0"}
-    with held_elsewhere(_target(repo, "feat/a") / core.run_lock.LOCK_FILE, record):
-        assert _main(["batch", "run", "--checkout", str(repo), "--with-review"]) == 1
-    root = batch.store.batch_root()
-    assert not root.exists() or list(root.iterdir()) == []
-
-
-# ── a cancel the driver's own finish applies ─────────────────────────────────
-
-def test_a_cancel_queued_during_the_drive_ends_the_run_cancelled(monkeypatch, capsys):
-    run = seed(_run())
-
-    def fake_run(self):
-        # A submitter's cancel, refused by this driver's lock and queued for it.
-        batch.store.write_request(self.run.id, Cancel())
-        self.run.status = RunStatus.WAITING
-        return RunStatus.WAITING
-
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
-    assert _main(["batch", "resume", run.id]) == 0
-    lines = _events(capsys.readouterr().out)
-    assert [e["status"] for e in lines if e["kind"] == "run_finished"] == ["cancelled"]
-    assert lines[-1]["kind"] == "run_summary"
-    assert (lines[-1]["run"]["status"], lines[-1]["run"]["exit_hint"]) == ("cancelled", 0)
-    assert batch.store.load(run.id).status is RunStatus.CANCELLED
-
-
-# ── what status says about holders and the inbox ─────────────────────────────
-
-def test_an_applier_hold_is_not_a_live_scheduler_and_its_queue_is_reported(capsys):
-    run = seed(_run())
-    with holding(run.id, "applier"):
-        assert _main(["batch", "release", run.id, run.items[0].key]) == 0
-        capsys.readouterr()
-        assert _main(["batch", "status", run.id]) == 0
-    report = json.loads(capsys.readouterr().out)
-    assert report["run"]["active"] is False
-    assert report["run"]["pending_requests"] == 1
+    def boom(*_a, **_k):
+        raise otto_queue.ledger.LedgerBusy("busy")
+    monkeypatch.setattr(otto_queue.ledger.Ledger, "open", boom)
+    assert _main(["batch", "cancel", run.id]) == 1
+    assert "busy" in capsys.readouterr().err
+    assert batch.store.load(run.id).status is RunStatus.WAITING

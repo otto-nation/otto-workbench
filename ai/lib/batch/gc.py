@@ -1,7 +1,7 @@
-"""Remove finished `pr batch` runs once they are old enough; `pr gc` calls it.
+"""Remove old `pr batch` runs once they are old enough; `pr gc` calls it.
 
-Only `done` and `cancelled` runs are candidates. `running` and `waiting` runs
-are live, and an `interrupted` run is one `pr batch resume` can still pick up.
+Schema-3 runs are candidates only when `done` or `cancelled`. Pre-v3 driver
+runs are not migrated: past retention they are reaped even if still running.
 A run is kept for `review.gc.GC_STALE_DAYS` after its last save, or for
 `review.gc.GC_FAILED_STALE_DAYS` when it kept work a person may come back for —
 see `retention_days`. Removal goes through `batch.store.reap`, which takes the
@@ -80,13 +80,13 @@ def _read_run(run_id: str) -> Run | None:
 
 
 def _expired_run(run: Run, now: float) -> bool:
-    """True when *run* is finished and past its window."""
+    """True when *run* is past its window and eligible to reap."""
     try:
         age = now - batch.store.state_mtime(run.id)
     except OSError as exc:
         core.log.warn(f"GC: could not read batch run {run.id} ({exc}) — leaving it in place")
         return False
-    if run.status not in FINISHED_RUN:
+    if run.schema_version >= 3 and run.status not in FINISHED_RUN:
         return False
     return age >= retention_days(run) * DAY_SECONDS
 

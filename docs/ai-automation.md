@@ -348,7 +348,7 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
   review, re-run, recover, post, dismiss, cancel, and watch. Each but cancel and watch runs
   `pr review --pr N --repo-dir DIR` as a labelled `hc` terminal; watch shows the run output in the pane and can open it as a tab.
   A Files tab lists the PR's changed files (from `gh api …/pulls/N/files`, page 1 first then the rest in parallel) and shows a file's diff inline (first 1,500 lines); files marked `linguist-generated` in `.gitattributes` sort last and are left out of the header's file and line counts; Open for Review checks the PR out with `wt switch pr:N` and selects, or opens, a space on that worktree (this machine only).
-  Mine's Batch button (with "running" beside it while runs are active) opens a Batch page: running runs with Log/Cancel/Kill, a Start form (your shown PRs by repo, under the shared filters, plus steps and AI and push options; it starts one `pr batch run` per repo), and recent runs to look back, where an expanded run (and a PR's Needs-you card) offers Open session, which focuses that run's pi session or starts it with `pr batch session` on the run's machine; cards show their batch state and a PR's detail has a Batch tab; run, step and item states are `_lib/batch.js` `runStatus`/`stepStatus` and `pr_status.js` `itemStatus`. Cards show state tags (Merged, In merge queue, Draft) top right and every problem as status text in any lane (× Conflicts, × CI failing, … CI running, · CI unknown, · CI loading, ! owed feedback, ! Changes requested), then a running review and the batch state; positive state (CI passing, Approved) shows only in a PR's detail, and every view reads `_lib/pr_status.js` `presentationOf` on `pr board`'s per-row `presentation`; a draft keeps its real CI. Status is fetched in concurrent batches. The web reads the same `pr board` document through the same `_lib` store and model, so it shows owed feedback and lanes as the app does, and publishes each repo as it loads. Owed (Has Comments) is read only while a view shows Mine and is on screen; until it lands the lane reads "Loading comments…", and a failed read shows its reason. The lanes and each lane's Batch shortcut are described in `ai/herdr/app/mods/AGENTS.md`. While repos load, after a second the header reads "… Loading N of M repos" over a thin progress line, a strip beside the filters marks each repo queued (·), loading (…), stale (!) or failed (×); the header's stale · age, failed or N failed is `_lib/load_state.js` `errorsStatus`, shared with the web, and lanes show static dashed placeholders until the first repo lands.
+  Mine's Batch button (with "running" beside it while runs are active) opens a Batch page: running runs with Log/Cancel/Kill, a Start form (your shown PRs by repo, under the shared filters, plus steps and AI and push options; it starts one `pr batch run` per repo), and recent runs to look back, where an expanded run offers Open trail when that run has a trail id; Cancel and Kill remain (`pr batch cancel`); a PR's detail header offers Open session for its target (`pr target session`); cards show their batch state and a PR's detail has a Batch tab; run, step and item states are `_lib/batch.js` `runStatus`/`stepStatus` and `pr_status.js` `itemStatus`. Cards show state tags (Merged, In merge queue, Draft) top right and every problem as status text in any lane (× Conflicts, × CI failing, … CI running, · CI unknown, · CI loading, ! owed feedback, ! Changes requested), then a running review and the batch state; positive state (CI passing, Approved) shows only in a PR's detail, and every view reads `_lib/pr_status.js` `presentationOf` on `pr board`'s per-row `presentation`; a draft keeps its real CI. Status is fetched in concurrent batches. The web reads the same `pr board` document through the same `_lib` store and model, so it shows owed feedback and lanes as the app does, and publishes each repo as it loads. Owed (Has Comments) is read only while a view shows Mine and is on screen; until it lands the lane reads "Loading comments…", and a failed read shows its reason. The lanes and each lane's Batch shortcut are described in `ai/herdr/app/mods/AGENTS.md`. While repos load, after a second the header reads "… Loading N of M repos" over a thin progress line, a strip beside the filters marks each repo queued (·), loading (…), stale (!) or failed (×); the header's stale · age, failed or N failed is `_lib/load_state.js` `errorsStatus`, shared with the web, and lanes show static dashed placeholders until the first repo lands.
 - **PR board on the web** (`ai/herdr/web/`): the same board in a browser or on a phone, for the repos the
   agent's herdr-core terminals sit in. A Bun server (`bun ai/herdr/web/server/main.js`) reuses
   `ai/herdr/app/mods/_lib/` for every fetch and decision, binds `127.0.0.1`, and requires its access
@@ -443,7 +443,7 @@ All resolved through `PATH` (except `hc` → `PR_BOARD_HC`), run as the agent:
 | `hc` / `herdr-core` | `ls --json` (repo discovery, 1), `ls --json --label otto.app=pr` + `get <t> --json` (busy, 1), `run --bg --json …` (2, 3, 4), `get <t> --json` (run follow-up, 2), `read <t> --lines 80` (2, 4), `kill <t>` (2), `exec --json --on …` (remote targets only) |
 | `gh` | `api …/files`, patch pages (1); `pr board` runs its own `gh` calls as its children; via `wt` (3) |
 | `git` | `check-attr -z linguist-generated` (1) |
-| `pr` | `pr board --schema-version 1 --checkout DIR --phase listing\|status\|owed [--offline] [--if-changed STAMP]` (app and web: one per target per pull, serialized per machine; `owed` only while a page shows Mine, at most once a minute per repo) (1); `pr review` inside launched terminals (2; post actions need `review-publish` in that machine's board `features`); `pr batch status --list --schema-version 2`, `pr batch status RUN --full --offline --schema-version 2`, `pr batch cancel --kill RUN --schema-version 2` (4); `pr batch run --checkout DIR --prs KEYS --steps STEPS --with-review --with-ai STEPS --auto-publish ff --select SEL` inside launched terminals (4) |
+| `pr` | `pr board --schema-version 1 --checkout DIR --phase listing\|status\|owed [--offline] [--if-changed STAMP]` (app and web: one per target per pull, serialized per machine; `owed` only while a page shows Mine, at most once a minute per repo) (1); `pr review` inside launched terminals (2; post actions need `review-publish` in that machine's board `features`); `pr batch status --list --schema-version 2`, `pr batch status RUN --full --offline --schema-version 2`, `pr batch cancel --kill RUN --schema-version 2` (4); `pr batch run --checkout DIR --prs KEYS --steps STEPS --with-ai STEPS --auto-publish ff --select SEL` inside launched terminals (4) |
 | `tail` | `tail -n 200 <step log path>` (4; path from `pr batch status`) |
 | `wt` | `switch pr:<n> --no-cd --format json` (3) |
 | `sh` | `sh -c 'command -v pr; command -v gh; command -v wt; true'` (1) |
@@ -454,7 +454,7 @@ The agent's `pr` must be at or after `d42eb4152` (`pr board --offline`); an olde
 **Requirement on herdr-core's environment (homelab side).** Terminals started by `hc run` get the core's
 environment, not the board's, and local runs are not PATH-wrapped by `hcRunArgv`/`hcBatchArgv` (only remote
 ones are). So the agent's `herdr-core.service` environment must resolve `pr`, `gh`, `git`, `wt`, `pi` to the
-workbench ones, and carry whatever the AI agents `pr review` and `pr batch run --with-ai`/`--with-review`
+workbench ones, and carry whatever the AI agents `pr review` and `pr batch run --with-ai`
 spawn need (the same credentials reviews already use). Check as the agent:
 `herdr-core exec -- sh -c 'command -v pr gh git wt pi'` must print `~/.local/bin/pr` (not `/usr/bin/pr`).
 
@@ -1384,22 +1384,21 @@ Rebase, CI, comments and (opt-in) self-review across my open PRs. A default run 
 |---|---|---|---|---|
 | `(bare invocation)` | nothing | nowhere | every step runs drafted — nothing is pushed or posted | n/a |
 | `run --auto-publish` | a clean fast-forward of refs/heads/<branch> when an item closes with no findings | origin | pr push --expect <remote_sha> (docs/ai-automation.md#pr-push-contract). Never a force push, never a closeout. | a refused push leaves the item unpushed; the run continues |
-| `run --no-verify` | nothing extra: changes how those publish pushes run | origin | skips the pre-push hook on every publish push; persisted so resume honours it | as for the push |
+| `run --no-verify` | nothing extra: changes how those publish pushes run | origin | skips the pre-push hook on every publish push; persisted so --continue honours it | as for the push |
 
 **Exit codes**
 
 | Code | Meaning | Next |
 |---|---|---|
 | `0` | the run is done or cancelled |  |
-| `1` | it stopped without settling | `pr batch resume` |
-| `2` | bad flags, missing --checkout/--plan, resume --steps that widen, or a note naming a run, PR or finding the run does not have |  |
+| `1` | it stopped without settling | `pr batch run --continue ID` |
+| `2` | bad flags, missing --checkout/--plan, or an unknown subcommand |  |
 
 **Examples**
 
 - `pr batch run --checkout DIR` — rebase, ci, comments; drafted; no AI, no review
 - `pr batch run --checkout DIR --auto-publish ff` — the same, fast-forwarding a clean close
-- `pr batch resume` — continue this checkout's covering run
-- `pr batch session RUN_ID` — open the run's pi session in its checkout
+- `pr batch run --continue ID` — submit ready jobs on an existing run
 
 > Slow or hung? A push that prints '⏱ still pushing <branch>' every minute is slow, not hung: git is waiting on the pre-push hook or the transfer, and the workbench never kills a push (WORKBENCH_PUSH_HEARTBEAT_SECS sets the interval). This repo's own hook bounds each captured step (WORKBENCH_PREPUSH_STEP_TIMEOUT) and names the step it killed. Use --no-verify only for a hook failure already understood — a flake, or a check the branch did not cause — never because a push is slow.
 > Batch declares NO_LOCK; 75 is not an exit. LockBusy on an item is exit 1 (fail), not TEMPFAIL. A default run never opens a decision.
@@ -1629,9 +1628,10 @@ command as taking no target, or give it a delegate to read.
 ### pr batch
 
 Flags, remote writes and exits: [`pr batch` contract](#pr-batch-contract).
-Every step is a child `pr` (CI: `ci-check`) in a new session with stdin closed.
-`run` plans for itself. Default steps are `rebase`, `ci`, `comments` (`review`
-needs `--with-review`), each only where needed. `run --prs` reads named PRs by
+Every step is a child `pr` (CI: `ci-check`) with stdin closed. `run` is one-shot:
+it plans for itself, submits ready jobs to otto-queue, and returns. Default steps
+are `rebase`, `ci`, `comments`, each only where needed. Review is not in the thin
+orchestrator yet (`--with-review` is a usage error). `run --prs` reads named PRs by
 number in pages sized to stay inside GitHub's request budget; without it the
 plan searches every open PR of yours the same way. A PR that needs no step is
 still planned when its saved `pr` state owes a closeout, but only when
@@ -1640,21 +1640,22 @@ needed only when the branch conflicts with its PR's base: `git merge-tree` over
 fetched objects (a run keeps them in `refs/pr-batch/`), falling back to GitHub's
 merge state, where only `DIRTY` counts. `--rebase behind` takes every branch
 behind its base instead (fallback: `BEHIND`, `DIRTY` and `UNKNOWN`); the run
-records the choice so `resume` keeps it. `comments` is needed when `pr comments`
+records the choice so `pr batch run --continue ID` keeps it. `comments` is needed when `pr comments`
 would find something to answer (`pr.owed_feedback`). `ci` runs `ci-check
 --no-rebase --head-sha <planned remote head>` (not `pr ci`) when the rollup
 failed, with `--wait` if still running; `--fix` and the rate-limit rerun only
-under `--with-ai=ci`. Fork heads skip both. A stacked PR records
-`stack_wait_base` and is not rebased. One fetching rebase or CI step per repo at
-a time per run; several runs may share a repo. No start in a dirty worktree
-except restoring generated files.
+under `--with-ai=ci`. Fork heads skip both. A stacked child rebases onto its
+still-open parent; there is no wait-for-merge `stack_wait_base`. Several runs may
+share a repo. No start in a dirty worktree except restoring generated files.
+`pr batch run --continue ID` is the idempotent submit: ready jobs on an existing
+run, no new id. `pr batch cancel` stops that run's queue jobs; a recorded cancel
+is final.
 
-Items end `done` or `needs_session` with `findings` (`batch/findings.py`). A
-stored waiting v1 run converts on `resume` (one-way). Report keys: `run` (`id`,
+`pr batch run` emits `run_started` and returns; it does not wait for jobs or print `run_summary`. Report keys: `run` (`id`,
 `status`, `active`, `exit_hint`, `hint`, `pending_requests`, `failed_requests`),
 `counts`, `items` (non-terminal), `github`, `sessions` (`pr batch report` only).
-`resume` replays `--focus`. `run_summary` is `run`, `counts`, `report_path`. Events include `finding_created`, and each is also appended to the run's `events.jsonl` ([`core/run_events.py`](ai-libraries.md#corerun_eventspy)). `pr batch session RUN_ID` opens the run's pi session in its checkout (`--json` prints how, for UIs), and `pr batch note` records an operator verdict there as a `decision` event without changing item state ([`batch/run_session.py`](ai-libraries.md#batchrun_sessionpy)). Inside that session the `run-session` Pi extension shows the run's history and report and records verdicts through `pr batch note` ([extensions README](../ai/pi/extensions/README.md#run-session)). `pr comments` and `pr ci` (and so batch's comments and CI steps) also append `step_started`/`step_finished` to their target's `events.jsonl` ([`pr/target_events.py`](ai-libraries.md#prtarget_eventspy)); for one PR without a run, `pr target report` prints what it waits on, `pr target session` opens its pi session in the branch's worktree, and `pr target note` records a verdict there ([`batch/target_session.py`](ai-libraries.md#batchtarget_sessionpy)).
-`github` is omitted under `--offline`; keys and checkout rules are in [`batch/live.py`](ai-libraries.md#batchlivepy). Step output stays in the run's `logs/`. Every queued step (review, comments, rebase, any AI step) is an otto-queue entry the batch driver records and hands to the child (`pr batch · <step> · <repo>#<n>`): review/comments/AI are heavy, plain rebase is light. A waiter shows `items[].wait_reason` and an `admission_wait` event, stays `running`, and a plain `pr batch cancel` (no `--kill`) cancels its queue entry. Plain CI is unqueued: only `--pool` and per-repo serialisation (`_repo_busy`) apply. `--pool` still caps every live step, waiters included. State lives under `~/.local/state/workbench/batch/<run-id>/`; `pr gc` removes finished runs and orphaned `refs/pr-batch/` namespaces ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
+Events include `finding_created`, and each is also appended to the run's `events.jsonl` ([`core/run_events.py`](ai-libraries.md#corerun_eventspy)). `pr comments` and `pr ci` (and so batch's comments and CI steps) also append `step_started`/`step_finished` to their target's `events.jsonl` ([`pr/target_events.py`](ai-libraries.md#prtarget_eventspy)); for one PR without a run, `pr target report` prints what it waits on, `pr target session` opens its pi session in the branch's worktree, and `pr target note` records a verdict there ([`batch/target_session.py`](ai-libraries.md#batchtarget_sessionpy)).
+`github` is omitted under `--offline`; keys and checkout rules are in [`batch/live.py`](ai-libraries.md#batchlivepy). Step output stays in the run's `logs/`. Each submitted step is an otto-queue job (`pr batch · <step> · <repo>#<n>`). State lives under `~/.local/state/workbench/batch/<run-id>/`; `pr gc` removes finished runs and orphaned `refs/pr-batch/` namespaces ([`batch/gc.py`](ai-libraries.md#batchgcpy)).
 
 ### pr status
 

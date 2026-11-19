@@ -70,6 +70,7 @@ import core.serde
 import core.workbench_paths
 from batch.model import BUSY_ITEM, FINISHED_RUN, CancelState, Item, Run
 from batch.requests import Cancel, Envelope, Malformed, Outcome, Release, Request
+from otto_queue.model import EntryState, LIVE_STATES
 
 STATE_FILE = "state.json"
 # The cancel sidecar older `pr batch cancel` wrote. `session()` folds it into
@@ -98,7 +99,7 @@ class RunNotFound(LookupError):
 class Role(enum.Enum):
     """Why a process holds a run's lock; written into its holder record."""
 
-    # A scheduler: `pr batch run` or `resume`.
+    # One-shot `pr batch run` / `pr batch run --continue`.
     DRIVER = "driver"
     # Draining requests with no scheduler: cancel, release, the hand-off.
     APPLIER = "applier"
@@ -359,22 +360,55 @@ def unfinished_covering(ref: RepoRef | None) -> list[str]:
     return [run.id for run in _covering_runs(ref) if run.status not in FINISHED_RUN]
 
 
-def busy_prs(ref: RepoRef | None) -> frozenset[int]:
-    """PR numbers whose covering item is in `BUSY_ITEM` on an unfinished run.
+def busy_prs(ref: RepoRef | None, *,
+             states: Callable[[list[int]], dict[int, EntryState]] | None = None) -> frozenset[int]:
+    """PR numbers busy on an unfinished covering run.
 
-    Empty when *ref* is None, when no unfinished run covers it, or when every
-    covering item is already terminal. Matching is `_item_covers`: origin key
-    when the item has one, else the label.
+    Schema 2: the covering item is in `BUSY_ITEM`. Schema 3+: the item has a
+    job whose otto-queue state is in `LIVE_STATES`. Empty when *ref* is None.
+    Matching is `_item_covers`: origin key when the item has one, else the label.
     """
     if ref is None:
         return frozenset()
-    return frozenset(
-        item.pr
-        for run in _covering_runs(ref)
-        if run.status not in FINISHED_RUN
-        for item in run.items
-        if _item_covers(item, ref) and item.status in BUSY_ITEM
-    )
+    found: set[int] = set()
+    schema3: list[Item] = []
+    for run in _covering_runs(ref):
+        if run.status in FINISHED_RUN:
+            continue
+        _collect_busy_items(run, ref, found, schema3)
+    found.update(_live_schema3(schema3, states))
+    return frozenset(found)
+
+
+def _collect_busy_items(run: Run, ref: RepoRef, found: set[int], schema3: list[Item]) -> None:
+    for item in run.items:
+        if not _item_covers(item, ref):
+            continue
+        _note_busy_item(run, item, found, schema3)
+
+
+def _note_busy_item(run: Run, item: Item, found: set[int], schema3: list[Item]) -> None:
+    if run.schema_version < 3:
+        if item.status in BUSY_ITEM:
+            found.add(item.pr)
+        return
+    schema3.append(item)
+
+
+def _live_schema3(
+    schema3: list[Item],
+    states: Callable[[list[int]], dict[int, EntryState]] | None,
+) -> set[int]:
+    if not schema3:
+        return set()
+    ids = [job.entry_id for item in schema3 for job in item.jobs]
+    if states is None:
+        import batch.queue_entries
+        lookup = batch.queue_entries.QueueEntries().states(ids)
+    else:
+        lookup = states(ids)
+    return {item.pr for item in schema3
+            if any(lookup.get(job.entry_id) in LIVE_STATES for job in item.jobs)}
 
 
 def covering_run_id(ref: RepoRef | None) -> str | None:
@@ -766,7 +800,7 @@ def _warn_stranded(run_id: str) -> None:
     """Name on stderr a run whose queued requests the hand-off could not apply."""
     count = pending_requests(run_id)
     print(f"pr batch: run {run_id} still has {count} queued request(s) nobody could apply; "
-          f"`pr batch resume {run_id}` or another resolve will apply them", file=sys.stderr)
+          f"`pr batch run --continue {run_id}` or `pr batch cancel {run_id}`", file=sys.stderr)
 
 
 def _hand_off(run_id: str, inbox: InboxPolicy, command: str) -> None:

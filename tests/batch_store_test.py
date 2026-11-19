@@ -187,3 +187,27 @@ def test_covering_falls_back_to_the_label_when_an_item_has_no_repo_key():
     ref = _ref("o/r", key="unrelated-key-00000000")
     assert batch.store.ids_covering(ref) == ["20261001T120000-aaaa"]
     assert batch.store.covering_run_id(ref) == "20261001T120000-aaaa"
+
+
+def test_jobs_round_trip_through_the_state_file():
+    run = _run()
+    run.schema_version = 3
+    run.items[0].jobs = [
+        batch.model.Job(step=batch.model.Step.REBASE, entry_id=42,
+                        argv=["pr", "rebase", "--no-queue"], submitted_at="t"),
+    ]
+    seed(run)
+    back = batch.store.load(RID)
+    assert back.items[0].jobs[0].entry_id == 42
+    assert back.items[0].jobs[0].step is batch.model.Step.REBASE
+    assert back.items[0].jobs[0].argv[-1] == "--no-queue"
+
+
+def test_state_file_saved_before_jobs_existed_loads_empty_jobs():
+    run = _run()
+    seed(run)
+    path = batch.store.run_dir(RID) / "state.json"
+    data = json.loads(path.read_text())
+    data["items"][0].pop("jobs", None)
+    path.write_text(json.dumps(data))
+    assert batch.store.load(RID).items[0].jobs == []

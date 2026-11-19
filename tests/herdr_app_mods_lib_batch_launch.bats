@@ -52,10 +52,10 @@ _throws() {
   [ "$output" = '["batch","run","--checkout","/co","--prs","o/r#1,o/r#2","--steps","rebase,ci,comments"]' ]
 }
 
-@test "runArgv with review drops review from --steps and adds --with-review" {
+@test "runArgv with review drops review from --steps and does not pass --with-review" {
   _js 'm.runArgv({keys:["o/r#1"],steps:["rebase","ci","comments","review"],checkout:"/co"})'
   [ "$status" -eq 0 ]
-  [ "$output" = '["batch","run","--checkout","/co","--prs","o/r#1","--steps","rebase,ci,comments","--with-review"]' ]
+  [ "$output" = '["batch","run","--checkout","/co","--prs","o/r#1","--steps","rebase,ci,comments"]' ]
 }
 
 @test "runArgv withAi is filtered to rebase|ci|comments" {
@@ -82,10 +82,10 @@ _throws() {
   [ "$output" = '[true,{"started":false,"error":"pr batch: GitHub query failed: gh: HTTP 504"},{"started":false,"error":""},{"started":false,"error":""}]' ]
 }
 
-@test "runArgv selects follow keys order and imply --with-review" {
+@test "runArgv selects follow keys order and omit review" {
   _js 'm.runArgv({keys:["o/r#2","o/r#1","o/r#3"],steps:["rebase","ci"],selects:{"o/r#3":["ci"],"o/r#1":["review"],"o/r#2":["rebase"],"o/r#9":["ci"]},checkout:"/co"})'
   [ "$status" -eq 0 ]
-  [ "$output" = '["batch","run","--checkout","/co","--prs","o/r#2,o/r#1,o/r#3","--steps","rebase,ci","--with-review","--select","o/r#2=rebase","--select","o/r#1=review","--select","o/r#3=ci"]' ]
+  [ "$output" = '["batch","run","--checkout","/co","--prs","o/r#2,o/r#1,o/r#3","--steps","rebase,ci","--select","o/r#2=rebase","--select","o/r#3=ci"]' ]
 }
 
 @test "runArgv focus is trimmed and blanks dropped" {
@@ -94,10 +94,10 @@ _throws() {
   [ "$output" = '["batch","run","--checkout","/co","--prs","o/r#1","--steps","rebase","--focus","a","--focus","b"]' ]
 }
 
-@test "runArgv review-only omits --steps and selects review per key" {
-  _js 'm.runArgv({keys:["o/r#1","o/r#2"],steps:["review"],checkout:"/co"})'
+@test "runArgv review-only throws rather than defaulting steps" {
+  _throws 'm.runArgv({keys:["o/r#1","o/r#2"],steps:["review"],checkout:"/co"})'
   [ "$status" -eq 0 ]
-  [ "$output" = '["batch","run","--checkout","/co","--prs","o/r#1,o/r#2","--with-review","--select","o/r#1=review","--select","o/r#2=review"]' ]
+  [ "$output" = 'throw' ]
 }
 
 @test "runArgv empty keys throws" {
@@ -193,7 +193,7 @@ _throws() {
 @test "runArgv leads with the phase-model flags it is given" {
   run node --input-type=module -e "
     const { runArgv } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/batch_launch.js');
-    process.stdout.write(JSON.stringify(runArgv({ keys: ['a/b#1'], steps: ['review'], checkout: '/c', phaseModels: ['--phase-model', 'scout=x'] }).slice(0, 4)));
+    process.stdout.write(JSON.stringify(runArgv({ keys: ['a/b#1'], steps: ['rebase'], checkout: '/c', phaseModels: ['--phase-model', 'scout=x'] }).slice(0, 4)));
   "
   [ "$status" -eq 0 ]
   jq -e '.==["--phase-model","scout=x","batch","run"]' <<<"$output"

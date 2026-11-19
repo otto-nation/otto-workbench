@@ -9,10 +9,10 @@ import { invoke, readJson } from "./_lib/board_data.js";
 import { createGateMap } from "./_lib/load_backoff.js";
 import { keepStarted, notShownText, parseRunReply } from "./_lib/launch.js";
 import {
-  openSession as openKindSession, sessionGate, waitingText, SESSION_KINDS,
+  openSession as openKindSession, sessionGate,
 } from "./_lib/run_session.js";
 
-const [BATCH, TARGET] = Object.keys(SESSION_KINDS);
+const TARGET = "target";
 
 function k(on) { return String(on ?? ""); }
 
@@ -55,9 +55,8 @@ export class Workflows {
     this.trailError = null;
     // Which machine's `pr` can open run sessions; board_view sets it from the board's features.
     this.featuresOf = () => null;
-    // Per run (machine and id): {opening, error} for Open session, and the report's session count.
+    // Per target (machine and PR): {opening, error} for Open session.
     this.sessionUi = new Map();
-    this.runWaiting = new Map();
     // The log path being read, so a slow tail is not doubled by the 3 s timer; another step's
     // click still starts its own read.
     this.logInflight = null;
@@ -161,7 +160,6 @@ export class Workflows {
     m.docs = next;
     m.error = err;
     this.ensureSession(cx);
-    if (this.pinned && k(this.pinned.on) === key) this.loadRunWaiting(cx, this.pinned.on, this.pinned.id);
     if (m.ctx.on != null) return;
     for (const r of m.runs) {
       if (r.active && r.runDir) this.startWatch(cx, r.runDir);
@@ -300,11 +298,6 @@ export class Workflows {
       onPickRun: (r) => this.pickRun(r),
       trailError: this.trailError,
       onOpenTrail: (r) => this.openTrail(r),
-      // Only the pinned run's row is expanded, so only it offers Open session.
-      session: pin
-        ? this.runSession(pin.on, pin.id, run?.id === pin.id ? (run.repos?.[0] ?? null) : null,
-          this.runWaiting.get(this.runKeyOf(pin.on, pin.id))?.count ?? null)
-        : null,
     };
   }
 
@@ -331,10 +324,6 @@ export class Workflows {
     });
   }
 
-  runKeyOf(on, id) {
-    return `${k(on)}\0${id}`;
-  }
-
   // Open session: focus the terminal already running its pi session, or start one.
   startSession(kind, key, target) {
     if (this.sessionUi.get(key)?.opening) return;
@@ -351,42 +340,6 @@ export class Workflows {
       cx.notify();
     });
     this.acx.notify();
-  }
-
-  openSession(on, runId, repo) {
-    const ctx = this.machines.get(k(on))?.ctx ?? { on, cwd: null };
-    this.startSession(BATCH, sessionKey(BATCH, on, runId), {
-      on, cwd: ctx.cwd ?? null, runId, repo, features: this.featuresOf(on),
-    });
-  }
-
-  // The pinned run's report session count, re-read only when its items' states change.
-  loadRunWaiting(cx, on, id) {
-    const key = this.runKeyOf(on, id);
-    const doc = this.docOf(on, id);
-    const stamp = (doc?.items ?? []).map((i) => `${i.key}:${i.status}:${(i.findings ?? []).length}`).join(",");
-    const cur = this.runWaiting.get(key);
-    if (cur && cur.stamp === stamp) return;
-    this.runWaiting.set(key, { stamp, count: cur?.count ?? null });
-    const ctx = this.machines.get(k(on))?.ctx ?? { on, cwd: null };
-    cx.spawn(async (cx) => {
-      const parsed = await prParse(ctx, reportArgv(id), parseSessions);
-      if (this.runWaiting.get(key)?.stamp !== stamp) return;
-      this.runWaiting.set(key, { stamp, count: parsed.ok ? parsed.sessions.size : null });
-      cx.notify();
-    });
-  }
-
-  // What the views draw for one run's Open session; `waiting` is the report's session count.
-  runSession(on, runId, repo, waiting) {
-    const ui = this.sessionUi.get(sessionKey(BATCH, on, runId)) ?? {};
-    return {
-      gate: sessionGate(this.featuresOf(on), BATCH),
-      opening: Boolean(ui.opening),
-      error: ui.error ?? null,
-      waiting: waitingText(waiting),
-      onOpen: () => this.openSession(on, runId, repo),
-    };
   }
 
   targetSession(on, d) {
@@ -436,9 +389,6 @@ export class Workflows {
       sessionError: this.sessionError,
       onRun: this.onRun,
       onTerminal: local ? this.onTerminal : null,
-      runSession: hit?.run?.id
-        ? this.runSession(hit.on, hit.run.id, hit.item?.repo ?? null, this.sessionMap?.size ?? null)
-        : null,
     };
   }
 

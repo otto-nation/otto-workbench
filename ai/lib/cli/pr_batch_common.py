@@ -31,7 +31,7 @@ def cwd_repo() -> batch.store.RepoRef | None:
 def warn_other_active(chosen: str) -> None:
     for run_id in batch.store.run_ids():
         if run_id != chosen and is_active(run_id):
-            print(f"pr batch: other active run {run_id} is being driven", file=sys.stderr)
+            print(f"pr batch: other active run {run_id} has a running job", file=sys.stderr)
 
 
 def warn_foreign_run(cwd: batch.store.RepoRef | None, chosen: str) -> None:
@@ -59,11 +59,94 @@ def resolve_run_id(given: str | None, *, covering_only: bool = False) -> str | N
     return chosen
 
 
-def is_active(run_id: str) -> bool:
-    """Whether a scheduler is driving *run_id*: the live holder of its lock is a driver.
+def continue_run(run_id: str, pr_bin: str) -> int:
+    """Load *run_id*, submit what is now ready, and return submit_ready's mapped code."""
+    import batch.inbox
+    try:
+        with batch.store.session(
+            run_id, Role.DRIVER,
+            inbox=batch.inbox.Inbox(batch.inbox.ApplyContext()),
+            command=f"pr batch run --continue {run_id}",
+        ) as session:
+            return _continue_locked(session, pr_bin)
+    except batch.store.RunNotFound:
+        return fail(f"no run {run_id}")
+    except (batch.store.RunBusy, batch.store.RunUnreachable) as exc:
+        return fail(str(exc))
 
-    An applier's brief hold is not a scheduler. A record with no role reads as
-    a driver, which is what a held run lock meant before roles existed.
-    """
-    found = batch.store.holder(run_id)
-    return found is not None and found.role in (Role.DRIVER, None)
+
+def _continue_locked(session, pr_bin: str) -> int:
+    from batch.model import FINISHED_RUN
+    if session.run.status in FINISHED_RUN:
+        return fail(f"run {session.run.id} is {session.run.status.value}")
+    code = submit_jobs(session.run, pr_bin)
+    session.commit()
+    return 0 if code == 0 else 1
+
+
+def submit_jobs(run, pr_bin: str) -> int:
+    """Submit every ready job on *run* via otto-queue and return submit_ready's code."""
+    import batch.orchestrate
+    import batch.queue_entries
+    import batch.steps
+    import cli.otto_queue
+    import git.client
+    import otto_queue.submit
+    import rebase.conflicts
+    import rebase.inspect
+    import rebase.need
+    from batch.model import StepStatus
+    from pathlib import Path
+
+    def submit(request):
+        return otto_queue.submit.submit(request, cli.otto_queue.machine_policy())
+
+    def ensure_worktree(item):
+        res = batch.steps.ensure_worktree(item.repo_dir, item.branch)
+        if not res.ok:
+            return res.error
+        item.worktree = res.path
+        return ""
+
+    def wanted(item, step):
+        return item.has(step) and item.step(step).status is not StepStatus.SKIPPED
+
+    def conflict_files(item):
+        if not item.worktree or not item.base_ref:
+            return ()
+        return rebase.need.conflict_paths(item.worktree, item.branch, item.base_ref)
+
+    def generated(item, path: str) -> bool:
+        wt = item.worktree or os.getcwd()
+        return rebase.conflicts.is_generated_file(path, Path(wt) / path, wt) is not None
+
+    return batch.orchestrate.submit_ready(
+        run,
+        pr_bin=pr_bin,
+        now=batch.store.now_iso(),
+        submit=submit,
+        states=batch.queue_entries.QueueEntries().states,
+        dirty=lambda wt: git.client.is_dirty(cwd=wt),
+        rebasing=rebase.inspect.rebase_in_progress,
+        branch_ok=lambda item: batch.steps.checked_out_branch(item.worktree) == item.branch,
+        wanted=wanted,
+        conflict_files=conflict_files,
+        generated=generated,
+        ensure_worktree=ensure_worktree,
+    )
+
+
+def is_active(run_id: str) -> bool:
+    """True when any indexed job is RUNNING in otto-queue (not merely queued)."""
+    import batch.queue_entries
+    from otto_queue.model import EntryState
+
+    try:
+        run = batch.store.load(run_id)
+    except (batch.store.RunNotFound, ValueError, TypeError):
+        return False
+    ids = [job.entry_id for item in run.items for job in item.jobs]
+    if not ids:
+        return False
+    states = batch.queue_entries.QueueEntries().states(ids)
+    return any(states.get(entry_id) is EntryState.RUNNING for entry_id in ids)

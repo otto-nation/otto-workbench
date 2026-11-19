@@ -3,7 +3,7 @@
 Every step is its own process so concurrent steps share no interpreter state,
 and each gets a new session with stdin closed: no prompt in any child can
 reach a terminal, whether the batch runs under a server or in a shell.
-Queued steps wait on their own otto-queue ticket rather than batch's host admission.
+Children run `--no-queue` because the orchestrator already submitted the job.
 """
 
 # doc-group: batch
@@ -75,7 +75,7 @@ def step_argv(step: Step, pr_bin: str, worktree: str, *, remote_sha: str = "",
     else:
         argv = [pr_bin, "review", "--self", "--fix", "--force"]
         argv += [f"--focus={text}" for text in focus]
-    return argv + ["--repo-dir", worktree]
+    return argv + ["--no-queue", "--repo-dir", worktree]
 
 
 def queues_itself(step: Step) -> bool:

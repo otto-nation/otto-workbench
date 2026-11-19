@@ -1,6 +1,5 @@
 """A batch holds each item's worktree with its target, and never runs on the wrong branch."""
 
-import contextlib
 import subprocess
 import sys
 import textwrap
@@ -19,22 +18,15 @@ import batch.plan  # noqa: E402
 import batch.publish  # noqa: E402
 import batch.steps  # noqa: E402
 import batch.targets  # noqa: E402
-import cli.pr_batch  # noqa: E402
 import core.run_lock  # noqa: E402
-from batch.model import FindingReason, Item, ItemStatus, Run, Step  # noqa: E402
+from batch.model import Item, ItemStatus, Run, Step  # noqa: E402
 from batch.publish import Refusal, TreeState  # noqa: E402
-# `_quiet_outcomes` and `_close_open_sessions` are autouse fixtures; imported so pytest
-# registers them here.
-from batch_scheduler_support import (  # noqa: E402,F401
-    NEED, NO, Harness, _close_open_sessions, _quiet_outcomes, row,
-)
 from conftest import commit_all, git_in, seed_repo  # noqa: E402
 from core.run_lock import CHECKOUT, TARGET, TREE_LOCK_ENV, TREE_LOCK_FILE  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
 from run_lock_support import repo_with_origin  # noqa: E402
 
 _PROC_TIMEOUT = 60
-ONLY_REVIEW = {Step.REBASE: NO, Step.COMMENTS: NO, Step.REVIEW: NEED}
 
 # A child that takes one checkout's lock and exits: 0 when it got through,
 # 1 (refusal on stderr) when another process holds it.
@@ -154,71 +146,6 @@ def test_a_child_passes_through_the_worktree_the_batch_holds(repo):
 
 def test_a_child_gets_no_checkout_marker_for_a_worktree_the_batch_does_not_hold(repo):
     assert TREE_LOCK_ENV not in batch.targets.child_env(_item(repo, worktree=repo))
-
-
-# ── the driver: resume and assignment ───────────────────────────────────────
-
-
-def test_resume_is_refused_while_another_pr_command_holds_a_recorded_worktree(
-        repo, held_elsewhere):
-    item = _item(repo, worktree=repo)
-    run = Run(id="r", started_at="t", steps=[Step.REVIEW], pool=1, auto_publish=[],
-              items=[item])
-    with contextlib.ExitStack() as held:
-        with pytest.raises(cli.pr_batch._Refused, match="pr comments --fix"):
-            cli.pr_batch._hold_items(held, run, "resume")
-
-
-def test_resume_holds_a_recorded_worktree(repo):
-    item = _item(repo, worktree=repo)
-    run = Run(id="r", started_at="t", steps=[Step.REVIEW], pool=1, auto_publish=[],
-              items=[item])
-    with contextlib.ExitStack() as held:
-        cli.pr_batch._hold_items(held, run, "resume")
-        assert core.run_lock.holds(_tree_lock(repo))
-    assert not core.run_lock.holds(_tree_lock(repo))
-
-
-def test_a_new_worktree_another_command_holds_is_a_decision_not_a_step():
-    h = Harness([row(1, ONLY_REVIEW)], hold_tree=lambda item: f"{item.worktree} is held by x")
-    h.sched._once()
-    item = h.run.items[0]
-    assert h.spawned == []
-    assert item.worktree == ""
-    (f,) = item.findings
-    assert f.reason is FindingReason.FAILED_UNKNOWN
-    assert f.step == "worktree"
-    assert f.data.get("reason") == "lock_busy"
-    assert "held by x" in f.detail
-
-
-def test_a_new_worktree_is_held_before_any_step_starts():
-    seen = []
-    h = Harness([row(1, ONLY_REVIEW)],
-                hold_tree=lambda item: seen.append((item.worktree, len(h.spawned))) or "")
-    h.sched._once()
-    assert seen == [("/wt/b1", 0)]
-    assert len(h.spawned) == 1
-
-
-# ── the branch check ────────────────────────────────────────────────────────
-
-
-def test_a_step_never_starts_on_a_worktree_switched_to_another_branch():
-    h = Harness([row(1, ONLY_REVIEW)], branch=lambda wt: "feat/other")
-    h.sched._once()
-    assert h.spawned == []
-    (f,) = h.run.items[0].findings
-    assert f.reason is FindingReason.WRONG_BRANCH
-    assert f.step == "review"
-    assert f.detail == "/wt/b1 is on feat/other, not b1"
-
-
-def test_a_branch_git_cannot_name_is_not_the_items_branch():
-    h = Harness([row(1, ONLY_REVIEW)], branch=lambda wt: "")
-    h.sched._once()
-    assert h.spawned == []
-    assert "no branch git could name" in h.run.items[0].findings[0].detail
 
 
 def test_publish_refuses_a_worktree_on_another_branch():

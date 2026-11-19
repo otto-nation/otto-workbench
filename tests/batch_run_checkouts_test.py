@@ -14,14 +14,15 @@ if str(LIB_DIR) not in sys.path:
     sys.path.insert(0, str(LIB_DIR))
 
 import batch.model  # noqa: E402
+import batch.orchestrate  # noqa: E402
 import batch.plan  # noqa: E402
 import batch.scheduler  # noqa: E402
+import batch.store  # noqa: E402
 import cli.pr  # noqa: E402
 import core.serde  # noqa: E402
-from batch.model import Run, RunStatus, Step  # noqa: E402
+from batch.model import Run, Step  # noqa: E402
 from batch.plan import Plan, PlanRow, StepNeed  # noqa: E402
 from batch_report_support import make_item, make_run  # noqa: E402
-from batch_session_support import stops_at  # noqa: E402
 
 
 def _main(argv):
@@ -49,16 +50,10 @@ def test_run_records_the_absolute_checkout(tmp_path, monkeypatch):
     rows = [PlanRow("o/r", expected, 1, "t", "b1", "h", False,
                     {s: StepNeed(True, "x") for s in batch.model.STEP_ORDER})]
     monkeypatch.setattr(batch.plan, "build_run_plan", lambda dirs, prs=None: Plan("me", rows))
-    seen = {}
-    settle = stops_at(RunStatus.DONE)
-
-    def fake_run(self):
-        seen["checkouts"] = list(self.run.checkouts)
-        return settle(self)
-
-    monkeypatch.setattr(batch.scheduler.Scheduler, "run_until_blocked", fake_run)
+    monkeypatch.setattr(batch.orchestrate, "submit_ready", lambda *a, **k: 0)
     assert _main(["batch", "run", "--checkout", "r"]) == 0
-    assert seen["checkouts"] == [expected]
+    run = batch.store.load(batch.store.latest_run_id())
+    assert run.checkouts == [expected]
 
 
 def test_checkouts_fall_back_to_the_plans_repo_dirs_when_every_row_is_filtered_out():

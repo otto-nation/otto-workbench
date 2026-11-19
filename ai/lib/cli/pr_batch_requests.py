@@ -1,4 +1,4 @@
-"""Inbox-writing `pr batch` commands: cancel and release.
+"""`pr batch` cancel. Cancel stops queue jobs.
 
 Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 """
@@ -7,48 +7,17 @@ Moved out of `cli.pr_batch` so the dispatcher stays under the file-size cap.
 
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 
 import batch.inbox
-import batch.plan
 import batch.report
 import batch.store
 import cli.pr_batch_common
 import core.report
-from batch.model import FINISHED_RUN, Item, Run
-from batch.requests import Cancel, Release
+from batch.model import FINISHED_RUN, Item, Run, RunStatus
+from batch.store import Role
 
 EXIT_OK = batch.report.EXIT_OK
-
-
-def _unreachable(run_id: str) -> str:
-    return (f"run {run_id} is unreachable; the request is in its inbox and "
-            f"will be applied by the next session to open it")
-
-
-def _deliver(run_id: str, request: Cancel | Release, bin_dir: Path,
-             verb: str) -> batch.inbox.Delivery:
-    """`batch.inbox.deliver`, naming on stderr each earlier request the same drain failed."""
-    delivery = batch.inbox.deliver(run_id, request, batch.inbox.ApplyContext(),
-                                   command=f"pr batch {verb} {run_id}")
-    for other in delivery.others:
-        if not other.ok:
-            print(f"pr batch: request {other.name}: {other.error}", file=sys.stderr)
-    return delivery
-
-
-def _own_error(run_id: str, delivery: batch.inbox.Delivery) -> str:
-    """This request's error, or "" if it applied.
-
-    When another session applied it, the error is read from `rejected/`.
-    """
-    if delivery.own is not None:
-        return delivery.own.error
-    for failed in batch.store.failed_requests(run_id):
-        if failed.name == delivery.name:
-            return failed.error
-    return ""
 
 
 def ambiguous(given: str | None) -> str | None:
@@ -60,6 +29,21 @@ def ambiguous(given: str | None) -> str | None:
         return ("more than one unfinished run covers this repo "
                 f"({', '.join(candidates)}); pass a run id")
     return None
+
+
+def _cancel_jobs(run: Run) -> str:
+    ids = [job.entry_id for item in run.items for job in item.jobs]
+    if not ids:
+        return ""
+    import otto_queue.ledger
+    import otto_queue.ticket
+    try:
+        ledger = otto_queue.ledger.Ledger.open()
+    except otto_queue.ledger.LedgerError as exc:
+        return str(exc)
+    for entry_id in ids:
+        otto_queue.ticket.cancel_entry(ledger, entry_id)
+    return ""
 
 
 def cmd_cancel(args, bin_dir: Path) -> int:
@@ -74,20 +58,31 @@ def cmd_cancel(args, bin_dir: Path) -> int:
         return cli.pr_batch_common.fail(f"no run {run_id}")
     if run.status in FINISHED_RUN:
         return cli.pr_batch_common.fail(f"run {run_id} is {run.status.value}")
+    # --kill is the same as cancel this cut: jobs are not batch children.
     try:
-        delivery = _deliver(run_id, Cancel(kill=args.kill), bin_dir, "cancel")
+        with batch.store.session(
+            run_id, Role.APPLIER,
+            inbox=batch.inbox.Inbox(batch.inbox.ApplyContext()),
+            command=f"pr batch cancel {run_id}",
+        ) as session:
+            return _cancel_locked(session)
     except batch.store.RunNotFound:
         return cli.pr_batch_common.fail(f"no run {run_id}")
-    except batch.store.RunUnreachable:
-        return cli.pr_batch_common.fail(_unreachable(run_id))
-    error = "" if delivery.queued else _own_error(run_id, delivery)
-    result = {"cancelled": not error, "run": run_id, "queued": delivery.queued}
-    if error:
-        # The run finished before the cancel reached it; say what it ended as.
-        result["status"] = batch.store.load(run_id).status.value
-        print(f"pr batch: {error}", file=sys.stderr)
-    core.report.emit_json(result)
-    return 1 if error else EXIT_OK
+    except (batch.store.RunBusy, batch.store.RunUnreachable) as exc:
+        return cli.pr_batch_common.fail(str(exc))
+
+
+def _cancel_locked(session) -> int:
+    if session.run.status in FINISHED_RUN:
+        return cli.pr_batch_common.fail(
+            f"run {session.run.id} is {session.run.status.value}")
+    err = _cancel_jobs(session.run)
+    if err:
+        return cli.pr_batch_common.fail(err)
+    session.run.status = RunStatus.CANCELLED
+    session.commit()
+    core.report.emit_json({"cancelled": True, "run": session.run.id})
+    return EXIT_OK
 
 
 def resolve_item(run: Run, given: str) -> Item | str:
@@ -105,43 +100,3 @@ def resolve_item(run: Run, given: str) -> Item | str:
     except KeyError:
         listed = ", ".join(i.key for i in run.items) or "none"
         return f"run {run.id} has no item {given} (have {listed})"
-
-
-def _release_view(item: Item, *, run_id: str, queued: bool, released: bool) -> dict:
-    drafted = [{"step": r.step.value, "commits": list(r.commits)}
-               for r in item.steps if r.drafted]
-    closeout = ""
-    if item.repo_dir and Path(item.repo_dir).is_dir():
-        try:
-            closeout = batch.plan.closeout_debt(item.repo_dir, item.branch).describe()
-        except (OSError, TypeError, ValueError):
-            closeout = ""
-    return {"released": released, "run": run_id, "item": item.key, "queued": queued,
-            "worktree": item.worktree, "drafted": drafted, "closeout": closeout}
-
-
-def cmd_release(args, bin_dir: Path) -> int:
-    run_id = args.run_id
-    try:
-        run = batch.store.load(run_id)
-    except batch.store.RunNotFound:
-        return cli.pr_batch_common.fail(f"no run {run_id}")
-    item = resolve_item(run, args.pr)
-    if isinstance(item, str):
-        return cli.pr_batch_common.fail(item)
-    try:
-        delivery = _deliver(run_id, Release(item=item.key, kill=args.kill), bin_dir, "release")
-    except batch.store.RunNotFound:
-        return cli.pr_batch_common.fail(f"no run {run_id}")
-    except batch.store.RunUnreachable:
-        return cli.pr_batch_common.fail(_unreachable(run_id))
-    error = "" if delivery.queued else _own_error(run_id, delivery)
-    if error:
-        print(f"pr batch: {error}", file=sys.stderr)
-    try:
-        current = batch.store.load(run_id).item(item.key)
-    except (batch.store.RunNotFound, KeyError):
-        current = item
-    core.report.emit_json(_release_view(current, run_id=run_id, queued=delivery.queued,
-                                        released=not error))
-    return 1 if error else EXIT_OK

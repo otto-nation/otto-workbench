@@ -14,12 +14,8 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.plan  # noqa: E402
 import batch.scheduler  # noqa: E402
-import batch.store  # noqa: E402
-from batch.model import STEP_ORDER, RebaseWhen, RunStatus, Step  # noqa: E402
+from batch.model import STEP_ORDER, RebaseWhen, Step  # noqa: E402
 from batch.plan import PlanRow, StepNeed  # noqa: E402
-# `_close_open_sessions` is an autouse fixture; imported only so pytest registers it.
-from batch_scheduler_support import _close_open_sessions, attach_scheduler  # noqa: F401,E402
-from config.workbench_config import BatchConfig  # noqa: E402
 
 
 def _node(branch="feat", base="main", merge_state="BLOCKED", number=7):
@@ -125,44 +121,6 @@ def test_new_run_marks_a_pr_stacked_on_another_in_the_run():
             PlanRow("o/r", "/r", 2, "t", "b2", "h2", False, dict(need), base_ref="b1")]
     run = batch.scheduler.new_run(rows, steps=list(STEP_ORDER), selected=None, pool=1)
     assert [i.stacked_on for i in run.items] == ["", "o/r#1"]
-
-
-def test_a_finished_run_drops_its_refs(monkeypatch):
-    dropped = []
-    monkeypatch.setattr(batch.plan, "drop_refs", lambda dirs, ns: dropped.append((dirs, ns)))
-    assert _scheduler(_empty_run(["/r"])).run_until_blocked() is RunStatus.DONE
-    assert dropped == [(["/r"], "refs/pr-batch/abcd")]
-
-
-def _scheduler(run):
-    return attach_scheduler(
-        run, pr_bin="pr", cfg=BatchConfig(pool_max=1),
-        spawn=lambda *a, **k: None,
-        emit=lambda *a, **k: None, sleep=lambda s: None)
-
-
-def _empty_run(ref_dirs):
-    return batch.scheduler.new_run([], steps=list(STEP_ORDER), selected=None, pool=1, ref_namespace="refs/pr-batch/abcd",
-                                   ref_dirs=ref_dirs)
-
-
-def test_a_run_whose_checkout_is_gone_settles_and_is_saved_done(tmp_path):
-    run = _empty_run([str(tmp_path / "removed-checkout")])
-    assert _scheduler(run).run_until_blocked() is RunStatus.DONE
-    assert batch.store.load(run.id).status is RunStatus.DONE
-
-
-def test_a_run_is_saved_done_before_its_refs_are_dropped(monkeypatch):
-    def fail(dirs, ns):
-        raise OSError("cleanup failed")
-
-    monkeypatch.setattr(batch.plan, "drop_refs", fail)
-    run = _empty_run(["/r"])
-    with pytest.raises(OSError):
-        _scheduler(run).run_until_blocked()
-    assert batch.store.load(run.id).status is RunStatus.DONE
-    # The DRIVER session is still open; finish() on teardown would drop again.
-    monkeypatch.setattr(batch.plan, "drop_refs", lambda *a, **k: None)
 
 
 def test_a_held_packed_refs_lock_fails_the_drop_once_and_keeps_the_refs(

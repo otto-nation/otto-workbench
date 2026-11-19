@@ -259,6 +259,7 @@ def test_running_run_sessions_only_terminal_items():
         ],
         status=RunStatus.RUNNING,
     )
+    running.schema_version = 2
     entries = batch.session_report.sessions(running, closeout=no_debt, tree=None)
     assert [e.pr for e in entries] == [settled.key]
     assert [c.action for c in entries[0].commands] == ["rebase"]
@@ -269,6 +270,16 @@ def test_running_run_sessions_only_terminal_items():
         status=RunStatus.WAITING,
     )
     assert batch.session_report.sessions(waiting, closeout=no_debt, tree=None)
+
+
+def test_schema3_running_run_includes_nonterminal_items():
+    inflight = make_item(1, status=ItemStatus.QUEUED)
+    run = make_run([inflight], status=RunStatus.RUNNING)
+    assert run.schema_version >= 3
+    debt = CloseoutDebt(summary=True)
+    entries = batch.session_report.sessions(
+        run, closeout=lambda d, b: debt, tree=None)
+    assert [e.pr for e in entries] == [inflight.key]
 
 
 @pytest.mark.parametrize("kind,step,payload,reason", [

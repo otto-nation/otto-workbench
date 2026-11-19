@@ -13,16 +13,11 @@ if str(LIB_DIR) not in sys.path:
 import pytest  # noqa: E402
 
 import batch.autopublish  # noqa: E402
-import batch.scheduler  # noqa: E402
 import batch.targets  # noqa: E402
 import core.run_lock  # noqa: E402
 import otto_queue.model  # noqa: E402
 import pr.target  # noqa: E402
 from batch.model import Item, ItemStatus, Run, Step  # noqa: E402
-# `_quiet_outcomes` is an autouse fixture; imported only so pytest registers it here.
-from batch_scheduler_support import (  # noqa: E402,F401
-    NEED, Harness, _close_open_sessions, _quiet_outcomes, attach_scheduler, ff_tree, row,
-)
 from conftest import seed_repo  # noqa: E402
 from core.run_lock import LOCK_ENV, TARGET, TREE_LOCK_ENV  # noqa: E402
 from run_lock_support import repo_with_origin  # noqa: E402
@@ -135,26 +130,6 @@ def test_a_child_gets_through_its_own_item_and_is_refused_on_another(repo):
     assert own.returncode == 0, own.stderr
     assert other.returncode == core.run_lock.EXIT_BUSY
     assert "pr batch run R" in other.stderr
-
-
-def test_every_step_is_spawned_with_only_its_items_marker(monkeypatch):
-    monkeypatch.setattr(batch.targets, "item_target_dir",
-                        lambda item: Path(f"/targets/{item.pr}"))
-    monkeypatch.setattr(core.run_lock, "holds", lambda lock_file: True)
-    h = Harness([row(1), row(10)])
-    seen = []
-    real = h._spawn
-
-    def spawn(argv, **kw):
-        seen.append((argv[-1], kw["env"][LOCK_ENV]))
-        return real(argv, **kw)
-
-    h.sched._spawn = spawn
-    h.sched.run_until_blocked()
-    assert seen
-    # argv[-1] is --repo-dir's worktree (`/wt/b{pr}` from the harness). Match
-    # that exact path, not a last-character substring, so PR 10 is not "0".
-    assert all(marker == f"/targets/{Path(worktree).name[1:]}" for worktree, marker in seen)
 
 
 def _holding(holds, *keys_by_target):

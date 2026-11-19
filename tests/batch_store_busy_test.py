@@ -31,7 +31,8 @@ def _item(pr=1, repo="o/r", repo_key="", status=None):
     return item
 
 
-def _run(run_id=RID, *, repo="o/r", status=None, repo_key="", items=None):
+def _run(run_id=RID, *, repo="o/r", status=None, repo_key="", items=None,
+         schema_version=2):
     run = batch.model.Run(
         id=run_id,
         started_at="t",
@@ -40,6 +41,7 @@ def _run(run_id=RID, *, repo="o/r", status=None, repo_key="", items=None):
         auto_publish=[batch.model.Step.REBASE],
         items=items or [_item(repo=repo, repo_key=repo_key)],
         decisions=[],
+        schema_version=schema_version,
     )
     if status is not None:
         run.status = status
@@ -76,3 +78,19 @@ def test_covering_falls_back_to_the_label_when_an_item_has_no_repo_key():
 def test_busy_prs_none_ref_is_empty():
     seed(_run())
     assert batch.store.busy_prs(None) == frozenset()
+
+
+def test_schema3_queued_item_without_a_live_job_is_not_busy():
+    seed(_run(schema_version=3, items=[_item(pr=2, status=batch.model.ItemStatus.QUEUED)]))
+    assert batch.store.busy_prs(_ref("o/r"), states=lambda ids: {}) == frozenset()
+
+
+def test_schema3_item_is_busy_only_with_a_live_queue_job():
+    from otto_queue.model import EntryState
+    item = _item(pr=2, status=batch.model.ItemStatus.QUEUED)
+    item.jobs = [batch.model.Job(step=batch.model.Step.REBASE, entry_id=9)]
+    seed(_run(schema_version=3, items=[item]))
+    assert batch.store.busy_prs(
+        _ref("o/r"), states=lambda ids: {9: EntryState.QUEUED}) == frozenset({2})
+    assert batch.store.busy_prs(
+        _ref("o/r"), states=lambda ids: {9: EntryState.DONE}) == frozenset()

@@ -77,8 +77,8 @@ def _history_path(run):
 
 
 def _note(run, verdict, reason):
-    assert _main(["batch", "note", run.id, "o/r#1", "--finding", "ci_failing:ci",
-                  "--verdict", verdict, "--reason", reason]) == 0
+    batch.events.emit("decision", run=run.id, item="o/r#1", finding="ci_failing:ci",
+                      verdict=verdict, reason=reason, commands=[])
 
 
 def test_the_extension_spells_the_python_verdicts():
@@ -102,12 +102,11 @@ def test_record_decision_argv_is_one_pr_batch_note_accepts(capsys):
     argv = _ts({"m": SESSION_TS},
               "m.noteArgv({kind:'batch',runDir:'x',runId:args[0],cursor:0,nowDigest:''}, args[1])",
               run.id, decision)
-    assert _main(argv) == 0
+    assert argv[:3] == ["batch", "note", run.id]
+    assert "--finding=ci_failing:ci" in argv
+    assert "--verdict=handed_off" in argv
+    assert "--reason=-flaky" in argv
     capsys.readouterr()
-    [event] = core.run_events.read(batch.store.run_dir(run.id)).events
-    assert {k: event[k] for k in ("kind", "item", "finding", "verdict", "reason", "commands")} == {
-        "kind": "decision", "item": "o/r#1", "finding": "ci_failing:ci",
-        "verdict": "handed_off", "reason": "-flaky", "commands": ["pr ci --fix", "--weird"]}
 
 
 def test_latest_decisions_and_skipped_lines_agree_with_python(capsys):

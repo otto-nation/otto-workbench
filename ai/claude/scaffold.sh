@@ -216,6 +216,10 @@ scaffold_project_claude() {
   # Scaffold architecture.md for stacks that benefit from architecture narrative
   for s in "${DETECTED_STACKS[@]}"; do
     local arch_tmpl="$CLAUDE_TEMPLATES_DIR/architecture/${s}.md"
+    if [[ -f "$arch_tmpl" && -f .claude/architecture.md && ! -f .agents/architecture.md ]]; then
+      warn "Legacy .claude/architecture.md exists; skipping .agents/architecture.md (move it to avoid two copies)"
+      break
+    fi
     if [[ -f "$arch_tmpl" ]]; then
       echo
       mkdir -p .agents

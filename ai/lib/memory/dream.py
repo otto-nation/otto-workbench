@@ -14,6 +14,7 @@ Not: transcript discovery, record shapes or automation filtering
 from __future__ import annotations
 
 import re
+import sys
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -219,6 +220,17 @@ def _format_signals_section(signals: list[dict]) -> list[str]:
     return lines
 
 
+def _session_repo_key(session) -> str | None:
+    """Repo identity of a session's cwd, or None when absent or not a repo."""
+    cwd = core.sessions.project_path_of(session)
+    if cwd is None:
+        return None
+    try:
+        return core.memory.repo_key(cwd)
+    except ValueError:
+        return None
+
+
 def list_transcripts(
     home: Path, days: int, repo: Path | str | None = None,
 ) -> int:
@@ -238,18 +250,14 @@ def list_transcripts(
     cutoff = datetime.now() - timedelta(days=days)
     want = None
     if repo is not None:
-        want = core.memory.repo_key(repo)
+        try:
+            want = core.memory.repo_key(repo)
+        except ValueError as e:
+            print(f"dream-scan: --repo {repo}: {e}", file=sys.stderr)
+            return 2
     for session in core.sessions.discover_sessions(home, since=cutoff):
-        if want is not None:
-            cwd = core.sessions.project_path_of(session)
-            if cwd is None:
-                continue
-            try:
-                if core.memory.repo_key(cwd) != want:
-                    continue
-            except ValueError:
-                continue
-        print(session.path)
+        if want is None or _session_repo_key(session) == want:
+            print(session.path)
     return 0
 
 

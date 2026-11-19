@@ -188,7 +188,7 @@ Re-use the session files already scanned in Phase 2 — `dream-scan
 --list-transcripts` prints them, across every harness, for the same window:
 
 ```bash
-dream-scan --list-transcripts --days 7 > /tmp/dream-transcripts
+dream-scan --list-transcripts --days 7 --repo . > /tmp/dream-transcripts
 ```
 
 Look specifically for architectural signals:

@@ -75,3 +75,8 @@ def test_run_scan_returns_0_rather_than_exiting(tmp_path, monkeypatch):
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("WORKBENCH_DATA_DIR", str(tmp_path / "data"))
     assert memory.dream.run_scan(tmp_path, 30) == 0
+
+
+def test_list_transcripts_non_repo_path_is_usage_error(tmp_path, capsys):
+    assert memory.dream.list_transcripts(tmp_path, 30, repo=tmp_path / "nope") == 2
+    assert "--repo" in capsys.readouterr().err

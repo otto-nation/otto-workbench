@@ -382,23 +382,15 @@ _path_matches() {
 _glob_to_rx() {
   local pat="$1" rx="" i=0 c
   while (( i < ${#pat} )); do
+    if [[ "${pat:i:2}" == "**" ]]; then
+      rx+=".*"
+      i=$((i + 2))
+      continue
+    fi
     c="${pat:i:1}"
-    if [[ "$c" == "*" ]]; then
-      if [[ "${pat:i:2}" == "**" ]]; then
-        rx+=".*"
-        i=$((i + 2))
-        continue
-      fi
-      rx+="[^/]*"
-      i=$((i + 1))
-      continue
-    fi
-    if [[ "$c" == "?" ]]; then
-      rx+="[^/]"
-      i=$((i + 1))
-      continue
-    fi
     case "$c" in
+      '*') rx+="[^/]*" ;;
+      '?') rx+="[^/]" ;;
       .|'['|']'|'('|')'|'^'|'$'|'+'|'{'|'}'|'|') rx+="\\$c" ;;
       *) rx+="$c" ;;
     esac
@@ -438,14 +430,32 @@ _glob_suffix_rx() {
 # When the suite names concrete files that match PATTERN, only those files
 # select it (`_lib/*.js` plus `_lib/queue.js` does not run for sessions.js).
 # A suite that only has the glob still selects every match.
+# _name_matches_changed CHANGED BASE NAME... — CHANGED is one of the named files.
+_name_matches_changed() {
+  local changed="$1" changed_base="$2" hit; shift 2
+  for hit in "$@"; do
+    [[ "$changed" == *"$hit" || "$changed_base" == "$hit" ]] && return 0
+  done
+  return 1
+}
+
+# _glob_basenames BODY LEAF — emit foo.js-style names when LEAF is `*.ext`.
+_glob_basenames() {
+  local body="$1" leaf="$2" ext bn
+  [[ "$leaf" == '*.'* ]] || return 0
+  ext="${leaf#*.}"
+  while IFS= read -r bn; do
+    [[ -n "$bn" ]] && printf '%s\n' "$bn"
+  done < <(grep -oE "[A-Za-z0-9_-]+\\.${ext}" <<< "$body" || true)
+  return 0
+}
+
 _pattern_selects() {
   local test_file="$1" pattern="$2"; shift 2
-  local changed rx hit named=0 body
+  local changed rx hit named=0 body leaf
   # Basename-only globs (`*.env.yml`) are tree scans; do not narrow them.
   if [[ "$pattern" != */* ]]; then
-    for changed in "$@"; do
-      _glob_match "$changed" "$pattern" && return 0
-    done
+    _pattern_matches_any "$pattern" "$@" && return 0
     return 1
   fi
   rx="$(_glob_suffix_rx "$pattern")"
@@ -458,27 +468,15 @@ _pattern_selects() {
     [[ -z "$hit" || "$hit" == *'*'* ]] && continue
     names+=("$hit")
   done < <(grep -oE "$rx" <<< "$body" || true)
-  local leaf="${pattern##*/}" ext="" bn
-  if [[ "$leaf" == '*.'* ]]; then
-    ext="${leaf#*.}"
-    while IFS= read -r bn; do
-      [[ -z "$bn" ]] && continue
-      names+=("$bn")
-    done < <(grep -oE "[A-Za-z0-9_-]+\\.${ext}" <<< "$body" || true)
-  fi
+  leaf="${pattern##*/}"
+  while IFS= read -r hit; do
+    [[ -n "$hit" ]] && names+=("$hit")
+  done < <(_glob_basenames "$body" "$leaf")
   [[ ${#names[@]} -gt 0 ]] && named=1
-  local changed_base
   for changed in "$@"; do
     _glob_match "$changed" "$pattern" || continue
-    if [[ "$named" -eq 0 ]]; then
-      return 0
-    fi
-    changed_base="${changed##*/}"
-    for hit in "${names[@]}"; do
-      if [[ "$changed" == *"$hit" || "$changed_base" == "$hit" ]]; then
-        return 0
-      fi
-    done
+    [[ "$named" -eq 0 ]] && return 0
+    _name_matches_changed "$changed" "${changed##*/}" "${names[@]}" && return 0
   done
   return 1
 }

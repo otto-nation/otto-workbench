@@ -71,6 +71,7 @@ def test_an_unversioned_id_drops_only_the_version_suffix(value, expected):
     ("xai/grok-4.6", "high"),
     ("grok-4.7", "high"),
     ("google-vertex/gemini-4-carbon", "high"),
+    ("google-vertex/gemini-4-neon", "high"),
     ("google-vertex-claude/claude-haiku-4-5@20251001", "low"),
     ("claude-haiku-5-5", "low"),
     ("anthropic.claude-haiku-5-5-v1:0", "low"),

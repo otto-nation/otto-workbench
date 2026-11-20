@@ -7,6 +7,27 @@
  *   { action: "created" | "existing" | "already_at", branch, path, ... }
  */
 
+// Slice from *start* through the matching `}`, so a later token on stdout is ignored.
+function _firstObject(s, start) {
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < s.length; i++) {
+    const c = s[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return s.slice(start);
+}
+
 export function switchArgv(number) {
   return ['switch', `pr:${number}`, '--no-cd', '--format', 'json'];
 }
@@ -18,7 +39,7 @@ export function parseSwitch(stdout) {
   }
   let doc;
   try {
-    doc = JSON.parse(stdout.slice(start));
+    doc = JSON.parse(_firstObject(stdout, start));
   } catch {
     return { ok: false, message: 'wt printed no JSON' };
   }

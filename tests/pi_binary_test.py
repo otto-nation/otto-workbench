@@ -258,6 +258,17 @@ class TestUntrustedMise:
         assert envs and envs[0] is not None
         assert envs[0].get("FROM_BASE_ENV") == "1"
 
+    def test_machine_env_unavailable_from_base_env_is_unresolvable(self, machine, monkeypatch):
+        machine.managed("1.2.0")
+        machine.mise()
+
+        def boom(_cwd):
+            raise agent.machine_env.MachineEnvUnavailable("mise could not undo the repo env")
+
+        monkeypatch.setattr(agent.machine_env, "base_env", boom)
+        with pytest.raises(PiUnresolvable, match="cannot run mise"):
+            _resolve(machine)
+
 
 class TestVersionKey:
     def test_numeric_prerelease_identifiers_compare_numerically(self):

@@ -331,7 +331,7 @@ def _mise_current(cwd: str) -> dict:
             ["mise", "ls", "--current", "--json"], cwd=cwd, timeout=core.timeouts.LOCAL,
             env=agent.machine_env.base_env(cwd),
         )
-    except OSError as exc:
+    except (OSError, agent.machine_env.MachineEnvUnavailable) as exc:
         raise PiUnresolvable(f"cannot run mise to read the repo's pi pin: {exc}") from exc
     if not result.ok:
         raise PiUnresolvable(core.proc.failure_message(

@@ -93,14 +93,15 @@ import otto_queue.lease
 import otto_queue.ledger
 import otto_queue.paths
 import otto_queue.slots
+import otto_queue.stuck
 import otto_queue.wait_report
 from otto_queue.model import (  # noqa: F401  env names are re-exported for callers
     ACTION_ENV, ADOPT_ENV, ENTRY_ENV, LABEL_ENV, LEASE_FD_ENV, SUBJECT_ENV, WAIT_ENV, Entry,
     EntryClass, EntryKind, EntryState, NewEntry)
 
 # How long a ticket waits for a slot before ending as `tempfail`. A review takes
-# about ten minutes, so an hour is several heavy entries deep: long enough that
-# only a ticket stuck behind a wedged entry times out.
+# about ten minutes, so an hour is several heavy entries deep. An unclaimed job
+# with a live idle worker fails fast as `stuck` (exit 1) instead of waiting this out.
 DEFAULT_WAIT_S = 3600.0
 
 # Between admission attempts, and between looks at a joined entry. Stays at
@@ -122,6 +123,7 @@ class TicketOutcome(StrEnum):
     REUSED = "reused"
     CANCELLED = "cancelled"
     TIMED_OUT = "timed_out"
+    STUCK = "stuck"
     NESTED = "nested"
     UNQUEUED = "unqueued"
 
@@ -161,6 +163,7 @@ class _WaitEnd(StrEnum):
     ADMITTED = "admitted"
     CANCELLED = "cancelled"
     TIMED_OUT = "timed_out"
+    STUCK = "stuck"
 
 
 @dataclass(frozen=True)
@@ -425,6 +428,9 @@ def _run_after_wait(ledger: otto_queue.ledger.Ledger, entry_id: int,
                     notify: Callable[[str], None]) -> TicketResult:
     if wait.end is _WaitEnd.CANCELLED:
         return TicketResult(core.proc.INTERRUPT_RETURNCODE, TicketOutcome.CANCELLED, entry_id)
+    if wait.end is _WaitEnd.STUCK:
+        _record_status(ledger, entry_id, 1)
+        return TicketResult(1, TicketOutcome.STUCK, entry_id)
     if wait.end is _WaitEnd.TIMED_OUT:
         _record_status(ledger, entry_id, os.EX_TEMPFAIL)
         notify(f"otto-queue: entry {entry_id} found no room in {request.wait_s:g}s")
@@ -495,11 +501,17 @@ def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
             reporter.admitted()
         if wait is not None:
             return wait
+        kind = otto_queue.wait_report.reason_kind(reason) if reason else None
+        if kind is otto_queue.wait_report.WaitKind.STUCK:
+            notify(f"otto-queue: {reason}")
+            notify(
+                "  status: otto-queue status    "
+                "the older job is unclaimed; do not --no-queue")
+            return _Wait(_WaitEnd.STUCK)
         if reason != said:
             reporter.waiting(reason)
             said = reason
             origin = time.monotonic()
-        kind = otto_queue.wait_report.reason_kind(reason) if reason else None
         if kind in (otto_queue.wait_report.WaitKind.MEMORY,
                     otto_queue.wait_report.WaitKind.CPU):
             return _Wait(_WaitEnd.TIMED_OUT)
@@ -521,9 +533,22 @@ def _try_once(ledger: otto_queue.ledger.Ledger, entry_id: int, entry_class: Entr
     ledger.reap_orphans()
     first = ledger.first_waiting(entry_class, jobs=otto_queue.lease.worker_alive(ledger.root))
     if first is not None and first != entry_id:
-        return otto_queue.slots.Admission(None, f"behind entry {first}, which queued first")
+        return _behind(ledger, first, entry_class)
     return otto_queue.slots.try_admit(ledger.root, policy, entry_class,
                                       host_room=False)
+
+
+def _behind(ledger: otto_queue.ledger.Ledger, first_id: int,
+            entry_class: EntryClass) -> otto_queue.slots.Admission:
+    """Refuse this waiter: FIFO, or stuck if the older job will never start."""
+    running = sum(1 for e in ledger.entries()
+                  if e.entry_class is entry_class and e.state is EntryState.RUNNING)
+    reason = otto_queue.stuck.unclaimed_job(
+        ahead=ledger.get(first_id), now=time.time(),
+        worker_alive=otto_queue.lease.worker_alive(ledger.root), running=running)
+    if reason:
+        return otto_queue.slots.Admission(None, reason)
+    return otto_queue.slots.Admission(None, f"behind entry {first_id}, which queued first")
 
 
 def _run(request: TicketRequest, entry_id: int | None) -> int:

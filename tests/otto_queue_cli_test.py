@@ -21,10 +21,12 @@ if str(LIB_DIR) not in sys.path:
 import cli.otto_queue  # noqa: E402
 import core.proc  # noqa: E402
 import core.timeouts  # noqa: E402
+import otto_queue.lease  # noqa: E402
 import otto_queue.paths  # noqa: E402
 import otto_queue.ticket  # noqa: E402
 from otto_queue.ledger import Ledger, LedgerBusy  # noqa: E402
 from otto_queue.model import EntryClass, EntryKind, EntryState, NewEntry  # noqa: E402
+from otto_queue_support import set_columns  # noqa: E402
 
 SHIM = REPO_ROOT / "ai" / "bin" / "otto-queue"
 PY = sys.executable
@@ -327,3 +329,19 @@ def test_status_shows_a_jobs_kind_and_retry_time(capsys):
     assert cli.otto_queue.main(["status"]) == 0
     line = capsys.readouterr().out.splitlines()[1]
     assert "job" in line and "retry in 10m, attempt 2" in line
+
+
+def test_status_marks_an_unclaimed_job_the_worker_is_not_starting(capsys):
+    root = otto_queue.paths.queue_root()
+    ledger = Ledger.open()
+    job = ledger.resolve(
+        NewEntry(argv=("true",), cwd="/", kind=EntryKind.JOB, label="maintenance"),
+        force=False, pid=None).entry
+    set_columns(root, job.id, created_at=time.time() - 3600)
+    worker = otto_queue.lease.take_worker(root)
+    try:
+        assert cli.otto_queue.main(["status"]) == 0
+    finally:
+        worker.release()
+    line = capsys.readouterr().out.splitlines()[1]
+    assert "stuck" in line and "never claimed" in line

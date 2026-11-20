@@ -26,6 +26,7 @@ KIND_CASES = (
     ("light work is bounded by count alone", WaitKind.OTHER),
     ("all 4 heavy slots are taken", WaitKind.SLOTS),
     ("behind entry 107, which queued first", WaitKind.BEHIND),
+    ("stuck: job #436 queued 10h 7m 12s, worker alive, never claimed", WaitKind.STUCK),
 )
 
 FIRST_BLOCK = (

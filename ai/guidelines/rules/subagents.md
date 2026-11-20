@@ -61,9 +61,11 @@ and test specifics live with their owners (pointers below).
   small item directly, and revisit when the model or provider changes
 - Never put a bare coreutils `timeout` around a long `pr review --self --fix`: a
   3000s bound killed one mid-fix, and a rerun was owed. Start it with `job_start`
-  under Pi (`run_in_background` under Claude Code; see `general.md`) and a
-  generous `timeout_minutes` (observed 2026-11: 10 to 35 minutes per
-  run, longer when the repo's checks are slow)
+  under Pi (`run_in_background` under Claude Code; see `general.md`) and
+  `timeout_minutes: 0`. A 35-minute cap (observed 2026-11 through pi's
+  `job_start`) killed a review that was still waiting on otto-queue and a
+  `pr create` that was still in pre-push; `pr` itself never kills a push.
+  Revisit if `job_start` grows a wait-vs-run distinction
 - Retry a stalled or aborted call on the same model before changing models —
   the stall is usually the call, not the model. A killed or timed-out child can
   leave uncommitted partial files in the worktree; before retrying, read

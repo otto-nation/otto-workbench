@@ -33,7 +33,7 @@ from admission_support import BUSY, CFG  # noqa: E402
 from otto_queue.ledger import Ledger  # noqa: E402
 from otto_queue.model import LIVE_STATES, EntryClass, EntryKind, EntryState, NewEntry  # noqa: E402
 from otto_queue.ticket import TERMINAL_ENV, TicketOutcome, TicketRequest, TicketResult  # noqa: E402
-from otto_queue_support import PEAK, Room, exit_argv, touch_argv  # noqa: E402
+from otto_queue_support import PEAK, Room, exit_argv, set_columns, touch_argv  # noqa: E402
 
 PY = sys.executable
 
@@ -300,6 +300,26 @@ def test_six_heavy_tickets_never_run_more_than_two_at_once(tmp_path):
     assert [p.wait(timeout=120) for p in procs] == [0] * 6
     assert json.loads(counter.read_text())["peak"] == 2
     assert [e.state for e in Ledger.open().entries()] == [EntryState.DONE] * 6
+
+
+def test_a_ticket_fails_behind_an_unclaimed_job_the_worker_is_not_starting(tmp_path):
+    root = otto_queue.paths.queue_root()
+    ledger = Ledger.open()
+    job = ledger.resolve(
+        NewEntry(argv=("true",), cwd="/", kind=EntryKind.JOB, label="maintenance"),
+        force=False, pid=None).entry
+    set_columns(root, job.id, created_at=time.time() - 60)
+    worker = otto_queue.lease.take_worker(root)
+    messages = []
+    try:
+        result = _run(touch_argv(tmp_path / "ran"), messages=messages, wait_s=10)
+    finally:
+        worker.release()
+    assert (result.exit_status, result.outcome) == (1, TicketOutcome.STUCK)
+    assert ledger.get(result.entry_id).state is EntryState.FAILED
+    assert ledger.get(job.id).state is EntryState.QUEUED
+    assert any("stuck:" in m and "never claimed" in m for m in messages)
+    assert not (tmp_path / "ran").exists()
 
 
 def test_a_ticket_waits_behind_an_older_job_while_a_worker_is_alive(tmp_path):

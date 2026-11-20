@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Agents route heavy shell work through otto-queue (issue 1995, option C1).
-# select-on: ai/registry.yml ai/guidelines/rules/general.md
+# select-on: ai/registry.yml ai/guidelines/rules/general.md ai/guidelines/rules/subagents.md
 
 setup() {
   load 'test_helper'
@@ -41,4 +41,33 @@ setup() {
   [[ "$section" == *'not admission'* ]]
   [[ "$section" == *'otto-queue submit --class heavy -- CMD'* ]]
   [[ "$section" == *'otto-queue wait <id>'* ]]
+}
+
+@test "Waiting on Background Work does not bound pr with a job_start timeout" {
+  local section
+  section="$(awk '/^## Waiting on Background Work$/{p=1;next} /^## /{p=0} p' \
+    "$REPO_ROOT/ai/guidelines/rules/general.md")"
+
+  [[ "$section" == *'timeout_minutes: 0'* ]]
+  [[ "$section" == *'pr review'* ]]
+  [[ "$section" == *'pr create'* ]]
+  [[ "$section" != *'generous timeout_minutes'* ]]
+}
+
+@test "Waiting on Background Work does not treat a stuck queue as --no-queue" {
+  local section
+  section="$(awk '/^## Waiting on Background Work$/{p=1;next} /^## /{p=0} p' \
+    "$REPO_ROOT/ai/guidelines/rules/general.md")"
+
+  [[ "$section" == *'behind an older entry'* ]]
+  [[ "$section" == *'Do not `--no-queue`'* ]]
+  [[ "$section" == *'stuck'* ]]
+}
+
+@test "subagents do not give pr review a generous job_start timeout" {
+  local text
+  text="$(cat "$REPO_ROOT/ai/guidelines/rules/subagents.md")"
+
+  [[ "$text" == *'timeout_minutes: 0'* ]]
+  [[ "$text" != *'generous timeout_minutes'* ]]
 }

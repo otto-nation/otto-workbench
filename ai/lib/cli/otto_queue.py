@@ -29,7 +29,9 @@ import core.log
 import core.serde
 import otto_queue.admission
 import otto_queue.job
+import otto_queue.lease
 import otto_queue.ledger
+import otto_queue.stuck
 import otto_queue.submit
 import otto_queue.supervisor
 import otto_queue.ticket
@@ -276,15 +278,19 @@ def _age(seconds: float) -> str:
     return f"{seconds / 3600:.1f}h"
 
 
-def _line(entry: Entry, now: float) -> str:
+def _line(entry: Entry, now: float, *, worker_alive: bool = False,
+          running: int = 0) -> str:
     since = entry.started_at or entry.created_at
     status = "" if entry.exit_status is None else f" exit {entry.exit_status}"
     retry = ""
     if entry.state is EntryState.QUEUED and entry.not_before is not None and entry.not_before > now:
         retry = f"  retry in {_age(entry.not_before - now)}, attempt {entry.attempts + 1}"
+    stuck = otto_queue.stuck.unclaimed_job(
+        ahead=entry, now=now, worker_alive=worker_alive, running=running)
+    note = f"  {stuck}" if stuck else ""
     title = entry.label if entry.label else shlex.join(entry.argv)
     return (f"  #{entry.id:<5} {entry.kind.value:<6} {entry.entry_class.value:<5} {entry.state.value:<9} "
-            f"{_age(now - since):>5}{status}{retry}  {title}")
+            f"{_age(now - since):>5}{status}{retry}{note}  {title}")
 
 
 SLOTS_HEADER_SCHEMA = 1
@@ -338,8 +344,12 @@ def _status(args: argparse.Namespace) -> int:
     print(" · ".join(f"{c.value} {sum(e.entry_class is c for e in running)}/{policy.limit(c)} running"
                      for c in EntryClass))
     now = time.time()
+    worker_alive = otto_queue.lease.worker_alive(ledger.root)
+    running_by_class = {
+        cls: sum(1 for e in running if e.entry_class is cls) for cls in EntryClass}
     for entry in entries:
-        print(_line(entry, now))
+        print(_line(entry, now, worker_alive=worker_alive,
+                    running=running_by_class[entry.entry_class]))
     return ExitCode.OK
 
 

@@ -92,6 +92,17 @@ _maint() {
   grep -q '"\$MAINTENANCE_SRC_DIR/bin/otto-workbench-maintenance" --ticket$' "$REPO_ROOT/bin/otto-workbench"
 }
 
+@test "a --no-queue run skips otto-queue and runs the body" {
+  _maint -- --no-queue
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"Fetching origin/main"* ]]
+  [ ! -e "$QUEUE_CALLS" ]
+}
+
+@test "otto-workbench maintenance run --no-queue passes --no-queue" {
+  grep -q 'otto-workbench-maintenance" --no-queue' "$REPO_ROOT/bin/otto-workbench"
+}
+
 @test "a missing otto-queue runs the body without a queue call" {
   _maint OTTO_QUEUE_BIN="$TEST_HOME/no-such-queue"
   [ "$status" -eq 1 ]

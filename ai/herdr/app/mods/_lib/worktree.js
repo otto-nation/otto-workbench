@@ -2,8 +2,9 @@
  * Pure helpers for Open for Review: check a PR out with the workbench's `wt` and land in it.
  * Imports nothing.
  *
- * `wt switch pr:<n> --no-cd --format json` prints one JSON object on stdout:
- *   { action: "created" | "existing", branch, path, ... }
+ * `wt switch pr:<n> --no-cd --format json` prints a JSON object on stdout,
+ * often pretty-printed after a human status line:
+ *   { action: "created" | "existing" | "already_at", branch, path, ... }
  */
 
 export function switchArgv(number) {
@@ -11,9 +12,13 @@ export function switchArgv(number) {
 }
 
 export function parseSwitch(stdout) {
+  const start = stdout.indexOf('{');
+  if (start < 0) {
+    return { ok: false, message: 'wt printed no JSON' };
+  }
   let doc;
   try {
-    doc = JSON.parse(stdout);
+    doc = JSON.parse(stdout.slice(start));
   } catch {
     return { ok: false, message: 'wt printed no JSON' };
   }

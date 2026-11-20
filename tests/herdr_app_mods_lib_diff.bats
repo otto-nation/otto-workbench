@@ -78,6 +78,12 @@ _js() {
   [ "$output" = '[{"ok":true,"path":"/p","created":true},false,false]' ]
 }
 
+@test "parseSwitch reads pretty JSON after a status line" {
+  _js 'w.parseSwitch("○ Already on worktree for main @ ~/git/x/main\n{\n  \"action\": \"created\",\n  \"path\": \"/p\"\n}")'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"ok":true,"path":"/p","created":true}' ]
+}
+
 @test "openForReviewState needs a local checkout and gives the reason" {
   _js '[w.openForReviewState({cwd:"/r",on:null}).enabled, w.openForReviewState({cwd:"/r",on:"m"}).reason, w.openForReviewState({cwd:null,on:null}).reason]'
   [ "$output" = '[true,"Open for Review works on this machine only","No local checkout of this repository"]' ]

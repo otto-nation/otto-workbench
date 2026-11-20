@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import os
 import queue
-import shutil
 import signal
 import subprocess
 import threading
@@ -174,100 +173,6 @@ def restore_generated_dirt(cwd: str) -> list[str] | None:
     return paths
 
 
-def _default_rev(cwd: str) -> str | None:
-    """The commit-ish to read default-branch content from, or None.
-
-    ``origin/<default>`` when that ref exists, else the local default branch.
-    Either missing is a comparison failure, not a reason to trust.
-    """
-    default = git.topology.default_branch(cwd)
-    for rev in (f"origin/{default}", default):
-        if git.client.ok("rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}", cwd=cwd):
-            return rev
-    return None
-
-
-def _blob_at(worktree: str, rev: str, rel: str) -> str:
-    r = git.client.run(
-        "rev-parse", "--verify", "--quiet", f"{rev}:{rel}", cwd=worktree,
-    )
-    return r.stdout.strip() if r.ok else ""
-
-
-def _trusted_blobs(worktree: str, rev: str, rel: str) -> set[str]:
-    blobs = {_blob_at(worktree, rev, rel)}
-    mb = git.client.out("merge-base", "HEAD", rev, cwd=worktree)
-    if mb and mb != rev:
-        blobs.add(_blob_at(worktree, mb, rel))
-    blobs.discard("")
-    return blobs
-
-
-def _same_bytes_as_default(cfg: Path, worktree: str) -> str | None:
-    """Empty if *cfg* matches the default branch or merge-base; otherwise why not.
-
-    Never raises: a comparison that cannot be made is not a match.
-    """
-    try:
-        rel = cfg.resolve().relative_to(Path(worktree).resolve()).as_posix()
-        rev = _default_rev(worktree)
-        if rev is None:
-            return f"could not resolve the default branch in {worktree}"
-        blobs = _trusted_blobs(worktree, rev, rel)
-        if not blobs:
-            return f"{rel} is absent on {rev}"
-        work = git.client.run("hash-object", str(cfg), cwd=worktree)
-        if not work.ok:
-            return f"could not hash {cfg}"
-        if work.stdout.strip() not in blobs:
-            return f"{rel} differs from {rev} and merge-base"
-        return None
-    except Exception as exc:
-        return f"could not compare {cfg} to the default branch: {exc}"
-
-
-def trust_mise_config(worktree: str) -> None:
-    """Trust mise config files in *worktree* so a child hook can run tasks.
-
-    Only a file whose bytes match the same path on the repo's default branch
-    or at ``merge-base(HEAD, default)`` is trusted. A stale feature branch
-    whose mise config still matches the fork point is accepted; a PR that
-    edited the file is not. This is a widening of the boundary, not a proof
-    of safety: the default branch may have since changed that file, and the
-    merge-base is computed against PR-controlled history. ``author:@me`` is not enough: PR content can come from a
-    fork or a collaborator commit, and trusting lets mise run arbitrary tasks
-    that persist in the user's trust store. A file that differs from both, is
-    absent on the default branch, or whose comparison fails is left untrusted
-    — the reason is logged and the item still starts. A failed ``mise trust``
-    is the same: logged, never fatal; an untrusted config surfaces as the
-    hook's own error.
-    """
-    if not shutil.which("mise"):
-        return
-    root = Path(worktree)
-    for name in git.regenerate.MISE_CONFIG_NAMES:
-        if not name.endswith(".toml"):
-            continue
-        cfg = root / name
-        if not cfg.is_file():
-            continue
-        reason = _same_bytes_as_default(cfg, worktree)
-        if reason is not None:
-            core.log.warn(f"mise trust of {cfg} skipped — {reason}")
-            continue
-        result = _mise_trust(cfg)
-        if not result.ok:
-            core.log.warn(core.proc.failure_message(
-                f"mise trust of {cfg} failed — continuing", result,
-            ))
-
-
-def _mise_trust(cfg: Path) -> core.proc.CmdResult:
-    return core.proc.run(
-        ["mise", "trust", "--quiet", str(cfg)], timeout=core.timeouts.QUICK,
-    )
-
-
 def checked_out_branch(worktree: str) -> str:
     """The branch *worktree* stands on — the one being rebased while a rebase is
     paused — or "" when git cannot say or HEAD is detached outside a rebase.
@@ -319,7 +224,7 @@ def ensure_worktree(repo_dir: str, branch: str) -> WorktreeResult:
                 collision=True)
         else:
             return WorktreeResult("", False, f"could not create a worktree for {branch}")
-    trust_mise_config(path)
+    git.regenerate.trust_mise_config(path)
     return WorktreeResult(path, git.client.is_dirty(cwd=path), "")
 
 

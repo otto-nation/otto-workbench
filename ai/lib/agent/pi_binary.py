@@ -53,6 +53,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
+import agent.machine_env
 import core.errors
 import core.log
 import core.proc
@@ -320,10 +321,15 @@ def _managed() -> _Managed | None:
 
 
 def _mise_current(cwd: str) -> dict:
-    """``mise ls --current --json`` in *cwd*. Raises `PiUnresolvable` when mise fails."""
+    """``mise ls --current --json`` in *cwd*. Raises `PiUnresolvable` when mise fails.
+
+    Runs under ``base_env`` so an untrusted worktree config is ignored rather
+    than refusing the listing — the same policy agent spawns already use.
+    """
     try:
         result = core.proc.run(
             ["mise", "ls", "--current", "--json"], cwd=cwd, timeout=core.timeouts.LOCAL,
+            env=agent.machine_env.base_env(cwd),
         )
     except OSError as exc:
         raise PiUnresolvable(f"cannot run mise to read the repo's pi pin: {exc}") from exc

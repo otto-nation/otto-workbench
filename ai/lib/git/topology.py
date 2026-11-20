@@ -288,18 +288,22 @@ def _fetch_remote_branch(branch: str, cwd: str | None) -> None:
 
 
 def parse_wt_switch_path(stdout: str) -> str | None:
-    """Pull the ``path`` field out of ``wt switch --format json`` output."""
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line.startswith("{"):
-            continue
-        try:
-            path = json.loads(line).get("path", "")
-        except json.JSONDecodeError:
-            continue
-        if path:
-            return path
-    return None
+    """Pull the ``path`` field out of ``wt switch --format json`` output.
+
+    worktrunk prints pretty-printed JSON, often after a human status line, so
+    this decodes from the first ``{`` rather than requiring one compact line.
+    """
+    start = stdout.find("{")
+    if start < 0:
+        return None
+    try:
+        doc, _ = json.JSONDecoder().raw_decode(stdout, start)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(doc, dict):
+        return None
+    path = doc.get("path", "")
+    return path or None
 
 
 def default_branch(cwd: str | Path | None = None) -> str:

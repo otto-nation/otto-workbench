@@ -75,6 +75,30 @@ def test_setup_pr_worktree_via_wt(mock_run):
     assert result.cleanup_ref == "pr:42"
 
 
+@patch("git.regenerate.trust_mise_config")
+@patch("core.proc.subprocess.run")
+def test_setup_pr_worktree_trusts_mise_on_the_landed_path(mock_run, mock_trust):
+    wt_json = json.dumps({"path": "/repos/repo/pr-42", "branch": "pr:42"})
+
+    def side_effect(cmd, **kwargs):
+        m = MagicMock()
+        if cmd[0] == "git" and "--is-shallow-repository" in cmd:
+            m.returncode = 0
+            m.stdout = "false\n"
+            return m
+        if cmd[0] == "wt" and "switch" in cmd:
+            m.returncode = 0
+            m.stdout = wt_json + "\n"
+            return m
+        m.returncode = 0
+        m.stdout = ""
+        return m
+
+    mock_run.side_effect = side_effect
+    setup_pr_worktree("owner/repo", 42, "/repos/repo")
+    mock_trust.assert_called_once_with("/repos/repo/pr-42")
+
+
 @patch("core.proc.subprocess.run")
 def test_setup_pr_worktree_fallback_when_wt_fails(mock_run):
     def side_effect(cmd, **kwargs):

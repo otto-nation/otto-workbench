@@ -416,6 +416,31 @@ def test_create_worktree_warns_once_when_wt_reports_no_path(mock_run, mock_log):
     assert "branch feat/x is checked out" in mock_log.warn.call_args.args[0]
 
 
+# ── parse_wt_switch_path ───────────────────────────────────────────────────
+
+
+def test_parse_wt_switch_path_reads_pretty_json_after_a_status_line():
+    """worktrunk v0.82 prints a status line, then pretty-printed JSON."""
+    stdout = (
+        "○ Already on worktree for main @ ~/git/x/main\n"
+        "{\n"
+        '  "action": "already_at",\n'
+        '  "branch": "main",\n'
+        '  "path": "/Users/me/git/x/main"\n'
+        "}\n"
+    )
+    assert git.topology.parse_wt_switch_path(stdout) == "/Users/me/git/x/main"
+
+
+def test_parse_wt_switch_path_still_reads_compact_json():
+    assert git.topology.parse_wt_switch_path('{"path": "/wt/feat"}\n') == "/wt/feat"
+
+
+def test_parse_wt_switch_path_returns_none_without_a_path():
+    assert git.topology.parse_wt_switch_path('{"action": "created"}\n') is None
+    assert git.topology.parse_wt_switch_path("Updating files: 17%\n") is None
+
+
 # ── wt switch ──────────────────────────────────────────────────────────────
 
 

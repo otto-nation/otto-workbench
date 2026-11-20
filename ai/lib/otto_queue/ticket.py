@@ -19,16 +19,20 @@ the machine's budget, and runs once per idempotency key.
    the interval resets when the wait reason or joined state changes). A sleep
    never runs past `wait_s`. A waiter that is not first only reads the head of
    the queue each poll and reaps orphans at most every `REAP_EVERY_S`; the first
-   waiter reaps, then asks `otto_queue.slots.try_admit`. The first wait prints
-   a short block naming the entry and how to check or cancel it; later waits
-   print only when the kind of reason changes, at most once per 30s, with no
-   changing numbers. Admission after a wait prints how long it took.
-   `LedgerBusy` after the ledger's own retries is printed once (`ledger busy;
-   still waiting`) and is not a crash: the ticket keeps waiting until `wait_s`,
-   then returns 75. `cancel`, Ctrl-C, or a `SystemExit` from a stop handler
-   while waiting ends the ticket with that exit status (130 when none is
-   given). Reaching `wait_s` with no slot records `tempfail` and returns 75
-   (EX_TEMPFAIL), so a caller can tell "never got room" from a failure.
+   waiter reaps, then asks `otto_queue.slots.try_admit` with `host_room=False`:
+   a ticket is already in-process work, so memory and CPU pressure do not hold
+   it. Production `QueuePolicy` therefore admits on count alone; a policy that
+   still refuses for MEMORY or CPU is fail-fast (tempfail 75) rather than
+   waited out. The first wait prints a short block naming the entry and how to
+   check or cancel it; later waits print only when the kind of reason changes,
+   at most once per 30s, with no changing numbers. Admission after a wait
+   prints how long it took. `LedgerBusy` after the ledger's own retries is
+   printed once (`ledger busy; still waiting`) and is not a crash: the ticket
+   keeps waiting until `wait_s`, then returns 75. `cancel`, Ctrl-C, or a
+   `SystemExit` from a stop handler while waiting ends the ticket with that
+   exit status (130 when none is given). Reaching `wait_s` with no slot records
+   `tempfail` and returns 75 (EX_TEMPFAIL), so a caller can tell "never got
+   room" from a failure.
 
 3. **Run.** The row moves to `running`, and the command runs through
    `core.signal_relay.run_child(foreground=True)`: stdio inherited, the
@@ -495,6 +499,10 @@ def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
             reporter.waiting(reason)
             said = reason
             origin = time.monotonic()
+        kind = otto_queue.wait_report.reason_kind(reason) if reason else None
+        if kind in (otto_queue.wait_report.WaitKind.MEMORY,
+                    otto_queue.wait_report.WaitKind.CPU):
+            return _Wait(_WaitEnd.TIMED_OUT)
         if time.monotonic() >= deadline:
             return _Wait(_WaitEnd.TIMED_OUT)
         _poll_sleep(poll_delay(time.monotonic() - origin, rng, poll_s), deadline)
@@ -514,7 +522,8 @@ def _try_once(ledger: otto_queue.ledger.Ledger, entry_id: int, entry_class: Entr
     first = ledger.first_waiting(entry_class, jobs=otto_queue.lease.worker_alive(ledger.root))
     if first is not None and first != entry_id:
         return otto_queue.slots.Admission(None, f"behind entry {first}, which queued first")
-    return otto_queue.slots.try_admit(ledger.root, policy, entry_class)
+    return otto_queue.slots.try_admit(ledger.root, policy, entry_class,
+                                      host_room=False)
 
 
 def _run(request: TicketRequest, entry_id: int | None) -> int:

@@ -184,21 +184,29 @@ def test_the_light_limit_is_every_core_but_one():
     assert otto_queue.admission.class_limit(EntryClass.LIGHT, platform="linux", cores=4) == 3
 
 
-def _admit(sample, entry_class):
-    return otto_queue.admission.admit_entry(sample, entry_class=entry_class, cfg=CFG)
+def _admit(sample, entry_class, *, host_room=True):
+    return otto_queue.admission.admit_entry(
+        sample, entry_class=entry_class, cfg=CFG, host_room=host_room)
 
 
 def test_light_work_is_admitted_on_a_starved_host():
     assert _admit(BUSY, EntryClass.LIGHT).admit
 
 
-def test_a_heavy_entry_needs_room():
+def test_a_heavy_job_needs_room():
     assert not _admit(BUSY, EntryClass.HEAVY).admit
     assert _admit(HEALTHY, EntryClass.HEAVY).admit
     assert _admit(MAC, EntryClass.HEAVY).admit
+
+
+def test_a_heavy_ticket_skips_room():
+    v = _admit(BUSY, EntryClass.HEAVY, host_room=False)
+    assert v.admit
+    assert v.reason == "in-process work is bounded by count alone"
 
 
 def test_queue_policy_reads_the_host_and_its_platform_limit():
     policy = otto_queue.admission.QueuePolicy(CFG, host=lambda: BUSY, platform="linux", cores=4)
     assert (policy.limit(EntryClass.HEAVY), policy.limit(EntryClass.LIGHT)) == (2, 3)
     assert not policy.verdict(EntryClass.HEAVY, 1).admit
+    assert policy.verdict(EntryClass.HEAVY, 1, host_room=False).admit

@@ -150,6 +150,10 @@ def default_thinking(ref: ModelRef) -> str | None:
     # uses that top mapped level rather than leaving thinking to the session.
     if model_id == "gemini-4-carbon":
         return Thinking.HIGH.value
+    # Neon is the Pi deep/judgement pin. high is the driver; xhigh is
+    # quality-max, the same split as Grok vs xhigh.
+    if model_id == "gemini-4-neon":
+        return Thinking.HIGH.value
     # Opus 5.5 and Sonnet 5.5 always think (off/minimal are unmapped). high is
     # the driver; xhigh and max are quality-max, the same split as Grok vs xhigh.
     if _id_is(model_id, "claude-opus-5-5") or _id_is(model_id, "claude-sonnet-5-5"):

@@ -169,7 +169,7 @@
             },
             {
               "code": 1,
-              "meaning": "cancel named no live entry (unknown id, or already finished); wait named no entry, or the entry ended without a status; the ledger could not be opened",
+              "meaning": "cancel named no live entry (unknown id, or already finished); wait named no entry, or the entry ended without a status; a ticket ended stuck behind an unclaimed job; the ledger could not be opened",
               "name": "failure"
             },
             {

@@ -294,6 +294,15 @@ def _line(entry: Entry, now: float, *, worker_alive: bool = False,
             f"{_age(now - since):>5}{status}{retry}{note}  {title}")
 
 
+def _json_row(entry: Entry, now: float, *, worker_alive: bool, running: int) -> dict:
+    row = core.serde.to_dict(entry)
+    stuck = otto_queue.stuck.unclaimed_job(
+        ahead=entry, now=now, worker_alive=worker_alive, running=running)
+    if stuck:
+        row["stuck"] = stuck
+    return row
+
+
 SLOTS_HEADER_SCHEMA = 1
 FAILED_24H_S = 24 * 3600
 
@@ -343,13 +352,9 @@ def _status(args: argparse.Namespace) -> int:
             cls: sum(1 for e in entries if e.state is EntryState.RUNNING and e.entry_class is cls)
             for cls in EntryClass}
         for entry in entries:
-            row = core.serde.to_dict(entry)
-            stuck = otto_queue.stuck.unclaimed_job(
-                ahead=entry, now=now, worker_alive=worker_alive,
-                running=running_by_class[entry.entry_class])
-            if stuck:
-                row["stuck"] = stuck
-            print(json.dumps(row))
+            print(json.dumps(_json_row(
+                entry, now, worker_alive=worker_alive,
+                running=running_by_class[entry.entry_class])))
         return ExitCode.OK
     policy = machine_policy()
     running = [e for e in entries if e.state is EntryState.RUNNING]

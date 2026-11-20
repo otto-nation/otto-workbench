@@ -331,6 +331,22 @@ def test_status_shows_a_jobs_kind_and_retry_time(capsys):
     assert "job" in line and "retry in 10m, attempt 2" in line
 
 
+def test_status_json_marks_an_unclaimed_job_the_worker_is_not_starting(capsys):
+    root = otto_queue.paths.queue_root()
+    ledger = Ledger.open()
+    job = ledger.resolve(
+        NewEntry(argv=("true",), cwd="/", kind=EntryKind.JOB, label="maintenance"),
+        force=False, pid=None).entry
+    set_columns(root, job.id, created_at=time.time() - 3600)
+    worker = otto_queue.lease.take_worker(root)
+    try:
+        assert cli.otto_queue.main(["status", "--json"]) == 0
+    finally:
+        worker.release()
+    row = json.loads(capsys.readouterr().out.splitlines()[0])
+    assert "stuck" in row and "never claimed" in row["stuck"]
+
+
 def test_status_marks_an_unclaimed_job_the_worker_is_not_starting(capsys):
     root = otto_queue.paths.queue_root()
     ledger = Ledger.open()

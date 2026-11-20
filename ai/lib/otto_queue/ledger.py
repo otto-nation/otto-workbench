@@ -508,6 +508,15 @@ class Ledger:
             ).fetchone()["n"]
         return _run(self.root, read)
 
+    def count_running(self, entry_class: EntryClass) -> int:
+        """How many live rows of *entry_class* are `running`."""
+        def read(conn):
+            return conn.execute(
+                "SELECT COUNT(*) AS n FROM entries WHERE state = ? AND entry_class = ?",
+                (EntryState.RUNNING.value, entry_class.value),
+            ).fetchone()["n"]
+        return _run(self.root, read)
+
     def resolve(self, new: NewEntry, *, force: bool, pid: int | None, reuse: bool = True) -> Resolution:
         """Accept *new*, or answer it from an entry with the same key; see the module docstring.
 

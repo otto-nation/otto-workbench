@@ -14,6 +14,7 @@ if str(LIB_DIR) not in sys.path:
 
 import batch.steps  # noqa: E402
 import core.proc  # noqa: E402
+import git.regenerate  # noqa: E402
 from batch.model import Step  # noqa: E402
 from conftest import add_self_origin, commit_all, git_in, git_out, init_repo, seed_repo  # noqa: E402
 
@@ -281,8 +282,8 @@ def test_ensure_worktree_trusts_mise_toml_identical_to_the_default_branch(tmp_pa
     cfg = _commit_mise(repo)
     add_self_origin(repo)
     seen = []
-    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
-    monkeypatch.setattr(batch.steps, "_mise_trust",
+    monkeypatch.setattr(git.regenerate.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(git.regenerate, "_mise_trust",
                         lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
     res = batch.steps.ensure_worktree(str(repo), _branch(repo))
     assert res.ok
@@ -295,8 +296,8 @@ def test_ensure_worktree_does_not_trust_a_modified_mise_toml(tmp_path, monkeypat
     add_self_origin(repo)
     cfg.write_text("[tools]\npython = \"3\"\n")
     seen = []
-    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
-    monkeypatch.setattr(batch.steps, "_mise_trust",
+    monkeypatch.setattr(git.regenerate.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(git.regenerate, "_mise_trust",
                         lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
     batch.steps.ensure_worktree(str(repo), _branch(repo))
     assert seen == []
@@ -309,8 +310,8 @@ def test_ensure_worktree_does_not_trust_mise_toml_absent_on_the_default_branch(
     add_self_origin(repo)
     (repo / ".mise.toml").write_text("[tools]\n")
     seen = []
-    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
-    monkeypatch.setattr(batch.steps, "_mise_trust",
+    monkeypatch.setattr(git.regenerate.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(git.regenerate, "_mise_trust",
                         lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
     batch.steps.ensure_worktree(str(repo), _branch(repo))
     assert seen == []
@@ -322,13 +323,13 @@ def test_ensure_worktree_does_not_trust_mise_toml_when_comparison_fails(
     _commit_mise(repo)
     add_self_origin(repo)
     seen = []
-    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(git.regenerate.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
 
     def boom(_cwd):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(batch.steps, "_default_rev", boom)
-    monkeypatch.setattr(batch.steps, "_mise_trust",
+    monkeypatch.setattr(git.regenerate, "_default_rev", boom)
+    monkeypatch.setattr(git.regenerate, "_mise_trust",
                         lambda c: seen.append(str(c)) or core.proc.CmdResult(0, "", ""))
     res = batch.steps.ensure_worktree(str(repo), _branch(repo))
     assert res.ok
@@ -339,8 +340,8 @@ def test_ensure_worktree_skips_mise_trust_when_mise_is_absent(tmp_path, monkeypa
     repo = seed_repo(tmp_path / "r")
     (repo / ".mise.toml").write_text("[tools]\n")
     seen = []
-    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: None)
-    monkeypatch.setattr(batch.steps, "_mise_trust", lambda cfg: seen.append(str(cfg)))
+    monkeypatch.setattr(git.regenerate.shutil, "which", lambda n: None)
+    monkeypatch.setattr(git.regenerate, "_mise_trust", lambda cfg: seen.append(str(cfg)))
     batch.steps.ensure_worktree(str(repo), _branch(repo))
     assert seen == []
 
@@ -349,9 +350,9 @@ def test_mise_trust_invokes_quiet_trust(tmp_path, monkeypatch):
     cfg = tmp_path / ".mise.toml"
     cfg.write_text("[tools]\n")
     seen = []
-    monkeypatch.setattr(batch.steps.core.proc, "run",
+    monkeypatch.setattr(git.regenerate.core.proc, "run",
                         lambda cmd, **kw: seen.append(cmd) or core.proc.CmdResult(0, "", ""))
-    batch.steps._mise_trust(cfg)
+    git.regenerate._mise_trust(cfg)
     assert seen == [["mise", "trust", "--quiet", str(cfg)]]
 
 
@@ -359,8 +360,8 @@ def test_a_failed_mise_trust_does_not_fail_the_worktree(tmp_path, monkeypatch):
     repo = init_repo(tmp_path / "r")
     _commit_mise(repo)
     add_self_origin(repo)
-    monkeypatch.setattr(batch.steps.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
-    monkeypatch.setattr(batch.steps, "_mise_trust",
+    monkeypatch.setattr(git.regenerate.shutil, "which", lambda n: "/bin/mise" if n == "mise" else None)
+    monkeypatch.setattr(git.regenerate, "_mise_trust",
                         lambda cfg: core.proc.CmdResult(1, "", "not trusted"))
     res = batch.steps.ensure_worktree(str(repo), _branch(repo))
     assert res.ok and Path(res.path).resolve() == repo.resolve()
@@ -392,12 +393,12 @@ def test_trust_mise_config_trusts_stale_branch_matching_merge_base(
     repo = _stale_feat_repo(tmp_path)
     seen = []
     monkeypatch.setattr(
-        batch.steps.shutil, "which",
+        git.regenerate.shutil, "which",
         lambda n: "/usr/bin/mise" if n == "mise" else None)
     monkeypatch.setattr(
-        batch.steps, "_mise_trust",
+        git.regenerate, "_mise_trust",
         lambda c: seen.append(c) or core.proc.CmdResult(0, "", ""))
-    batch.steps.trust_mise_config(str(repo))
+    git.regenerate.trust_mise_config(str(repo))
     assert seen == [repo / "mise.toml"]
 
 
@@ -407,12 +408,12 @@ def test_trust_mise_config_skips_pr_modified_mise_toml_on_stale_branch(
         tmp_path, feat_mise='[tasks.evil]\nrun = "curl ..."\n')
     seen = []
     monkeypatch.setattr(
-        batch.steps.shutil, "which",
+        git.regenerate.shutil, "which",
         lambda n: "/usr/bin/mise" if n == "mise" else None)
     monkeypatch.setattr(
-        batch.steps, "_mise_trust",
+        git.regenerate, "_mise_trust",
         lambda c: seen.append(c) or core.proc.CmdResult(0, "", ""))
-    batch.steps.trust_mise_config(str(repo))
+    git.regenerate.trust_mise_config(str(repo))
     assert seen == []
 
 

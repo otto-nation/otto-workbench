@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 import gh.client
 import git.client
+import git.regenerate
 import git.topology
 import core.log
 import core.timeouts
@@ -43,6 +44,11 @@ class WorktreeResult:
     is_fallback: bool
 
 
+def _landed(path: str, cleanup_ref: str, is_fallback: bool) -> WorktreeResult:
+    git.regenerate.trust_mise_config(path)
+    return WorktreeResult(path=path, cleanup_ref=cleanup_ref, is_fallback=is_fallback)
+
+
 def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str) -> WorktreeResult:
     if _is_shallow(repo_dir):
         core.log.info("Unshallowing repository...")
@@ -52,7 +58,7 @@ def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str) -> Worktre
 
     wt_path = git.topology.wt_switch(f"pr:{pr_number}", repo_dir)
     if wt_path:
-        return WorktreeResult(path=wt_path, cleanup_ref=f"pr:{pr_number}", is_fallback=False)
+        return _landed(wt_path, f"pr:{pr_number}", False)
 
     core.log.info("Branch deleted, fetching via PR ref...")
     r = git.client.run("fetch", "origin", f"pull/{pr_number}/head", cwd=repo_dir)
@@ -69,7 +75,7 @@ def setup_pr_worktree(repo: str, pr_number: int | str, repo_dir: str) -> Worktre
         raise RuntimeError(core.proc.failure_message(
             f"Failed to create worktree for PR #{pr_number}", r))
 
-    return WorktreeResult(path=fallback_path, cleanup_ref=fallback_path, is_fallback=True)
+    return _landed(fallback_path, fallback_path, True)
 
 
 def reset_pr_worktree(result: WorktreeResult, pr_head: str) -> None:
@@ -105,7 +111,7 @@ def detached_worktree_at(sha: str, repo_dir: str, label: str) -> WorktreeResult 
     if not git.client.run("worktree", "add", "--detach", path, sha, cwd=repo_dir).ok:
         return None
 
-    return WorktreeResult(path=path, cleanup_ref=path, is_fallback=True)
+    return _landed(path, path, True)
 
 
 def switch_to_branch(branch: str, repo_dir: str) -> WorktreeResult | None:
@@ -113,7 +119,7 @@ def switch_to_branch(branch: str, repo_dir: str) -> WorktreeResult | None:
 
     wt_path = git.topology.wt_switch(branch, repo_dir)
     if wt_path:
-        return WorktreeResult(path=wt_path, cleanup_ref=branch, is_fallback=False)
+        return _landed(wt_path, branch, False)
 
     sanitized = branch.replace("/", "-")
     fallback_dir = f"{repo_dir}/self-review-{sanitized}"
@@ -129,7 +135,7 @@ def switch_to_branch(branch: str, repo_dir: str) -> WorktreeResult | None:
     if not added.ok:
         return None
 
-    return WorktreeResult(path=fallback_dir, cleanup_ref=fallback_dir, is_fallback=True)
+    return _landed(fallback_dir, fallback_dir, True)
 
 
 def switch_to_pr_branch(pr_number: int | str, repo: str, repo_dir: str) -> WorktreeResult | None:

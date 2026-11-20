@@ -495,6 +495,10 @@ def _wait_for_slot(ledger: otto_queue.ledger.Ledger, entry_id: int,
             reporter.waiting(reason)
             said = reason
             origin = time.monotonic()
+        kind = otto_queue.wait_report.reason_kind(reason) if reason else None
+        if kind in (otto_queue.wait_report.WaitKind.MEMORY,
+                    otto_queue.wait_report.WaitKind.CPU):
+            return _Wait(_WaitEnd.TIMED_OUT)
         if time.monotonic() >= deadline:
             return _Wait(_WaitEnd.TIMED_OUT)
         _poll_sleep(poll_delay(time.monotonic() - origin, rng, poll_s), deadline)
@@ -514,7 +518,8 @@ def _try_once(ledger: otto_queue.ledger.Ledger, entry_id: int, entry_class: Entr
     first = ledger.first_waiting(entry_class, jobs=otto_queue.lease.worker_alive(ledger.root))
     if first is not None and first != entry_id:
         return otto_queue.slots.Admission(None, f"behind entry {first}, which queued first")
-    return otto_queue.slots.try_admit(ledger.root, policy, entry_class)
+    return otto_queue.slots.try_admit(ledger.root, policy, entry_class,
+                                      host_room=False)
 
 
 def _run(request: TicketRequest, entry_id: int | None) -> int:

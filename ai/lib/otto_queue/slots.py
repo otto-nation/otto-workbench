@@ -50,7 +50,8 @@ class Policy(Protocol):
 
     def limit(self, entry_class: EntryClass) -> int: ...
 
-    def verdict(self, entry_class: EntryClass, running: int) -> Decision: ...
+    def verdict(self, entry_class: EntryClass, running: int, *,
+                host_room: bool = True) -> Decision: ...
 
 
 @dataclass(frozen=True)
@@ -96,13 +97,14 @@ def _probe(root: Path, entry_class: EntryClass, index: int) -> int | None:
     return fd
 
 
-def try_admit(root: Path, policy: Policy, entry_class: EntryClass) -> Admission:
+def try_admit(root: Path, policy: Policy, entry_class: EntryClass, *,
+              host_room: bool = True) -> Admission:
     """Claim a free *entry_class* slot when *policy* says there is room; never blocks on a slot."""
     # ceiling: admitted-but-young heavy entries are not subtracted from the sample;
     # once two heavy entries are seen admitted on the same headroom, subtract their
     # QUEUE_HEAVY_ESTIMATE.
     with core.flock_wait.held(otto_queue.paths.admit_lock_path(root), wait_s=ADMIT_LOCK_WAIT_S):
-        return _admit_locked(root, policy, entry_class)
+        return _admit_locked(root, policy, entry_class, host_room=host_room)
 
 
 def _release_all(slots: list[Slot]) -> None:
@@ -126,24 +128,26 @@ def _collect_free(root: Path, entry_class: EntryClass, limit: int,
 
 
 def _choose_slot(root: Path, policy: Policy, entry_class: EntryClass,
-                 limit: int, free: list[Slot]) -> Admission:
+                 limit: int, free: list[Slot], *, host_room: bool = True) -> Admission:
     running = _collect_free(root, entry_class, limit, free)
     if not free:
         return Admission(None, f"all {limit} {entry_class.value} slots are taken")
-    verdict = policy.verdict(entry_class, running)
+    verdict = policy.verdict(entry_class, running, host_room=host_room)
     if not verdict.admit:
         free[0].release()
         return Admission(None, verdict.reason)
     return Admission(free[0], verdict.reason)
 
 
-def _admit_locked(root: Path, policy: Policy, entry_class: EntryClass) -> Admission:
+def _admit_locked(root: Path, policy: Policy, entry_class: EntryClass, *,
+                  host_room: bool = True) -> Admission:
     limit = max(1, policy.limit(entry_class))
     free: list[Slot] = []
     # Probed fds sit in `free` before verdict runs. Release every one on any
     # exception, including a KeyboardInterrupt during a later probe.
     try:
-        return _choose_slot(root, policy, entry_class, limit, free)
+        return _choose_slot(root, policy, entry_class, limit, free,
+                            host_room=host_room)
     except BaseException:
         _release_all(free)
         raise

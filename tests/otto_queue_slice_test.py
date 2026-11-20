@@ -100,7 +100,7 @@ class _OneHeavy:
     def limit(self, entry_class):
         return 1
 
-    def verdict(self, entry_class, running):
+    def verdict(self, entry_class, running, *, host_room=True):
         return type("V", (), {"admit": True, "reason": "room"})()
 
 

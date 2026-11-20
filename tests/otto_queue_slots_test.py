@@ -25,7 +25,7 @@ class FakePolicy:
     def limit(self, entry_class):
         return self.slots
 
-    def verdict(self, entry_class, running):
+    def verdict(self, entry_class, running, *, host_room=True):
         self.seen.append(running)
         return SimpleNamespace(admit=self.room, reason="room" if self.room else "no room")
 
@@ -38,7 +38,7 @@ class RaisingOncePolicy:
     def limit(self, entry_class):
         return self.slots
 
-    def verdict(self, entry_class, running):
+    def verdict(self, entry_class, running, *, host_room=True):
         if not self.raised:
             self.raised = True
             raise RuntimeError("boom")

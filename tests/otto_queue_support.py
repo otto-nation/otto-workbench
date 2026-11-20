@@ -40,7 +40,7 @@ class Room:
     def limit(self, entry_class):
         return self._slots
 
-    def verdict(self, entry_class, running):
+    def verdict(self, entry_class, running, *, host_room=True):
         if self._raises is not None:
             raise self._raises
         return SimpleNamespace(admit=self._admit, reason="room" if self._admit else "no room")

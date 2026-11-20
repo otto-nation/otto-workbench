@@ -12,6 +12,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -50,7 +51,7 @@ class Room:
     def limit(self, entry_class):
         return 2
 
-    def verdict(self, entry_class, running):
+    def verdict(self, entry_class, running, *, host_room=True):
         return SimpleNamespace(admit=True, reason="room")
 
 request = otto_queue.ticket.TicketRequest(argv=tuple(sys.argv[2:]), cwd=os.getcwd())
@@ -344,7 +345,7 @@ class Never:
     def limit(self, entry_class):
         return 2
 
-    def verdict(self, entry_class, running):
+    def verdict(self, entry_class, running, *, host_room=True):
         return SimpleNamespace(admit=False, reason="no room")
 
 def say(message):
@@ -426,3 +427,23 @@ def test_a_ticket_records_hc_terminal_id_when_set(monkeypatch):
 def test_a_ticket_leaves_terminal_blank_without_hc_terminal_id():
     result = _run(exit_argv(0))
     assert Ledger.open().get(result.entry_id).terminal is None
+
+
+@pytest.mark.parametrize("reason", [
+    "waiting for memory: 0.0 of 1.5 GB",
+    "CPU pressure 99% >= 30%",
+])
+def test_a_ticket_does_not_wait_on_memory(tmp_path, reason):
+    class Starve:
+        def limit(self, entry_class):
+            return 2
+
+        def verdict(self, entry_class, running, *, host_room=True):
+            return SimpleNamespace(admit=False, reason=reason)
+
+    t0 = time.monotonic()
+    result = _run(touch_argv(tmp_path / "ran"), policy=Starve(), wait_s=10)
+    assert time.monotonic() - t0 < 1.0
+    assert (result.exit_status, result.outcome) == (
+        os.EX_TEMPFAIL, TicketOutcome.TIMED_OUT)
+    assert not (tmp_path / "ran").exists()

@@ -34,7 +34,7 @@ class Never:
     def limit(self, entry_class):
         return 2
 
-    def verdict(self, entry_class, running):
+    def verdict(self, entry_class, running, *, host_room=True):
         return SimpleNamespace(admit=False, reason="no room")
 
 def say(message):

@@ -230,15 +230,18 @@ def class_limit(entry_class: EntryClass, *, platform: str, cores: int) -> int:
 
 
 def admit_entry(sample: HostSample, *, entry_class: EntryClass,
-                cfg: BatchConfig) -> Verdict:
+                cfg: BatchConfig, host_room: bool = True) -> Verdict:
     """Whether one more queue entry may start.
 
-    Light entries are admitted on count alone: refusing a board read for memory a
-    review is using would stall the board, not save the host. Heavy work needs
+    Light entries and in-process work (`host_room=False`) are admitted on count
+    alone: refusing a board read for memory a review is using would stall the
+    board, not save the host. Heavy work with `host_room=True` still needs
     `room`, including the first entry. Slot counts stay in `otto_queue.slots`.
     """
     if entry_class is EntryClass.LIGHT:
         return Verdict(True, "light work is bounded by count alone")
+    if not host_room:
+        return Verdict(True, "in-process work is bounded by count alone")
     return room(sample, estimate=QUEUE_HEAVY_ESTIMATE, cfg=cfg)
 
 
@@ -254,6 +257,8 @@ class QueuePolicy:
     def limit(self, entry_class: EntryClass) -> int:
         return class_limit(entry_class, platform=self.platform, cores=self.cores)
 
-    def verdict(self, entry_class: EntryClass, running: int) -> Verdict:
+    def verdict(self, entry_class: EntryClass, running: int, *,
+                host_room: bool = True) -> Verdict:
         del running
-        return admit_entry(self.host(), entry_class=entry_class, cfg=self.cfg)
+        return admit_entry(self.host(), entry_class=entry_class, cfg=self.cfg,
+                           host_room=host_room)

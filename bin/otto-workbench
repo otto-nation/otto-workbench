@@ -136,7 +136,7 @@ COMMANDS_MAINTENANCE=(
   "start [SECONDS]"  "Start maintenance (default: every 12h; Linux: SECONDS must divide 1h or 1d)"
   "stop"             "Stop maintenance"
   "status"           "Show maintenance status"
-  "run [--no-queue]" "Run maintenance now (skip otto-queue)"
+  "run [--no-queue]" "Run maintenance now; --no-queue skips otto-queue"
   "logs"             "Show recent log entries"
 )
 

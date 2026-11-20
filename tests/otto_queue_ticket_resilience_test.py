@@ -202,6 +202,13 @@ class _CountingLedger:
         self.reaps += 1
         return []
 
+    def entries(self):
+        return [self.entry]
+
+    def count_running(self, entry_class):
+        self.reads += 1
+        return 0
+
 
 def _queued(entry_id):
     return Entry(
@@ -277,7 +284,8 @@ def test_six_waiters_issue_far_fewer_ledger_calls_than_a_fixed_poll(monkeypatch)
     wait_s = 60.0
     max_polls = _bounded_polls(wait_s)
     max_reaps = 1 + int(wait_s / REAP_EVERY_S)
-    max_reads = max_polls + max_reaps
+    # Each reap also loads the older row and counts running of the class.
+    max_reads = max_polls + 3 * max_reaps
     old_polls = int(wait_s / POLL_S) + 1
     assert max_polls < old_polls
     for i in range(6):

@@ -24,6 +24,7 @@ REPEAT_S = 30.0
 
 class WaitKind(StrEnum):
     BEHIND = "behind an older entry"
+    STUCK = "worker not claiming an older job"
     SLOTS = "all slots taken"
     MEMORY = "memory"
     CPU = "CPU pressure"
@@ -33,6 +34,8 @@ class WaitKind(StrEnum):
 def reason_kind(reason: str) -> WaitKind:
     """Which wait kind *reason* is, ignoring digits and percents."""
     text = reason.strip().lower()
+    if text.startswith("stuck:"):
+        return WaitKind.STUCK
     if text.startswith("behind entry"):
         return WaitKind.BEHIND
     if "slots are taken" in text or text.startswith("at the concurrency limit"):

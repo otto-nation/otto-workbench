@@ -29,7 +29,9 @@ import core.log
 import core.serde
 import otto_queue.admission
 import otto_queue.job
+import otto_queue.lease
 import otto_queue.ledger
+import otto_queue.stuck
 import otto_queue.submit
 import otto_queue.supervisor
 import otto_queue.ticket
@@ -60,7 +62,8 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.ExitOutcome(
             ExitCode.FAILURE,
             "cancel named no live entry (unknown id, or already finished); wait named "
-            "no entry, or the entry ended without a status; the ledger could not be opened",
+            "no entry, or the entry ended without a status; a ticket ended stuck behind "
+            "an unclaimed job; the ledger could not be opened",
             (core.command_contract.NextStep(
                 "", ("otto-queue status", "cancel a live id from that list")),)),
         core.command_contract.ExitOutcome(
@@ -276,15 +279,28 @@ def _age(seconds: float) -> str:
     return f"{seconds / 3600:.1f}h"
 
 
-def _line(entry: Entry, now: float) -> str:
+def _line(entry: Entry, now: float, *, worker_alive: bool = False,
+          running: int = 0) -> str:
     since = entry.started_at or entry.created_at
     status = "" if entry.exit_status is None else f" exit {entry.exit_status}"
     retry = ""
     if entry.state is EntryState.QUEUED and entry.not_before is not None and entry.not_before > now:
         retry = f"  retry in {_age(entry.not_before - now)}, attempt {entry.attempts + 1}"
+    stuck = otto_queue.stuck.unclaimed_job(
+        ahead=entry, now=now, worker_alive=worker_alive, running=running)
+    note = f"  {stuck}" if stuck else ""
     title = entry.label if entry.label else shlex.join(entry.argv)
     return (f"  #{entry.id:<5} {entry.kind.value:<6} {entry.entry_class.value:<5} {entry.state.value:<9} "
-            f"{_age(now - since):>5}{status}{retry}  {title}")
+            f"{_age(now - since):>5}{status}{retry}{note}  {title}")
+
+
+def _json_row(entry: Entry, now: float, *, worker_alive: bool, running: int) -> dict:
+    row = core.serde.to_dict(entry)
+    stuck = otto_queue.stuck.unclaimed_job(
+        ahead=entry, now=now, worker_alive=worker_alive, running=running)
+    if stuck:
+        row["stuck"] = stuck
+    return row
 
 
 SLOTS_HEADER_SCHEMA = 1
@@ -330,16 +346,27 @@ def _status(args: argparse.Namespace) -> int:
     if args.json:
         if args.slots:
             print(json.dumps(_slot_header(entries, machine_policy(), ledger)))
+        now = time.time()
+        worker_alive = otto_queue.lease.worker_alive(ledger.root)
+        running_by_class = {
+            cls: sum(1 for e in entries if e.state is EntryState.RUNNING and e.entry_class is cls)
+            for cls in EntryClass}
         for entry in entries:
-            print(json.dumps(core.serde.to_dict(entry)))
+            print(json.dumps(_json_row(
+                entry, now, worker_alive=worker_alive,
+                running=running_by_class[entry.entry_class])))
         return ExitCode.OK
     policy = machine_policy()
     running = [e for e in entries if e.state is EntryState.RUNNING]
     print(" · ".join(f"{c.value} {sum(e.entry_class is c for e in running)}/{policy.limit(c)} running"
                      for c in EntryClass))
     now = time.time()
+    worker_alive = otto_queue.lease.worker_alive(ledger.root)
+    running_by_class = {
+        cls: sum(1 for e in running if e.entry_class is cls) for cls in EntryClass}
     for entry in entries:
-        print(_line(entry, now))
+        print(_line(entry, now, worker_alive=worker_alive,
+                    running=running_by_class[entry.entry_class]))
     return ExitCode.OK
 
 

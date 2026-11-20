@@ -149,12 +149,10 @@ no bearing on what the run then decides.
   `run_in_background` under Claude Code, `job_start` under Pi. Use the harness's
   own job facility, never a detached `&` or `nohup`: a job it started messages you
   on completion, while a detached shell leaves you polling for an exit you are
-  never told about. Give it 90 minutes.
-
-  Ninety clears the longest run on record (p90 24 minutes, slowest 74). A timeout
-  is not a clean retry: the kill leaves a partial rebase in the worktree that the
-  next run resumes without the JSON saying so. Backgrounding is safe because
-  nothing reads the run's output mid-flight.
+  never told about. Use `timeout_minutes: 0`. A timeout is not a clean retry:
+  the kill leaves a partial rebase in the worktree that the next run resumes
+  without the JSON saying so. Backgrounding is safe because nothing reads the
+  run's output mid-flight. (`general.md` § Waiting on Background Work)
 
 - **`--stop-on-conflict`**: same as default but **pauses** (`tree: paused`, stash
   held) instead of aborting. Resume never aborts either: a further stop pauses,
@@ -488,9 +486,9 @@ they then ask for the branch to be pushed.
   it afterwards; the pre-push hooks then validate the branch alone. A resumed
   rebase cannot stash (the index is mid-rebase), so uncommitted work is still
   present while its hooks run
-- Never run `pr rebase --fix` in the foreground, and never under a timeout below
-  90 minutes — a killed run leaves a partial rebase that the next run resumes
-  without the JSON saying so
+- Never run `pr rebase --fix` in the foreground, and never under a
+  `job_start` `timeout_minutes` other than 0 — a killed run leaves a partial
+  rebase that the next run resumes without the JSON saying so
 - Background it through the harness's job facility and nothing else. A detached
   `&`/`nohup` run reports no completion, which is what turns a finished rebase
   into a poll loop, and (`general.md` § Waiting on Background Work) forbids it

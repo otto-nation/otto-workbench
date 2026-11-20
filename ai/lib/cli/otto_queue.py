@@ -62,7 +62,8 @@ CONTRACT = core.command_contract.CommandContract(
         core.command_contract.ExitOutcome(
             ExitCode.FAILURE,
             "cancel named no live entry (unknown id, or already finished); wait named "
-            "no entry, or the entry ended without a status; the ledger could not be opened",
+            "no entry, or the entry ended without a status; a ticket ended stuck behind "
+            "an unclaimed job; the ledger could not be opened",
             (core.command_contract.NextStep(
                 "", ("otto-queue status", "cancel a live id from that list")),)),
         core.command_contract.ExitOutcome(
@@ -336,8 +337,19 @@ def _status(args: argparse.Namespace) -> int:
     if args.json:
         if args.slots:
             print(json.dumps(_slot_header(entries, machine_policy(), ledger)))
+        now = time.time()
+        worker_alive = otto_queue.lease.worker_alive(ledger.root)
+        running_by_class = {
+            cls: sum(1 for e in entries if e.state is EntryState.RUNNING and e.entry_class is cls)
+            for cls in EntryClass}
         for entry in entries:
-            print(json.dumps(core.serde.to_dict(entry)))
+            row = core.serde.to_dict(entry)
+            stuck = otto_queue.stuck.unclaimed_job(
+                ahead=entry, now=now, worker_alive=worker_alive,
+                running=running_by_class[entry.entry_class])
+            if stuck:
+                row["stuck"] = stuck
+            print(json.dumps(row))
         return ExitCode.OK
     policy = machine_policy()
     running = [e for e in entries if e.state is EntryState.RUNNING]

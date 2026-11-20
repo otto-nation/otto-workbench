@@ -23,8 +23,10 @@ the machine's budget, and runs once per idempotency key.
    a ticket is already in-process work, so memory and CPU pressure do not hold
    it. Production `QueuePolicy` therefore admits on count alone; a policy that
    still refuses for MEMORY or CPU is fail-fast (tempfail 75) rather than
-   waited out. The first wait prints a short block naming the entry and how to
-   check or cancel it; later waits print only when the kind of reason changes,
+   waited out. An older job that a live worker is not claiming is fail-fast
+   too (`stuck`, exit 1): waiting will not start it. The first wait prints a
+   short block naming the entry and how to check or cancel it; later waits
+   print only when the kind of reason changes,
    at most once per 30s, with no changing numbers. Admission after a wait
    prints how long it took. `LedgerBusy` after the ledger's own retries is
    printed once (`ledger busy; still waiting`) and is not a crash: the ticket
@@ -329,7 +331,7 @@ def adopt_job(ledger: otto_queue.ledger.Ledger, entry: Entry, policy: otto_queue
                             wait_s=wait_s)
     wait = _wait_for_slot(ledger, entry.id, request, policy, poll_s, notify)
     try:
-        if wait.end is _WaitEnd.TIMED_OUT:
+        if wait.end is _WaitEnd.TIMED_OUT or wait.end is _WaitEnd.STUCK:
             return Adoption(AdoptOutcome.TIMED_OUT)
         if wait.end is _WaitEnd.CANCELLED:
             return Adoption(AdoptOutcome.LEFT_QUEUE)
@@ -541,8 +543,7 @@ def _try_once(ledger: otto_queue.ledger.Ledger, entry_id: int, entry_class: Entr
 def _behind(ledger: otto_queue.ledger.Ledger, first_id: int,
             entry_class: EntryClass) -> otto_queue.slots.Admission:
     """Refuse this waiter: FIFO, or stuck if the older job will never start."""
-    running = sum(1 for e in ledger.entries()
-                  if e.entry_class is entry_class and e.state is EntryState.RUNNING)
+    running = ledger.count_running(entry_class)
     reason = otto_queue.stuck.unclaimed_job(
         ahead=ledger.get(first_id), now=time.time(),
         worker_alive=otto_queue.lease.worker_alive(ledger.root), running=running)

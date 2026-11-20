@@ -134,6 +134,11 @@ Check the `behind_main` field in the JSON report. If the branch is behind
 
 If `behind_main` is 0, skip this step.
 
+If a rebase finished outside `pr` and you publish with `pr rebase --push-only
+--expect <SHA>` or `pr push --expect <SHA>`, `<SHA>` is the commit origin
+currently holds, never the new local HEAD. Passing the commit you want to
+publish is refused as `stale info`.
+
 **Exit 4 is a refusal, not a failure.** The rebase declined its preflight — the
 branch's PR already merged, or GitHub could not be asked whether it had because
 the API budget is spent. Nothing was replayed and nothing was pushed. Do not

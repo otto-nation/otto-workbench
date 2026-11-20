@@ -2,7 +2,7 @@
 
 `Need` is the declaration; `review_need` is the one resolver that reads a mode
 flag off an argv. `ticket_class` is derived from that Need plus whether the
-argv runs an agent or git-pushes — it does not live on `CommandSpec`.
+argv runs an agent or a hook-on git-push — it does not live on `CommandSpec`.
 This module does not import `cli.review_modes`; the modes mapping is an
 argument, which is also what lets a test declare a table of its own.
 """
@@ -347,11 +347,14 @@ def ticket_class(
 ) -> EntryClass | None:
     """Queue class for this invocation, or None to run unqueued.
 
-    No locks → None. Agent or git-push → HEAVY. Otherwise LIGHT.
+    No locks → None. Agent or hook-on git-push → HEAVY. Otherwise LIGHT.
+    `--no-verify` skips the pre-push hook, so that push is not a 1.5 GiB claim.
     """
     if not need.locks:
         return None
-    if runs_agent(command, argv, review_modes_table) or git_pushes(command, argv):
+    if runs_agent(command, argv, review_modes_table):
+        return EntryClass.HEAVY
+    if git_pushes(command, argv) and not has_flag(argv, "--no-verify"):
         return EntryClass.HEAVY
     return EntryClass.LIGHT
 

@@ -140,6 +140,7 @@ withholds it. A default run they did not ask to rebase is not that request:
 - **Not clean** — the item is `needs_session` (`stale_generated`, a conflict, a
   dirty tree). Fix and commit in its worktree first.
 - **The push** — `pr rebase --push-only --expect SHA --repo-dir WT`.
+  SHA is that `remote_sha` (what origin holds), never local HEAD.
 
 ---
 

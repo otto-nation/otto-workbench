@@ -78,6 +78,12 @@ _js() {
   [ "$output" = '[{"ok":true,"path":"/p","created":true},false,false]' ]
 }
 
+@test "parseSwitch ignores a later token after the JSON object" {
+  _js 'w.parseSwitch("{\"action\":\"existing\",\"path\":\"/p\"}\nUpdating files: 100%")'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"ok":true,"path":"/p","created":false}' ]
+}
+
 @test "parseSwitch reads pretty JSON after a status line" {
   _js 'w.parseSwitch("○ Already on worktree for main @ ~/git/x/main\n{\n  \"action\": \"created\",\n  \"path\": \"/p\"\n}")'
   [ "$status" -eq 0 ]

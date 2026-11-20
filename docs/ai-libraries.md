@@ -5120,6 +5120,22 @@ still see the same free gigabyte. If that lock cannot be had within
 `ADMIT_LOCK_WAIT_S`, the claim goes ahead without it: the slot flocks still
 bound the count, and only the host check can race.
 
+### otto_queue/stuck.py
+
+When a queued job is stuck: worker alive, nothing of its class running, never claimed.
+
+A live worker polls every second and starts the oldest ready job. Tickets wait
+behind that job while `worker_alive` is true, so a worker that holds the lock
+and never claims leaves every heavy ticket sitting until something else kills
+the waiter. That is not a busy queue.
+
+Observed 2026-11 through pi's `job_start`: a maintenance job queued 10h with
+the worker process up and 0/2 heavy running; `pr review` and `pr create`
+waited until a harness timeout cancelled them. `--no-queue` is not the retry.
+
+Upgrade trigger: if a healthy worker can leave a job unclaimed longer than
+`UNCLAIMED_S` with empty slots (a start delay we have measured), raise it.
+
 ### otto_queue/submit.py
 
 Submit: record a command as a durable queued job and return its entry id.
@@ -5212,8 +5228,10 @@ the machine's budget, and runs once per idempotency key.
    a ticket is already in-process work, so memory and CPU pressure do not hold
    it. Production `QueuePolicy` therefore admits on count alone; a policy that
    still refuses for MEMORY or CPU is fail-fast (tempfail 75) rather than
-   waited out. The first wait prints a short block naming the entry and how to
-   check or cancel it; later waits print only when the kind of reason changes,
+   waited out. An older job that a live worker is not claiming is fail-fast
+   too (`stuck`, exit 1): waiting will not start it. The first wait prints a
+   short block naming the entry and how to check or cancel it; later waits
+   print only when the kind of reason changes,
    at most once per 30s, with no changing numbers. Admission after a wait
    prints how long it took. `LedgerBusy` after the ledger's own retries is
    printed once (`ledger busy; still waiting`) and is not a crash: the ticket

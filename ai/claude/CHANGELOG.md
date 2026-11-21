@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v2.0.0...otto-ai-tools-v2.1.0) (2026-11-21)
+
+
+### Features
+
+* **agents:** implement architecture discovery and narrative storage ([#2148](https://github.com/otto-nation/otto-workbench/issues/2148)) ([17394d8](https://github.com/otto-nation/otto-workbench/commit/17394d884ecf0ebe4ea02c8a98f44289e4aceecc))
+* **pi-sessions:** add pi session briefs and the herdr Sessions panel ([#2131](https://github.com/otto-nation/otto-workbench/issues/2131)) ([26f2860](https://github.com/otto-nation/otto-workbench/commit/26f2860ebdacd704aababe5d14e9afad0d9a87e4))
+
 ## [2.0.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.42.0...otto-ai-tools-v2.0.0) (2026-11-17)
 
 

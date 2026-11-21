@@ -429,13 +429,15 @@ _bd() {
       seen.push({ inner, cwd: opts.cwd ?? null });
       return { code: 0, stdout: "{}", stderr: "" };
     };
-    await m.invoke(exec, { cwd: "/w", on: null }, "pr", ["board"]);
-    await m.invoke(exec, { cwd: "/w", on: "box" }, "pr", ["board"]);
+    await m.invoke(exec, { cwd: "/w", on: null }, "pr", ["board", "--checkout", "/w"]);
+    await m.invoke(exec, { cwd: "/w", on: "box" }, "pr", ["board", "--repo-dir", "/w"]);
+    await m.invoke(exec, { cwd: "/w", on: null }, "pr", ["--branch", "B", "target", "session", "--json"]);
+    await m.invoke(exec, { cwd: "/w", on: "box" }, "pr", ["--branch", "B", "target", "session", "--json"]);
     await m.invoke(exec, { cwd: "/w", on: "box" }, "git", ["status"]);
     process.stdout.write(JSON.stringify(seen));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"inner":"pr","cwd":null},{"inner":"pr","cwd":null},{"inner":"git","cwd":"/w"}]' ]
+  [ "$output" = '[{"inner":"pr","cwd":null},{"inner":"pr","cwd":null},{"inner":"pr","cwd":"/w"},{"inner":"pr","cwd":"/w"},{"inner":"git","cwd":"/w"}]' ]
 }
 
 _write_echo_stub() {

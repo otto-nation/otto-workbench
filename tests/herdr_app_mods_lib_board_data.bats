@@ -102,7 +102,9 @@ _bd() {
   _bd '
     const table = [{ prefix: "pr board --schema-version 1", stdout: "not-json" }];
     const r = pack(await m.loadBoard(exec, ctx, "listing"));
-    process.stdout.write(JSON.stringify({ r, every: calls.every(everyOn) }));
+    process.stdout.write(JSON.stringify({
+      r, every: calls.every((c) => c.on === "mac" && c.cwd == null),
+    }));
   '
   [ "$status" -eq 0 ]
   [[ "$output" == *'"kind":"bad-json"'* ]]
@@ -419,6 +421,25 @@ _bd() {
   [ "$output" = '{"kind":"failed","message":"killed at its 768M memory cap or 55s deadline"}' ]
 }
 
+@test "invoke omits checkout cwd for pr so mise does not resolve the repo toolchain" {
+  _rr '
+    const seen = [];
+    const exec = async (cmd, args, opts) => {
+      const inner = cmd === "sh" && args[0] === "-c" ? args[3] : cmd;
+      seen.push({ inner, cwd: opts.cwd ?? null });
+      return { code: 0, stdout: "{}", stderr: "" };
+    };
+    await m.invoke(exec, { cwd: "/w", on: null }, "pr", ["board", "--checkout", "/w"]);
+    await m.invoke(exec, { cwd: "/w", on: "box" }, "pr", ["board", "--repo-dir", "/w"]);
+    await m.invoke(exec, { cwd: "/w", on: null }, "pr", ["--branch", "B", "target", "session", "--json"]);
+    await m.invoke(exec, { cwd: "/w", on: "box" }, "pr", ["--branch", "B", "target", "session", "--json"]);
+    await m.invoke(exec, { cwd: "/w", on: "box" }, "git", ["status"]);
+    process.stdout.write(JSON.stringify(seen));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"inner":"pr","cwd":null},{"inner":"pr","cwd":null},{"inner":"pr","cwd":"/w"},{"inner":"pr","cwd":"/w"},{"inner":"git","cwd":"/w"}]' ]
+}
+
 _write_echo_stub() {
   local path="$1" name="$2"
   printf '%s\n' '#!/bin/sh' "printf '%s' '${name}'" 'printf '\'' %s'\'' "$@"' 'printf '\''\n'\''' > "$path"
@@ -522,5 +543,6 @@ _preamble() {
 
   [ "$status" -eq 127 ]
   [ -z "$output" ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"/.config/zsh/env.sh) is missing on this machine"*"otto-workbench sync"* ]]
 }

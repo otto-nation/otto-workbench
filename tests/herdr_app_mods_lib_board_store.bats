@@ -26,8 +26,10 @@ _store() {
       'const docAs = (slug, phase, extra = {}) => ({ code: 0, stdout: JSON.stringify({ ...doc, phase, stamp: "st-" + phase, repos: [{ ...doc.repos[0], slug }], ...extra }), stderr: "" });' \
       'const fake = (answer = () => null) => async (cmd, args, opts = {}) => {' \
       '  const l = cmd === "sh" ? "tools" : cmd === "hc" ? "hc" : "pr:" + args[args.indexOf("--phase") + 1] + (args.includes("--offline") ? ":offline" : "") + (args.includes("--if-changed") ? ":stamp" : "");' \
-      '  calls.push({ l, cwd: opts.cwd ?? null });' \
-      '  const c = await answer(l, opts); if (c) return c;' \
+      '  const i = args.indexOf("--checkout");' \
+      '  const checkout = i >= 0 ? args[i + 1] : null;' \
+      '  calls.push({ l, cwd: opts.cwd ?? null, checkout });' \
+      '  const c = await answer(l, { ...opts, checkout }); if (c) return c;' \
       '  if (l === "tools") return { code: 0, stdout: "/b/pr\n/b/gh\n", stderr: "" };' \
       '  if (l === "hc") return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };' \
       '  return docAs("acme/box", l.split(":")[1].replace(":offline", ""));' \
@@ -85,7 +87,7 @@ _store() {
 
 @test "store: active keeps one target per known repo; keep() prunes the rest" {
   _store '
-    const st = s.createBoardStore({ exec: fake((l, o) => (l.startsWith("pr:") && o.cwd === "/w/kit" ? docAs("acme/kit", l.split(":")[1]) : null)) });
+    const st = s.createBoardStore({ exec: fake((l, o) => (l.startsWith("pr:") && o.checkout === "/w/kit" ? docAs("acme/kit", l.split(":")[1]) : null)) });
     const box = { on: null, cwd: "/w/box" }, box2 = { on: null, cwd: "/w/box2" }, kit = { on: null, cwd: "/w/kit" };
     const before = st.active([box, box2, kit]).length;
     await st.pull({ targets: [box, box2, kit] });
@@ -304,7 +306,7 @@ _store() {
   _store '
     let changed = false;
     const st = s.createBoardStore({ exec: fake((l, o) => (
-      changed && l.startsWith("pr:") && o.cwd === "/w/a"
+      changed && l.startsWith("pr:") && o.checkout === "/w/a"
         ? docAs("acme/box", l.split(":")[1], { rows: doc.rows.slice(0, 1) })
         : null
     )) });
@@ -325,7 +327,7 @@ _store() {
 @test "store: repoStateOf prefers the later commit over insertion order" {
   _store '
     const st = s.createBoardStore({ exec: fake((l, o) => (
-      o.cwd === "/w/a" && l.startsWith("pr:")
+      o.checkout === "/w/a" && l.startsWith("pr:")
         ? docAs("acme/box", l.split(":")[1], { rows: doc.rows.slice(0, 1) })
         : null
     )) });
@@ -359,7 +361,7 @@ _store() {
   _store '
     let changed = false;
     const st = s.createBoardStore({ exec: fake((l, o) => (
-      changed && l.startsWith("pr:") && o.cwd === "/w/a"
+      changed && l.startsWith("pr:") && o.checkout === "/w/a"
         ? docAs("acme/box", l.split(":")[1], { rows: doc.rows.slice(0, 1) })
         : null
     )) });

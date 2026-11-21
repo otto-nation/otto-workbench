@@ -145,7 +145,14 @@ export async function invoke(exec, ctx, cmd, args, opts = {}) {
     const { isolate, ...execOpts } = opts;
     const run = (iso) => {
       const call = toolCall(ctx, cmd, args, iso != null ? { isolate: iso } : {});
-      return exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on, ...execOpts });
+      // When pr already names the tree (--checkout/--repo-dir), starting it in
+      // the repo makes its python3 shebang a mise shim that resolves that tree's
+      // toolchain. Calls without those flags still need cwd so pr detects the repo.
+      const callOpts = { on: ctx.on, ...execOpts };
+      const namesTree = cmd === 'pr'
+        && args.some((a) => a === '--checkout' || a === '--repo-dir');
+      if (!namesTree) callOpts.cwd = ctx.cwd;
+      return exec(call.cmd, call.args, callOpts);
     };
     let result = await run(isolate);
     const remote = isolate != null && ctx.on != null && ctx.on !== '';

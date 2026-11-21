@@ -16,7 +16,7 @@
 #   H  herdr state: H.state (shared keys), H.spacesList, H.panesList, H.terminalsList, H.focusedPane,
 #      and any herdr function to override (H.exec, H.watchFolder, …). H.onSleep(ms), when set, runs
 #      on each cx.sleep — where a test makes herdr list a terminal it was slow to hear of
-#   calls        every exec call: {label, cwd, on}
+#   calls        every exec call: {label, cwd, on, checkout}
 #   label(c, a)  pr:<phase>[:offline][:stamp] | tools | hc:<sub>[:label] — a remote call is unwrapped
 #   fakePr(doc, answer?) an exec answering the tools check, hc ls and `pr board` from `doc`;
 #                answer(label, opts) may return {code, stdout, stderr} (or a promise of one) first
@@ -80,8 +80,10 @@ const fakePr = (doc, answer = () => null) => async (cmd, args, opts = {}) => {
   // and the probe is not a board call, so it is answered before it is recorded.
   if (cmd === "nproc" || (cmd === "cat" && args[0] === "/proc/loadavg")) return { code: 1, stdout: "", stderr: "no load" };
   const l = label(cmd, args);
-  calls.push({ label: l, cwd: opts.cwd ?? null, on: opts.on ?? null });
-  const custom = await answer(l, opts);
+  const i = args.indexOf("--checkout");
+  const checkout = i >= 0 ? args[i + 1] : null;
+  calls.push({ label: l, cwd: opts.cwd ?? null, checkout, on: opts.on ?? null });
+  const custom = await answer(l, { ...opts, checkout });
   if (custom) return custom;
   if (l === "tools") return { code: 0, stdout: "/b/pr\n/b/gh\n/b/wt\n", stderr: "" };
   if (l.startsWith("hc:ls")) return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };

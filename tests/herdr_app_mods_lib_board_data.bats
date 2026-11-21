@@ -543,5 +543,6 @@ _preamble() {
 
   [ "$status" -eq 127 ]
   [ -z "$output" ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"/.config/zsh/env.sh) is missing on this machine"*"otto-workbench sync"* ]]
 }

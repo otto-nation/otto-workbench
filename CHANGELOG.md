@@ -1,5 +1,66 @@
 # Changelog
 
+## [2.1.0](https://github.com/otto-nation/otto-workbench/compare/v2.0.0...v2.1.0) (2026-11-21)
+
+
+### Features
+
+* **agent:** default thinking per model family ([#2159](https://github.com/otto-nation/otto-workbench/issues/2159)) ([1cd1ed3](https://github.com/otto-nation/otto-workbench/commit/1cd1ed3df0654ad5ab100f62fcb9d8552ce468c6))
+* **agents:** implement architecture discovery and narrative storage ([#2148](https://github.com/otto-nation/otto-workbench/issues/2148)) ([17394d8](https://github.com/otto-nation/otto-workbench/commit/17394d884ecf0ebe4ea02c8a98f44289e4aceecc))
+* **ai:** default neon thinking to high ([#2164](https://github.com/otto-nation/otto-workbench/issues/2164)) ([6ed202f](https://github.com/otto-nation/otto-workbench/commit/6ed202f4faa2ca63a31a7fcf3f64c615a9748c7a))
+* **batch:** submit otto-queue jobs and exit ([#2157](https://github.com/otto-nation/otto-workbench/issues/2157)) ([64cab6f](https://github.com/otto-nation/otto-workbench/commit/64cab6f4d27b968c4ed8e47b83ac4f1bf0927c86))
+* **herdr:** copy a PR's ref, branch, commit and link from its header ([#2117](https://github.com/otto-nation/otto-workbench/issues/2117)) ([e49278c](https://github.com/otto-nation/otto-workbench/commit/e49278c62b61c5bd75e10cb7b1d40f1649fcd13a))
+* **herdr:** drop Files and Changes from the workbench layout ([#2149](https://github.com/otto-nation/otto-workbench/issues/2149)) ([9b2629c](https://github.com/otto-nation/otto-workbench/commit/9b2629c8492890d035d69f181fca4ab457ee4fdd))
+* **herdr:** fix buttons for a PR's own problems ([#2121](https://github.com/otto-nation/otto-workbench/issues/2121)) ([1761260](https://github.com/otto-nation/otto-workbench/commit/1761260334ea905f7b0e25a953c736d7e54a8ecf))
+* **herdr:** gate PR actions on live locks; retire Space PRs ([#2130](https://github.com/otto-nation/otto-workbench/issues/2130)) ([06d1d1e](https://github.com/otto-nation/otto-workbench/commit/06d1d1eacf323f019cdae4e96c7dd02067c89c37))
+* **herdr:** one Workbench hub instead of four tab-bar buttons ([#2156](https://github.com/otto-nation/otto-workbench/issues/2156)) ([667e259](https://github.com/otto-nation/otto-workbench/commit/667e259aad64807faea7781d50be9fec2e136eaf))
+* **herdr:** select PRs for a batch from Mine ([#2119](https://github.com/otto-nation/otto-workbench/issues/2119)) ([74b269d](https://github.com/otto-nation/otto-workbench/commit/74b269db49a4903587a15291b65e56bdc532a4e9))
+* **herdr:** space-prs cards with pinned header ([#2120](https://github.com/otto-nation/otto-workbench/issues/2120)) ([0cc7238](https://github.com/otto-nation/otto-workbench/commit/0cc72385bc9542b9c12d691ed95ab5023c5c401c))
+* **host-health:** report the ZFS ARC and show it in the Hosts pane ([#2127](https://github.com/otto-nation/otto-workbench/issues/2127)) ([b894cca](https://github.com/otto-nation/otto-workbench/commit/b894ccab49f90af5be06b3b8153ad6c44e63860c))
+* **maintenance:** add --no-queue to run ([#2163](https://github.com/otto-nation/otto-workbench/issues/2163)) ([d56550b](https://github.com/otto-nation/otto-workbench/commit/d56550b8bdffc91471ae2e1b9100b73c6b8a3d86))
+* **pi-sessions:** add pi session briefs and the herdr Sessions panel ([#2131](https://github.com/otto-nation/otto-workbench/issues/2131)) ([26f2860](https://github.com/otto-nation/otto-workbench/commit/26f2860ebdacd704aababe5d14e9afad0d9a87e4))
+* **pi:** fold subagent spend into session rollup ([#2151](https://github.com/otto-nation/otto-workbench/issues/2151)) ([290173a](https://github.com/otto-nation/otto-workbench/commit/290173a3e33430c2033bbaced6e3d82f1d47d1fe))
+* **pr:** derive otto-queue class from Need ([#2152](https://github.com/otto-nation/otto-workbench/issues/2152)) ([3a3aec4](https://github.com/otto-nation/otto-workbench/commit/3a3aec4ded3772257a9e1fc50eae13af7af1329d))
+* **review:** post an author-facing GitHub review body ([#2144](https://github.com/otto-nation/otto-workbench/issues/2144)) ([f97528b](https://github.com/otto-nation/otto-workbench/commit/f97528b333717e6caec820adf292b5f6a671576e))
+* **session-spend:** show session spend by physical model ([#2150](https://github.com/otto-nation/otto-workbench/issues/2150)) ([6e9ade4](https://github.com/otto-nation/otto-workbench/commit/6e9ade4a92a71f058c51fe1caf5bd3169f339bb7))
+
+
+### Bug Fixes
+
+* **batch,pi:** collapse decided Now rows and parallelise session report ([#2142](https://github.com/otto-nation/otto-workbench/issues/2142)) ([a6dbb2a](https://github.com/otto-nation/otto-workbench/commit/a6dbb2a3688e58c23d423ff6a7799c1bfdcda34e))
+* **batch,rebase:** sync start point; published is tracking==local ([#2143](https://github.com/otto-nation/otto-workbench/issues/2143)) ([1a6581a](https://github.com/otto-nation/otto-workbench/commit/1a6581a655e5cd24dcf6175e2a99a68f24ceabe2))
+* **batch,zsh:** export Docker env in sh, trust fork-point mise, and polish sessions ([#2137](https://github.com/otto-nation/otto-workbench/issues/2137)) ([0308e04](https://github.com/otto-nation/otto-workbench/commit/0308e04904a8dc994129406def402665475fd2bd))
+* **batch:** reconcile pushed branches, 1:1 replays, and session findings ([#2133](https://github.com/otto-nation/otto-workbench/issues/2133)) ([d8f7b9e](https://github.com/otto-nation/otto-workbench/commit/d8f7b9e577dfd195efecd39f28c3b9e0fa2052be))
+* **batch:** reuse existing worktree on target branch ([#2122](https://github.com/otto-nation/otto-workbench/issues/2122)) ([b650228](https://github.com/otto-nation/otto-workbench/commit/b650228c08fd78d751cdcdcf51ee354f9f36be31))
+* **board:** rank Approved above Has Comments ([#2154](https://github.com/otto-nation/otto-workbench/issues/2154)) ([dd55d16](https://github.com/otto-nation/otto-workbench/commit/dd55d16d61fa71c88b8d921cefd8c03e72761197))
+* **ci:** harden fix-tracking IDs, .github fallback, and blind ci_fix runs ([#2134](https://github.com/otto-nation/otto-workbench/issues/2134)) ([202c2a9](https://github.com/otto-nation/otto-workbench/commit/202c2a98afaee6493f64e1538f7ea3f87c525465))
+* **gh,rebase:** detect stacked squashes and stop refused clean picks ([#2141](https://github.com/otto-nation/otto-workbench/issues/2141)) ([312a085](https://github.com/otto-nation/otto-workbench/commit/312a0859c7240b2f8210a4741989becabedca4ab))
+* **herdr:** do not start pr in the checkout cwd ([#2167](https://github.com/otto-nation/otto-workbench/issues/2167)) ([f5a72c4](https://github.com/otto-nation/otto-workbench/commit/f5a72c49f34a0aac67e4bdaba6c2381461d44a91))
+* **herdr:** gate board polls on the target's load, not the poller's ([#2146](https://github.com/otto-nation/otto-workbench/issues/2146)) ([d256ba2](https://github.com/otto-nation/otto-workbench/commit/d256ba2e9020bca5aeae30fa78252890782dde16))
+* **herdr:** keep a started terminal only once herdr lists it ([#2124](https://github.com/otto-nation/otto-workbench/issues/2124)) ([3017227](https://github.com/otto-nation/otto-workbench/commit/3017227d0075a30feb891682a2a4124b24e66659))
+* **herdr:** keep the panel's 900px max ([#2160](https://github.com/otto-nation/otto-workbench/issues/2160)) ([d993386](https://github.com/otto-nation/otto-workbench/commit/d993386c6260adaeafb4ab28cbf48c3cf45d75d4))
+* **herdr:** model-picker row ids and mouse event handling ([#2138](https://github.com/otto-nation/otto-workbench/issues/2138)) ([de1bf6d](https://github.com/otto-nation/otto-workbench/commit/de1bf6deff310aa935fd978c2899403cb6034385))
+* **herdr:** scroll the model picker list past the clip ([#2139](https://github.com/otto-nation/otto-workbench/issues/2139)) ([2c3732e](https://github.com/otto-nation/otto-workbench/commit/2c3732eef54113fa6db01cb752c024c0ee913c6a))
+* **herdr:** the web board shows a PR's allowed fields, not all but cwd ([#2129](https://github.com/otto-nation/otto-workbench/issues/2129)) ([7771b1d](https://github.com/otto-nation/otto-workbench/commit/7771b1d41133613dce6c2002437959df4d1e4913))
+* **mise:** wrap mise so pinned tools win on PATH ([#2147](https://github.com/otto-nation/otto-workbench/issues/2147)) ([3e766c3](https://github.com/otto-nation/otto-workbench/commit/3e766c384f68bfaf2e852c67d4f8cf78d2fac99b))
+* **pi:** list workbench/auto first in enabledModels ([#2158](https://github.com/otto-nation/otto-workbench/issues/2158)) ([b151d01](https://github.com/otto-nation/otto-workbench/commit/b151d01b391b62076e85341d1c43d6061399cd28))
+* **pi:** scan the Linear release version in upstream-guard ([#2125](https://github.com/otto-nation/otto-workbench/issues/2125)) ([c98cf48](https://github.com/otto-nation/otto-workbench/commit/c98cf486f305099d80d4047a5575adc9f1275754))
+* **pi:** show Auto spend on footer ([#2155](https://github.com/otto-nation/otto-workbench/issues/2155)) ([2ae1e36](https://github.com/otto-nation/otto-workbench/commit/2ae1e363ca58008d7844ebdd8094c545382d6d63))
+* **pr:** adopt rb-* on --settle and preflight unanswered handbacks ([#2140](https://github.com/otto-nation/otto-workbench/issues/2140)) ([7313b76](https://github.com/otto-nation/otto-workbench/commit/7313b7634863f607d6df3bdd66aff4aa0e10e71a))
+* **pr:** classify --no-verify pushes as light ([#2161](https://github.com/otto-nation/otto-workbench/issues/2161)) ([b2a8dd1](https://github.com/otto-nation/otto-workbench/commit/b2a8dd1ad48378c4b66a1dd177698df185ca844d))
+* **pr:** keep CI failure logs out of the agent prompt ([#2145](https://github.com/otto-nation/otto-workbench/issues/2145)) ([e50d491](https://github.com/otto-nation/otto-workbench/commit/e50d491be6ac8b84260dba7fdd590d0624131c06))
+* **queue:** fail tickets behind an unclaimed job ([#2165](https://github.com/otto-nation/otto-workbench/issues/2165)) ([8d62ba1](https://github.com/otto-nation/otto-workbench/commit/8d62ba10239d0635c84a521c0fa366e8e59e2541))
+* **queue:** require host room for the first heavy entry ([#2153](https://github.com/otto-nation/otto-workbench/issues/2153)) ([95d7c60](https://github.com/otto-nation/otto-workbench/commit/95d7c60746613d28ef0aa94df816ed4d6c6ef83e))
+* **queue:** skip host room for in-process heavy tickets ([#2162](https://github.com/otto-nation/otto-workbench/issues/2162)) ([4a37093](https://github.com/otto-nation/otto-workbench/commit/4a3709384018df7336a9ef15661a6c9ace79ca0c))
+* **rebase:** allow relocated blocks in survival audit and clear requeued picks ([#2136](https://github.com/otto-nation/otto-workbench/issues/2136)) ([9a768dd](https://github.com/otto-nation/otto-workbench/commit/9a768ddc3978af8418f99fe7397e45f4d22b8f1d))
+* **rebase:** retry stale regeneration at tip, hold push, and fix resume ([#2135](https://github.com/otto-nation/otto-workbench/issues/2135)) ([3698f39](https://github.com/otto-nation/otto-workbench/commit/3698f39ecf81590a2e23f10c0c244245fbac7c69))
+* **review:** parse pretty wt JSON; trust mise on new worktrees ([#2166](https://github.com/otto-nation/otto-workbench/issues/2166)) ([8918ffc](https://github.com/otto-nation/otto-workbench/commit/8918ffcf69c68037678595d8e26f15dea760c7b2))
+
+
+### Code Refactoring
+
+* **batch:** admit pr batch steps through otto-queue ([#2123](https://github.com/otto-nation/otto-workbench/issues/2123)) ([a0e418e](https://github.com/otto-nation/otto-workbench/commit/a0e418ed513e7b933963c41957a2d8fc794cbee6))
+
 ## [2.0.0](https://github.com/otto-nation/otto-workbench/compare/v1.47.0...v2.0.0) (2026-11-10)
 
 

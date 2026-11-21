@@ -80,8 +80,10 @@ const fakePr = (doc, answer = () => null) => async (cmd, args, opts = {}) => {
   // and the probe is not a board call, so it is answered before it is recorded.
   if (cmd === "nproc" || (cmd === "cat" && args[0] === "/proc/loadavg")) return { code: 1, stdout: "", stderr: "no load" };
   const l = label(cmd, args);
-  calls.push({ label: l, cwd: opts.cwd ?? null, on: opts.on ?? null });
-  const custom = await answer(l, opts);
+  const i = args.indexOf("--checkout");
+  const checkout = i >= 0 ? args[i + 1] : null;
+  calls.push({ label: l, cwd: opts.cwd ?? null, checkout, on: opts.on ?? null });
+  const custom = await answer(l, { ...opts, checkout });
   if (custom) return custom;
   if (l === "tools") return { code: 0, stdout: "/b/pr\n/b/gh\n/b/wt\n", stderr: "" };
   if (l.startsWith("hc:ls")) return { code: 0, stdout: "{\"terminals\":[]}", stderr: "" };

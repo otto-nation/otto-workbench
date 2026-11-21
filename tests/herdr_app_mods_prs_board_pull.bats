@@ -189,12 +189,12 @@ BOARD_JS
 # passes-at-base: characterizes the mod before the extraction
 @test "mod pull: a checkout no space shows any more is forgotten (its next pull sends no stamp)" {
   _host "$BOARD
-    const answer = (l, o) => (l.startsWith('pr:') && o.cwd === '/w/kit' ? docAs('acme/kit', l.split(':')[1]) : null);
+    const answer = (l, o) => (l.startsWith('pr:') && o.checkout === '/w/kit' ? docAs('acme/kit', l.split(':')[1]) : null);
     spacesOf(['/w/box', '/w/kit']); H.state['prs.scope'] = 'all';
     const { b, cx, settle } = await start(fakePr(doc, answer));
     spacesOf(['/w/box']); b.refresh(cx); await settle();
     spacesOf(['/w/box', '/w/kit']); take(); b.refresh(cx); await settle();
-    out(calls.filter((c) => c.label.startsWith('pr:listing')).map((c) => c.cwd + ' ' + c.label).sort());"
+    out(calls.filter((c) => c.label.startsWith('pr:listing')).map((c) => c.checkout + ' ' + c.label).sort());"
   [ "$status" -eq 0 ]
   [ "$output" = '["/w/box pr:listing:stamp","/w/kit pr:listing"]' ]
 }
@@ -240,7 +240,7 @@ BOARD_JS
   _host "$BOARD
     let release; const gate = new Promise((r) => { release = r; });
     spacesOf(['/w/box', '/w/kit']);
-    H.exec = fakePr(doc, async (l, o) => (l === 'pr:listing' && o.cwd === '/w/box' ? (await gate, null) : null));
+    H.exec = fakePr(doc, async (l, o) => (l === 'pr:listing' && o.checkout === '/w/box' ? (await gate, null) : null));
     const b = new PrsBoard(); const { cx, settle } = fakeCx();
     b.init({}, cx);
     for (let i = 0; i < 100 && !labels().includes('pr:listing'); i++) await new Promise((r) => setTimeout(r, 1));

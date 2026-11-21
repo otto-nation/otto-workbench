@@ -102,7 +102,9 @@ _bd() {
   _bd '
     const table = [{ prefix: "pr board --schema-version 1", stdout: "not-json" }];
     const r = pack(await m.loadBoard(exec, ctx, "listing"));
-    process.stdout.write(JSON.stringify({ r, every: calls.every(everyOn) }));
+    process.stdout.write(JSON.stringify({
+      r, every: calls.every((c) => c.on === "mac" && c.cwd == null),
+    }));
   '
   [ "$status" -eq 0 ]
   [[ "$output" == *'"kind":"bad-json"'* ]]
@@ -417,6 +419,23 @@ _bd() {
   '
   [ "$status" -eq 0 ]
   [ "$output" = '{"kind":"failed","message":"killed at its 768M memory cap or 55s deadline"}' ]
+}
+
+@test "invoke omits checkout cwd for pr so mise does not resolve the repo toolchain" {
+  _rr '
+    const seen = [];
+    const exec = async (cmd, args, opts) => {
+      const inner = cmd === "sh" && args[0] === "-c" ? args[3] : cmd;
+      seen.push({ inner, cwd: opts.cwd ?? null });
+      return { code: 0, stdout: "{}", stderr: "" };
+    };
+    await m.invoke(exec, { cwd: "/w", on: null }, "pr", ["board"]);
+    await m.invoke(exec, { cwd: "/w", on: "box" }, "pr", ["board"]);
+    await m.invoke(exec, { cwd: "/w", on: "box" }, "git", ["status"]);
+    process.stdout.write(JSON.stringify(seen));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"inner":"pr","cwd":null},{"inner":"pr","cwd":null},{"inner":"git","cwd":"/w"}]' ]
 }
 
 _write_echo_stub() {

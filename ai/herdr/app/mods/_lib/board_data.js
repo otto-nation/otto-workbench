@@ -145,7 +145,11 @@ export async function invoke(exec, ctx, cmd, args, opts = {}) {
     const { isolate, ...execOpts } = opts;
     const run = (iso) => {
       const call = toolCall(ctx, cmd, args, iso != null ? { isolate: iso } : {});
-      return exec(call.cmd, call.args, { cwd: ctx.cwd, on: ctx.on, ...execOpts });
+      // pr takes --checkout/--repo-dir; starting it in the repo makes its
+      // python3 shebang a mise shim that resolves that tree's toolchain.
+      const callOpts = { on: ctx.on, ...execOpts };
+      if (cmd !== 'pr') callOpts.cwd = ctx.cwd;
+      return exec(call.cmd, call.args, callOpts);
     };
     let result = await run(isolate);
     const remote = isolate != null && ctx.on != null && ctx.on !== '';

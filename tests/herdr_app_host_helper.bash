@@ -16,7 +16,7 @@
 #   H  herdr state: H.state (shared keys), H.spacesList, H.panesList, H.terminalsList, H.focusedPane,
 #      and any herdr function to override (H.exec, H.watchFolder, …). H.onSleep(ms), when set, runs
 #      on each cx.sleep — where a test makes herdr list a terminal it was slow to hear of
-#   calls        every exec call: {label, cwd, on}
+#   calls        every exec call: {label, cwd, on, checkout}
 #   label(c, a)  pr:<phase>[:offline][:stamp] | tools | hc:<sub>[:label] — a remote call is unwrapped
 #   fakePr(doc, answer?) an exec answering the tools check, hc ls and `pr board` from `doc`;
 #                answer(label, opts) may return {code, stdout, stderr} (or a promise of one) first

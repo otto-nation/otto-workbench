@@ -1,6 +1,6 @@
 """Tests for `pr.permalinks` — the links a reply points at, and what backs them.
 
-`git-operations.md` § Replying to Review Comments requires every reply to cite a
+`git-workflow/SKILL.md` § Replying to Review Comments requires every reply to cite a
 SHA-pinned permalink. Two things have to hold for that to mean anything: the URL
 has to name a commit rather than a branch, and the line it highlights has to be
 a line that exists. Both are tested here.

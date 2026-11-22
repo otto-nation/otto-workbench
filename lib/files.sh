@@ -386,6 +386,36 @@ resolve_layers() {
 resolve_rules() {
   resolve_layers "$GUIDELINES_RULES_SRC_DIR" "$GENERATED_RULES_DIR" "$RULES_GLOB" "$1"
   resolve_layers "$GENERATED_RULES_DIR" "$USER_RULES_DIR" "$RULES_GLOB" "$1"
+  drop_rule_skill_shadows "$1"
+}
+
+# Names already warned about this process, so the Claude and Pi steps, which both
+# call resolve_rules, report a shadowing file once rather than twice.
+__RULE_SKILL_SHADOW_WARNED=" "
+
+# drop_rule_skill_shadows RESULT_NAMEREF — removes from a resolved rule set every
+# entry whose name is a skill declaring `kind: rule`, and warns naming the file.
+#
+# A rule that moved into a skill has no base file left, so an operator's override
+# of it (or a generated file of that name) would resolve as a standalone
+# always-on rule — re-adding the text the move made on-demand, and drifting from
+# the skill. The file is left where it is; only the install is withheld. An
+# operator who wants their version applies it to the skill, which the override
+# mechanism for skills replaces by directory name.
+drop_rule_skill_shadows() {
+  local -n __rules=$1
+  local name skill_name skill_file source
+  for name in "${!__rules[@]}"; do
+    skill_name="${name%.md}"
+    skill_file="$SKILLS_SRC_DIR/$skill_name/SKILL.md"
+    [[ "$(frontmatter_field "$skill_file" kind)" == "rule" ]] || continue
+    source="${__rules[$name]}"
+    unset "__rules[$name]"
+    [[ "$__RULE_SKILL_SHADOW_WARNED" == *" $source "* ]] && continue
+    __RULE_SKILL_SHADOW_WARNED+="$source "
+    warn "$source overrides a rule that is now the on-demand skill '$skill_name' — not installing it as an always-on rule; the file is left untouched. Run: otto-workbench ai override skill $skill_name --add"
+  done
+  return 0
 }
 
 # rules_layer_roots — prints the directory each rule layer is resolved from, one

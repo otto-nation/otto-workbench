@@ -145,6 +145,11 @@ _check_required_fields() {
     _fail "$(basename "$file") entry '$name': field 'usage' is not allowed beside 'parser' — the usage is rendered from the parser"
   fi
 
+  if reg_has "$file" tools "$i" usage_mode; then
+    [[ "$(reg_get "$file" tools "$i" usage_mode)" == "help" ]] || _fail "$(basename "$file") entry '$name': invalid usage_mode (must be help)"
+    [[ "$visibility" == "full" ]] || _fail "$(basename "$file") entry '$name': field 'usage_mode' is not allowed when visibility: $visibility"
+  fi
+
   if [[ "$visibility" == "full" ]]; then
     [[ -n "$when_to_use" && "$when_to_use" != "null" ]] || _fail "$(basename "$file") entry '$name': missing required field: when_to_use (required when visibility: full)"
     if [[ "$has_parser" != "true" ]]; then

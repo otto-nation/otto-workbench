@@ -1,3 +1,13 @@
+---
+name: subagents
+description: "Delegating work to subagents or other AI agents: how to brief them, what stalls them, running several at once, and what to verify afterwards. TRIGGER when: about to dispatch a subagent or another agent, run several agents in one worktree, delegate a rebase, implementation or review, or read back what a subagent returned. SKIP: doing the work directly in this session."
+source: otto-workbench/ai/skills/subagents/SKILL.md
+kind: rule
+invocation: "/subagents"
+trigger: "Use before dispatching a subagent or another AI agent, running agents concurrently, delegating a rebase or implementation, or reviewing what a subagent reported."
+skip: "Do not use when doing the work directly in this session with no agent dispatched."
+---
+
 # Delegating to Subagents
 
 The central rule for briefing, running, concurrently running, and reviewing AI
@@ -81,7 +91,7 @@ and test specifics live with their owners (pointers below).
   `git rebase` and any raw `git push --force` / `--force-with-lease`, and a
   statement that `pr rebase` pushing the result is expected and needs no
   confirmation. Which tool a rebase request uses is
-  `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts
+  `git-workflow/SKILL.md` § Rebase, Cherry-Pick, Merge Conflicts
 - Two changes to the same subsystem can land in parallel under the same module
   name. Before a long rebase, `git diff <merge-base> origin/main --stat` over the
   directories the branch touches: a same-named module on main (observed 2026-11:
@@ -160,7 +170,7 @@ and test specifics live with their owners (pointers below).
   message for 19 squashed commits
 - A subagent's "revert check" that edits the expected value instead of the code
   under test proves nothing: ask for the subject line to be broken and restored
-  by rewriting it (see `testing.md` § A Test Must Fail When Its Subject Breaks)
+  by rewriting it (see `test-verification/SKILL.md` § A Test Must Fail When Its Subject Breaks)
 - Plans written by a model cite line numbers and a base that drift (an opus
   plan's citations were wrong the next day and its base had moved): every
   implementer's first task re-checks the plan's citations against HEAD and
@@ -180,10 +190,10 @@ and test specifics live with their owners (pointers below).
 
 ## Where the related rules live
 
-- Rebase and conflict policy: `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts
+- Rebase and conflict policy: `git-workflow/SKILL.md` § Rebase, Cherry-Pick, Merge Conflicts
 - Push policy: `git-operations.md` § Pushing
 - Rebase output meaning: the `pr-rebase` skill
-- Fix-pass claims: `self-review.md` § The Summary Is a Claim About the Tree
-- Test strength: `testing.md` § A Test Must Fail When Its Subject Breaks
+- Fix-pass claims: `self-review/SKILL.md` § The Summary Is a Claim About the Tree
+- Test strength: `test-verification/SKILL.md` § A Test Must Fail When Its Subject Breaks
 - Suite result reading: `testing.md` § Reading a Suite Result
 - Cross-worktree and cwd: `git-operations.md` § Cross-Worktree Safety

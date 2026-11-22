@@ -13,7 +13,7 @@
  * This one names neither. It says `pr create` loads the repo's PR
  * template, applies the template check, appends the closing refs and assigns
  * the PR — none of which `gh pr create` does, under any harness. That is
- * coding policy, written down in git-operations.md § PR Creation, and it
+ * coding policy, written down in git-workflow/SKILL.md § PR Creation, and it
  * applies here verbatim.
  */
 

@@ -34,8 +34,7 @@ KEPT_RULES = frozenset({
 # Rules addressed to a human operator or to harness mechanics. A fix agent
 # neither opens a PR nor files an issue nor authors a skill.
 DROPPED_RULES = frozenset({
-    "git-operations", "git.generated", "self-review", "issue-tracker",
-    "issue-tracker.local", "skills", "subagents", "artifacts", "output",
+    "git-operations", "git.generated", "skills", "artifacts", "output",
     "bash-tool", "rules-authoring", "review-dev", "workbench",
     "tools.generated", "tools.generated.workbench", "tools.generated.java",
 })

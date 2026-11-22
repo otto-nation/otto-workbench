@@ -2891,7 +2891,7 @@ decompose, nor plan a step for one it would drop.
 
 Links back to the code a review comment is about, pinned so they keep pointing.
 
-`git-operations.md` § Replying to Review Comments makes a SHA-pinned permalink a
+`git-workflow/SKILL.md` § Replying to Review Comments makes a SHA-pinned permalink a
 standing requirement for every reply: a branch-relative blob URL drifts as the
 branch moves, so a claim posted to a reviewer stops resolving to the code it was
 making a claim about. This is the implementation that gets it right, including
@@ -6930,6 +6930,21 @@ A tool's stdout is its contract with whatever launched it, and the shape of
 that contract is the same everywhere: one JSON object (indented by default),
 or a stream of them a reader can tell apart. Neither is domain vocabulary, so
 it lives here rather than being spelled out again in each binary that reports.
+
+### core/rule_skills.py
+
+Skills whose body is rule text rather than a procedure.
+
+A rule in ``ai/guidelines/rules/`` is loaded into every session, by both Claude
+Code and Pi. Guidance that applies only sometimes is written as a skill
+instead, because description matching is the one conditional load both
+harnesses share. A skill that carries a rule's text declares it with
+``kind: rule`` in its frontmatter.
+
+Tools that read the rule set — to match review comments against it, or to
+decide whether a memory is already covered — must read these skills too, or
+moving a rule into a skill reads as the rule having been deleted. This module
+is the one place that says which skills those are, so the marker is read one way.
 
 ### core/run_events.py
 

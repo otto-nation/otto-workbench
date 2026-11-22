@@ -22,6 +22,25 @@ gtc_setup() {
   mkdir -p "$WORK_DIR"
 }
 
+# _write_registry FILE SECTION — writes a single-tool registry with the given section title
+_write_registry() {
+  local file="$1" section="${2:-Tools}"
+  cat > "$file" << EOF
+meta:
+  section: "$section"
+  validation: none
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: full
+    description: "A test tool"
+    when_to_use: "When testing"
+    usage: "mytool --flag"
+    docs: "https://example.com"
+EOF
+}
+
 gtc_teardown() {
   cd "$ORIG_DIR" || return 1
   unset PACKAGES_REGISTRY MISE_REGISTRY BIN_REGISTRY ZSH_REGISTRY PACKAGES_STACKS_DIR WORK_DIR TOOL_CONTEXT_OUTPUT REGISTRY_SCAN_DIR AI_DIR

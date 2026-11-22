@@ -21,8 +21,8 @@ import config.workbench_config  # noqa: E402
 def rss():
     return config.session_start
 
-ISSUE_TRACKER_RULE = REPO_ROOT / "ai" / "guidelines" / "rules" / "issue-tracker.md"
-GIT_OPERATIONS_RULE = REPO_ROOT / "ai" / "guidelines" / "rules" / "git-operations.md"
+ISSUE_TRACKER_RULE = REPO_ROOT / "ai" / "skills" / "issue-tracker" / "SKILL.md"
+GIT_OPERATIONS_RULE = REPO_ROOT / "ai" / "skills" / "git-workflow" / "SKILL.md"
 
 
 def _run(rss, repo):

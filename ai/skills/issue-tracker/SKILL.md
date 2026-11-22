@@ -1,5 +1,11 @@
 ---
-description: "Issue trackers — how the provider resolves, and per-provider CLI conventions"
+name: issue-tracker
+description: "Issue tracker conventions: resolving which tracker a repo uses (github, linear, jira), filing, assigning, labelling and linking issues, and per-provider CLI patterns. TRIGGER when: creating, editing, searching or closing an issue, filing a follow-up or deferred item, or asked which tracker a repo uses. SKIP: opening a PR (see git-workflow); reading an issue a user pasted."
+source: otto-workbench/ai/skills/issue-tracker/SKILL.md
+kind: rule
+invocation: "/issue-tracker"
+trigger: "Use when creating, editing, searching or closing an issue, filing a follow-up or deferred item, or when asked which issue tracker a repo uses."
+skip: "Do not use when opening a PR (use git-workflow) or when only reading an issue the user pasted."
 ---
 
 # Issue Tracker
@@ -40,7 +46,7 @@ Applies only when the resolved provider is `linear`.
 - Assign with `--assignee self`
 - Search with `linear issue query --search "term"`. `linear issue list` is an alias for `issue mine` and takes no search flag at all — `--query` on it prints that subcommand's usage to *stdout* and exits 2, so a duplicate check written that way reads as a search that matched nothing. Never conclude an issue does not exist from a command whose output looked like help text
 - `issue view --json` has no `relations` key — the schema is assignee, attachments, branchName, children, comments, cycle, description, documents, identifier, labels, parent, priority, project, projectMilestone, state, team, title, url. Relations are only visible through `linear issue relation list <ID>`, so absence in the JSON is the field never being returned, not the relation being missing
-- Close on merge with `pr create --draft --closes ENG-123` (`git-operations.md` § PR Creation).
+- Close on merge by passing the issue key (`ENG-123`) to `pr create`'s `--closes` flag (the invocation is in `git-workflow/SKILL.md` § PR Creation).
 - Team key is always the prefix of the issue identifier. Pass it explicitly where required:
 
 | Command | Notes |
@@ -65,7 +71,7 @@ Applies only when the resolved provider is `github`.
 
 - Issues are addressed by repo, not by team — there is no team key to supply, and nothing should be skipped for want of one
 - Assign with `--assignee @me`
-- Close on merge with `pr create --draft --closes <number>`; Jira-style keys are refused (`git-operations.md` § PR Creation).
+- Close on merge by passing the issue number to `pr create`'s `--closes` flag; Jira-style keys are refused (the invocation is in `git-workflow/SKILL.md` § PR Creation).
 - Pass `--repo <owner>/<repo>` *after* the subcommand — `gh issue view --repo x/y`, never `gh --repo x/y issue view`. Both parse, but the flag reads as the subcommand's everywhere it is documented, and under Claude Code the leading form also costs a permission prompt (`bash-tool.md` § Avoid Compound `cd` Commands)
 - On GitHub Enterprise, set `issues.base_url` to the instance host. It moves the issue links, and the workbench passes the host to `gh` as `--repo HOST/OWNER/REPO` on every issue read and write — a bare `OWNER/REPO` resolves against gh's *default* host, which on a machine logged into both instances is whichever gh picked, not the one the repo lives on. Unset it and a filing lands on github.com
 - Use the same three-part form in any `gh` command you run by hand against an enterprise repo, for the same reason

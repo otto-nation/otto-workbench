@@ -6,7 +6,7 @@
  * A dispatched subagent runs as `pi --mode json -p`. Its work is reviewed by
  * its parent; it should report deferrals and proposed PR text, not file or
  * edit. Prose in the prompt ("never post to GitHub") did not hold: a subagent
- * followed issue-tracker.md's "Nothing is truly out of scope" and filed
+ * followed the issue-tracker skill's "Nothing is truly out of scope" and filed
  * anyway. This is the mechanical half.
  *
  * The Pi tools that post without bash (the PR comment tools) are refused the

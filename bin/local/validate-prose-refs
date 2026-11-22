@@ -28,6 +28,9 @@ Three checks, each against the live source of truth rather than a list kept here
                     ) . , ; : | ` em dash. A docs page is spelled `docs/x.md` or
                     bare `x.md` when that basename is unique; composed pages are
                     read from the committed `.md` so included sections count.
+                    A skill is spelled `<skill>/SKILL.md` (or the full
+                    `ai/skills/<skill>/SKILL.md`), and its headings are checked
+                    the same way.
                     A `name.md` § span that names no file in the repo fails as
                     an unknown rule file.
 
@@ -267,11 +270,31 @@ def load_doc_headings(root: Path) -> dict[str, tuple[str, ...]]:
     return out
 
 
+def load_skill_headings(root: Path) -> dict[str, tuple[str, ...]]:
+    """Each skill's SKILL.md headings, keyed `<skill>/SKILL.md` and `ai/skills/<skill>/SKILL.md`.
+
+    Every skill file is named SKILL.md, so a bare basename cannot identify one:
+    the skill directory is part of the key, which is also what keeps a pointer
+    into a skill from falling through check_pointer as a basename that merely
+    exists somewhere in the repo.
+    """
+    skills = root / "ai" / "skills"
+    if not skills.is_dir():
+        return {}
+    out: dict[str, tuple[str, ...]] = {}
+    for path in sorted(skills.glob("*/SKILL.md")):
+        heads = _headings_of(path)
+        out[f"{path.parent.name}/SKILL.md"] = heads
+        out[path.relative_to(root).as_posix()] = heads
+    return out
+
+
 def load_headings(root: Path) -> dict[str, tuple[str, ...]]:
-    """Rule and docs headings; a colliding basename keeps the rules file."""
+    """Rule, skill and docs headings; a colliding basename keeps the rules file."""
     heads = dict(load_rule_headings(root))
-    for key, value in load_doc_headings(root).items():
-        heads.setdefault(key, value)
+    for source in (load_skill_headings(root), load_doc_headings(root)):
+        for key, value in source.items():
+            heads.setdefault(key, value)
     return heads
 
 
@@ -305,6 +328,13 @@ def check_pointer(line: str, headings: dict[str, tuple[str, ...]],
     for match in POINTER.finditer(line):
         name = match.group(1)
         base = Path(name).name
+        # A generated rule file is gitignored: it resolves on a machine that has
+        # run the generator and nowhere else, so CI would reject what passes here.
+        if ".generated" in base:
+            reasons.append(
+                f"`{name}`: generated and gitignored, absent from a clean checkout; "
+                "point at a tracked file or drop the pointer")
+            continue
         if name in headings:
             key = name
         elif base in headings:

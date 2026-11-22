@@ -126,7 +126,8 @@ succeeds in the same run; there is no wait-for-merge `stack_wait_base`.
 ## Push protocol
 
 When to push without asking is `git-operations.md` § Pushing; whether to comment
-on the PR is § A Branch With an Open PR Is Shared. This section only maps them
+on the PR is `git-workflow/SKILL.md` § A Branch With an Open PR Is Shared. This
+section only maps them
 onto batch state.
 
 Nothing is pushed unless `--auto-publish ff`, which never force-pushes, so a

@@ -10,6 +10,7 @@ tools:
   - name: otto-workbench
     permission: true
     visibility: full
+    usage_mode: help
     description: "Manage your workbench developer environment"
     when_to_use: "After pulling workbench updates or when config gets out of sync"
     usage: "otto-workbench sync  |  otto-workbench ai init  |  otto-workbench ai sync  |  otto-workbench projects  |  otto-workbench changelog"

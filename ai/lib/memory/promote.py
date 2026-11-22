@@ -21,6 +21,7 @@ from pathlib import Path
 import core.errors
 import core.log
 import core.memory
+import core.rule_skills
 import core.trail
 import memory.state
 
@@ -64,16 +65,24 @@ def scan_backed_up_memories(workbench: Path) -> list[dict]:
 
 
 def scan_rules(workbench: Path) -> list[dict]:
+    """Every rule file, then every skill carrying rule text (``kind: rule``).
+
+    A memory already covered by a rule that moved into a skill must still read
+    as covered, or promotion proposes the rule again.
+    """
     rules_dir = workbench / RULES_REL
-    if not rules_dir.exists():
-        return []
+    files = [(f.name, f) for f in sorted(rules_dir.glob("*.md"))] if rules_dir.exists() else []
+    files.extend(
+        (core.rule_skills.display_name(f), f)
+        for f in core.rule_skills.rule_skill_files(workbench)
+    )
 
     results = []
-    for f in sorted(rules_dir.glob("*.md")):
+    for name, f in files:
         heading = first_heading(f)
         body = core.memory.read_body(f)
         results.append({
-            "filename": f.name,
+            "filename": name,
             "heading": heading,
             "body": body[:memory.state.BODY_PREVIEW_LENGTH],
         })

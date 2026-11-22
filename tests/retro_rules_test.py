@@ -13,6 +13,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ai" / "lib"))
 
+import core.rule_skills  # noqa: E402
 from retro_support import make_rules_dir  # noqa: E402
 from retro.rules import (  # noqa: E402
     FRONTMATTER,
@@ -58,11 +59,18 @@ def _every_passage():
 
 
 def _rule_texts() -> dict[str, str]:
-    """Every rule file's raw text off disk, keyed by filename."""
-    return {
+    """Every rule's raw text off disk, keyed by the name `load_rules` gives it.
+
+    Rule files are keyed by filename; a skill carrying rule text is keyed
+    `<skill>/SKILL.md`, the same as the scanner reports it.
+    """
+    texts = {
         p.name: p.read_text(encoding="utf-8")
         for p in sorted((REPO_ROOT / "ai" / "guidelines" / "rules").glob("*.md"))
     }
+    for path in core.rule_skills.rule_skill_files(REPO_ROOT):
+        texts[core.rule_skills.display_name(path)] = path.read_text(encoding="utf-8")
+    return texts
 
 
 def _ordered_items(content: str) -> list[str]:
@@ -210,9 +218,9 @@ TOPICAL_COMMENTS = [
         "skills.md",
     ),
     (
-        "Re-run the self review because HEAD moved after the findings were "
-        "fixed, so the review file names an earlier commit than the branch.",
-        "self-review.md",
+        "Never dispatch two writer subagents into one worktree; reviewers "
+        "must stay read-only and the brief must name the absolute path.",
+        "subagents/SKILL.md",
     ),
 ]
 
@@ -519,12 +527,12 @@ class TestPassages:
     def test_the_self_review_ladder_item_keeps_its_continuation(self):
         """The case the field defect was found on, read off the real file.
 
-        `self-review.md`'s first ladder item under "The Review Covers One
+        The self-review skill's first ladder item under "The Review Covers One
         Commit" wraps onto two more lines. Split, the head keeps `head_sha`
         and `git rev-parse HEAD` while the tail keeps the instruction, and a
         comment about re-running a stale review matches neither well.
         """
-        passages = split_passages(_rule_texts()["self-review.md"])
+        passages = split_passages(_rule_texts()["self-review/SKILL.md"])
         item = next(
             p for p in passages
             if p.startswith("1.") and "head_sha" in p

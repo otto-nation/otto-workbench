@@ -125,8 +125,8 @@ _budget_line() {
     "" \
     "### Description template" \
     "" \
-    "- Always create PRs via \`pr create\` — see \`git-operations.md\` § PR Creation for the full invocation and flags." \
-    "- When a repo has a PR template, its required headers must be present — see \`git-operations.md\` § The PR Template. The fallback below is only for repos with none:" \
+    "- Always create PRs via \`pr create\` — see \`git-workflow/SKILL.md\` § PR Creation for the full invocation and flags." \
+    "- When a repo has a PR template, its required headers must be present — see \`git-workflow/SKILL.md\` § The PR Template. The fallback below is only for repos with none:" \
     "" \
     '```markdown'
   printf '%s\n' "$FALLBACK_TEMPLATE"
@@ -140,7 +140,7 @@ _budget_line() {
     "" \
     "### Issue linking" \
     "" \
-    "- A PR closes an issue only through \`--closes <ID>\` — see \`git-operations.md\` § PR Creation." \
+    "- A PR closes an issue only through \`--closes <ID>\` — see \`git-workflow/SKILL.md\` § PR Creation." \
     "" \
     "### Assignee" \
     "" \

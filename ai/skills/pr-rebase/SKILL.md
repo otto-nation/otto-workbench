@@ -29,7 +29,7 @@ stack whose parent has no PR yet onto that parent, and a repo whose trunk is not
 SHA. The rungs below it yield a branch name that is resolved as
 `origin/<name>`.
 
-A rebase request is this CLI even when delegated — `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts.
+A rebase request is this CLI even when delegated — `git-workflow/SKILL.md` § Rebase, Cherry-Pick, Merge Conflicts.
 
 Run with `/pr-rebase` or `/pr-rebase <branch>`.
 
@@ -112,7 +112,7 @@ in-progress rebase, and refuses the branches step 2's exit 4 describes — and i
 records each of those decisions with its reason, so the answers arrive in the
 trail rather than costing a turn each up front. When conflicts are expected to
 repeat on the same files, it may squash the replay itself (`rebase.squash`);
-do not preflight the CLI's automatic squash, count commits, or inspect merge settings first. A squash the user asked for is `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts.
+do not preflight the CLI's automatic squash, count commits, or inspect merge settings first. A squash the user asked for is `git-workflow/SKILL.md` § Rebase, Cherry-Pick, Merge Conflicts.
 Running `git fetch`,
 `rev-list --count`, or `gh pr view` before it asks the script's own questions in
 a worse form: the answer you get is from a second fetch, a moment earlier, with
@@ -331,7 +331,7 @@ Runs that reach this, and the difference is `tree` plus what the console said:
 
 **Resolving by hand.** Edit each conflicted file hunk by hunk, keeping both
 sides' intent and every change git merged cleanly; under Claude Code use Bash
-for the edits, per `git-operations.md` § Rebase, Cherry-Pick, Merge Conflicts.
+for the edits, per `git-workflow/SKILL.md` § Rebase, Cherry-Pick, Merge Conflicts.
 Never take a side whole (see Constraints). Check the file still parses —
 `gofmt -e`, `bash -n`, or `python3 -m py_compile` — then
 `git -C <worktree> add <file>` and resume.

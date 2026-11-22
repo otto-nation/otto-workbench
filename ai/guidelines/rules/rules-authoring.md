@@ -51,6 +51,14 @@ Adding `paths:` therefore takes a rule away from Pi entirely. For guidance that
 must reach both and only sometimes applies, write a skill instead — description
 matching is the one conditional load both harnesses share.
 
+A skill whose body is rule text rather than a procedure declares `kind: rule` in
+its frontmatter. `retro-scan` and `promote-scan` read those skills beside this
+directory (`core.rule_skills`), so moving a rule into a skill does not read as
+deleting it. Cite one as `<skill>/SKILL.md` § Heading — `validate-prose-refs`
+checks that heading. A skill loads only when the model chooses to, so a
+prohibition no hook enforces stays in an always-on rule, with the procedure in
+the skill (`git-operations.md` and the `git-workflow` skill are the worked example).
+
 `harness:` is for a rule whose *content* is harness-specific, not for turning a
 rule off. `bash-tool.md` is the only one today: it catalogues Claude Code's
 static analyzer, and under another harness it forbids commands that were never

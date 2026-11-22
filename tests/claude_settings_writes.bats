@@ -343,7 +343,7 @@ teardown() {
 @test "guard: every block call cites a rules section" {
   local guard="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
   local uncited
-  uncited=$(grep -n '^  block ' "$guard" | grep -v 'See [a-z-]*\.md §' || true)
+  uncited=$(grep -n '^  block ' "$guard" | grep -v 'See [A-Za-z/-]*\.md §' || true)
   [ -z "$uncited" ] || {
     echo "block call(s) with no 'See <doc>.md § <Section>' citation:"
     echo "$uncited"
@@ -353,20 +353,23 @@ teardown() {
 
 @test "guard: every cited rules section exists" {
   local guard="$REPO_ROOT/ai/claude/bin/claude-bash-guard"
-  local doc section
+  local doc section file
   # Headings are compared with backticks stripped: the guard's messages are
   # plain text, so `## Avoid \`env -C\`` is cited as `§ Avoid env -C`.
+  # A rule is cited by filename; a skill carrying rule text as <skill>/SKILL.md.
   while IFS='|' read -r doc section; do
-    [ -f "$REPO_ROOT/ai/guidelines/rules/$doc" ] || {
+    file="$REPO_ROOT/ai/guidelines/rules/$doc"
+    [[ "$doc" == */SKILL.md ]] && file="$REPO_ROOT/ai/skills/$doc"
+    [ -f "$file" ] || {
       echo "guard cites a rules file that does not exist: $doc"
       return 1
     }
-    sed 's/`//g' "$REPO_ROOT/ai/guidelines/rules/$doc" | grep -qxF "## $section" || {
+    sed 's/`//g' "$file" | grep -qxF "## $section" || {
       echo "guard cites '$doc § $section', which has no matching heading"
       return 1
     }
-  done < <(grep -oE 'See [a-z-]+\.md § [^.]+\.' "$guard" |
-    sed -E 's/^See ([a-z-]+\.md) § (.*)\.$/\1|\2/' | sort -u)
+  done < <(grep -oE 'See [A-Za-z/-]+\.md § [^.]+\.' "$guard" |
+    sed -E 's/^See ([A-Za-z/-]+\.md) § (.*)\.$/\1|\2/' | sort -u)
 }
 
 # The bodies below each put the pattern after a statement separator, which is

@@ -17,7 +17,7 @@
 #   - name and description satisfy the Agent Skills standard (64 / 1024 chars)
 #   - every non-programmatic agent has a matching agent-backed skill
 #   - ai/pi/AGENTS.head.md's Agent protocols table matches ai/claude/guidelines.md's
-#   - flagged `pr create --…` invocations match git-operations.md's
+#   - flagged `pr create --…` invocations match the git-workflow skill's
 #   - every superpowers shim records the version ai/pi/settings.json pins
 #   - every superpowers shim's override marker names its own directory
 #   - skill scripts are invoked through the shared skills root, not a
@@ -454,7 +454,7 @@ fi
 # notice. Rather than compare prose — the skill spells the command across
 # several lines, with its own commentary — this asks the narrower question the
 # staleness actually turns on: every flagged `pr create --…` invocation
-# a skill gives is one git-operations.md gives too.
+# a skill gives is one the git-workflow skill gives too.
 #
 # Only the flagged form is compared. A bare `pr create` naming the command in
 # prose carries no flags to drift. The match opens at the backtick so that
@@ -477,15 +477,15 @@ _check_pr_create_drift() {
   while IFS= read -r pr_line; do
     [[ -n "$pr_line" ]] || continue
     grep -qFx "$pr_line" <<< "$rule_lines" \
-      && _pass "$display: pr create invocation matches git-operations.md" \
-      || _fail "$display: teaches \`$pr_line\`, which git-operations.md § PR Creation does not — the rule file owns this command"
+      && _pass "$display: pr create invocation matches git-workflow/SKILL.md" \
+      || _fail "$display: teaches \`$pr_line\`, which git-workflow/SKILL.md § PR Creation does not — that skill owns this command"
   done <<< "$(_pr_create_lines "$skill_file")"
   return 0
 }
 
-GIT_OPS_RULE="$WORKBENCH_DIR/ai/guidelines/rules/git-operations.md"
-if [[ -f "$GIT_OPS_RULE" ]]; then
-  rule_pr_lines="$(_pr_create_lines "$GIT_OPS_RULE")"
+PR_CREATE_OWNER="$WORKBENCH_DIR/ai/skills/git-workflow/SKILL.md"
+if [[ -f "$PR_CREATE_OWNER" ]]; then
+  rule_pr_lines="$(_pr_create_lines "$PR_CREATE_OWNER")"
   for skill_file in "$SKILLS_DIR"/*/SKILL.md; do
     [[ -f "$skill_file" ]] || continue
     _check_pr_create_drift "$skill_file" "skills/$(basename "$(dirname "$skill_file")")" "$rule_pr_lines"

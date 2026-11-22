@@ -12,7 +12,7 @@
  *
  * Claude Code gets the same rule from ai/claude/bin/claude-bash-guard; that
  * hook does not run under Pi. The two enforce one rule written down in
- * general.md § Code Quality and self-review.md § Before PR Creation.
+ * general.md § Code Quality and self-review/SKILL.md § Before PR Creation.
  *
  * Narrow on purpose, and fails open at every step. No git, no remote, no
  * review, or a review whose findings are all ticked all mean silence — a guard

@@ -18,8 +18,49 @@ import eval.conditions
 def test_every_installed_rule_is_classified_into_exactly_one_arm():
     both = eval.conditions.KEPT_RULES & eval.conditions.DROPPED_RULES
     assert both == frozenset(), f"classified into both arms: {sorted(both)}"
-    assert len(eval.conditions.KEPT_RULES) == 12
-    assert len(eval.conditions.DROPPED_RULES) == 16
+
+
+# Names classified without a file under ai/guidelines/rules: a machine-local
+# addendum and the generated workbench layer, both installed outside the repo.
+MACHINE_LAYER_RULES = frozenset({"testing.local", "workbench"})
+
+
+# Names produced by bin/local/generate-tool-context and
+# git/bin/local/generate-git-rules into ai/guidelines/rules. Those files are
+# gitignored, so a fresh checkout lacks them while the arms still classify them.
+GENERATED_LAYER_RULES = frozenset({
+    "git.generated",
+    "tools.generated",
+    "tools.generated.go",
+    "tools.generated.infra",
+    "tools.generated.java",
+    "tools.generated.workbench",
+})
+
+
+def _repo_rule_stems() -> set[str]:
+    """Rule stems on disk: tracked files plus whichever generated ones exist."""
+    return {
+        p.stem for p in (REPO_ROOT / "ai" / "guidelines" / "rules").glob("*.md")
+    }
+
+
+def _tracked_rule_stems() -> set[str]:
+    return _repo_rule_stems() - GENERATED_LAYER_RULES
+
+
+def _every_legitimate_rule_name() -> set[str]:
+    return _tracked_rule_stems() | GENERATED_LAYER_RULES | MACHINE_LAYER_RULES
+
+
+def test_the_arms_name_exactly_the_shipped_rules_plus_the_machine_layer():
+    classified = eval.conditions.KEPT_RULES | eval.conditions.DROPPED_RULES
+    stale = sorted(
+        classified - _tracked_rule_stems() - GENERATED_LAYER_RULES - MACHINE_LAYER_RULES
+    )
+    unclassified = sorted(_repo_rule_stems() - classified)
+    assert stale == [], f"named in an arm but no longer a rule: {stale}"
+    assert unclassified == [], f"shipped rules in neither arm: {unclassified}"
 
 
 def test_every_repo_shipped_rule_is_classified():
@@ -74,7 +115,7 @@ def test_the_full_arm_seeds_every_rule_and_the_trimmed_arm_only_the_kept(tmp_pat
     full = eval.conditions.seed_config_tree(source, tmp_path / "cc-full", "full")
     trimmed = eval.conditions.seed_config_tree(source, tmp_path / "cc-trimmed", "trimmed")
 
-    assert len(list((full / "rules").glob("*.md"))) == 28
+    assert {p.stem for p in (full / "rules").glob("*.md")} == _every_legitimate_rule_name()
     assert {p.stem for p in (trimmed / "rules").glob("*.md")} == set(eval.conditions.KEPT_RULES)
     assert (trimmed / "settings.json").is_file()
 
@@ -90,7 +131,7 @@ def test_seeding_copies_and_leaves_the_source_tree_untouched(tmp_path):
     dest = eval.conditions.seed_config_tree(source, tmp_path / "cc-trimmed", "trimmed")
 
     assert sorted(p.name for p in (source / "rules").iterdir()) == before
-    assert len(before) == 28
+    assert {Path(n).stem for n in before} == _every_legitimate_rule_name()
     assert {p.stem for p in (dest / "rules").glob("*.md")} == set(eval.conditions.KEPT_RULES)
     assert (dest / "settings.json").is_file()
 

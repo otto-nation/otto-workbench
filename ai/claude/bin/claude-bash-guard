@@ -872,7 +872,7 @@ fi
 # neither of which opens a PR.
 re_pr_create='(^|[;&|][[:space:]]*)gh[[:space:]]+pr[[:space:]]+create([[:space:]]|$)'
 if [[ "$stripped" =~ $re_pr_create ]]; then
-  block 'Use pr create instead of gh pr create — it auto-loads the repo PR template. See git-operations.md § PR Creation.'
+  block 'Use pr create instead of gh pr create — it auto-loads the repo PR template. See git-workflow/SKILL.md § PR Creation.'
 fi
 
 # Filing an issue while this branch's self-review still has open findings is a

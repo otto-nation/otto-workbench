@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Agents route heavy shell work through otto-queue (issue 1995, option C1).
-# select-on: ai/registry.yml ai/guidelines/rules/general.md ai/guidelines/rules/subagents.md
+# select-on: ai/registry.yml ai/guidelines/rules/general.md ai/skills/subagents/SKILL.md
 
 setup() {
   load 'test_helper'
@@ -66,7 +66,7 @@ setup() {
 
 @test "subagents do not give pr review a generous job_start timeout" {
   local text
-  text="$(cat "$REPO_ROOT/ai/guidelines/rules/subagents.md")"
+  text="$(cat "$REPO_ROOT/ai/skills/subagents/SKILL.md")"
 
   [[ "$text" == *'timeout_minutes: 0'* ]]
   [[ "$text" != *'generous timeout_minutes'* ]]

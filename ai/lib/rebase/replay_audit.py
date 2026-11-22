@@ -166,6 +166,45 @@ def _changed_paths(cwd: str, old: str, new: str) -> list[str]:
     return [p for p in r.stdout.split("\0") if p] if r.ok else []
 
 
+def _rename_dest(cwd: str, old: str, new: str, path: str) -> str | None:
+    """The new path *path* was renamed to between *old* and *new*, if any."""
+    r = git.client.run(
+        "diff", "--name-status", "--find-renames", old, new, cwd=cwd)
+    if not r.ok:
+        return None
+    for line in r.stdout.splitlines():
+        if not line.startswith("R"):
+            continue
+        parts = line.split("\t")
+        if len(parts) == 3 and parts[1] == path:
+            return parts[2]
+    return None
+
+
+def _survived_as_rename(
+    cwd: str, path: str, audit: rebase.survival.FileAudit, *,
+    base: str, target: str, replayed: str, resolved: str,
+) -> str | None:
+    """The destination *path* was renamed to, when FILE_PRESENCE is that rename.
+
+    Onto (or the replayed commit) renamed *path*; the destination is in the
+    resolution. The same-path audit would otherwise flag a ghost path.
+    """
+    if audit.skipped or not audit.advisory:
+        return None
+    if any(loss.kind is not rebase.survival.LossKind.FILE_PRESENCE for loss in audit.losses):
+        return None
+    if git.client.blob(resolved, path, cwd=cwd) is not None:
+        return None
+    dest = (
+        _rename_dest(cwd, base, target, path)
+        or _rename_dest(cwd, base, replayed, path)
+    )
+    if dest is None or git.client.blob(resolved, dest, cwd=cwd) is None:
+        return None
+    return dest
+
+
 def _exemption(cwd: str, path: str, texts: Sequence[str | None]) -> str:
     """Why *path* is not audited, or empty when it is."""
     if any(text is not None and "\0" in text for text in texts):
@@ -191,10 +230,19 @@ def audit_paths(
             audits.append(rebase.survival.FileAudit(path, skipped=skipped))
             continue
         base_text, target_text, replayed_text, resolved_text = texts
-        audits.append(rebase.survival.audit(
+        audit = rebase.survival.audit(
             path, base=base_text, target=target_text,
             replayed=replayed_text, resolved=resolved_text,
-        ))
+        )
+        dest = _survived_as_rename(
+            cwd, path, audit,
+            base=base, target=target, replayed=replayed, resolved=resolved,
+        )
+        if dest is not None:
+            audits.append(rebase.survival.FileAudit(
+                path, skipped=f"renamed to {dest}"))
+            continue
+        audits.append(audit)
     return tuple(audits)
 
 

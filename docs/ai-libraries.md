@@ -4921,7 +4921,7 @@ Host free memory (`MemAvailable`) and cgroup headroom are sampled apart.
 `room` spends `batch.mem_reserve` and the job estimate only against the host
 figure. A slice cap *is* the cap: requiring `cgroup_free >= estimate` on a
 1.5G user slice never admits, because the worker already lives there.
-`cgroup_free` stays on the sample for status. Each cgroup's limit is the
+Each cgroup's limit is the
 tighter of its `memory.max` and `memory.high`. A caller may name the chain to
 read (`read_host(cgroup=)`): the queue worker reads `workbench.slice`'s, found
 by `slice_cgroup`. Reading only `/sys/fs/cgroup/memory.max` saw nothing on a

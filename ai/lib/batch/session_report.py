@@ -45,7 +45,9 @@ from pathlib import Path
 import batch.plan
 import batch.publish
 import git.client
+import git.topology
 import pr.needs_person
+import rebase.inspect
 import review.deferred_issue
 import review.finding_issue
 import review.issue
@@ -186,6 +188,7 @@ def _session(run: Run, item: Item, closeout: CloseoutFn, tree: TreeFn | None) ->
     _refresh_stored(item, findings, planned)
     if planned is not None:
         _apply_plan(findings, planned)
+    _refresh_live(item, findings)
     after = _after(run, item)
     severity = severity_for(findings)
     checkout = _checkout(item)
@@ -241,6 +244,51 @@ def _apply_plan(findings: list[Finding], planned: _Planned) -> None:
         if result.commits:
             data["commits"] = list(result.commits)
         findings.append(_derived(FindingReason.PUSH_REFUSED, result.detail, data))
+
+
+def _refresh_live(item: Item, findings: list[Finding]) -> None:
+    """Drop stored findings whose local condition is gone.
+
+    The builder never writes. Closeout is refreshed in `_session` from
+    `CloseoutDebt`; rebase/push findings are `_refresh_stored`.
+    """
+    _drop_clean_dirty(item, findings)
+    state = batch.plan.pr_state(item.repo_dir, item.branch)
+    if state is None:
+        return
+    if not pr.needs_person.owed_threads(state):
+        _drop(findings, FindingReason.THREADS_NEED_HUMAN)
+    run = state.ci.latest_run()
+    if run is not None and run.conclusion == "success" and not run.failures:
+        _drop(findings, FindingReason.CI_FAILING)
+
+
+def _drop_clean_dirty(item: Item, findings: list[Finding]) -> None:
+    if not _has(findings, FindingReason.DIRTY_WORKTREE):
+        return
+    wt = _dirty_worktree_path(item, findings)
+    if not wt:
+        return
+    if rebase.inspect.rebase_in_progress(wt):
+        return
+    status = git.client.run("status", "--porcelain", cwd=wt)
+    if status.ok and not status.stdout.strip():
+        _drop(findings, FindingReason.DIRTY_WORKTREE)
+
+
+def _dirty_worktree_path(item: Item, findings: list[Finding]) -> str | None:
+    for finding in findings:
+        path = finding.data.get("path") if finding.reason is FindingReason.DIRTY_WORKTREE else None
+        if path and Path(str(path)).is_dir():
+            return str(path)
+    if item.worktree and Path(item.worktree).is_dir():
+        return item.worktree
+    repo = item.repo_dir
+    if repo and Path(repo).is_dir() and item.branch:
+        found = git.topology.find_worktree_for_branch(item.branch, cwd=repo)
+        if found is not None:
+            return str(found)
+    return None
 
 
 def _refresh_stored(item: Item, findings: list[Finding], planned: _Planned | None) -> None:

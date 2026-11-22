@@ -88,6 +88,16 @@ _seed_settings() {
   [ "$output" = '{"ANTHROPIC_DEFAULT_OPUS_MODEL":"claude-opus-5-5"}' ]
 }
 
+@test "a tier named by an alias is left unpinned and a stale alias pin is withdrawn" {
+  _seed_settings '{"env":{"ANTHROPIC_DEFAULT_OPUS_MODEL":"sonnet","ANTHROPIC_DEFAULT_HAIKU_MODEL":"sonnet","OPERATOR_OWN_VAR":"keep-me"}}'
+  _seed_config 'models:' '  deep: sonnet' '  light: claude-haiku-5-5'
+  run _sync_run "$HOME_DIR" "$STATE_DIR"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"models.deep: sonnet is a Claude alias"* ]]
+  run jq -c '.env' "$SETTINGS_OUT"
+  [ "$output" = '{"OPERATOR_OWN_VAR":"keep-me","ANTHROPIC_DEFAULT_HAIKU_MODEL":"claude-haiku-5-5"}' ]
+}
+
 @test "a config naming an unset tier leaves the model settings as they were" {
   _seed_settings '{"model":"claude-opus-5-5","env":{"ANTHROPIC_DEFAULT_OPUS_MODEL":"claude-opus-5-5"}}'
   _seed_config 'models:' '  session: standard'

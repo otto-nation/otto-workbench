@@ -80,8 +80,12 @@ Claude Code:
 
 - ``ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`` take the deep, standard and
   light tiers, so the CLI's own ``opus``/``sonnet``/``haiku`` aliases — and the
-  subagents and ``opusplan`` that use them — follow the tiers.
-- ``model`` and ``effortLevel`` take ``models.session``.
+  subagents and ``opusplan`` that use them — follow the tiers. They take a
+  model id, never an alias: Claude Code resolves ``opus``/``sonnet``/``haiku``
+  for ``--model`` and ``model`` but sends an env value to the API as written, so
+  a tier written as an alias leaves its variable unset and is reported, while
+  an agent that names the tier still runs the alias the CLI resolves.
+- ``model`` and ``effortLevel`` take ``models.session``, which may be an alias.
 - An agent declaring ``tier:`` in its source frontmatter is installed with
   that tier's model and level as its ``model:`` and ``effort:``, and with
   ``model: inherit`` when the tier names no Claude model (``tiers``). A tier

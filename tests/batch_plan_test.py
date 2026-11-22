@@ -494,3 +494,19 @@ def test_a_comments_only_plan_reads_no_refs_and_judges_only_comments(monkeypatch
     assert row.rebase_behind is None
     [full] = batch.plan.build_plan(["/repos/a"]).rows
     assert set(full.needs) == set(batch.model.STEP_ORDER) and touched
+
+
+def test_merge_state_does_not_retry_graphql(monkeypatch):
+    calls = []
+
+    class R:
+        ok, stdout, stderr = False, "", "timed out after 30s"
+
+    def fake(*args, **kwargs):
+        calls.append(kwargs)
+        return R()
+
+    monkeypatch.setattr(batch.plan.gh.client, "graphql", fake)
+    assert batch.plan._merge_state("o/a", 7) == "UNKNOWN"
+    assert len(calls) == 1
+    assert calls[0].get("retry") is False

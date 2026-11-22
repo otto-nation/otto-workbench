@@ -127,9 +127,13 @@ def test_list_active_when_a_job_is_running_not_when_a_driver_lock_is_held(monkey
     assert runs["idle"]["active"] is False
 
 
-def test_list_not_active_when_jobs_are_queued_or_done(monkeypatch):
+def test_list_active_when_jobs_are_queued(monkeypatch):
     _minimal_run("r1", jobs=[_job(1)])
     _fake_states(monkeypatch, {1: EntryState.QUEUED})
-    assert cli.pr_batch_views.run_list()["runs"][0]["active"] is False
+    assert cli.pr_batch_views.run_list()["runs"][0]["active"] is True
+
+
+def test_list_not_active_when_jobs_are_done(monkeypatch):
+    _minimal_run("r1", jobs=[_job(1)])
     _fake_states(monkeypatch, {1: EntryState.DONE})
     assert cli.pr_batch_views.run_list()["runs"][0]["active"] is False

@@ -756,12 +756,28 @@ def _graphql(query: str, variables: dict) -> dict:
 
 
 def _merge_state(repo: str, number: int) -> str:
-    """GitHub's merge state for one PR, or UNKNOWN when GitHub cannot say."""
+    """GitHub's merge state for one PR, or UNKNOWN when GitHub cannot say.
+
+    Timeouts are not retried: a loaded host turns one 30s NETWORK bound into
+    ~96s per PR, and the fallback is already UNKNOWN.
+    """
     owner, name = repo.split("/", 1)
+    r = gh.client.graphql(
+        _MERGE_STATE, variables={"owner": owner, "name": name, "number": number},
+        retry=False)
+    if not r.ok:
+        detail = r.stderr.strip() or r.stdout.strip() or "query failed"
+        core.log.warn(
+            f"{repo}#{number}: merge state unavailable "
+            f"(GitHub query failed: {detail}); rebase need unknown")
+        return "UNKNOWN"
     try:
-        data = _graphql(_MERGE_STATE, {"owner": owner, "name": name, "number": number})
-    except PlanError as exc:
-        core.log.warn(f"{repo}#{number}: merge state unavailable ({exc}); rebase need unknown")
+        data = json.loads(r.stdout)["data"]
+        if not isinstance(data, dict):
+            raise TypeError("data is not an object")
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        core.log.warn(
+            f"{repo}#{number}: merge state unavailable ({exc}); rebase need unknown")
         return "UNKNOWN"
     pr = (data.get("repository") or {}).get("pullRequest") or {}
     return pr.get("mergeStateStatus") or "UNKNOWN"

@@ -50,7 +50,9 @@ def test_read_host_parses_meminfo_and_psi(tmp_path):
 
 
 def test_read_host_takes_the_tighter_cgroup_limit(tmp_path):
-    assert otto_queue.admission.read_host(_proc(tmp_path, cg_max=3 * GiB, cg_cur=2 * GiB)).mem_available == GiB
+    sample = otto_queue.admission.read_host(_proc(tmp_path, cg_max=3 * GiB, cg_cur=2 * GiB))
+    assert sample.mem_available == 7_000_000 * 1024
+    assert sample.cgroup_free == GiB
 
 
 def test_read_host_without_psi_does_not_support_admission(tmp_path):
@@ -80,7 +82,9 @@ def test_read_host_reads_the_cap_on_its_own_nested_user_slice(tmp_path):
     _self_cgroup(root, USER_SCOPE)
     _cgroup(root, "user.slice/user-1000.slice", limit=int(6.5 * GiB), current=int(5.4 * GiB))
     _cgroup(root, USER_SCOPE.lstrip("/"), current=GiB)
-    assert otto_queue.admission.read_host(root).mem_available == int(6.5 * GiB) - int(5.4 * GiB)
+    sample = otto_queue.admission.read_host(root)
+    assert sample.mem_available == 15_000_000 * 1024
+    assert sample.cgroup_free == int(6.5 * GiB) - int(5.4 * GiB)
 
 
 def test_read_host_takes_the_tightest_ancestor_not_only_the_nearest(tmp_path):
@@ -88,14 +92,18 @@ def test_read_host_takes_the_tightest_ancestor_not_only_the_nearest(tmp_path):
     _self_cgroup(root, "/workbench.slice/otto-queue-7.service")
     _cgroup(root, "workbench.slice/otto-queue-7.service", limit=4 * GiB, current=GiB)
     _cgroup(root, "workbench.slice", limit=2 * GiB, current=int(1.5 * GiB))
-    assert otto_queue.admission.read_host(root).mem_available == 2 * GiB - int(1.5 * GiB)
+    sample = otto_queue.admission.read_host(root)
+    assert sample.mem_available == 7_000_000 * 1024
+    assert sample.cgroup_free == 2 * GiB - int(1.5 * GiB)
 
 
 # passes-at-base: a process in the root cgroup must keep reading the root files
 def test_read_host_in_the_root_cgroup_reads_the_root_files(tmp_path):
     root = _proc(tmp_path, cg_max=3 * GiB, cg_cur=2 * GiB)
     _self_cgroup(root, "/")
-    assert otto_queue.admission.read_host(root).mem_available == GiB
+    sample = otto_queue.admission.read_host(root)
+    assert sample.mem_available == 7_000_000 * 1024
+    assert sample.cgroup_free == GiB
 
 
 # passes-at-base: a cgroup with no limit anywhere leaves MemAvailable in charge
@@ -103,7 +111,9 @@ def test_read_host_with_no_limit_on_the_chain_uses_meminfo(tmp_path):
     root = _proc(tmp_path, mem_kb=1_000_000)
     _self_cgroup(root, USER_SCOPE)
     _cgroup(root, USER_SCOPE.lstrip("/"), current=GiB)
-    assert otto_queue.admission.read_host(root).mem_available == 1_000_000 * 1024
+    sample = otto_queue.admission.read_host(root)
+    assert sample.mem_available == 1_000_000 * 1024
+    assert sample.cgroup_free is None
 
 
 WORKBENCH_SLICE = "user.slice/user-1000.slice/user@1000.service/workbench.slice"
@@ -114,7 +124,9 @@ def test_read_host_admits_below_memory_high_not_only_memory_max(tmp_path):
     _self_cgroup(root, "/workbench.slice/otto-queue-7-1.scope")
     _cgroup(root, "workbench.slice", limit=int(2.5 * GiB), current=int(1.5 * GiB))
     (root / "sys" / "fs" / "cgroup" / "workbench.slice" / "memory.high").write_text(f"{2 * GiB}\n")
-    assert otto_queue.admission.read_host(root).mem_available == 2 * GiB - int(1.5 * GiB)
+    sample = otto_queue.admission.read_host(root)
+    assert sample.mem_available == 7_000_000 * 1024
+    assert sample.cgroup_free == 2 * GiB - int(1.5 * GiB)
 
 
 def test_read_host_reads_the_named_cgroup_chain_rather_than_its_own(tmp_path):
@@ -122,7 +134,8 @@ def test_read_host_reads_the_named_cgroup_chain_rather_than_its_own(tmp_path):
     _self_cgroup(root, USER_SCOPE)
     _cgroup(root, WORKBENCH_SLICE, limit=int(2.5 * GiB), current=2 * GiB)
     sample = otto_queue.admission.read_host(root, cgroup=PurePosixPath("/" + WORKBENCH_SLICE))
-    assert sample.mem_available == int(2.5 * GiB) - 2 * GiB
+    assert sample.mem_available == 7_000_000 * 1024
+    assert sample.cgroup_free == int(2.5 * GiB) - 2 * GiB
 
 
 def test_slice_cgroup_is_a_child_of_the_user_manager(tmp_path):
@@ -173,6 +186,38 @@ def test_room_checks_only_the_metrics_a_sample_has():
     short = otto_queue.admission.HostSample(2 * GiB, None, None)
     assert not otto_queue.admission.room(short, estimate=GiB, cfg=CFG).admit
     assert otto_queue.admission.room(otto_queue.admission.HostSample(None, None, None), estimate=GiB, cfg=CFG).admit
+
+
+def _slice_host(root, *, mem_kb, current=0):
+    """Host + workbench.slice as on agent-maximum: 2G MemoryHigh, named-cgroup read."""
+    root = _proc(root, mem_kb=mem_kb)
+    _self_cgroup(root, USER_SCOPE)
+    _cgroup(root, WORKBENCH_SLICE, limit=int(2.5 * GiB), current=current)
+    (root / "sys" / "fs" / "cgroup" / WORKBENCH_SLICE / "memory.high").write_text(f"{2 * GiB}\n")
+    return otto_queue.admission.read_host(root, cgroup=PurePosixPath("/" + WORKBENCH_SLICE))
+
+
+def test_room_does_not_spend_host_reserve_inside_the_slice(tmp_path):
+    sample = _slice_host(tmp_path, mem_kb=8 * 1024 * 1024)
+    verdict = otto_queue.admission.room(
+        sample, estimate=otto_queue.admission.QUEUE_HEAVY_ESTIMATE, cfg=CFG)
+    assert verdict.admit, verdict.reason
+
+
+def test_room_refuses_when_the_slice_cannot_fit_the_estimate(tmp_path):
+    sample = _slice_host(tmp_path, mem_kb=8 * 1024 * 1024, current=int(1.8 * GiB))
+    verdict = otto_queue.admission.room(
+        sample, estimate=otto_queue.admission.QUEUE_HEAVY_ESTIMATE, cfg=CFG)
+    assert not verdict.admit
+    assert "cgroup" in verdict.reason
+
+
+def test_room_still_requires_host_reserve_beside_the_slice(tmp_path):
+    sample = _slice_host(tmp_path, mem_kb=int(2.5 * 1024 * 1024))
+    verdict = otto_queue.admission.room(
+        sample, estimate=otto_queue.admission.QUEUE_HEAVY_ESTIMATE, cfg=CFG)
+    assert not verdict.admit
+    assert verdict.reason.startswith("waiting for memory:")
 
 
 @pytest.mark.parametrize("platform,limit", [("linux", 2), ("darwin", 4), ("freebsd14", 2)])

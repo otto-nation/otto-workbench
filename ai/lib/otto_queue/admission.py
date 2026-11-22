@@ -6,14 +6,15 @@ alone, heavy work on `room`. The class limits are
 `class_limit`: heavy entries per platform (`HEAVY_LIMITS`), light ones every
 core but one.
 
-Free memory is the smaller of `MemAvailable` and the tightest headroom on the
-chain from this process's own cgroup (`/proc/self/cgroup`) up to the hierarchy
-root. Each cgroup's limit is the tighter of its `memory.max` and `memory.high`.
-A caller may name the chain to read (`read_host(cgroup=)`): the queue worker
-reads `workbench.slice`'s, found by `slice_cgroup`. Reading only
-`/sys/fs/cgroup/memory.max` saw nothing on a host whose cap sits on a nested
-user slice: the root cgroup has no limit file there, so a 6.5 GiB `MemoryMax`
-was invisible to admission.
+Host free memory (`MemAvailable`) and cgroup headroom are sampled apart.
+`room` spends `batch.mem_reserve` only against the host figure: a slice cap
+*is* the interactive reserve, so subtracting the reserve from it again made
+spare 0 on a 2G `workbench.slice`. Each cgroup's limit is the
+tighter of its `memory.max` and `memory.high`. A caller may name the chain to
+read (`read_host(cgroup=)`): the queue worker reads `workbench.slice`'s, found
+by `slice_cgroup`. Reading only `/sys/fs/cgroup/memory.max` saw nothing on a
+host whose cap sits on a nested user slice: the root cgroup has no limit file
+there, so a 6.5 GiB `MemoryMax` was invisible to admission.
 
 On macOS free memory comes from `vm_stat` (free, inactive and speculative
 pages); there is no pressure reading there.
@@ -63,6 +64,7 @@ class HostSample:
     mem_available: int | None
     cpu_some_avg10: float | None
     mem_some_avg10: float | None
+    cgroup_free: int | None = None
 
     @property
     def supports_admission(self) -> bool:
@@ -144,12 +146,11 @@ def read_host(root: Path = Path("/"), *, cgroup: PurePosixPath | None = None) ->
     if sys.platform == "darwin" and root == Path("/"):
         # macOS has no /proc and no PSI: free memory from vm_stat, pressure unknown.
         return HostSample(_vm_stat_available(_vm_stat()), None, None)
-    frees = [v for v in (_meminfo_available(read_proc(root / "proc/meminfo")), _cgroup_free(root, cgroup))
-             if v is not None]
     return HostSample(
-        mem_available=min(frees) if frees else None,
+        mem_available=_meminfo_available(read_proc(root / "proc/meminfo")),
         cpu_some_avg10=_psi_some_avg10(read_proc(root / "proc/pressure/cpu")),
         mem_some_avg10=_psi_some_avg10(read_proc(root / "proc/pressure/memory")),
+        cgroup_free=_cgroup_free(root, cgroup),
     )
 
 
@@ -173,8 +174,13 @@ class Verdict:
 
 
 def room(sample: HostSample, *, estimate: int, cfg: BatchConfig) -> Verdict:
-    """Whether the host has *estimate* bytes beyond `batch.mem_reserve` and no CPU or
-    memory pressure at its limit. A metric the sample lacks is not checked.
+    """Whether the host has *estimate* bytes beyond `batch.mem_reserve`, the
+    cgroup has *estimate* of headroom, and CPU/memory pressure are under limit.
+    A metric the sample lacks is not checked.
+
+    `mem_reserve` is host-only. Cgroup headroom is already the cap; folding it
+    into `mem_available` before subtracting the reserve made a 2G slice report
+    spare 0 for a 1.5G job.
 
     The one owner of "is there room", for a batch step (`decide`) and a queue
     entry (`admit_entry`) alike.
@@ -190,6 +196,9 @@ def room(sample: HostSample, *, estimate: int, cfg: BatchConfig) -> Verdict:
         if spare < estimate:
             return Verdict(False, f"waiting for memory: {max(spare, 0) / GB:.1f} of "
                                   f"{estimate / GB:.1f} GB")
+    if sample.cgroup_free is not None and sample.cgroup_free < estimate:
+        return Verdict(False, f"waiting for cgroup: {sample.cgroup_free / GB:.1f} of "
+                              f"{estimate / GB:.1f} GB")
     if sample.cpu_some_avg10 is not None and sample.cpu_some_avg10 >= cfg.cpu_pressure_max:
         return Verdict(False, f"CPU pressure {sample.cpu_some_avg10:g}% "
                               f">= {cfg.cpu_pressure_max:g}%")

@@ -191,19 +191,19 @@ def _claude(tiers: dict[Tier, ModelRef], session: ModelRef | None) -> ClaudeMode
         ref = tiers.get(tier)
         if ref is None:
             continue
-        if _claude_servable(ref):
-            # The tier keeps an alias as the model an agent runs by name, which the
-            # CLI resolves; only the env pin needs an id.
-            claude_tiers[tier] = ClaudeTier(model=ref.id, effort=agent.backend_claude.effort(ref.level))
-            if _is_claude_alias(ref):
-                skipped.append(
-                    f"models.{tier.value}: {ref.id} is a Claude alias, which Claude Code sends to the API "
-                    f"as written, so {key} is left unset — name a full claude-… model id"
-                )
-            else:
-                env[key] = ref.id
-        else:
+        if not _claude_servable(ref):
             skipped.append(f"models.{tier.value}: {ref.spec()} is not a Claude model, so {key} is left unset")
+            continue
+        # The tier keeps an alias as the model an agent runs by name, which the
+        # CLI resolves; only the env pin needs an id.
+        claude_tiers[tier] = ClaudeTier(model=ref.id, effort=agent.backend_claude.effort(ref.level))
+        if _is_claude_alias(ref):
+            skipped.append(
+                f"models.{tier.value}: {ref.id} is a Claude alias, which Claude Code sends to the API "
+                f"as written, so {key} is left unset — name a full claude-… model id"
+            )
+            continue
+        env[key] = ref.id
     model = effort = None
     if session is not None and _claude_servable(session):
         model = session.id

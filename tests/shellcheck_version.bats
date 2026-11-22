@@ -108,7 +108,7 @@ _pinned() {
   # And the install has to come before the lint step that depends on it.
   local install_at lint_at
   install_at="$(printf '%s\n' "$job" | grep -n "install-shellcheck" | head -1 | cut -d: -f1)"
-  lint_at="$(printf '%s\n' "$job" | grep -n "list_shell_scripts" | head -1 | cut -d: -f1)"
+  lint_at="$(printf '%s\n' "$job" | grep -n "lint_shell_scripts" | head -1 | cut -d: -f1)"
   [[ -n "$install_at" && -n "$lint_at" ]]
   [[ "$install_at" -lt "$lint_at" ]]
 }

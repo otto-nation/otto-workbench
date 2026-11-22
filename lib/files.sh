@@ -314,6 +314,18 @@ list_shell_scripts() {
     | xargs awk -v re="$shebang_re" 'FNR == 1 && $0 ~ re { print FILENAME }'
 }
 
+# lint_shell_scripts ROOT — ShellCheck every script list_shell_scripts prints,
+# in batches of 20. -n 20 is on BSD and GNU xargs; do not add GNU-only -r.
+#
+# One unbatched xargs packed the whole tree into a single Haskell process
+# (~400 MB, 589 files) and put the homelab agent user in D-state.
+# Upgrade trigger: if a batch of 20 still peaks above ~100 MB RSS on pre-push,
+# lower the batch size.
+lint_shell_scripts() {
+  local root="$1"
+  list_shell_scripts "$root" | xargs -n 20 shellcheck --severity=warning
+}
+
 # resolve_layers BASE_DIR USER_DIR GLOB RESULT_NAMEREF
 # Merges two directory layers into an associative array: basename -> source_path.
 # User dir wins for same-named files. A .disabled sentinel in user dir suppresses both.

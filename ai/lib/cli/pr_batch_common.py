@@ -137,9 +137,9 @@ def submit_jobs(run, pr_bin: str) -> int:
 
 
 def is_active(run_id: str) -> bool:
-    """True when any indexed job is RUNNING in otto-queue (not merely queued)."""
+    """True when any indexed job is still live in otto-queue (queued or running)."""
     import batch.queue_entries
-    from otto_queue.model import EntryState
+    from otto_queue.model import LIVE_STATES
 
     try:
         run = batch.store.load(run_id)
@@ -149,4 +149,4 @@ def is_active(run_id: str) -> bool:
     if not ids:
         return False
     states = batch.queue_entries.QueueEntries().states(ids)
-    return any(states.get(entry_id) is EntryState.RUNNING for entry_id in ids)
+    return any(states.get(entry_id) in LIVE_STATES for entry_id in ids)

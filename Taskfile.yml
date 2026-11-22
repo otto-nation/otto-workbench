@@ -57,10 +57,10 @@ tasks:
     silent: true
     cmds:
       # bash -c: go-task's shell is not bash, and lib/ui.sh only loads the
-      # file helpers under bash. list_shell_scripts is the same selection the
-      # pre-push hook uses — line-1 shebangs only.
+      # file helpers under bash. lint_shell_scripts is the same batched
+      # selection the pre-push hook and CI job use — line-1 shebangs only.
       - |
-        bash -c '. lib/ui.sh && list_shell_scripts . | xargs shellcheck --severity=warning'
+        bash -c '. lib/ui.sh && lint_shell_scripts .'
         echo "✓ ShellCheck passed"
 
   wt:cleanup:

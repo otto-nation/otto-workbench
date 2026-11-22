@@ -315,9 +315,10 @@ list_shell_scripts() {
 }
 
 # lint_shell_scripts ROOT — ShellCheck every script list_shell_scripts prints,
-# in batches of 20. One unbatched xargs packed the whole tree into a single
-# Haskell process (~400 MB, 589 files) and put the homelab agent user in D-state.
-# -n 20 is on BSD and GNU xargs; do not add GNU-only -r.
+# in batches of 20. -n 20 is on BSD and GNU xargs; do not add GNU-only -r.
+#
+# One unbatched xargs packed the whole tree into a single Haskell process
+# (~400 MB, 589 files) and put the homelab agent user in D-state.
 # Upgrade trigger: if a batch of 20 still peaks above ~100 MB RSS on pre-push,
 # lower the batch size.
 lint_shell_scripts() {

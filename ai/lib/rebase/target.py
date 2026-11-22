@@ -132,6 +132,19 @@ def local_vs_remote(cwd: str, branch: str, remote: str = "") -> RefDivergence:
     return RefDivergence(ahead=int(parts[1]), behind=int(parts[0]), comparable=True)
 
 
+def same_content(cwd: str, branch: str) -> bool:
+    """Whether local *branch* and ``origin/{branch}`` point at identical trees.
+
+    False when either tree cannot be read, so an unreadable ref keeps the
+    refusal rather than waving a branch through on a guess.
+    """
+    local, remote = (
+        git.client.out("rev-parse", "--verify", "--quiet", f"{ref}^{{tree}}", cwd=cwd)
+        for ref in (f"refs/heads/{branch}", f"origin/{branch}")
+    )
+    return bool(local) and local == remote
+
+
 def unpushed_subjects(cwd: str, branch: str) -> list[str]:
     """Subjects of commits on local *branch* that origin's copy does not have."""
     return git.client.lines(
@@ -179,12 +192,26 @@ def checkout_target_branch(
     refused rather than resolved: replaying a stale local branch over a remote
     that was force-pushed and then force-pushing the result loses the same work
     in the other direction.
+
+    Divergence is refused for the content origin holds that the local ref
+    lacks, not for the history differing. A branch whose tree equals origin's is
+    a rewrite of it — the documented squash (``reset --soft`` to the merge-base,
+    then a fresh commit) lands here — and nothing on the remote is lost by
+    replaying it and pushing under a lease, so it is kept as it stands.
     """
     from_origin = ("checkout", "-B", ctx.branch, f"origin/{ctx.branch}")
     if not rebase_inspect.ref_exists(cwd, f"refs/heads/{ctx.branch}"):
         return run_checkout(cwd, ctx, from_origin, trail=trail)
 
     div = local_vs_remote(cwd, ctx.branch)
+    if div.diverged and same_content(cwd, ctx.branch):
+        tdecision(
+            trail, "branch_checkout",
+            f"keeping {ctx.branch}: a rewrite of origin/{ctx.branch}",
+            reason=f"holds {div.ahead} commit(s) origin lacks and lacks {div.behind} "
+                   f"origin has, but the trees are identical, so no content is lost",
+        )
+        return run_checkout(cwd, ctx, ("checkout", ctx.branch), trail=trail)
     if div.diverged:
         return refuse_diverged(cwd, ctx, div, trail=trail)
 

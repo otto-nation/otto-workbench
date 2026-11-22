@@ -286,7 +286,7 @@ _pass
 # ── ShellCheck ───────────────────────────────────────────────────────────────
 
 _step "Running ShellCheck"
-if _sc_output=$(list_shell_scripts "$REPO_ROOT" | xargs shellcheck --severity=warning 2>&1); then
+if _sc_output=$(lint_shell_scripts "$REPO_ROOT" 2>&1); then
   _pass
 else
   _fail "$_sc_output"

@@ -90,3 +90,38 @@ teardown() {
   [ "$status" -eq 0 ]
   [[ "$output" == "$ROOT/ours.sh" ]]
 }
+
+@test "lint_shell_scripts: batches shellcheck at 20 files" {
+  local i
+  for i in $(seq 1 21); do
+    printf '#!/usr/bin/env bash\ntrue\n' > "$ROOT/s$i.sh"
+  done
+  mkdir -p "$TMPDIR/bin"
+  # Count path args only: --severity=warning is already on the command line, so
+  # a 20-file batch is $# 21 if we counted flags.
+  printf '%s\n' '#!/usr/bin/env bash' 'n=0' 'for a in "$@"; do [[ "$a" == -* ]] || n=$((n+1)); done' 'echo "$n" >> "$SC_LOG"' 'exit 0' > "$TMPDIR/bin/shellcheck"
+  chmod +x "$TMPDIR/bin/shellcheck"
+  SC_LOG="$TMPDIR/sc.log"
+  export SC_LOG
+  PATH="$TMPDIR/bin:$PATH" run lint_shell_scripts "$ROOT"
+  [ "$status" -eq 0 ]
+  [ "$(wc -l < "$SC_LOG" | tr -d ' ')" -eq 2 ]
+  grep -qx 20 "$SC_LOG"
+  grep -qx 1 "$SC_LOG"
+}
+
+@test "lint_shell_scripts: a failing batch fails the helper" {
+  printf '#!/usr/bin/env bash\ntrue\n' > "$ROOT/ok.sh"
+  mkdir -p "$TMPDIR/bin"
+  printf '%s\n' '#!/usr/bin/env bash' 'exit 1' > "$TMPDIR/bin/shellcheck"
+  chmod +x "$TMPDIR/bin/shellcheck"
+  PATH="$TMPDIR/bin:$PATH" run lint_shell_scripts "$ROOT"
+  [ "$status" -ne 0 ]
+}
+
+@test "pre-push ShellCheck goes through lint_shell_scripts" {
+  run grep -nE 'xargs shellcheck' "$REPO_ROOT/git/hooks/pre-push-workbench"
+  [ "$status" -ne 0 ]
+  run grep -n 'lint_shell_scripts' "$REPO_ROOT/git/hooks/pre-push-workbench"
+  [ "$status" -eq 0 ]
+}

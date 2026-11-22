@@ -31,7 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # bullet, which is what made the old scan fall through to the filename. Named
 # rather than discovered so the test says which files the defect was found on;
 # `test_the_named_files_are_the_bulletless_ones` holds the naming honest.
-PROSE_RULE_FILES = ("artifacts.md", "self-review.md")
+PROSE_RULE_FILES = ("artifacts.md", "self-review/SKILL.md")
 
 # A comment per prose rule file, written the way a reviewer writes one, each
 # about a subject only that file covers.
@@ -39,7 +39,7 @@ PROSE_COMMENTS = (
     (
         "Re-run the self review because HEAD moved after the findings were "
         "fixed, so the review file names an earlier commit than the branch.",
-        "self-review.md",
+        "self-review/SKILL.md",
     ),
     (
         "Read the project anatomy file before exploring the codebase rather "

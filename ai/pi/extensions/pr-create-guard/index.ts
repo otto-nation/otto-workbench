@@ -11,7 +11,7 @@
  *
  * Claude Code gets the same rule from ai/claude/bin/claude-bash-guard; that
  * hook does not run under Pi. The two enforce one rule written down in
- * git-operations.md § PR Creation.
+ * git-workflow/SKILL.md § PR Creation.
  *
  * The predicate lives in ./detect.ts so it can be tested without the SDK — see
  * that file's header, which also records why this rule is shared where most of
@@ -39,7 +39,7 @@ export default function (pi: ExtensionAPI) {
         "each --closes, assigns the PR, and pushes the branch first. A bare gh pr create " +
         "opens a PR with none of those. Pass --draft so it goes through review, and " +
         "--repo-dir <path> when the working directory is not the target repo. " +
-        "See git-operations.md § PR Creation.",
+        "See git-workflow/SKILL.md § PR Creation.",
     };
   });
 }

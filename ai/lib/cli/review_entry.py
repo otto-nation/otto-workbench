@@ -494,7 +494,7 @@ def _run_self_review(args, argv: list[str],
     # for it here rather than getting it from the context. It is wanted but not
     # needed: when the branch already has an open PR, the number is what fetches
     # the reply threads that keep a re-review from repeating findings already
-    # answered there — the `--self --fix --push` flow in self-review.md. When
+    # answered there — the `--self --fix --push` flow in the self-review skill. When
     # GitHub cannot be reached the lookup yields nothing and the run proceeds as
     # a pre-PR self-review, which is the whole point of resolving locally first.
     #

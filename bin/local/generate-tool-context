@@ -29,6 +29,9 @@
 #
 # Each tool entry has a `visibility` field controlling AI rendering:
 #   visibility: full   — full entry (heading, description, when_to_use, usage)
+#                        add `usage_mode: help` to render usage as the bare command
+#                        plus "run `<tool> --help` for flags", and subcommands as one
+#                        line of names (for CLIs whose flag list is large)
 #   visibility: brief  — compact one-liner
 #   visibility: hidden — omitted from AI context
 #
@@ -187,18 +190,48 @@ _render_subcommands() {
   done
 }
 
+# _render_subcommand_names FILE INDEX — a tool's commands[] as one line of
+# first words, in order, each once: `config set KEY VALUE` and `config get KEY`
+# are both `config`. Descriptions and argument shapes are `--help`'s.
+_render_subcommand_names() {
+  local file="$1" i="$2"
+  local cmd_count cmd_i cmd_name word names=()
+  cmd_count=$(reg_len "$file" tools "$i" commands)
+  [[ "$cmd_count" -gt 0 ]] || return 0
+  for (( cmd_i=0; cmd_i<cmd_count; cmd_i++ )); do
+    cmd_name=$(reg_get "$file" tools "$i" commands "$cmd_i" name)
+    word="${cmd_name%% *}"
+    [[ " ${names[*]:-} " == *" \`$word\` "* ]] && continue
+    names+=("\`$word\`")
+  done
+  printf -- '- **Subcommands**: %s\n' "$(_join ', ' "${names[@]}")"
+}
+
+# An entry with `usage_mode: help` does not carry its flag list into the
+# always-loaded context. What stays is the name, the description and When to
+# use, which is what a session needs to pick the tool; the exhaustive flags
+# cost thousands of characters on every session start and are one
+# `<tool> --help` away, where they are authoritative. The drift the usage line
+# guarded against — a tool agents are never told exists — is still closed,
+# because the entry itself is generated from the registry.
 _tool_md_entry() {
   local name="$1" description="$2" when_to_use="$3" usage="$4"
   local file="${6:-}" index="${7:-}"
+  printf '\n### %s\n' "$name"
+  printf '%s\n' "$description"
+  printf -- '- **When to use**: %s\n' "$when_to_use"
+  if [[ -n "$file" && "$(reg_get "$file" tools "$index" usage_mode)" == "help" ]]; then
+    # shellcheck disable=SC2016  # backticks are markdown literals
+    printf -- '- **Usage**: `%s` — run `%s --help` for flags\n' "$name" "$name"
+    _render_subcommand_names "$file" "$index"
+    return 0
+  fi
   # An entry with a `parser:` has its usage rendered from that parser, so the
   # line agents read cannot advertise less than the CLI accepts. A render that
   # fails stops the run: a missing usage line is the drift this replaces.
   if [[ -n "$file" && -n "$(reg_get "$file" tools "$index" parser)" ]]; then
     usage="$(REGISTRY_ROOT="${REGISTRY_SCAN_DIR:-$REPO_ROOT}" "$REPO_ROOT/bin/local/generate-cli-reference" --tool "$name" --emit usage)" || return 1
   fi
-  printf '\n### %s\n' "$name"
-  printf '%s\n' "$description"
-  printf -- '- **When to use**: %s\n' "$when_to_use"
   if [[ -z "$usage" || "$usage" == "null" ]]; then
     # >&2 needed: warn() writes to stdout; without redirect it leaks into $(_iter_tools_by_visibility ...)
     warn "generate-tool-context: '$name' has visibility: full but no usage field" >&2

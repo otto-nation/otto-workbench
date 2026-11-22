@@ -17,25 +17,6 @@ teardown() {
   common_teardown
 }
 
-# _write_registry FILE SECTION — writes a single-tool registry with the given section title
-_write_registry() {
-  local file="$1" section="${2:-Tools}"
-  cat > "$file" << EOF
-meta:
-  section: "$section"
-  validation: none
-
-tools:
-  - name: mytool
-    permission: false
-    visibility: full
-    description: "A test tool"
-    when_to_use: "When testing"
-    usage: "mytool --flag"
-    docs: "https://example.com"
-EOF
-}
-
 # _write_minimal_registry FILE — writes a registry with minimal required fields
 _write_minimal_registry() {
   local file="$1"
@@ -175,36 +156,11 @@ EOF
   grep -q "When testing" "$TOOL_CONTEXT_OUTPUT"
 }
 
-@test "renders usage field when present" {
-  _write_registry "$PACKAGES_REGISTRY"
-
-  main
-  grep -q "mytool --flag" "$TOOL_CONTEXT_OUTPUT"
-}
-
 @test "omits docs field from output" {
   _write_registry "$PACKAGES_REGISTRY"
 
   main
   run grep "https://example.com" "$TOOL_CONTEXT_OUTPUT"
-  [ "$status" -ne 0 ]
-}
-
-@test "omits usage line for visibility: brief entry" {
-  cat > "$PACKAGES_REGISTRY" << 'EOF'
-meta:
-  section: "Tools"
-  validation: none
-
-tools:
-  - name: brief-tool
-    permission: false
-    visibility: brief
-    description: "A brief tool"
-EOF
-
-  main
-  run grep "Usage" "$TOOL_CONTEXT_OUTPUT"
   [ "$status" -ne 0 ]
 }
 

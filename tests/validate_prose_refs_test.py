@@ -129,7 +129,7 @@ def test_a_pointer_to_a_missing_heading_fails(tmp_path, tools, names):
 def test_a_pointer_to_a_real_heading_passes(tmp_path, tools, names):
     headings = vpr.load_rule_headings(REPO_ROOT)
     assert _reasons(
-        tmp_path, "`git-operations.md` § PR Creation\n", tools, names,
+        tmp_path, "`git-operations.md` § Pushing\n", tools, names,
         headings) == []
 
 
@@ -183,6 +183,20 @@ def test_an_unknown_rule_file_pointer_fails(tmp_path, tools, names):
         headings) == ["`git-operation.md`: unknown rule file"]
 
 
+def test_a_pointer_to_a_gitignored_generated_rule_file_fails_even_when_it_exists(
+        tmp_path, tools, names):
+    rules = tmp_path / "ai" / "guidelines" / "rules"
+    rules.mkdir(parents=True)
+    (rules / "tools.generated.md").write_text("# Tools\n\n## otto-queue\n")
+    headings = vpr.load_rule_headings(tmp_path)
+    page = tmp_path / "page.md"
+    page.write_text("see `tools.generated.md` § otto-queue\n")
+    reasons = [v.reason for v in vpr.check_file(
+        page, tools, names, headings, vpr.load_repo_basenames(tmp_path))]
+    assert len(reasons) == 1
+    assert reasons[0].startswith("`tools.generated.md`: generated and gitignored")
+
+
 def test_a_known_non_rule_md_pointer_is_skipped(tmp_path, tools, names):
     headings = vpr.load_rule_headings(REPO_ROOT)
     assert _reasons(
@@ -211,3 +225,40 @@ def test_a_renamed_docs_heading_fails(tmp_path, tools, names):
     assert _reasons(
         tmp_path, "`docs/page.md` § Renamed Section\n", tools, names,
         headings) == ["`docs/page.md` § Renamed Section: no such heading"]
+
+
+def _skill_tree(root):
+    skill = root / "ai" / "skills" / "demo"
+    skill.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: demo\n---\n\n# Demo\n\n## Pushing\n")
+    return vpr.load_headings(root)
+
+
+def test_a_skill_heading_pointer_resolves_in_both_spellings(tmp_path, tools, names):
+    headings = _skill_tree(tmp_path)
+    # A skipped pointer also yields no reasons, so a bare empty result proves
+    # nothing: the skill's own keys must be what resolves it.
+    assert headings["demo/SKILL.md"] == ("Demo", "Pushing")
+    assert headings["ai/skills/demo/SKILL.md"] == ("Demo", "Pushing")
+    assert _reasons(tmp_path, "`demo/SKILL.md` § Pushing\n", tools, names, headings) == []
+    assert _reasons(
+        tmp_path, "`ai/skills/demo/SKILL.md` § Pushing\n", tools, names, headings) == []
+
+
+def test_a_renamed_skill_heading_fails_not_skipped(tmp_path, tools, names):
+    # SKILL.md exists elsewhere in the repo, so without the skill's own key the
+    # pointer falls through as a "known non-rule .md" and is never checked.
+    headings = _skill_tree(tmp_path)
+    assert "SKILL.md" in vpr.load_repo_basenames(REPO_ROOT)
+    page = tmp_path / "page.md"
+    page.write_text("`demo/SKILL.md` § Renamed\n")
+    reasons = [v.reason for v in vpr.check_file(
+        page, tools, names, headings, vpr.load_repo_basenames(REPO_ROOT))]
+    assert reasons == ["`demo/SKILL.md` § Renamed: no such heading"]
+
+
+def test_a_skill_heading_follows_the_heading_boundary_rule(tmp_path, tools, names):
+    headings = _skill_tree(tmp_path)
+    assert _reasons(
+        tmp_path, "`demo/SKILL.md` § Pushing the PR\n", tools, names,
+        headings) == ["`demo/SKILL.md` § Pushing the PR: no such heading"]

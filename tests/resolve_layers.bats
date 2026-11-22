@@ -114,7 +114,49 @@ _rule_layers() {
   # Read by resolve_rules, not by anything in this file.
   # shellcheck disable=SC2034
   RULES_GLOB="*.md"
-  mkdir -p "$GUIDELINES_RULES_SRC_DIR" "$GENERATED_RULES_DIR" "$USER_RULES_DIR"
+  # Read by resolve_rules, not by anything in this file.
+  # shellcheck disable=SC2034
+  SKILLS_SRC_DIR="$TMPDIR/skills"
+  mkdir -p "$GUIDELINES_RULES_SRC_DIR" "$GENERATED_RULES_DIR" "$USER_RULES_DIR" "$SKILLS_SRC_DIR"
+}
+
+# A skill that carries rule text, as ai/skills/<name>/SKILL.md does.
+_rule_skill() {
+  mkdir -p "$SKILLS_SRC_DIR/$1"
+  printf -- '---\nname: %s\nkind: rule\n---\nbody\n' "$1" > "$SKILLS_SRC_DIR/$1/SKILL.md"
+}
+
+@test "resolve_rules: an override of a rule that became a skill is not installed, and warns" {
+  _rule_layers
+  _rule_skill self-review
+  echo "repo" > "$GUIDELINES_RULES_SRC_DIR/general.md"
+  echo "override" > "$USER_RULES_DIR/self-review.md"
+  echo "override" > "$USER_RULES_DIR/general.md"
+
+  local -A result
+  run --separate-stderr resolve_rules result
+  [ "$status" -eq 0 ]
+  [[ "$output$stderr" == *"self-review"* ]]
+  [[ "$output$stderr" == *"ai override skill self-review"* ]]
+
+  # run forks a subshell; resolve again here to inspect the map itself.
+  resolve_rules result 2>/dev/null
+  [[ -z "${result[self-review.md]+set}" ]]
+  [[ "${result[general.md]}" == "$USER_RULES_DIR/general.md" ]]
+  [[ -f "$USER_RULES_DIR/self-review.md" ]]
+}
+
+@test "resolve_rules: an unrelated override still installs and does not warn" {
+  _rule_layers
+  _rule_skill self-review
+  echo "override" > "$USER_RULES_DIR/general.md"
+
+  local -A result
+  run --separate-stderr resolve_rules result
+  [ "$status" -eq 0 ]
+  [[ -z "$output$stderr" ]]
+  resolve_rules result
+  [[ "${result[general.md]}" == "$USER_RULES_DIR/general.md" ]]
 }
 
 @test "resolve_rules: all three layers are merged" {

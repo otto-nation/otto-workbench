@@ -112,6 +112,72 @@ EOF
   [[ "$output" == *"missing required field: when_to_use"* ]]
 }
 
+@test "fails when usage_mode is not help" {
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
+meta:
+  section: "Brew Tools"
+  validation: brewfile
+  source: packages/Brewfile
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: full
+    usage_mode: everything
+    description: "A tool"
+    when_to_use: "Always"
+    usage: "mytool --help"
+EOF
+  printf 'brew "mytool"\n' > "$TMPDIR/packages/Brewfile"
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"invalid usage_mode (must be help)"* ]]
+}
+
+@test "fails when usage_mode is set on a non-full entry" {
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
+meta:
+  section: "Brew Tools"
+  validation: brewfile
+  source: packages/Brewfile
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: brief
+    usage_mode: help
+    description: "A tool"
+EOF
+  printf 'brew "mytool"\n' > "$TMPDIR/packages/Brewfile"
+
+  run main
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"field 'usage_mode' is not allowed when visibility: brief"* ]]
+}
+
+@test "passes when usage_mode help is set on a full entry" {
+  cat > "$TMPDIR/packages/registry.yml" << 'EOF'
+meta:
+  section: "Brew Tools"
+  validation: brewfile
+  source: packages/Brewfile
+
+tools:
+  - name: mytool
+    permission: false
+    visibility: full
+    usage_mode: help
+    description: "A tool"
+    when_to_use: "Always"
+    usage: "mytool --help"
+EOF
+  printf 'brew "mytool"\n' > "$TMPDIR/packages/Brewfile"
+
+  run main
+  [ "$status" -eq 0 ]
+}
+
 @test "fails on duplicate tool names in brew registry" {
   cat > "$TMPDIR/packages/registry.yml" << 'EOF'
 meta:

@@ -54,7 +54,7 @@ suite.
 ## Step 2: Confirm the Branch Is Finished
 
 Before continuing, check that nothing is still on your list
-(`git-operations.md` § Branch Completion).
+(`git-workflow/SKILL.md` § Branch Completion).
 
 Confirm the branch contains only your work. Fetch first — a local `origin/main`
 that has not moved since yesterday reads a stale base as clean:
@@ -67,7 +67,7 @@ git status --porcelain -uall
 ```
 
 Three dots for the diff. Reversions or unrelated files mean a stale base —
-`git-operations.md` § Branch Freshness.
+`git-workflow/SKILL.md` § Branch Freshness.
 
 The first two commands see committed work only. `git status --porcelain -uall`
 is what catches the file that exists nowhere else: a dirty tree passes the diff
@@ -94,13 +94,13 @@ branch's own. Pass `--base <branch>` when the derivation picks wrong — a stale
 branch parked between this one and its real parent is the case that does it.
 
 `--fix` is part of the command; no `--push` here, because `pr create` pushes in
-Step 4 (`self-review.md` § Before PR Creation).
+Step 4 (`self-review/SKILL.md` § Before PR Creation).
 
 Read the review from `~/.local/state/workbench/reviews/`, present what the fix
 pass did, and work through whatever it left open as your human partner directs
-(`self-review.md` § Before PR Creation). Before opening the PR, check
+(`self-review/SKILL.md` § Before PR Creation). Before opening the PR, check
 `git rev-parse HEAD` against the review's `covered_sha`, else its `head_sha`;
-if it is neither, re-run (`self-review.md` § The Review Covers One Commit).
+if it is neither, re-run (`self-review/SKILL.md` § The Review Covers One Commit).
 
 Skip only if your human partner explicitly says to. Then pass their words to
 `pr create --draft --skip-review "<their reason>"` in step 4; `pr create`
@@ -117,7 +117,7 @@ pr create --draft
 
 - Closing an issue on merge: `pr create --draft --closes 941`
 - Other flags (`--issue`, `--repo-dir`, `--title`/`--body-file`, `--dry-run`,
-  `--base`): `git-operations.md` § PR Creation.
+  `--base`): `git-workflow/SKILL.md` § PR Creation.
 
 `--draft` is not optional: PRs go through review before being marked ready.
 
@@ -148,9 +148,9 @@ After the PR merges, cleanup is `wt-cleanup`, run without asking
 workspace, which cleanup does not touch.
 
 Prefer a follow-up PR. If you must push before merge,
-(`git-operations.md` § A Branch With an Open PR Is Shared) says when to comment,
+(`git-workflow/SKILL.md` § A Branch With an Open PR Is Shared) says when to comment,
 and the push owes `pr review --self --fix --push`
-(`self-review.md` § The Review Covers One Commit).
+(`self-review/SKILL.md` § The Review Covers One Commit).
 
 ## Quick Reference
 
@@ -158,7 +158,7 @@ and the push owes `pr review --self --fix --push`
 |-----------|--------|
 | Tests failing | Stop. Report failures |
 | Something still on your list | Finish it now — do not open the PR yet. Leftover work is a follow-up PR, not an issue |
-| Diff shows unrelated reversions | Stale base — `git-operations.md` § Branch Freshness |
+| Diff shows unrelated reversions | Stale base — `git-workflow/SKILL.md` § Branch Freshness |
 | Uncommitted files in the tree | Commit them or say why not — the PR will not carry them |
 | Branch targets something other than `main` | Substitute it, and pass `--base` in Step 4 |
 | Detached HEAD | `git switch -c` a branch first — `pr create` has nothing to push otherwise |

@@ -4,26 +4,17 @@ harness: [claude]
 
 # Bash Tool — Permission Patterns
 
-Patterns that trigger unsuppressible permission prompts in Claude Code's static analyzer, plus one silent-failure pattern (§ Subagents Reset the Working Directory) that produces no prompt but breaks correctness the same way. These apply to Bash tool usage, not to writing shell scripts. Every pattern here describes Claude Code's own static analyzer or its file-access gate, so the file is scoped to that harness — under another one the rules would forbid commands that were never going to prompt.
+Patterns that trigger unsuppressible permission prompts in Claude Code's static analyzer, plus one silent-failure pattern (§ Subagents Reset the Working Directory). They apply to Bash tool usage, not to writing shell scripts, and to Claude Code only.
 
-§ Subagents Reset the Working Directory is the exception, and it has now been checked rather than assumed. A Pi subagent given a bare `cd` into a feature worktree answered `main` to `git rev-parse --abbrev-ref HEAD` on its very next call — the same silent wrong-tree failure, under the other harness. The harness-independent statement of it therefore lives in `git-operations.md` § Cross-Worktree Safety, which every harness loads, and that is the copy to read if you only read one. The section below adds only the Claude Code forms: the Write-tool wrapper file, `bash` not `sh`, and the grant shapes.
-
-`ai/claude/bin/claude-bash-guard`, the PreToolUse hook for the Bash tool, enforces the patterns below that can be matched mechanically — not every section has a guard rule. Each block message cites the section holding its alternatives (`See bash-tool.md § <Section>`), so a new guard rule needs a section here to cite; `tests/claude_settings_writes.bats` fails if it has none.
+`ai/claude/bin/claude-bash-guard` (PreToolUse hook) blocks the mechanically matchable ones; each block message names the fix and cites its section here (`See bash-tool.md § <Section>`). `tests/claude_settings_writes.bats` fails if a guard rule has no section.
 
 ## Avoid Command Substitution in Arguments
 
-- Never use `$(...)` command substitution inside Bash tool commands — Claude Code's static analyzer cannot resolve the substitution, triggering a "cannot be statically analyzed" permission prompt. Run the inner command first, then use the result in the next call:
-  - `which pr` then `head -80 /path/from/previous/result` instead of `head -80 "$(which pr)"`
-  - `git rev-parse --show-toplevel` then `ls /path/from/previous/result` instead of `ls "$(git rev-parse --show-toplevel)"`
+- No `$(...)` in Bash tool commands. Run the inner command first, then use its result in the next call
 
 ## Avoid Compound `cd` Commands
 
-- Never use `cd <path> && <command>` — compound commands containing `cd` trigger an unsuppressible security prompt in Claude Code. This applies wherever a statement begins, not just at the start of the command: `mkdir -p x; cd x && ls` counts. A newline is a statement separator too, so a `cd` on its own line followed by more lines is still compound — and when a later line writes a file, the prompt is the stricter "contains cd with write operation". Use these alternatives instead:
-  - `git -C <path> ...` for git commands
-  - `gh <subcommand> --repo <owner/repo> ...` for GitHub CLI — `--repo` must come *after* the subcommand. The allow list keys on per-subcommand prefixes (`Bash(gh pr:*)`, `Bash(gh issue:*)`, `Bash(gh run:*)`), so `gh --repo <owner/repo> pr view` matches none of them and prompts every time, while `gh pr view --repo <owner/repo>` matches `Bash(gh pr:*)`
-  - `gh api repos/<owner>/<repo>/...` for API calls (no directory needed, and `Bash(gh api:*)` covers it whatever the path)
-  - Run the command directly with absolute paths when possible — `pytest /abs/path/tests/foo_test.py`, `bats /abs/path/tests/foo.bats` (both derive their root from the file paths, so they need no cwd change)
-  - A bare `cd <dir>` on its own — no `&&`, no `;`, nothing after it — as its own call. In a main session the Bash tool keeps that working directory for later calls, which is the only way to run a whole suite (`bats tests/`, `bin/local/validate-all`) that resolves paths from the repo root. **It does not work in a subagent** — see § Subagents Reset the Working Directory
+- No `cd <path> && <command>`, wherever a statement begins (a newline is a separator too). Use `git -C <path>`, `gh <subcommand> --repo <owner/repo>` (`--repo` after the subcommand), `gh api repos/...`, absolute paths (`bats /abs/path/tests/foo.bats`), or a bare `cd <dir>` as its own call in a main session
 
 ## Subagents Reset the Working Directory
 
@@ -35,86 +26,48 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 
 ## Avoid `env -C`
 
-- Never run a command through `env -C <dir> ...` (or `env --chdir=<dir> ...`) — the analyzer reports "env with -C flag cannot be statically analyzed", which no permission rule can suppress. `env -C` is not an escape hatch from the compound-`cd` rule, it is a second unsuppressible prompt. Run a bare `cd <dir>` as its own call first, per § Avoid Compound `cd` Commands
+- No `env -C <dir>` / `env --chdir=<dir>`; run a bare `cd <dir>` as its own call first
 
 ## Avoid Shell Function Definitions
 
-- Never define a shell function in a Bash tool command — both `name() { ...; }` and `function name { ...; }` make the parser classify the whole command as too complex to analyze ("Contains function_definition"), which skips the allow list entirely so no permission rule can match it. Write the command directly with absolute paths:
-  - `grep -rn "pattern" /abs/path/tests/ | head -40` instead of `cd() { :; }; W=/abs/path; grep -rn "pattern" "$W/tests/" | head -40`
-- A no-op stub such as `cd() { :; }` is not a way around the compound-`cd` rule — it trades a rule you can satisfy for a prompt you cannot suppress. Use an absolute path, `git -C <path>`, or `gh <subcommand> --repo` instead
+- No `name() { ...; }` or `function name { ...; }` (a no-op `cd() { :; }` stub included); write the command directly with absolute paths
 
 ## Avoid Wrapping Commands in `sh -c`
 
-- Never wrap a command in `sh -c "..."` (or `bash -c`, `zsh -c`) — the analyzer cannot see inside the quoted string, so it asks approval for the wrapper as a whole and no allow-list entry ever matches the real command. Worse, the offered "don't ask again" rule keys on that exact string, so the next `sh -c` prompts again
-- `sh -c "cd /dir; cmd"` is the usual reason to reach for it. Run a bare `cd /dir` as its own call, then `cmd` as the next one — per § Avoid Compound `cd` Commands
-- If you need a specific shell's behavior (`sh` word-splitting, glob handling), put the script in a file with the Write tool and run `bash /tmp/probe.sh` — the file is also readable, which a quoted one-liner is not. Reach for `sh /tmp/probe.sh` only when the POSIX behaviour is the thing under test — this is the one place `sh` survives the § Subagents Reset the Working Directory rule, because swapping in `bash` here would change the result the probe exists to observe. It prompts, and that is the right trade for the one case that cannot use the granted shell
+- No `sh -c`, `bash -c`, `zsh -c`. Run a bare `cd /dir` as its own call, then the command. For shell-specific behaviour, write a file with the Write tool and run `bash /tmp/probe.sh` (`sh` only when POSIX behaviour is the thing under test)
 
 ## Avoid Absolute Paths to PATH Binaries
 
-- Never invoke a binary by its absolute path when the same binary is on `PATH` — the permission allow list keys on the bare command name (`Bash(cat:*)`, `Bash(mise:*)`), so an absolute form never matches it and prompts every time. This applies wherever a statement begins, not just at the start of the command: `ls; /bin/cat file` counts. Call the bare name instead — it resolves through `PATH` to the same binary:
-  - `cat /path/to/file` instead of `/bin/cat /path/to/file`
-  - `env` instead of `/usr/bin/env`
-  - `mise doctor` instead of `~/.local/bin/mise doctor`
-  - `gh pr view` instead of `/opt/homebrew/bin/gh pr view`
-  - `node --test x.mjs` instead of `~/.local/share/mise/installs/node/24.18.1/bin/node --test x.mjs`
-- The directories covered are `/bin`, `/usr/bin`, `/usr/local/bin`, `/opt/homebrew/bin`, `/opt/homebrew/sbin`, any `.local/bin`, and a version manager's shim and install dirs (`.local/share/mise/shims`, `.local/share/mise/installs/*/bin`, `.asdf/shims`, `.asdf/installs/*/bin`) — the workbench installs its own scripts into `~/.local/bin`, so its tools are reached by bare name too
-- `which <tool>` printing a shell function body (mise and other `activate`-style tools define one) is not a reason to switch to the absolute path — the bare name still resolves through `PATH` in the Bash tool
-- Resolving a version manager's shim to the versioned binary behind it is not a reason either. The shim is on `PATH` and picks the same version the project pins; the resolved path only adds a prompt and goes stale on the next upgrade
-- This is the opposite of the `bin/local/` rule: workbench *repo* scripts must use the *relative* path, installed binaries must use the *bare* name. Both exist so a single allow-list entry covers every invocation
-- Like the other statement-anchored checks below, the hook enforcing this scans every line of the command with quoted spans stripped — a later line counts, but such a path inside a quoted argument or a heredoc body is left alone
+- Call a binary on `PATH` by its bare name (`cat`, `gh`, `mise`, `node`), not `/bin/cat`, `~/.local/bin/x`, or a version manager's shim or install path; the allow list keys on the bare name. `which` printing a function body is no reason to use the absolute path
+- Workbench *repo* scripts take the relative path (next section); installed binaries take the bare name
 
 ## Invoke Repo Scripts by Relative Path
 
-- Never invoke a workbench repo script by absolute path — use the relative path from the repo root (`bin/local/validate-skills`, not `/Users/.../bin/local/validate-skills`). Permission rules match the first word of the command; an absolute path triggers a permission prompt every time. This applies wherever a statement begins, not just at the start of the command: `ls; /Users/.../bin/local/validate-skills` counts
-- Never prefix that relative path with `./` either — `bin/otto-workbench sync` and `./bin/otto-workbench sync` run the same script, but the grant is written `Bash(bin/*)` and only the first form matches it. The `./` form is a separate prompt and earns its own one-off entry
-- In otto-workbench the granted directories are `bin/`, `git/bin/`, `ai/bin/`, and `ai/claude/bin/`, from the repo's tracked `.claude/settings.json`. A script outside them has no grant, so it prompts however it is spelled — see CONTRIBUTING.md § Permission grants
-- **A subagent is the exception, and it overrides this section.** A relative path only resolves from the repo root when the call starts there, which in a subagent it does not — see § Subagents Reset the Working Directory. There the absolute path is correct and the prompt is the price; a relative one silently runs the parent worktree's copy of the script. Correctness first, grant shape second
+- Invoke workbench repo scripts by the path relative to the repo root, with no `./` and never absolute (`bin/local/validate-skills`); the grant is `Bash(bin/*)`. Granted directories: `bin/`, `git/bin/`, `ai/bin/`, `ai/claude/bin/` (see CONTRIBUTING.md § Permission grants)
+- **A subagent is the exception:** a relative path silently runs the parent worktree's copy, so use the absolute path there and accept the prompt (§ Subagents Reset the Working Directory)
 
 ## Avoid Env-Var Prefix Syntax
 
-- Never prefix a command with `VAR=value command` — Claude Code's permission matcher sees `VAR=value` as the command name, triggering a prompt every time. This applies wherever a statement begins, not just at the start of the command: `true; W=/tmp x` counts. Use tool-native alternatives:
-  - `git -C /path status` (not `cd /path && git status` or `GIT_DIR=… git status`)
-  - `pr create --repo-dir /path ...` (not `REPO_DIR=/path pr create ...`)
-  - `mise -C /path run ...` (not `REPO_DIR=/path mise run ...`)
-  - `otto-workbench --workbench-dir /path ...` (not `WORKBENCH_DIR=/path otto-workbench ...`)
+- No `VAR=value command`. Use the tool's own flag: `git -C`, `pr create --repo-dir`, `mise -C`, `otto-workbench --workbench-dir`
 
 ## Avoid Brace Expansion
 
-- Never use `{a,b,c}` brace expansion in Bash commands — Claude Code flags it with an unsuppressible "Brace expansion" permission prompt. Use these alternatives instead:
-  - List files as separate arguments: `wc -l file1.go file2.go file3.go`
-  - Use a glob when files share a pattern: `grep -rE "pattern" activities/*.go`
-  - Use `find ... | xargs` for more complex selections
+- No `{a,b,c}`. List the arguments separately or use a glob
 
 ## Avoid Shell Variable Expansion
 
-- Never use `echo "$VAR"` or `$VAR` in Bash tool commands — Claude Code's static analyzer flags shell variable references as "simple_expansion", triggering a permission prompt. Use `printenv VAR` instead, which reads the variable without shell expansion:
-  - If the value is already in an instructions file (AGENTS.md) or conversation context, don't run a command at all
-- A `for f in ...; do ... "$f" ...; done` loop over a list you already know is the most common way this fires. `Bash(for:*)` is allowed — it is the `$f` that prompts. Name the values directly instead:
-  - `tail -n +1 file1.sql file2.sql file3.sql` to dump several files, each under its own `==> file <==` header — this is the direct replacement for a `for` loop wrapping `cat`/`rtk read` plus an `echo` banner
-  - `grep -n "pattern" file1 file2 file3` and most other tools take a file list, so the loop is not needed at all
-  - Write out each statement in full when the tool genuinely takes one target at a time
-- Single quotes prevent expansion, so `grep -n '$HOME' file` and `perl -pe 's/$//' file` are fine — the hook enforcing this strips single-quoted spans but not double-quoted ones, since `"$f"` does expand
-- Like the other statement-anchored checks, the hook skips heredoc bodies, so a `$VAR` inside one being written to a file is left alone — every other line is scanned
+- No `$VAR` or `echo "$VAR"`. Read an env var with `printenv VAR`; for a `for f in ...` loop over known values, name them directly (`tail -n +1 f1 f2 f3`). Single-quoted `'$VAR'` and heredoc bodies are fine
 
 ## Avoid Shell Redirects That Write Files
 
-- Never write file content with `echo ... > file` or `printf ... >> file` — Claude Code gates a Bash redirect on the write path and asks per directory ("always allow access to `schema/` from this project"), while the Edit and Write tools are allow-listed outright. Unlike the other sections here, the prompt is a file-access gate, not a static-analysis failure — so the fix is a different tool, not a different command:
-  - Write tool for a new file, Edit tool to append to or modify an existing one — both show a diff, which a redirect does not
-  - `cat > file <<EOF` and `tee file` are the same anti-pattern; use the Write tool instead
-  - `>` silently truncates, so a mistyped path destroys a file with no diff to review — another reason the tools are the safer default
-- Redirecting to a scratch path (`/dev/null`, `/tmp/...`) is fine and is not blocked — that is where a redirect belongs
-- Capturing another command's *output* to a file (`some-cmd > report.json`) is fine too; the tools have no equivalent. Only `echo` and `printf`, which emit literal content you already have, are blocked
-- A path in a repo the session isn't working in prompts regardless of the tool. Add it with `--add-dir` or `permissions.additionalDirectories` in that project's settings rather than approving each subdirectory
+- No `echo ... > file`, `printf ... >> file`, `cat > file <<EOF`, or `tee file` to write content; use the Write tool (new file) or Edit tool (change/append). Redirecting to `/dev/null` or `/tmp`, or capturing a command's output (`cmd > report.json`), is fine
+- `>` silently truncates, so a mistyped path destroys a file with no diff; the Write and Edit tools show one
+- A path in a repo outside the session prompts whatever the tool; add it with `--add-dir` or `permissions.additionalDirectories`
 
 ## Avoid Backgrounding with `&`
 
-- Never use a standalone `&` in a Bash tool command, wherever it falls, and never reach for `nohup` — the tool has a `run_in_background` parameter that does the same thing and keeps the shell under its control, so it can be read and stopped through the harness. (`general.md` § Waiting on Background Work) states this for every harness and is the reason not to do it; what follows is the extra cost under this one. A shell backgrounded with `&` outlives the call and belongs to nobody: the only way left to stop it is `pkill -f <pattern>` or `lsof -ti:PORT | xargs kill`, and `pkill` is not on the allow list, so every cleanup is a fresh permission prompt. Like the redirect rule above, the prompt is a consequence of the shape rather than a static-analysis failure
-  - `run_in_background: true` for a dev server, a watcher, or anything else meant to outlive the call — then a separate call for the request you wanted to make against it
-  - Start the server and probe it in two calls, not one. `cmd & sleep 5; curl localhost:3000` is the shape this rule exists to replace, and it is also a compound command
-  - A short `sleep` settling a server that has just started is fine, and is the one use the guard leaves alone. Sleeping to *wait* for work that reports its own completion is a separate rule with its own guard — see `general.md` § Waiting on Background Work
-  - `&&`, `2>&1`, `&>`, `|&`, and a case statement's `;&` are not backgrounding and are left alone
-- The same orphans arrive from the other direction when a long suite is cut off mid-run: the Bash tool's default timeout is two minutes, and a killed `bats tests/` leaves `bats-exec-suite` children behind that the next run trips over. Pass an explicit `timeout` (milliseconds, up to 600000) when starting a full-suite run instead of discovering the limit by hitting it
-- When a stray process does need killing, `pkill` prompting is correct — pattern-killing processes is worth a confirmation. Do not add allow-list entries for it; fix the call that leaked the process
+- No standalone `&` and no `nohup`; use `run_in_background: true` and make any follow-up request in a separate call. `&&`, `2>&1`, `&>`, `|&` are fine, as is a short `sleep` settling a just-started server
+- Give a full-suite run an explicit `timeout` (up to 600000 ms); a killed `bats tests/` leaves orphans. `pkill` prompting is correct, so add no allow-list entry for it
 
 ## Avoid Nesting Quotes of the Same Type
 
@@ -125,7 +78,4 @@ Patterns that trigger unsuppressible permission prompts in Claude Code's static 
 
 ## Avoid `find -exec`
 
-- Never use `find ... -exec` — Claude Code blocks `-exec` even with `Bash(find:*)` allowed because `-exec` can run arbitrary commands. Use piped alternatives instead:
-  - `find ... -print0 | xargs -0 grep ...` instead of `find ... -exec grep ... {} \;`
-  - `find ... -print0 | xargs -0 <command>` for other commands
-  - Both `find` and `xargs` are already auto-allowed
+- No `find ... -exec`; use `find ... -print0 | xargs -0 <command>`

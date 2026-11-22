@@ -185,7 +185,7 @@ DISK_PCT_MAX = 99
 
 # The label the workbench puts on an issue its automation files, and the
 # default contents of ISSUE_LABELS_KEY. A value rather than a key: both
-# trackers' creators name it and issue-tracker.md documents it, so the default
+# trackers' creators name it and the issue-tracker skill documents it, so the default
 # and the prose cannot drift apart.
 FOLLOW_UP_LABEL = "follow-up"
 
@@ -351,7 +351,7 @@ class IssuesConfig:
 
     Top-level rather than under ``review``: where a repo files issues is a
     fact about the repo, read by the SessionStart context line and by every
-    rule in ``issue-tracker.md``, of which only two callers are reviews.
+    rule in the ``issue-tracker`` skill, of which only two callers are reviews.
 
     Named for the issues rather than the tracker, because the section stopped
     being only about which tracker is in use when ``labels`` arrived. The

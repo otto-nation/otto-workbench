@@ -19,7 +19,7 @@ import review.fix  # noqa: E402
 from core.project_context import CLAUDE_CODE_MIN_VERSION  # noqa: E402
 from pr.summary_model import ActionCell  # noqa: E402
 
-SELF_REVIEW = REPO_ROOT / "ai" / "guidelines" / "rules" / "self-review.md"
+SELF_REVIEW = REPO_ROOT / "ai" / "skills" / "self-review" / "SKILL.md"
 AI_AUTOMATION = REPO_ROOT / "docs" / "ai-automation.src.md"
 
 _TALLY = "3 fixed, 1 skipped"

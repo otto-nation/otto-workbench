@@ -40,7 +40,7 @@ component configures it and `wt-init` runs it.
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, diverge, dream, finishing-a-development-branch, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review-fix, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, diverge, dream, finishing-a-development-branch, git-workflow, issue-tracker, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review, self-review-fix, subagents, test-verification, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -151,6 +151,26 @@ Complete a development branch — verify tests, self-review, then open a draft P
 **Trigger:** Use when implementation is complete and the work needs to reach main, or when the user asks to finish, wrap up, or ship a branch.
 **Skip:** Do not use while work is still in progress, or on a branch whose PR is already open — prefer a follow-up PR.
 
+### `/git-workflow`
+
+Git and PR procedures: creating and describing a PR with pr create, the PR template, rebasing with pr rebase, answering review comments, pushing to a branch that has an open PR, keeping a branch fresh, finishing a branch, diagnosing a failed git command, and analysing what a branch holds. TRIGGER when: about to open, describe, update or push to a PR, rebase or resolve conflicts, reply to review comments, start work on an existing branch, or debug a failed push or fetch. SKIP: the always-on prohibitions (never commit on main, never amend, never raw force-push), which are already in context.
+
+```
+/git-workflow
+```
+**Trigger:** Use before opening, describing or pushing to a PR, rebasing, answering review comments, starting work on an existing branch, or debugging a failed git command.
+**Skip:** Do not use for the always-on prohibitions, which are already in context, or for work that touches no branch or PR.
+
+### `/issue-tracker`
+
+Issue tracker conventions: resolving which tracker a repo uses (github, linear, jira), filing, assigning, labelling and linking issues, and per-provider CLI patterns. TRIGGER when: creating, editing, searching or closing an issue, filing a follow-up or deferred item, or asked which tracker a repo uses. SKIP: opening a PR (see git-workflow); reading an issue a user pasted.
+
+```
+/issue-tracker
+```
+**Trigger:** Use when creating, editing, searching or closing an issue, filing a follow-up or deferred item, or when asked which issue tracker a repo uses.
+**Skip:** Do not use when opening a PR (use git-workflow) or when only reading an issue the user pasted.
+
 ### `/machine`
 
 Refresh the machine profile (~/.claude/machine/machine.md) — hardware, OS, runtimes, Docker, Git identity, and project registry. TRIGGER when: user upgrades tools, installs new runtimes, or machine.md is stale (>7 days). SKIP: project-specific architecture (use architecture); memory consolidation (use dream).
@@ -233,6 +253,16 @@ Analyze PR review comments to identify gaps in coding rules. Fetches comments fr
 **Trigger:** Run to analyze recent PR review comments for coding rule gaps, after a round of PR reviews has been completed, or when rule coverage feels incomplete. Auto-triggers once 72h and 5 sessions have both passed since the last run.
 **Skip:** Do not use when the user wants to address comments on a specific PR (use pr-comments instead). Do not use for memory consolidation (use dream instead).
 
+### `/self-review`
+
+The self-review policy before opening a PR: run pr review --self --fix, read what the fix pass did against the diff, and check that a review covers the commit being shipped. TRIGGER when: about to create or mark ready a PR, reading a self-review or fix-pass summary, deciding whether a review is stale after HEAD moved, or on a third review round on one subsystem. SKIP: running the review itself (use self-review-fix); reviewing someone else's PR.
+
+```
+/self-review
+```
+**Trigger:** Use before creating a PR, when reading a self-review or fix-pass result, or when a review may be stale because HEAD moved.
+**Skip:** Do not use to run the review (use self-review-fix) or to review someone else's PR.
+
 ### `/self-review-fix [branch_name]`
 
 Run self-review and auto-fix findings. Wraps pr review --self --fix --push. Can also fix from an existing review without re-running. TRIGGER when: user asks to self-review a branch, run pre-merge review, or auto-fix findings before PR creation. SKIP: reviewing someone else's PR (use code-review or review); addressing existing PR review comments (use pr-comments).
@@ -242,6 +272,26 @@ Run self-review and auto-fix findings. Wraps pr review --self --fix --push. Can 
 ```
 **Trigger:** Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR.
 **Skip:** Do not use for reviewing someone else's PR (use code-review or review instead). Do not use for addressing existing PR review comments (use pr-comments instead).
+
+### `/subagents`
+
+Delegating work to subagents or other AI agents: how to brief them, what stalls them, running several at once, and what to verify afterwards. TRIGGER when: about to dispatch a subagent or another agent, run several agents in one worktree, delegate a rebase, implementation or review, or read back what a subagent returned. SKIP: doing the work directly in this session.
+
+```
+/subagents
+```
+**Trigger:** Use before dispatching a subagent or another AI agent, running agents concurrently, delegating a rebase or implementation, or reviewing what a subagent reported.
+**Skip:** Do not use when doing the work directly in this session with no agent dispatched.
+
+### `/test-verification`
+
+Proving a test holds its subject: the revert check, fixtures that mask a condition, restoring a reverted file safely, pinning conditional paths, check-new-tests and the passes-at-base marker, and hand-run drills. TRIGGER when: writing, reviewing or verifying a test, running a revert check, or adding a regression test for a fix. SKIP: reading a suite result (stays in testing.md); running a suite with no new or changed test.
+
+```
+/test-verification
+```
+**Trigger:** Use when writing, reviewing or verifying a test, running a revert check, or adding a regression test for a fix or behaviour change.
+**Skip:** Do not use for reading a suite result, which stays in testing.md, or for running a suite when no test was added or changed.
 
 ### `/using-git-worktrees`
 

@@ -23,6 +23,8 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+import core.rule_skills
+
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
@@ -191,13 +193,24 @@ def build_rule(filename: str, content: str) -> dict:
 
 
 def load_rules(workbench: Path) -> list[dict]:
+    """Every rule file, then every skill that carries rule text (``kind: rule``).
+
+    A rule moved into a skill is still a rule a review comment can be matched
+    against; reading only the rules directory would report everything it covers
+    as a gap the moment it moved.
+    """
     rules_dir = workbench / RULES_REL
-    if not rules_dir.exists():
-        return []
-    return [
-        build_rule(f.name, f.read_text(encoding="utf-8"))
-        for f in sorted(rules_dir.glob("*.md"))
-    ]
+    rules = []
+    if rules_dir.exists():
+        rules = [
+            build_rule(f.name, f.read_text(encoding="utf-8"))
+            for f in sorted(rules_dir.glob("*.md"))
+        ]
+    rules.extend(
+        build_rule(core.rule_skills.display_name(f), f.read_text(encoding="utf-8"))
+        for f in core.rule_skills.rule_skill_files(workbench)
+    )
+    return rules
 
 
 # ── Scoring ──────────────────────────────────────────────────────────────────

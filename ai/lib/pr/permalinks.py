@@ -1,6 +1,6 @@
 """Links back to the code a review comment is about, pinned so they keep pointing.
 
-`git-operations.md` § Replying to Review Comments makes a SHA-pinned permalink a
+`git-workflow/SKILL.md` § Replying to Review Comments makes a SHA-pinned permalink a
 standing requirement for every reply: a branch-relative blob URL drifts as the
 branch moves, so a claim posted to a reviewer stops resolving to the code it was
 making a claim about. This is the implementation that gets it right, including

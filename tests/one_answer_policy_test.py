@@ -19,8 +19,9 @@ import pr.create  # noqa: E402
 from core.exit_codes import ExitCode  # noqa: E402
 
 GIT_OPS = REPO_ROOT / "ai" / "guidelines" / "rules" / "git-operations.md"
-SUBAGENTS = REPO_ROOT / "ai" / "guidelines" / "rules" / "subagents.md"
-SELF_REVIEW = REPO_ROOT / "ai" / "guidelines" / "rules" / "self-review.md"
+GIT_WORKFLOW = REPO_ROOT / "ai" / "skills" / "git-workflow" / "SKILL.md"
+SUBAGENTS = REPO_ROOT / "ai" / "skills" / "subagents" / "SKILL.md"
+SELF_REVIEW = REPO_ROOT / "ai" / "skills" / "self-review" / "SKILL.md"
 PR_REBASE_SKILL = REPO_ROOT / "ai" / "skills" / "pr-rebase" / "SKILL.md"
 AI_AUTOMATION = REPO_ROOT / "docs" / "ai-automation.src.md"
 
@@ -66,7 +67,7 @@ def test_unpushed_rebase_finish_is_push_only_from_the_contract():
 
 
 def test_a_rebase_request_is_pr_rebase():
-    rebase = _section(GIT_OPS.read_text(), "Rebase, Cherry-Pick, Merge Conflicts")
+    rebase = _section(GIT_WORKFLOW.read_text(), "Rebase, Cherry-Pick, Merge Conflicts")
     assert "is `pr rebase`" in rebase
 
     flags = [
@@ -81,7 +82,30 @@ def test_a_rebase_request_is_pr_rebase():
     assert "git rebase" in implementation
 
 
-@pytest.mark.parametrize("path", [GIT_OPS, SELF_REVIEW])
+GENERAL = REPO_ROOT / "ai" / "guidelines" / "rules" / "general.md"
+
+
+@pytest.mark.parametrize("path", [GIT_WORKFLOW, SELF_REVIEW, GENERAL])
 def test_skip_review_form_matches_the_create_gate(path: Path):
     form = _skip_review_form()
     assert form in path.read_text(), path
+
+
+# Prohibitions with no hook behind them stay in an always-loaded rule; the
+# skill holds the procedure, not the only copy of the ban.
+_ALWAYS_ON = [
+    (GIT_OPS, "use only Bash, never the Edit tool"),
+    (GIT_OPS, "whole-file `git checkout --ours`/`--theirs`"),
+    (GIT_OPS, "only through `pr comments`, never a bulk-reply tool"),
+    (GIT_OPS, "marked ready for review without a comment first"),
+    (GIT_OPS, "three-dot `git diff`, never two-dot"),
+    (GIT_OPS, "never bypass `wt switch` hooks with `--no-hooks`"),
+    (GENERAL, "quotes the user's own words, never your judgement"),
+    (GENERAL, "bare coreutils `timeout` around a long `pr review --self --fix`"),
+    (GENERAL, "check `~/.local/state/workbench/reviews/`"),
+]
+
+
+@pytest.mark.parametrize(("path", "phrase"), _ALWAYS_ON)
+def test_unenforced_prohibitions_stay_in_always_on_rules(path: Path, phrase: str):
+    assert phrase.lower() in path.read_text().lower(), (path, phrase)

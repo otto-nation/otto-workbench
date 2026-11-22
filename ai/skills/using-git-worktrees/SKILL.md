@@ -111,7 +111,7 @@ a question to ask: this machine's rules forbid editing `main`, `master`, or any
 shared branch in place.
 
 If the work has an issue, its ID goes in the branch name, so the issue must
-exist before the branch does — see the issue-tracker rules for which tracker
+exist before the branch does — see the `issue-tracker` skill for which tracker
 this repo uses. Work with no issue behind it uses the `type` form instead
 (`javier/feat/add_metrics`); do not stop an unattended run to file one.
 
@@ -125,7 +125,7 @@ different layouts, and the git form leaves state `wt` cannot see.
 
 If `wt switch -c` aborts on its pre-switch hook, the default branch has diverged
 or the worktree will not fast-forward: fix it and re-run, never with `--no-hooks`
-(`git-operations.md` § Branch Freshness).
+(`git-workflow/SKILL.md` § Branch Freshness).
 
 Any other `wt` failure — no `wt` on PATH, worktrunk unconfigured for this repo,
 a sandbox denying the write — stops the work. Report what failed and ask. Both

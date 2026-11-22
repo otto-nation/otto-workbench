@@ -162,8 +162,9 @@ def format_matched_snippet(
     The snippet comes off the same per-passage scoring that chose the rule, so
     the report quotes the text the match was actually made on. A scan for the
     best `- ` bullet answered a different question and could not answer it at
-    all for a rule file written in prose — `artifacts.md` and `self-review.md`
-    state every rule they have without a single top-level bullet, and the old
+    all for a rule written in prose — `artifacts.md` and the self-review skill
+    (`self-review/SKILL.md`) state every rule they have without a single
+    top-level bullet, and the old
     fallback showed the reader the filename it already had rather than any
     rule text.
 

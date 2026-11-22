@@ -42,7 +42,8 @@ def reason_kind(reason: str) -> WaitKind:
         return WaitKind.SLOTS
     if text.startswith("cpu pressure"):
         return WaitKind.CPU
-    if text.startswith("waiting for memory") or text.startswith("memory pressure"):
+    if (text.startswith("waiting for memory") or text.startswith("memory pressure")
+            or text.startswith("waiting for cgroup:")):
         return WaitKind.MEMORY
     return WaitKind.OTHER
 

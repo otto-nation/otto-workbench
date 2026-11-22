@@ -120,8 +120,7 @@ JSON
   _make_worktrees
   _write_merged_feature
   printf 'raise SystemExit(1)\n' > "$TMPDIR/broken_cli.py"
-  RUN_LOCK_CLI="$TMPDIR/broken_cli.py"
-  _run_cleanup --no-grace-period
+  RUN_LOCK_CLI="$TMPDIR/broken_cli.py" _run_cleanup --no-grace-period
   [ "$status" -eq 0 ]
   [ ! -s "$WT_REMOVE_LOG" ]
   grep -q "SKIP-HELD branch=feature reason=merged lock=unknown" "$CLEANUP_LOG_DIR/wt-cleanup.log"

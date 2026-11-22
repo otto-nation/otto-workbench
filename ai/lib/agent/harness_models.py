@@ -9,8 +9,12 @@ Claude Code:
 
 - ``ANTHROPIC_DEFAULT_{OPUS,SONNET,HAIKU}_MODEL`` take the deep, standard and
   light tiers, so the CLI's own ``opus``/``sonnet``/``haiku`` aliases — and the
-  subagents and ``opusplan`` that use them — follow the tiers.
-- ``model`` and ``effortLevel`` take ``models.session``.
+  subagents and ``opusplan`` that use them — follow the tiers. They take a
+  model id, never an alias: Claude Code resolves ``opus``/``sonnet``/``haiku``
+  for ``--model`` and ``model`` but sends an env value to the API as written, so
+  a tier written as an alias leaves its variable unset and is reported, while
+  an agent that names the tier still runs the alias the CLI resolves.
+- ``model`` and ``effortLevel`` take ``models.session``, which may be an alias.
 - An agent declaring ``tier:`` in its source frontmatter is installed with
   that tier's model and level as its ``model:`` and ``effort:``, and with
   ``model: inherit`` when the tier names no Claude model (``tiers``). A tier
@@ -165,6 +169,16 @@ def _claude_servable(ref: ModelRef) -> bool:
     return bool(_CLAUDE_ID.match(bare)) or bare in CLAUDE_ALIASES
 
 
+def _is_claude_alias(ref: ModelRef) -> bool:
+    """Whether *ref* is one of the Claude CLI's aliases rather than a model id.
+
+    The CLI resolves an alias for ``--model`` and the ``model`` setting, but
+    sends an ``ANTHROPIC_DEFAULT_*_MODEL`` value to the API as written, so an
+    alias pinned there fails every request with "doesn't recognize the model".
+    """
+    return ref.provider is None and _WINDOW_SUFFIX.sub("", ref.id.lower()) in CLAUDE_ALIASES
+
+
 def _qualified(ref: ModelRef) -> str:
     return f"{ref.provider}/{ref.id}" if ref.provider else ref.id
 
@@ -177,11 +191,19 @@ def _claude(tiers: dict[Tier, ModelRef], session: ModelRef | None) -> ClaudeMode
         ref = tiers.get(tier)
         if ref is None:
             continue
-        if _claude_servable(ref):
-            env[key] = ref.id
-            claude_tiers[tier] = ClaudeTier(model=ref.id, effort=agent.backend_claude.effort(ref.level))
-        else:
+        if not _claude_servable(ref):
             skipped.append(f"models.{tier.value}: {ref.spec()} is not a Claude model, so {key} is left unset")
+            continue
+        # The tier keeps an alias as the model an agent runs by name, which the
+        # CLI resolves; only the env pin needs an id.
+        claude_tiers[tier] = ClaudeTier(model=ref.id, effort=agent.backend_claude.effort(ref.level))
+        if _is_claude_alias(ref):
+            skipped.append(
+                f"models.{tier.value}: {ref.id} is a Claude alias, which Claude Code sends to the API "
+                f"as written, so {key} is left unset — name a full claude-… model id"
+            )
+            continue
+        env[key] = ref.id
     model = effort = None
     if session is not None and _claude_servable(session):
         model = session.id

@@ -61,12 +61,49 @@ def test_a_bare_id_that_is_not_a_claude_model_is_skipped(bare):
 
 @pytest.mark.parametrize("bare", [
     "us.anthropic.claude-opus-5-5-v1:0", "anthropic.claude-haiku-5-5-v1:0",
-    "arn:aws:bedrock:us-east-1:1:application-inference-profile/x", "opusplan", "sonnet[1m]",
+    "arn:aws:bedrock:us-east-1:1:application-inference-profile/x",
     "claude-opus-5-5[1m]", "claude-opus-4-6@20250514",
 ])
-def test_a_bare_claude_id_arn_or_alias_is_a_claude_model(bare):
+def test_a_bare_claude_id_or_arn_is_pinned_as_written(bare):
     claude = harness_models(ModelsConfig(deep=bare)).claude
     assert claude.env == {"ANTHROPIC_DEFAULT_OPUS_MODEL": bare}
+
+
+# Claude Code resolves an alias for `--model` and the `model` setting, but sends
+# an ANTHROPIC_DEFAULT_*_MODEL value to the API as written: pinning `haiku` to
+# the string `sonnet` fails every request with "doesn't recognize the model".
+@pytest.mark.parametrize("alias", ["sonnet", "opus", "haiku", "opusplan", "default", "sonnet[1m]", "Opus"])
+def test_a_tier_named_by_an_alias_is_not_pinned_and_says_to_name_an_id(alias):
+    claude = harness_models(ModelsConfig(deep=alias)).claude
+    assert claude.env == {}
+    assert claude.skipped == [
+        f"models.deep: {alias} is a Claude alias, which Claude Code sends to the API as written, "
+        "so ANTHROPIC_DEFAULT_OPUS_MODEL is left unset — name a full claude-… model id",
+    ]
+
+
+def test_an_alias_tier_is_still_the_model_an_agent_runs_by_name():
+    # `claude --model sonnet` resolves the alias itself, so the tier keeps it.
+    claude = harness_models(ModelsConfig(standard="sonnet:high")).claude
+    assert claude.tiers[Tier.STANDARD].model == "sonnet"
+
+
+def test_only_the_alias_tiers_are_dropped_from_the_env_pins():
+    claude = harness_models(ModelsConfig(
+        deep="sonnet", standard="claude-sonnet-5-5", light="claude-haiku-5-5",
+    )).claude
+    assert claude.env == {
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-sonnet-5-5",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-haiku-5-5",
+    }
+    assert [s.split(":")[0] for s in claude.skipped] == ["models.deep"]
+
+
+def test_a_session_may_still_be_an_alias():
+    # The `model` setting is resolved by Claude Code; only the env pins are not.
+    claude = harness_models(ModelsConfig(session="sonnet")).claude
+    assert claude.model == "sonnet"
+    assert claude.skipped == []
 
 
 def test_the_session_tier_gives_the_model_and_its_level_the_effort():

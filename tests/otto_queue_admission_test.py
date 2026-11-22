@@ -49,7 +49,7 @@ def test_read_host_parses_meminfo_and_psi(tmp_path):
     assert s.supports_admission
 
 
-def test_read_host_takes_the_tighter_cgroup_limit(tmp_path):
+def test_read_host_keeps_meminfo_and_cgroup_free_apart(tmp_path):
     sample = otto_queue.admission.read_host(_proc(tmp_path, cg_max=3 * GiB, cg_cur=2 * GiB))
     assert sample.mem_available == 7_000_000 * 1024
     assert sample.cgroup_free == GiB

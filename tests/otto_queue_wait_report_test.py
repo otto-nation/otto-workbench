@@ -20,6 +20,7 @@ KIND_CASES = (
     ("at the concurrency limit (4)", WaitKind.SLOTS),
     ("batch.mem_reserve is not a size: 'bogus'", WaitKind.OTHER),
     ("waiting for memory: 0.3 of 1.5 GB", WaitKind.MEMORY),
+    ("waiting for cgroup: 0.2 of 0.5 GB", WaitKind.MEMORY),
     ("CPU pressure 31.4% >= 30%", WaitKind.CPU),
     ("memory pressure 41.2% >= 40%", WaitKind.MEMORY),
     ("host has room", WaitKind.OTHER),

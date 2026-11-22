@@ -833,7 +833,8 @@ def fresh(
         display = ctx.current_branch or "detached HEAD"
         core.log.info(f"Worktree on {display}, checking out {ctx.branch}...")
     # Always sync, including when already on the branch: behind origin is
-    # fast-forwarded, unpushed commits are kept, divergence is refused.
+    # fast-forwarded, unpushed commits are kept, divergence is refused unless
+    # the local branch is a rewrite of origin's (identical tree), which is kept.
     # Skipping that when current_branch matched left leftover local SHAs to
     # replay.
     rc = rebase_target.checkout_target_branch(cwd, ctx, trail=trail)

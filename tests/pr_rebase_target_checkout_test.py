@@ -102,6 +102,57 @@ def test_checkout_target_branch_refuses_when_diverged(tmp_path):
     assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
 
 
+def _pushed_branch_squashed_in_place(repo, *, extra_file=None):
+    """A branch pushed as two commits, then squashed locally to one.
+
+    The documented squash is ``reset --soft`` to the merge-base and a fresh
+    commit, so the tree is the one origin already holds and only the history
+    differs. *extra_file* adds content on top, which is no longer a rewrite.
+    """
+    base = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "-b", _CHECKOUT_BRANCH)
+    _commit(repo, "one.txt", "one")
+    pushed = _commit(repo, "two.txt", "two")
+    _git(repo, "update-ref", f"refs/remotes/origin/{_CHECKOUT_BRANCH}", pushed)
+    _git(repo, "reset", "-q", "--soft", base)
+    _git(repo, "commit", "-qm", "one and two squashed")
+    if extra_file:
+        _commit(repo, extra_file, "content origin does not hold")
+    local = _git(repo, "rev-parse", "HEAD")
+    _git(repo, "checkout", "-q", "main")
+    return pushed, local
+
+
+def test_checkout_target_branch_keeps_a_squash_of_what_origin_holds(tmp_path):
+    """A rewrite that loses no content is not a divergence worth refusing.
+
+    Origin's two commits and the local one carry the same tree, so replaying
+    the local branch and pushing it under a lease drops nothing origin has.
+    """
+    repo = _repo_on_main(tmp_path)
+    pushed, local = _pushed_branch_squashed_in_place(repo)
+    assert rebase.target.local_vs_remote(str(repo), _CHECKOUT_BRANCH).diverged
+
+    rc = rebase.target.checkout_target_branch(str(repo), _checkout_ctx())
+
+    assert rc == 0
+    assert _git(repo, "rev-parse", "HEAD") == local
+    assert _git(repo, "rev-parse", _CHECKOUT_BRANCH) == local
+    assert _git(repo, "rev-parse", f"refs/remotes/origin/{_CHECKOUT_BRANCH}") == pushed
+
+
+def test_checkout_target_branch_refuses_a_squash_that_also_changes_content(tmp_path):
+    """Identical trees are the whole test: any difference keeps the refusal."""
+    repo = _repo_on_main(tmp_path)
+    _, local = _pushed_branch_squashed_in_place(repo, extra_file="three.txt")
+
+    rc = rebase.target.checkout_target_branch(str(repo), _checkout_ctx())
+
+    assert rc == 1
+    assert _git(repo, "rev-parse", _CHECKOUT_BRANCH) == local
+    assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD") == "main"
+
+
 def test_checkout_target_branch_names_the_commits_it_will_not_discard(tmp_path, capsys):
     """The refusal has to be actionable, and truncation has to admit itself."""
     repo = _repo_on_main(tmp_path)

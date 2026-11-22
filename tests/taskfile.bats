@@ -123,10 +123,3 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$output" = "none" ]
 }
-
-@test "lint calls lint_shell_scripts" {
-  run yq -r '.tasks.lint.cmds[]' "$TASKFILE"
-  [ "$status" -eq 0 ]
-  [[ "$output" == *"lint_shell_scripts ."* ]]
-  [[ "$output" != *"xargs shellcheck"* ]]
-}

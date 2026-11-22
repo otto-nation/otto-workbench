@@ -182,6 +182,29 @@ _run_reap() {
   run ! _alive "$child"
 }
 
+@test "an over-limit lint child of a pre-push hook is not reaped" {
+  local hook child
+  _spawn hook
+  _spawn child
+  _row "$hook" 99999 $(( 10 * 60 )) bash /usr/local/share/git/hooks/pre-push
+  _row "$child" "$hook" $(( 31 * 60 )) golangci-lint
+  _run_reap
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  _alive "$hook"
+  _alive "$child"
+}
+
+@test "an over-limit tasks process that is the pre-commit hook is not reaped" {
+  local pid
+  _spawn pid
+  _row "$pid" 99999 $(( 46 * 60 )) python3 python3 -m tasks lint /repo/.git/hooks/pre-commit
+  _run_reap
+  [ "$status" -eq 0 ]
+  [ -z "$output" ]
+  _alive "$pid"
+}
+
 @test "a process that ignores SIGTERM is killed after the grace period" {
   local pid
   _spawn_deaf pid

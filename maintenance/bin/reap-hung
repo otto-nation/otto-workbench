@@ -157,17 +157,20 @@ while [[ -n "$walker" && "$walker" != 0 ]]; do
   walker="$(ps -o ppid= -p "$walker" 2>/dev/null | tr -d ' ')" || walker=""
 done
 
+# _hook_args ARGS — true when the command line is a git hook.
+_hook_args() {
+  [[ "$1" == *"/hooks/pre-push"* ]] && return 0
+  [[ "$1" == *"/hooks/pre-commit"* ]] && return 0
+  [[ "$1" == *"git hook run"* ]] && return 0
+  return 1
+}
+
 # _hook_owned PID — true when PID or an ancestor is a git hook. Hook-owned
 # lint/tasks can legally run past the agent limits; a hung agent job cannot.
 _hook_owned() {
   local walker="$1"
   while [[ -n "$walker" && "$walker" != 0 && "$walker" != 1 ]]; do
-    local args="${ARGS_OF[$walker]:-}"
-    if [[ "$args" == *"/hooks/pre-push"* ||
-          "$args" == *"/hooks/pre-commit"* ||
-          "$args" == *"git hook run"* ]]; then
-      return 0
-    fi
+    _hook_args "${ARGS_OF[$walker]:-}" && return 0
     walker="${PPID_OF[$walker]:-}"
   done
   return 1
@@ -176,10 +179,7 @@ _hook_owned() {
 for pid in "${PIDS[@]}"; do
   limit="$(_limit_s "${NAME_OF[$pid]}")"
   [[ -n "$limit" && -z "${PROTECTED[$pid]:-}" ]] || continue
-  if (( AGE_OF[$pid] > limit )); then
-    if _hook_owned "$pid"; then
-      continue
-    fi
+  if (( AGE_OF[$pid] > limit )) && ! _hook_owned "$pid"; then
     CANDIDATE[$pid]=1
   fi
 done

@@ -503,7 +503,12 @@ they then ask for the branch to be pushed.
 - `rebase.squash` is `auto` (default), `always`, or `never`. `auto` squashes
   only in a squash-merge-only repo when the replay would conflict repeatedly
   on the same files and the branch has one author. Opt out with
-  `otto-workbench config set rebase.squash never --project`
+  `otto-workbench config set rebase.squash never --project`.
+  Auto does not fire for a rename-then-pointer series, or a stacked PR whose
+  own commits re-conflict on paths the parent did not change. After that kind
+  of replay, squash the branch's own commits and rebase once:
+  `git reset --soft "$(git merge-base HEAD origin/<base>)"` then
+  `pr rebase --fix`. Do not preflight that squash.
 - Never resolve a conflict in a hand-written file with a whole-file
   `git checkout --ours`/`--theirs`, or by copying either side's file in. It
   replaces every hunk, including the ones git merged cleanly, and the branch's

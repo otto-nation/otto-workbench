@@ -167,6 +167,51 @@ class TestAuditReplay:
         assert audit.files[0].skipped.startswith("resolved whole by design")
 
 
+class TestOntoRename:
+    def test_an_onto_rename_is_not_flagged_as_one_sided_presence(self, tmp_path):
+        repo = init_repo(tmp_path / "repo")
+        (repo / "CLAUDE.md").write_text("# rules\nkeep\n")
+        _git(repo, "add", "CLAUDE.md")
+        _git(repo, "commit", "-q", "-m", "base")
+        parent = git_out(repo, "rev-parse", "HEAD").strip()
+        _git(repo, "checkout", "-q", "-b", "feat")
+        (repo / "CLAUDE.md").write_text("# rules\nkeep\nbranch edit\n")
+        _git(repo, "commit", "-q", "-am", "feat: edit claude")
+        replayed = git_out(repo, "rev-parse", "HEAD").strip()
+        _git(repo, "checkout", "-q", "main")
+        _git(repo, "mv", "CLAUDE.md", "AGENTS.md")
+        _git(repo, "commit", "-q", "-m", "main: rename")
+        target = git_out(repo, "rev-parse", "HEAD").strip()
+        files = rebase.replay_audit.audit_paths(
+            str(repo), ["CLAUDE.md"],
+            base=parent, target=target, replayed=replayed, resolved=target,
+        )
+        assert files[0].advisory == ()
+
+    def test_a_plain_deletion_against_an_edit_is_still_flagged(self, tmp_path):
+        repo = init_repo(tmp_path / "repo")
+        (repo / "CLAUDE.md").write_text("# rules\nkeep\n")
+        _git(repo, "add", "CLAUDE.md")
+        _git(repo, "commit", "-q", "-m", "base")
+        parent = git_out(repo, "rev-parse", "HEAD").strip()
+        _git(repo, "checkout", "-q", "-b", "feat")
+        (repo / "CLAUDE.md").write_text("# rules\nkeep\nbranch edit\n")
+        _git(repo, "commit", "-q", "-am", "feat: edit claude")
+        replayed = git_out(repo, "rev-parse", "HEAD").strip()
+        _git(repo, "checkout", "-q", "main")
+        _git(repo, "rm", "CLAUDE.md")
+        _git(repo, "commit", "-q", "-m", "main: delete")
+        target = git_out(repo, "rev-parse", "HEAD").strip()
+        files = rebase.replay_audit.audit_paths(
+            str(repo), ["CLAUDE.md"],
+            base=parent, target=target, replayed=replayed, resolved=target,
+        )
+        assert any(
+            loss.kind is rebase.survival.LossKind.FILE_PRESENCE and not loss.blocking
+            for loss in files[0].losses
+        )
+
+
 class TestMain:
     def test_a_refusal_exits_with_the_code_the_hook_refuses_on(self, repo, monkeypatch, capsys):
         _stop_on_conflict(repo)

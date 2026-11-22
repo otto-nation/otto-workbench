@@ -204,12 +204,14 @@ def test_room_does_not_spend_host_reserve_inside_the_slice(tmp_path):
     assert verdict.admit, verdict.reason
 
 
-def test_room_refuses_when_the_slice_cannot_fit_the_estimate(tmp_path):
-    sample = _slice_host(tmp_path, mem_kb=8 * 1024 * 1024, current=int(1.8 * GiB))
+def test_room_does_not_require_the_host_estimate_inside_the_cgroup():
+    # agent: 1.5G MemoryMax, ~0.84G free. cgroup_free >= 1.5G never admits.
+    sample = otto_queue.admission.HostSample(
+        mem_available=8 * GiB, cpu_some_avg10=1.0, mem_some_avg10=0.0,
+        cgroup_free=int(0.84 * GiB))
     verdict = otto_queue.admission.room(
         sample, estimate=otto_queue.admission.QUEUE_HEAVY_ESTIMATE, cfg=CFG)
-    assert not verdict.admit
-    assert "cgroup" in verdict.reason
+    assert verdict.admit, verdict.reason
 
 
 def test_room_still_requires_host_reserve_beside_the_slice(tmp_path):

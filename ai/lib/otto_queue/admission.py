@@ -7,9 +7,10 @@ alone, heavy work on `room`. The class limits are
 core but one.
 
 Host free memory (`MemAvailable`) and cgroup headroom are sampled apart.
-`room` spends `batch.mem_reserve` only against the host figure: a slice cap
-*is* the interactive reserve, so subtracting the reserve from it again made
-spare 0 on a 2G `workbench.slice`. Each cgroup's limit is the
+`room` spends `batch.mem_reserve` and the job estimate only against the host
+figure. A slice cap *is* the cap: requiring `cgroup_free >= estimate` on a
+1.5G user slice never admits, because the worker already lives there.
+Each cgroup's limit is the
 tighter of its `memory.max` and `memory.high`. A caller may name the chain to
 read (`read_host(cgroup=)`): the queue worker reads `workbench.slice`'s, found
 by `slice_cgroup`. Reading only `/sys/fs/cgroup/memory.max` saw nothing on a
@@ -174,13 +175,14 @@ class Verdict:
 
 
 def room(sample: HostSample, *, estimate: int, cfg: BatchConfig) -> Verdict:
-    """Whether the host has *estimate* bytes beyond `batch.mem_reserve`, the
-    cgroup has *estimate* of headroom, and CPU/memory pressure are under limit.
-    A metric the sample lacks is not checked.
+    """Whether the host has *estimate* bytes beyond `batch.mem_reserve` and
+    CPU/memory pressure are under limit. A metric the sample lacks is not
+    checked. Cgroup remaining is not compared to *estimate*: the slice cap
+    enforces itself, and requiring the host job size free inside a same-sized
+    cap never admits.
 
-    `mem_reserve` is host-only. Cgroup headroom is already the cap; folding it
-    into `mem_available` before subtracting the reserve made a 2G slice report
-    spare 0 for a 1.5G job.
+    `mem_reserve` is host-only. Folding the reserve into cgroup headroom made
+    a 2G slice report spare 0 for a 1.5G job.
 
     The one owner of "is there room", for a batch step (`decide`) and a queue
     entry (`admit_entry`) alike.
@@ -196,9 +198,6 @@ def room(sample: HostSample, *, estimate: int, cfg: BatchConfig) -> Verdict:
         if spare < estimate:
             return Verdict(False, f"waiting for memory: {max(spare, 0) / GB:.1f} of "
                                   f"{estimate / GB:.1f} GB")
-    if sample.cgroup_free is not None and sample.cgroup_free < estimate:
-        return Verdict(False, f"waiting for cgroup: {sample.cgroup_free / GB:.1f} of "
-                              f"{estimate / GB:.1f} GB")
     if sample.cpu_some_avg10 is not None and sample.cpu_some_avg10 >= cfg.cpu_pressure_max:
         return Verdict(False, f"CPU pressure {sample.cpu_some_avg10:g}% "
                               f">= {cfg.cpu_pressure_max:g}%")

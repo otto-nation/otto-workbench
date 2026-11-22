@@ -109,7 +109,9 @@ command: read the log or wait.
 | `budget_exhausted` | AI quota or spend limit | none — wait for it to reset |
 | `failed_unknown` | unclassified failure | none — read the log path |
 
-`block`/`wait` → item `needs_session`; `act` only → `done`.
+`block`/`wait` → item `needs_session`; `act` only → `done`. The report
+re-reads `dirty_worktree`, `ci_failing`, and `threads_need_human` and drops
+them when the tree is clean, CI is green, or threads are settled.
 
 ---
 

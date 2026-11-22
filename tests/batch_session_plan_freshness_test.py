@@ -19,7 +19,8 @@ import batch.session_report  # noqa: E402
 from batch.model import Finding, FindingReason  # noqa: E402
 from batch.publish import TreeState  # noqa: E402
 from batch_report_support import SHA, make_item, make_run, no_debt  # noqa: E402
-from pr.domains import RebaseSummary  # noqa: E402
+from pr.ci_failures import RunState  # noqa: E402
+from pr.domains import CIDomain, RebaseSummary  # noqa: E402
 from pr.state import PRIdentity, PRState  # noqa: E402
 from rebase.types import RefDivergence  # noqa: E402
 
@@ -214,3 +215,59 @@ def test_offline_replan_keeps_stored_push_refused(tmp_path):
     entries = batch.session_report.sessions(
         make_run([item]), closeout=no_debt, tree=lambda i: tree)
     assert FindingReason.PUSH_REFUSED in _reasons(entries)
+
+
+def test_clean_worktree_drops_dirty_worktree(tmp_path):
+    repo = init_repo(tmp_path)
+    (repo / "a.txt").write_text("one\n")
+    commit_all(repo, "base")
+    wt = str(repo)
+    item = make_item(1, worktree=wt, repo_dir=wt, branch="feat")
+    item.findings = [Finding(FindingReason.DIRTY_WORKTREE, "worktree")]
+    entries = batch.session_report.sessions(
+        make_run([item]), closeout=no_debt, tree=_even)
+    assert FindingReason.DIRTY_WORKTREE not in _reasons(entries)
+
+
+def test_dirty_porcelain_keeps_dirty_worktree(tmp_path):
+    repo = init_repo(tmp_path)
+    (repo / "a.txt").write_text("one\n")
+    commit_all(repo, "base")
+    (repo / "a.txt").write_text("dirt\n")
+    wt = str(repo)
+    item = make_item(1, worktree=wt, repo_dir=wt, branch="feat")
+    item.findings = [Finding(FindingReason.DIRTY_WORKTREE, "worktree")]
+    entries = batch.session_report.sessions(
+        make_run([item]), closeout=no_debt, tree=_even)
+    assert FindingReason.DIRTY_WORKTREE in _reasons(entries)
+
+
+def test_green_ci_run_drops_stored_ci_failing(tmp_path, monkeypatch):
+    item = make_item(1, worktree=str(tmp_path), repo_dir=str(tmp_path), branch="feat")
+    item.findings = [Finding(FindingReason.CI_FAILING, "ci")]
+    ci_run = RunState(
+        run_id=1, run_number=1, head_sha=SHA, status="completed",
+        conclusion="success", fetched_at="t", failures={},
+    )
+    state = PRState(
+        identity=PRIdentity(repo="o/r", branch="feat", pr_number=1, head_sha=SHA,
+                            worktree_root=str(tmp_path)),
+        ci=CIDomain(runs={1: ci_run}, latest_run_id=1, conclusion="success"),
+    )
+    monkeypatch.setattr(batch.plan, "pr_state", lambda *a, **k: state)
+    entries = batch.session_report.sessions(
+        make_run([item]), closeout=no_debt, tree=_even)
+    assert FindingReason.CI_FAILING not in _reasons(entries)
+
+
+def test_empty_owed_threads_drops_stored_threads(tmp_path, monkeypatch):
+    item = make_item(1, worktree=str(tmp_path), repo_dir=str(tmp_path), branch="feat")
+    item.findings = [Finding(FindingReason.THREADS_NEED_HUMAN, "comments")]
+    state = PRState(
+        identity=PRIdentity(repo="o/r", branch="feat", pr_number=1, head_sha=SHA,
+                            worktree_root=str(tmp_path)),
+    )
+    monkeypatch.setattr(batch.plan, "pr_state", lambda *a, **k: state)
+    entries = batch.session_report.sessions(
+        make_run([item]), closeout=no_debt, tree=_even)
+    assert FindingReason.THREADS_NEED_HUMAN not in _reasons(entries)

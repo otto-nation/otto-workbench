@@ -10,7 +10,7 @@ findings:
 - conflict_handwritten
   - files: a.go
 
-- `pr rebase --fix --no-push --repo-dir /no/such/repo --branch feat-base` — resolve hand-written conflicts
+- `pr rebase --fix --no-push --repo-dir /no/such/wt/o-r-1` — resolve hand-written conflicts
 
 ## o/r#3
 
@@ -20,7 +20,7 @@ findings:
 - closeout_owed: closeout owed per pr state
 - push_refused: origin/feat-moved is bbbbbbb; the batch planned from aaaaaaa
 
-- `pr comments --finish --post --repo-dir /no/such/repo --branch feat-moved` — closeout owed per pr state
+- `pr comments --finish --post --repo-dir /no/such/wt/o-r-3` — closeout owed per pr state
 
 ## o/r#2
 
@@ -29,4 +29,4 @@ branch: feat-child
 findings:
 - threads_need_human
 
-- `pr comments --fix --repo-dir /no/such/repo --branch feat-child` — address review comments
+- `pr comments --fix --repo-dir /no/such/wt/o-r-2` — address review comments

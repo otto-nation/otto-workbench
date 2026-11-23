@@ -143,13 +143,13 @@ Memory consolidation for Claude Code. Scans session transcripts for corrections,
 
 ### `/finishing-a-development-branch`
 
-Complete a development branch — verify tests, self-review, then open a draft PR. TRIGGER when: implementation is complete and the work needs to reach main. SKIP: work still in progress; a branch whose PR is already open.
+Complete a development branch — verify tests, self-review, then open a draft PR. TRIGGER when: implementation is complete and the work needs to reach main, even if the user did not ask for a PR. SKIP: work still in progress; a branch whose PR is already open; the user named a different next step.
 
 ```
 /finishing-a-development-branch
 ```
-**Trigger:** Use when implementation is complete and the work needs to reach main, or when the user asks to finish, wrap up, or ship a branch.
-**Skip:** Do not use while work is still in progress, or on a branch whose PR is already open — prefer a follow-up PR.
+**Trigger:** Use when implementation is complete and the work needs to reach main — including when the user did not ask to finish or open a PR — or when the user asks to finish, wrap up, or ship a branch.
+**Skip:** Do not use while work is still in progress, or on a branch whose PR is already open — prefer a follow-up PR — or when the user named a different next step.
 
 ### `/git-workflow`
 
@@ -163,12 +163,12 @@ Git and PR procedures: creating and describing a PR with pr create, the PR templ
 
 ### `/issue-tracker`
 
-Issue tracker conventions: resolving which tracker a repo uses (github, linear, jira), filing, assigning, labelling and linking issues, and per-provider CLI patterns. TRIGGER when: creating, editing, searching or closing an issue, filing a follow-up or deferred item, or asked which tracker a repo uses. SKIP: opening a PR (see git-workflow); reading an issue a user pasted.
+Issue tracker conventions: resolving which tracker a repo uses (github, linear, jira), filing, assigning, labelling and linking issues, attaching analysis as a tracker document, and per-provider CLI patterns. TRIGGER when: creating, editing, searching or closing an issue, filing a follow-up or deferred item, attaching an analysis or plan to an issue, or asked which tracker a repo uses. SKIP: opening a PR (see git-workflow); reading an issue a user pasted.
 
 ```
 /issue-tracker
 ```
-**Trigger:** Use when creating, editing, searching or closing an issue, filing a follow-up or deferred item, or when asked which issue tracker a repo uses.
+**Trigger:** Use when creating, editing, searching or closing an issue, filing a follow-up or deferred item, attaching an analysis or plan to an issue, or when asked which issue tracker a repo uses.
 **Skip:** Do not use when opening a PR (use git-workflow) or when only reading an issue the user pasted.
 
 ### `/machine`

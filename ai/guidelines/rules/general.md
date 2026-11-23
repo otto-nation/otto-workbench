@@ -10,6 +10,7 @@
 - `pr create --draft --skip-review "<their reason>"` quotes the user's own words, never your judgement; skip only when asked (`self-review/SKILL.md` § Before PR Creation)
 - Never put a bare coreutils `timeout` around a long `pr review --self --fix` (`subagents/SKILL.md` § Implementation)
 - At session start in a repo, check `~/.local/state/workbench/reviews/` for a self-review of this branch (`self-review/SKILL.md` § Session-Start)
+- When implementation on a branch is complete, load `finishing-a-development-branch` and open the draft PR. Do not wait to be asked
 
 ## Upstream Repositories
 

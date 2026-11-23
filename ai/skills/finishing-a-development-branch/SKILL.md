@@ -1,10 +1,10 @@
 ---
 name: finishing-a-development-branch
-description: "Complete a development branch — verify tests, self-review, then open a draft PR. TRIGGER when: implementation is complete and the work needs to reach main. SKIP: work still in progress; a branch whose PR is already open."
+description: "Complete a development branch — verify tests, self-review, then open a draft PR. TRIGGER when: implementation is complete and the work needs to reach main, even if the user did not ask for a PR. SKIP: work still in progress; a branch whose PR is already open; the user named a different next step."
 source: otto-workbench/ai/skills/finishing-a-development-branch/SKILL.md
 invocation: "/finishing-a-development-branch"
-trigger: "Use when implementation is complete and the work needs to reach main, or when the user asks to finish, wrap up, or ship a branch."
-skip: "Do not use while work is still in progress, or on a branch whose PR is already open — prefer a follow-up PR."
+trigger: "Use when implementation is complete and the work needs to reach main — including when the user did not ask to finish or open a PR — or when the user asks to finish, wrap up, or ship a branch."
+skip: "Do not use while work is still in progress, or on a branch whose PR is already open — prefer a follow-up PR — or when the user named a different next step."
 ---
 
 <!-- Overrides superpowers:finishing-a-development-branch, which presents a
@@ -108,8 +108,9 @@ refuses an unreviewed HEAD otherwise.
 
 ## Step 4: Open the PR
 
-The work is complete and reviewed, so open the PR. Do not present a menu of
-completion options — the rules forbid it, and this is the path.
+The work is complete and reviewed, so open the PR. Do not wait to be asked.
+Do not present a menu of completion options — the rules forbid it, and this
+is the path.
 
 ```bash
 pr create --draft
@@ -174,6 +175,7 @@ and the push owes `pr review --self --fix --push`
 | Excuse | Reality |
 |--------|---------|
 | "I'll offer merge / PR / keep and let them choose" | The rules forbid a completion menu. Open the PR. |
+| "They didn't ask for a PR" / "I'll wait until they say finish" | Implementation complete is the trigger. Open the draft. |
 | "It's a small change — merge it into main locally" | Every change reaches `main` through a merged PR, no exceptions. |
 | "I'll open it ready, it's finished" | `--draft`. Ready is the reviewer's signal, not yours. |
 | "`gh pr create` is right here" | `pr create` applies the template, issue linking, and assignee rules. |

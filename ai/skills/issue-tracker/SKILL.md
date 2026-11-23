@@ -1,10 +1,10 @@
 ---
 name: issue-tracker
-description: "Issue tracker conventions: resolving which tracker a repo uses (github, linear, jira), filing, assigning, labelling and linking issues, and per-provider CLI patterns. TRIGGER when: creating, editing, searching or closing an issue, filing a follow-up or deferred item, or asked which tracker a repo uses. SKIP: opening a PR (see git-workflow); reading an issue a user pasted."
+description: "Issue tracker conventions: resolving which tracker a repo uses (github, linear, jira), filing, assigning, labelling and linking issues, attaching analysis as a tracker document, and per-provider CLI patterns. TRIGGER when: creating, editing, searching or closing an issue, filing a follow-up or deferred item, attaching an analysis or plan to an issue, or asked which tracker a repo uses. SKIP: opening a PR (see git-workflow); reading an issue a user pasted."
 source: otto-workbench/ai/skills/issue-tracker/SKILL.md
 kind: rule
 invocation: "/issue-tracker"
-trigger: "Use when creating, editing, searching or closing an issue, filing a follow-up or deferred item, or when asked which issue tracker a repo uses."
+trigger: "Use when creating, editing, searching or closing an issue, filing a follow-up or deferred item, attaching an analysis or plan to an issue, or when asked which issue tracker a repo uses."
 skip: "Do not use when opening a PR (use git-workflow) or when only reading an issue the user pasted."
 ---
 
@@ -21,13 +21,13 @@ skip: "Do not use when opening a PR (use git-workflow) or when only reading an i
 
 ## Writing an issue (any tracker)
 
-- Describe the problem and desired outcome — not implementation details. Structure as: Context (what prompted this), Problem (what's wrong), Goal (desired outcome). Keep specific files, code snippets, and implementation steps in the plan, not the issue
+- Describe the problem and desired outcome — not implementation details. Structure as: Context (what prompted this), Problem (what's wrong), Goal (desired outcome). Keep specific files, code snippets, and implementation steps out of the issue body; they belong in `resolve-workspace`'s `plans/`. Do not upload that write-up as a Linear document or a GitHub comment unless the user asks — the recipes live under Linear and GitHub below
 - Titles follow conventional commit format: `type(scope): subject` — same rules as git commit headers (72 chars, allowed types, no period). This keeps issues, commits, and PRs consistent
 - When an issue's scope expands beyond its original title/description, retitle and rewrite the description to reflect the broader scope. If the original scope was a meaningful unit of work, preserve it as a sub-issue rather than losing that context
 - Prefer sub-issues over expanding a single issue's scope when the work has distinct deliverables. A parent issue should describe the initiative; sub-issues should each be independently completable. Don't nest sub-issues more than one level
 - Always assign the issue to its creator — unassigned issues get lost
 - Nothing is truly out of scope. Work a change defers is filed as its own issue, linked from the one deferring it, rather than described in a section and forgotten
-- A dispatched subagent does not file: it reports the deferral (what, why, suggested title) to its parent, which files or asks
+- A dispatched subagent does not file, comment, or attach documents: it reports the deferral (what, why, suggested title, proposed document text) to its parent, which files or asks
 - An issue filed as follow-up work — deferred from a PR, split out of a plan's out-of-scope section, or carved off an issue whose scope grew — carries the labels in `issues.labels`, which is `follow-up` unless the repo says otherwise. Read the resolved list with `otto-workbench config get issues.labels`; a repo that has opted out spells it `labels: []` and you label nothing
 - Create the label when the tracker does not have one. Both CLIs resolve every label before they open the create call and fail the whole filing on one they cannot find, so an unknown label costs the issue rather than the label — `gh label list`/`gh label create`, `linear label list --all --json`/`linear label create --name X --team KEY`. The scripts do this themselves; it is only yours to do when you are filing by hand
 
@@ -47,6 +47,8 @@ Applies only when the resolved provider is `linear`.
 - Search with `linear issue query --search "term"`. `linear issue list` is an alias for `issue mine` and takes no search flag at all — `--query` on it prints that subcommand's usage to *stdout* and exits 2, so a duplicate check written that way reads as a search that matched nothing. Never conclude an issue does not exist from a command whose output looked like help text
 - `issue view --json` has no `relations` key — the schema is assignee, attachments, branchName, children, comments, cycle, description, documents, identifier, labels, parent, priority, project, projectMilestone, state, team, title, url. Relations are only visible through `linear issue relation list <ID>`, so absence in the JSON is the field never being returned, not the relation being missing
 - Close on merge by passing the issue key (`ENG-123`) to `pr create`'s `--closes` flag (the invocation is in `git-workflow/SKILL.md` § PR Creation).
+- Analysis, hide-lists, and ordered work the user asks to upload as a document go in a Linear document on the issue, not in the issue body and not as a file attachment. `linear document create --title "..." --content-file <path> --issue ENG-N --yes`. `linear issue attach` is a sidebar file that does not render — do not use it for Markdown analysis.
+- Mentions in documents and comments are a bare Linear URL (`linear issue url ENG-N`). `@name` and `[text](url)` stay plain text. Collapsible sections: `+++ [title]` … `+++` (`linear markdown`).
 - Team key is always the prefix of the issue identifier. Pass it explicitly where required:
 
 | Command | Notes |
@@ -55,6 +57,10 @@ Applies only when the resolved provider is `linear`.
 | `linear issue view <ID> --json` | JSON output — pipe through `head` before jq. Carries no relations |
 | `linear issue query --search "term"` | The only full-text search. Add `--all-teams`, `--include-archived`, `--search-comments` to widen it |
 | `linear issue comment add <ID> --body-file <path>` | Comments live under `issue comment`, not on `issue` itself. `--body-file` for anything multi-line |
+| `linear document create --title "..." --content-file <path> --issue <ID> --yes` | Markdown document on the issue. Analysis the user asks to upload goes here |
+| `linear document view <slug>` | View a document |
+| `linear issue attach <ID> <file>` | Sidebar file. Does not render. Not for Markdown analysis |
+| `linear issue url <ID>` | Print the issue URL — paste it bare in a document or comment to mention |
 | `linear issue create --team <KEY> --assignee self --title "..." --description "..."` | `--team` and `--assignee self` are required |
 | `linear issue create ... --label follow-up` | Repeat `--label` per label. Fails without filing when the label does not exist |
 | `linear label list --all --json` | Team and workspace labels — check before creating |
@@ -81,6 +87,7 @@ Applies only when the resolved provider is `github`.
 |---------|-------|
 | `gh issue view <N> --repo <owner>/<repo> --json title,body,comments` | Pipe through `head` before jq |
 | `gh issue create --repo <owner>/<repo> --title "..." --body-file <path> --assignee @me` | `--body-file` for anything multi-line |
+| `gh issue comment <N> --repo <owner>/<repo> --body-file <path>` | Analysis the user asks to upload. GitHub has no document type; do not comment implementation that belongs in `plans/` unless they asked |
 | `gh issue create ... --label follow-up` | Repeatable or comma-separated. Fails without filing when the label does not exist |
 | `gh label list --repo <owner>/<repo> --limit 200 --json name` | Default limit is 30, which reads a label past it as missing |
 | `gh label create follow-up --repo <owner>/<repo>` | Exits non-zero when it already exists. Not `--force`: that overwrites colour and description |

@@ -94,37 +94,62 @@ def _open_items(org: str, author: str) -> list[dict[str, Any]]:
         "--json", _SEARCH_OPEN_JSON,
         default=[],
     )
-    by_repo: dict[str, list[int]] = defaultdict(list)
-    if isinstance(hits, list):
-        for hit in hits:
-            if not isinstance(hit, dict):
-                continue
-            repo = _repo_slug(hit)
-            number = hit.get("number")
-            if repo and isinstance(number, int):
-                by_repo[repo].append(number)
     rows: list[dict[str, Any]] = []
-    wanted = {WAITING, APPROVED, BLOCKED, DRAFT}
-    for repo, numbers in sorted(by_repo.items()):
-        listed = gh.client.json_out(
-            "pr", "list",
-            "--repo", repo,
-            "--author", author,
-            "--state", "open",
-            "--limit", "100",
-            "--json", _OPEN_JSON,
-            default=[],
-        )
-        if not isinstance(listed, list):
-            continue
-        want = set(numbers)
-        for pr in listed:
-            if not isinstance(pr, dict) or pr.get("number") not in want:
-                continue
-            row = item_from_open(pr, repo)
-            if row["bucket"] in wanted:
-                rows.append(row)
+    for repo, numbers in sorted(_group_open_hits(hits).items()):
+        rows.extend(_list_open_repo(repo, author, set(numbers)))
     return rows
+
+
+def _group_open_hits(hits: object) -> dict[str, list[int]]:
+    by_repo: dict[str, list[int]] = defaultdict(list)
+    if not isinstance(hits, list):
+        return by_repo
+    for hit in hits:
+        parsed = _hit_repo_number(hit)
+        if parsed is None:
+            continue
+        repo, number = parsed
+        by_repo[repo].append(number)
+    return by_repo
+
+
+def _hit_repo_number(hit: object) -> tuple[str, int] | None:
+    if not isinstance(hit, dict):
+        return None
+    repo = _repo_slug(hit)
+    number = hit.get("number")
+    if not repo or not isinstance(number, int):
+        return None
+    return repo, number
+
+
+def _list_open_repo(repo: str, author: str, want: set[int]) -> list[dict[str, Any]]:
+    listed = gh.client.json_out(
+        "pr", "list",
+        "--repo", repo,
+        "--author", author,
+        "--state", "open",
+        "--limit", "100",
+        "--json", _OPEN_JSON,
+        default=[],
+    )
+    if not isinstance(listed, list):
+        return []
+    rows: list[dict[str, Any]] = []
+    for pr in listed:
+        row = _open_row(pr, repo, want)
+        if row is not None:
+            rows.append(row)
+    return rows
+
+
+def _open_row(pr: object, repo: str, want: set[int]) -> dict[str, Any] | None:
+    if not isinstance(pr, dict) or pr.get("number") not in want:
+        return None
+    row = item_from_open(pr, repo)
+    if row["bucket"] not in {WAITING, APPROVED, BLOCKED, DRAFT}:
+        return None
+    return row
 
 
 def _merged_items(org: str, author: str, since: datetime) -> list[dict[str, Any]]:
@@ -137,17 +162,23 @@ def _merged_items(org: str, author: str, since: datetime) -> list[dict[str, Any]
         "--json", _SEARCH_MERGED_JSON,
         default=[],
     )
-    rows: list[dict[str, Any]] = []
     if not isinstance(hits, list):
-        return rows
+        return []
+    rows: list[dict[str, Any]] = []
     for hit in hits:
-        if not isinstance(hit, dict):
-            continue
-        closed = hit.get("closedAt") or ""
-        if not _on_or_after(str(closed), since):
-            continue
-        rows.append(item_from_merged(hit))
+        row = _merged_row(hit, since)
+        if row is not None:
+            rows.append(row)
     return rows
+
+
+def _merged_row(hit: object, since: datetime) -> dict[str, Any] | None:
+    if not isinstance(hit, dict):
+        return None
+    closed = hit.get("closedAt") or ""
+    if not _on_or_after(str(closed), since):
+        return None
+    return item_from_merged(hit)
 
 
 def _repo_slug(hit: dict[str, Any]) -> str:

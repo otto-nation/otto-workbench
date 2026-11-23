@@ -84,7 +84,7 @@ the mismatch, since nothing at runtime would report it.
 ## Step 3: The `agent:` Contract
 
 `agent: <name>` declares that the skill's body is an agent protocol maintained
-in `ai/claude/agents/<name>.md`. Such a skill:
+in `ai/agents/<name>.md`. Such a skill:
 
 - installs to **Pi's discovery root only** — Claude Code loads the same protocol
   as an agent, and must not carry a second copy as a skill

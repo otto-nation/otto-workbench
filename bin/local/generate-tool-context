@@ -370,7 +370,7 @@ _emit_ai_installs() {
   local claude_rules="~${CLAUDE_RULES_DIR#"$HOME"}"
   # Source dirs within the repo
   local skills_src="$AI_DIR/skills"
-  local claude_agents_src="$AI_DIR/claude/agents"
+  local agents_src="$AI_DIR/agents"
   local claude_mcps_src="$AI_DIR/claude/mcps"
 
   printf '**Claude Code:**\n'
@@ -402,9 +402,9 @@ _emit_ai_installs() {
 
   # Agents table with descriptions from agent .md frontmatter
   local has_agents=false agent_names=() f
-  _sorted_names agent_names .md "$claude_agents_src"/*.md
+  _sorted_names agent_names .md "$agents_src"/*.md
   for name in "${agent_names[@]}"; do
-    f="$claude_agents_src/$name.md"
+    f="$agents_src/$name.md"
     [[ -f "$f" ]] || continue
     if [[ "$has_agents" == false ]]; then
       printf '\n**Agents:**\n\n'

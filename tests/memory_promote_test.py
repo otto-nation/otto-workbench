@@ -45,9 +45,10 @@ def test_run_scan_returns_0_rather_than_exiting(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("WORKBENCH_DATA_DIR", str(tmp_path / "data"))
     wb = tmp_path / "wb"
     (wb / "ai" / "guidelines" / "rules").mkdir(parents=True)
-    (wb / "ai" / "claude" / "agents").mkdir(parents=True)
+    (wb / "ai" / "agents").mkdir(parents=True)
     (wb / "ai" / "memory").mkdir(parents=True)
     (wb / "bin").mkdir(parents=True)
+    (wb / "ai" / "claude").mkdir(parents=True)
     (wb / "ai" / "claude" / "settings.json").write_text(
         '{"hooks": {"PreToolUse": [{"matcher": "Bash", "command": "echo hi"}]}}'
     )

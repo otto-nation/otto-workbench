@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# select-on: *registry.yml *.env.yml config.schema.json install.components */setup.conf ai/claude/agents/* ai/skills/*
+# select-on: *registry.yml *.env.yml config.schema.json install.components */setup.conf ai/agents/* ai/skills/*
 
 # A plain generator run costs ~1.7s and nine cases below do nothing but read
 # its output. Run once here; each of those copies the result rather than
@@ -180,9 +180,9 @@ EOF
   done < <(yq -r '.tools[].name' "$REPO_ROOT/ai/claude/registry.yml")
 }
 
-@test "every ai/claude agent has a matching agent entry" {
+@test "every agent has a matching agent entry" {
   _shared_snapshot
-  for f in "$REPO_ROOT"/ai/claude/agents/*.md; do
+  for f in "$REPO_ROOT"/ai/agents/*.md; do
     name="$(basename "$f" .md)"
     run jq -e --arg e "agent:$name" '.entries | index($e)' "$TMPDIR/ai/claude/public-surface.json"
     [ "$status" -eq 0 ]

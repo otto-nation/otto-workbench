@@ -2,11 +2,11 @@
 name: debugger
 description: "Systematic code-level bug diagnosis. Read-only — traces through source code to find root causes. Never modifies anything. Dispatch when a bug needs a diagnosis before anyone changes code. Not for a session that will implement the fix: that is superpowers:systematic-debugging, whose last phase implements, and loading both is duplicated process rather than escalation."
 tier: deep
-source: otto-workbench/ai/claude/agents/debugger.md
+source: otto-workbench/ai/agents/debugger.md
 ---
 
 <!-- The diagnose-vs-implement boundary is stated in three places, each for a
-     different reader: ai/claude/agents/debugger.md's description (Claude Code's
+     different reader: ai/agents/debugger.md's description (Claude Code's
      dispatcher), ai/skills/debugger/SKILL.md's description (Pi's matcher), and the
      debugger/systematic-debugging bullet in ai/guidelines/rules/skills.md
      (this repo's humans). If the boundary changes, update all three.

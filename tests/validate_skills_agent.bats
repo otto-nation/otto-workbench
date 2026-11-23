@@ -21,9 +21,9 @@ teardown() {
 _make_agent_skill() {
   local name="$1" agent="$2"
   local dir="$FAKE_WORKBENCH/ai/skills/$name"
-  mkdir -p "$dir" "$FAKE_WORKBENCH/ai/claude/agents"
+  mkdir -p "$dir" "$FAKE_WORKBENCH/ai/agents"
   printf -- '---\nname: %s\n---\nbody\n' "$agent" \
-    > "$FAKE_WORKBENCH/ai/claude/agents/$agent.md"
+    > "$FAKE_WORKBENCH/ai/agents/$agent.md"
   {
     echo "---"
     echo "name: $name"
@@ -56,11 +56,11 @@ _make_agent_skill() {
 
 @test "an agent field naming no agent file fails" {
   _make_agent_skill reviewer reviewer
-  rm "$FAKE_WORKBENCH/ai/claude/agents/reviewer.md"
+  rm "$FAKE_WORKBENCH/ai/agents/reviewer.md"
 
   WORKBENCH_DIR="$FAKE_WORKBENCH" run "$VALIDATE_SKILLS" --quiet
   [ "$status" -eq 1 ]
-  [[ "$output" == *"has no ai/claude/agents/reviewer.md"* ]]
+  [[ "$output" == *"has no ai/agents/reviewer.md"* ]]
 }
 
 @test "a name violating the Agent Skills standard fails" {
@@ -95,9 +95,9 @@ _make_agent_skill() {
 @test "an agent file with no skill and no allowlist entry fails" {
   # The omission this task fixes: debugger, incident and migrate each had an
   # agent file and no skill for a whole phase, and nothing said so.
-  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents"
+  mkdir -p "$FAKE_WORKBENCH/ai/agents"
   printf -- '---\nname: orphan\n---\nbody\n' \
-    > "$FAKE_WORKBENCH/ai/claude/agents/orphan.md"
+    > "$FAKE_WORKBENCH/ai/agents/orphan.md"
 
   _run_validate --quiet
   [ "$status" -eq 1 ]
@@ -105,9 +105,9 @@ _make_agent_skill() {
 }
 
 @test "an agent with a matching skill passes" {
-  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents" "$FAKE_WORKBENCH/ai/skills/paired"
+  mkdir -p "$FAKE_WORKBENCH/ai/agents" "$FAKE_WORKBENCH/ai/skills/paired"
   printf -- '---\nname: paired\n---\nbody\n' \
-    > "$FAKE_WORKBENCH/ai/claude/agents/paired.md"
+    > "$FAKE_WORKBENCH/ai/agents/paired.md"
   printf -- '---\nname: paired\nagent: paired\n---\nbody\n' \
     > "$FAKE_WORKBENCH/ai/skills/paired/SKILL.md"
 
@@ -119,9 +119,9 @@ _make_agent_skill() {
   # The filename check this replaced passed on exactly this: the directory is
   # there, so the agent reads as covered, while ai/skills/steps.sh splices the
   # other agent's protocol in and this one reaches Pi nowhere.
-  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents" "$FAKE_WORKBENCH/ai/skills/paired"
+  mkdir -p "$FAKE_WORKBENCH/ai/agents" "$FAKE_WORKBENCH/ai/skills/paired"
   printf -- '---\nname: paired\n---\nbody\n' \
-    > "$FAKE_WORKBENCH/ai/claude/agents/paired.md"
+    > "$FAKE_WORKBENCH/ai/agents/paired.md"
   printf -- '---\nname: paired\nagent: elsewhere\n---\nbody\n' \
     > "$FAKE_WORKBENCH/ai/skills/paired/SKILL.md"
 
@@ -131,9 +131,9 @@ _make_agent_skill() {
 }
 
 @test "a skill directory that declares no agent at all fails" {
-  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents" "$FAKE_WORKBENCH/ai/skills/paired"
+  mkdir -p "$FAKE_WORKBENCH/ai/agents" "$FAKE_WORKBENCH/ai/skills/paired"
   printf -- '---\nname: paired\n---\nbody\n' \
-    > "$FAKE_WORKBENCH/ai/claude/agents/paired.md"
+    > "$FAKE_WORKBENCH/ai/agents/paired.md"
   printf -- '---\nname: paired\n---\nbody\n' \
     > "$FAKE_WORKBENCH/ai/skills/paired/SKILL.md"
 
@@ -143,9 +143,9 @@ _make_agent_skill() {
 }
 
 @test "a programmatic agent needs no skill" {
-  mkdir -p "$FAKE_WORKBENCH/ai/claude/agents"
+  mkdir -p "$FAKE_WORKBENCH/ai/agents"
   printf -- '---\nname: changelog\n---\nbody\n' \
-    > "$FAKE_WORKBENCH/ai/claude/agents/changelog.md"
+    > "$FAKE_WORKBENCH/ai/agents/changelog.md"
 
   _run_validate --quiet
   [ "$status" -eq 0 ]

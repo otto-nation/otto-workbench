@@ -5,7 +5,7 @@ paths:
   - "ai/bin/ci-check"
   - "ai/bin/pr"
   - "ai/lib/**"
-  - "ai/claude/agents/reviewer.md"
+  - "ai/agents/reviewer.md"
 ---
 
 # review Development

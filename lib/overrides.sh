@@ -18,7 +18,7 @@ fi
 _override_type_dirs() {
   local -n __default=$2 __user=$3
   case "$1" in
-    agent|agents)   __default="$CLAUDE_AGENTS_SRC_DIR"; __user="$USER_AGENTS_DIR" ;;
+    agent|agents)   __default="$AGENTS_SRC_DIR"; __user="$USER_AGENTS_DIR" ;;
     skill|skills)   __default="$SKILLS_SRC_DIR"; __user="$USER_SKILLS_DIR" ;;
     rule|rules)     __default="$GUIDELINES_RULES_SRC_DIR"; __user="$USER_RULES_DIR" ;;
     *)              err "Unknown type: $1 (expected: agent, skill, rule)"; return 1 ;;

@@ -24,7 +24,7 @@ from workbench_config_support import roots, _write  # noqa: F401
 
 config_cli = _load_lib("config_cli")
 
-AGENTS = sorted((REPO_ROOT / "ai" / "claude" / "agents").glob("*.md"))
+AGENTS = sorted((REPO_ROOT / "ai" / "agents").glob("*.md"))
 
 
 def _frontmatter(path: Path) -> dict[str, str]:

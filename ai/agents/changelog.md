@@ -2,7 +2,7 @@
 name: changelog
 description: Generate categorized release notes and changelogs from git history. Used by task automation.
 tier: light
-source: otto-workbench/ai/claude/agents/changelog.md
+source: otto-workbench/ai/agents/changelog.md
 ---
 
 You are a changelog generation assistant. Your sole purpose is to produce audience-ready release notes from git history provided in the prompt.

@@ -685,7 +685,7 @@ _export_claude_config() {
   # Agents: copy all .md files. A tiered agent goes as `model: inherit`: the
   # tiers are this machine's models.*, and the host it is exported to has its own.
   local agent rendered rc
-  for agent in "$CLAUDE_AGENTS_SRC_DIR"/*.md; do
+  for agent in "$AGENTS_SRC_DIR"/*.md; do
     [[ -f "$agent" ]] || continue
     rc=0
     rendered=$(_claude_render_agent "$agent" "") || rc=$?

@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Tests for step_claude_agents rendering an agent's `tier:` into the model and effort Claude Code reads.
-# select-on: ai/claude/agents.sh ai/lib/agent/harness_models.py lib/config_cli.py ai/claude/agents/*.md
+# select-on: ai/claude/agents.sh ai/lib/agent/harness_models.py lib/config_cli.py ai/agents/*.md
 
 setup() {
   load 'test_helper'
@@ -21,8 +21,8 @@ _seed_config() {
 
 # _override NAME CONTENT — an agent in the operator's override layer.
 _override() {
-  mkdir -p "$HOME_DIR/.config/workbench/overrides/ai/claude/agents"
-  printf '%s\n' "$2" > "$HOME_DIR/.config/workbench/overrides/ai/claude/agents/$1.md"
+  mkdir -p "$HOME_DIR/.config/workbench/overrides/ai/agents"
+  printf '%s\n' "$2" > "$HOME_DIR/.config/workbench/overrides/ai/agents/$1.md"
 }
 
 # _agents_run — one step_claude_agents against the sandbox, in its own process
@@ -78,7 +78,7 @@ _frontmatter() {
   _seed_config 'models:' '  deep: claude-opus-5-5'
   run _agents_run
   [ "$status" -eq 0 ]
-  diff <(awk 'f; /^---$/ && ++n == 2 { f = 1 }' "$REPO_ROOT/ai/claude/agents/reviewer.md") \
+  diff <(awk 'f; /^---$/ && ++n == 2 { f = 1 }' "$REPO_ROOT/ai/agents/reviewer.md") \
        <(awk 'f; /^---$/ && ++n == 2 { f = 1 }' "$AGENTS_OUT/reviewer.md")
 }
 
@@ -95,7 +95,7 @@ _frontmatter() {
   _override plain $'---\nname: plain\ndescription: d\nmodel: sonnet\n---\n\nbody'
   run _agents_run
   [ "$status" -eq 0 ]
-  cmp "$HOME_DIR/.config/workbench/overrides/ai/claude/agents/plain.md" "$AGENTS_OUT/plain.md"
+  cmp "$HOME_DIR/.config/workbench/overrides/ai/agents/plain.md" "$AGENTS_OUT/plain.md"
 }
 
 @test "a tier that stops naming a Claude model takes its agents back to inherit" {
@@ -147,9 +147,9 @@ _frontmatter() {
 
 @test "an agent the renderer cannot read fails the step rather than being copied as untiered" {
   _override locked $'---\nname: locked\ndescription: d\ntier: deep\n---\n\nbody'
-  chmod 000 "$HOME_DIR/.config/workbench/overrides/ai/claude/agents/locked.md"
+  chmod 000 "$HOME_DIR/.config/workbench/overrides/ai/agents/locked.md"
   run _agents_run
-  chmod 644 "$HOME_DIR/.config/workbench/overrides/ai/claude/agents/locked.md"
+  chmod 644 "$HOME_DIR/.config/workbench/overrides/ai/agents/locked.md"
   [ "$status" -ne 0 ]
   [[ "$output" == *"Failed to render agent locked"* ]]
 }

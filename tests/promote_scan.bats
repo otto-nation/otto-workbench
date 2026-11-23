@@ -60,7 +60,8 @@ EOF
 _make_workbench() {
   local wb="$1"
   mkdir -p "$wb/ai/guidelines/rules"
-  mkdir -p "$wb/ai/claude/agents"
+  mkdir -p "$wb/ai/agents"
+  mkdir -p "$wb/ai/claude"
   mkdir -p "$wb/ai/memory"
   mkdir -p "$wb/bin"
 }
@@ -78,7 +79,7 @@ EOF
 # Helper: create an agent file with a heading
 _make_agent() {
   local wb="$1" filename="$2" heading="$3"
-  cat > "$wb/ai/claude/agents/$filename" <<EOF
+  cat > "$wb/ai/agents/$filename" <<EOF
 # $heading
 
 Agent protocol here.

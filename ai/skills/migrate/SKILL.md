@@ -11,4 +11,4 @@ trigger: "Loaded automatically for migration planning. Pi has no agent files, so
      full transcript of it in the skill index. ai/skills/steps.sh splices the
      agent body in below at install time. -->
 
-<!-- AGENT_PROTOCOL_PLACEHOLDER: replaced at install with the body of ai/claude/agents/migrate.md -->
+<!-- AGENT_PROTOCOL_PLACEHOLDER: replaced at install with the body of ai/agents/migrate.md -->

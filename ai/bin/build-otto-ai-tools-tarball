@@ -21,7 +21,6 @@ shopt -s nullglob
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(cd "$(dirname "$_SELF")" && pwd)"
 WORKBENCH_ROOT="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
-_CLAUDE_DIR="$WORKBENCH_ROOT/ai/claude"
 _AI_LIB_DIR="$WORKBENCH_ROOT/ai/lib"
 
 # ─── Constants ────────────────────────────────────────────────────────────
@@ -160,7 +159,7 @@ for tpl in "$_AI_LIB_DIR/review-templates/"*.md; do
 done
 
 # Agents — all .md files in the agents directory
-for agent in "$_CLAUDE_DIR/agents/"*.md; do
+for agent in "$WORKBENCH_ROOT/ai/agents/"*.md; do
   cp "$agent" "$DEST/agents/"
 done
 

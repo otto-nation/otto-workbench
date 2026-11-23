@@ -326,7 +326,7 @@ def test_python_script_help_exits_zero(script):
 
 # ── 6. Reviewer protocol JSON artifact (D15) ─────────────────────────────────
 
-AGENTS = REPO_ROOT / "ai" / "claude" / "agents"
+AGENTS = REPO_ROOT / "ai" / "agents"
 _JSON_BLOCK = re.compile(r"```json\n(.*?)\n```", re.DOTALL)
 
 

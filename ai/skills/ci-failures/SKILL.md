@@ -208,7 +208,7 @@ Print:
 
 - An empty `failures` means CI passed only when `unread` is also empty — otherwise it means nobody could see all of it
 - Present classification + diagnosis, then proceed to fix without waiting for confirmation — the user can interrupt to override
-- Never call `gh_ci_failures`. It dumps full job logs into the prompt and has compacted sessions.
+- Never call `gh_ci_failures`. It dumps full job logs into the prompt and has compacted sessions. ci-failures-guard refuses the tool and drops it from the active set.
 - Never paste job logs, `gh run view --log`, or `gh run view --log-failed` output into the conversation.
 - Do not fetch CI logs into the prompt (`gh run view`, `gh api`, `gh run view --log`). The `pr ci` JSON report includes short failure context and a `log_file` path when logs were fetched. If that is not enough: redirect failed-step logs to a file (`gh run view RUN --log-failed` into a file), then `rg` that file. Never dump the file into context.
 - NEVER auto-fix infra, flaky or external failures (rate-limit-only infra is rerun once by `ci-check --fix` / `run_fix`, not by editing the repo)

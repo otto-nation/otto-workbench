@@ -63,7 +63,7 @@ import re
 from dataclasses import dataclass, field, replace
 
 import agent.backend_claude
-from agent.models import ModelRef, resolve, with_default_level
+from agent.models import ModelRef, parse_ref, resolve, with_default_level
 from core.errors import OperatorError
 from config.workbench_config import ModelsConfig
 from core.phases import Tier
@@ -169,7 +169,7 @@ def _claude_servable(ref: ModelRef) -> bool:
     return bool(_CLAUDE_ID.match(bare)) or bare in CLAUDE_ALIASES
 
 
-def _is_claude_alias(ref: ModelRef) -> bool:
+def is_claude_alias(ref: ModelRef) -> bool:
     """Whether *ref* is one of the Claude CLI's aliases rather than a model id.
 
     The CLI resolves an alias for ``--model`` and the ``model`` setting, but
@@ -177,6 +177,26 @@ def _is_claude_alias(ref: ModelRef) -> bool:
     alias pinned there fails every request with "doesn't recognize the model".
     """
     return ref.provider is None and _WINDOW_SUFFIX.sub("", ref.id.lower()) in CLAUDE_ALIASES
+
+
+def alias_tier_refusal(key: str, value: str) -> str | None:
+    """Why ``config set`` must not write *value* to *key*, or None when it may.
+
+    Only a tier key (``models.deep`` and its siblings) is held to it: the
+    session takes an alias because the CLI resolves it there. A write the sync
+    would only report is refused where it is made, so the file never holds a
+    tier that leaves its env var unset.
+    """
+    tier = key.removeprefix("models.")
+    if tier == key or tier not in {t.value for t in Tier}:
+        return None
+    if not is_claude_alias(parse_ref(value)):
+        return None
+    return (
+        f"{key} cannot be the Claude alias '{value}': Claude Code sends the tier's "
+        "ANTHROPIC_DEFAULT_*_MODEL value to the API as written, so name a full "
+        f"claude-… model id (e.g. {key} claude-sonnet-5-5)"
+    )
 
 
 def _qualified(ref: ModelRef) -> str:
@@ -197,7 +217,7 @@ def _claude(tiers: dict[Tier, ModelRef], session: ModelRef | None) -> ClaudeMode
         # The tier keeps an alias as the model an agent runs by name, which the
         # CLI resolves; only the env pin needs an id.
         claude_tiers[tier] = ClaudeTier(model=ref.id, effort=agent.backend_claude.effort(ref.level))
-        if _is_claude_alias(ref):
+        if is_claude_alias(ref):
             skipped.append(
                 f"models.{tier.value}: {ref.id} is a Claude alias, which Claude Code sends to the API "
                 f"as written, so {key} is left unset — name a full claude-… model id"

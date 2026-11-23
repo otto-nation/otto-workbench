@@ -117,6 +117,7 @@ _host_brew() {
   [ "$status" -eq 0 ]
   [ "${lines[0]}" = "status=0" ]
   [ "${lines[1]}" = "$FAKE_HOME/.local/bin" ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"$FAKE_HOME/.env.local failed to load"* ]]
 }
 
@@ -228,6 +229,7 @@ _stub_uname() {
     'source "$HOME/.config/zsh/config.d/loader.zsh"'
 
   [ "$status" -eq 0 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"env.sh is missing"*"~/.local/bin/otto-workbench sync"* ]]
 }
 

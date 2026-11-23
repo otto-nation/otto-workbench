@@ -212,6 +212,7 @@ _run_reap() {
   _config $'reaper:\n  grace_s: 5\n'
   _run_reap
   [ "$output" = "reaped=1" ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"SIGKILL $pid"* ]]
   run ! _alive "$pid"
 }
@@ -225,6 +226,7 @@ _run_reap() {
   _config $'reaper:\n  grace_s: 5\n'
   _run_reap
   [ "$status" -eq 0 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"no longer golangci-lint"* ]]
   _alive "$pid"
 }
@@ -305,6 +307,7 @@ _run_reap() {
   _run_reap
   [ "$status" -eq 0 ]
   [ "$output" = "reaped=1" ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"SIGKILL $pid"* ]]
   run ! _alive "$pid"
 }
@@ -317,6 +320,7 @@ _run_reap() {
   _config $'reaper:\n  grace_s: 5\n'
   _run_reap
   [ "$status" -eq 0 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"no longer tasks"* ]]
   _alive "$pid"
 }
@@ -333,5 +337,6 @@ _run_reap() {
   printf '#!/usr/bin/env bash\nexit 1\n' > "$STUB_BIN/ps"
   _run_reap
   [ "$status" -eq 0 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"nothing reaped"* ]]
 }

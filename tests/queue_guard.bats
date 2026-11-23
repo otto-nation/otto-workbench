@@ -50,6 +50,7 @@ _pi() {
 @test "Claude Code refuses a heavy command in a listed repo and names the queued form" {
   _claude "$LISTED" "golangci-lint run ./..."
   [ "$status" -eq 2 ]
+  # shellcheck disable=SC2154  # stderr is set by bats' run --separate-stderr
   [[ "$stderr" == *"otto-queue submit --class heavy -- golangci-lint run ./..."* ]]
 }
 

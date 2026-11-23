@@ -363,7 +363,7 @@ def test_a_ticket_runs_when_the_older_job_cannot_admit(tmp_path):
     set_columns(root, job.id, created_at=time.time() - 60)
     worker = otto_queue.lease.take_worker(root)
     try:
-        result = _run(touch_argv(tmp_path / "ran"), policy=HostBusy(), wait_s=2)
+        result = _run(touch_argv(tmp_path / "ran"), policy=HostBusy(), wait_s=6)
     finally:
         worker.release()
     assert result.outcome is TicketOutcome.RAN

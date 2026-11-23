@@ -469,10 +469,10 @@ def _slot_once(ledger: otto_queue.ledger.Ledger, entry_id: int,
                entry_class: EntryClass, policy: otto_queue.slots.Policy,
                *, reap: bool) -> tuple[_Wait | None, str]:
     jobs = otto_queue.lease.worker_alive(ledger.root)
-    entry, _ = ledger.wait_poll(entry_id, entry_class, jobs=jobs)
+    entry, first = ledger.wait_poll(entry_id, entry_class, jobs=jobs)
     if entry is None or entry.state is not EntryState.QUEUED:
         return _Wait(_WaitEnd.CANCELLED), ""
-    admission = _try_once(ledger, entry_id, entry_class, policy, reap=reap)
+    admission = _try_once(ledger, entry_id, entry_class, policy, first, reap=reap)
     if admission.slot is not None:
         return _Wait(_WaitEnd.ADMITTED, admission.slot), ""
     return None, admission.reason
@@ -530,49 +530,54 @@ def _host_admits(policy: otto_queue.slots.Policy, ledger: otto_queue.ledger.Ledg
 
 
 def _waiting_ahead(ledger: otto_queue.ledger.Ledger, entry_class: EntryClass,
-                   policy: otto_queue.slots.Policy) -> int | None:
-    """Oldest waiter that can take a slot now.
+                   policy: otto_queue.slots.Policy) -> tuple[int | None, Entry | None]:
+    """Oldest waiter that can take a slot now, and its row when already loaded.
 
     A queued job the worker cannot admit is not ahead of a ticket. Tickets
     ignore host pressure; counting that job as FIFO head made `stuck` fail
-    every interactive heavy ticket while PSI blocked the worker.
+    every interactive heavy ticket while PSI blocked the worker. Called on
+    the reap path, the same cadence that would otherwise ask `unclaimed_job`.
+    The row is returned so `_behind` does not load it again.
     """
     jobs = otto_queue.lease.worker_alive(ledger.root)
     first = ledger.first_waiting(entry_class, jobs=jobs)
     if first is None:
-        return None
+        return None, None
     ahead = ledger.get(first)
     if (ahead is not None and ahead.kind is EntryKind.JOB
             and not _host_admits(policy, ledger, entry_class)):
-        return ledger.first_waiting(entry_class, jobs=False)
-    return first
+        return ledger.first_waiting(entry_class, jobs=False), None
+    return first, ahead
 
 
 def _try_once(ledger: otto_queue.ledger.Ledger, entry_id: int, entry_class: EntryClass,
-              policy: otto_queue.slots.Policy, *,
+              policy: otto_queue.slots.Policy, first: int | None, *,
               reap: bool) -> otto_queue.slots.Admission:
     """Ask for a slot, unless an older entry of the class is still waiting.
 
-    An older entry is a ticket, or a job a live worker can admit.
-    A waiter that is not first skips `reap_orphans` unless *reap*.
+    An older entry is a ticket, or a job a live worker can admit. Non-first
+    waiters use *first* from `wait_poll` and skip the host check unless *reap*,
+    so they do not add ledger reads on every poll. The skip of a host-blocked
+    job runs on reap, the same cadence as `stuck`.
     """
-    first = _waiting_ahead(ledger, entry_class, policy)
     if first is not None and first != entry_id and not reap:
         return otto_queue.slots.Admission(None, f"behind entry {first}, which queued first")
     ledger.reap_orphans()
-    first = _waiting_ahead(ledger, entry_class, policy)
+    first, ahead = _waiting_ahead(ledger, entry_class, policy)
     if first is not None and first != entry_id:
-        return _behind(ledger, first, entry_class)
+        return _behind(ledger, first, entry_class, ahead)
     return otto_queue.slots.try_admit(ledger.root, policy, entry_class,
                                       host_room=False)
 
 
 def _behind(ledger: otto_queue.ledger.Ledger, first_id: int,
-            entry_class: EntryClass) -> otto_queue.slots.Admission:
+            entry_class: EntryClass, ahead: Entry | None = None) -> otto_queue.slots.Admission:
     """Refuse this waiter: FIFO, or stuck if the older job will never start."""
     running = ledger.count_running(entry_class)
+    if ahead is None:
+        ahead = ledger.get(first_id)
     reason = otto_queue.stuck.unclaimed_job(
-        ahead=ledger.get(first_id), now=time.time(),
+        ahead=ahead, now=time.time(),
         worker_alive=otto_queue.lease.worker_alive(ledger.root), running=running)
     if reason:
         return otto_queue.slots.Admission(None, reason)

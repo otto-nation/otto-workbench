@@ -78,6 +78,7 @@
     "skill:reviewer-lite",
     "skill:self-review",
     "skill:self-review-fix",
+    "skill:standup",
     "skill:subagents",
     "skill:test-verification",
     "skill:using-git-worktrees",

@@ -139,9 +139,13 @@ def remotes(cwd: str | Path) -> list[Remote] | None:
     if not r.ok:
         return None
     found: list[Remote] = []
+    fetch = " (fetch)"
     for line in r.stdout.splitlines():
         name, _, rest = line.partition("\t")
-        url, _, kind = rest.rpartition(" ")
-        if kind == "(fetch)" and name and url:
+        # git remote -v prints "url (fetch)" and, for a partial clone,
+        # "url (fetch) [blob:none]". The kind is not the last token.
+        at = rest.find(fetch)
+        url = rest[:at]
+        if at != -1 and name and url:
             found.append(Remote(name, url))
     return found

@@ -40,6 +40,16 @@ def test_remotes_lists_every_fetch_url(tmp_path):
     ]
 
 
+def test_remotes_lists_a_partial_clone_fetch_url(tmp_path):
+    repo = remote_repo(tmp_path / "partial", "git@github.com:me/widget.git")
+    git_in(repo, "config", "remote.origin.promisor", "true")
+    git_in(repo, "config", "remote.origin.partialclonefilter", "blob:none")
+    found = git.remote_url.remotes(repo)
+    assert found == [
+        git.remote_url.Remote("origin", "git@github.com:me/widget.git"),
+    ]
+
+
 def test_remotes_is_empty_for_a_repo_without_any(tmp_path):
     repo = tmp_path / "bare"
     repo.mkdir()

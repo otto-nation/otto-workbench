@@ -43,6 +43,7 @@ import otto_queue.lease
 import otto_queue.ledger
 import otto_queue.slots
 import otto_queue.supervisor
+import otto_queue.wait_report
 from otto_queue.model import Entry, EntryClass, EntryKind, EntryState
 
 # Long enough to carry one process across a burst of submits (the next step of a
@@ -98,12 +99,14 @@ def run_worker(policy: otto_queue.slots.Policy, *, launcher: Launcher, root: Pat
 def _serve(ledger: otto_queue.ledger.Ledger, policy: otto_queue.slots.Policy, launcher: Launcher,
            idle_s: float, poll_s: float, notify: Callable[[str], None]) -> None:
     runners: dict[int, _Runner] = {}
+    refused: dict[int, tuple[str, float]] = {}
     idle_since = time.monotonic()
     while True:
         ledger.reap_orphans()
         _reap_runners(ledger, runners, notify)
         for entry_class in EntryClass:
-            _start_ready(ledger, policy, launcher, runners, entry_class, notify)
+            _start_ready(ledger, policy, launcher, runners, entry_class, notify,
+                         refused)
         _maybe_compact(ledger, notify)
         # A runner whose row is already terminal is still polled until reaped.
         if runners or ledger.live_jobs():
@@ -115,15 +118,31 @@ def _serve(ledger: otto_queue.ledger.Ledger, policy: otto_queue.slots.Policy, la
 
 def _start_ready(ledger: otto_queue.ledger.Ledger, policy: otto_queue.slots.Policy, launcher: Launcher,
                  runners: dict[int, _Runner], entry_class: EntryClass,
-                 notify: Callable[[str], None]) -> None:
-    while _start_one(ledger, policy, launcher, runners, entry_class, notify):
+                 notify: Callable[[str], None],
+                 refused: dict[int, tuple[str, float]]) -> None:
+    while _start_one(ledger, policy, launcher, runners, entry_class, notify,
+                     refused):
         pass
+
+
+def _note_refuse(notify: Callable[[str], None], refused: dict[int, tuple[str, float]],
+                 entry: Entry, reason: str) -> None:
+    now = time.monotonic()
+    prev = refused.get(entry.id)
+    if (prev is not None and prev[0] == reason
+            and now - prev[1] < otto_queue.wait_report.REPEAT_S):
+        return
+    refused[entry.id] = (reason, now)
+    notify(f"otto-queue: job {entry.id} not started: {reason}")
 
 
 def _start_one(ledger: otto_queue.ledger.Ledger, policy: otto_queue.slots.Policy, launcher: Launcher,
                runners: dict[int, _Runner], entry_class: EntryClass,
-               notify: Callable[[str], None]) -> bool:
+               notify: Callable[[str], None],
+               refused: dict[int, tuple[str, float]] | None = None) -> bool:
     """Start the next ready job of *entry_class*; whether one was taken off the queue."""
+    if refused is None:
+        refused = {}
     entry = ledger.next_job(entry_class, time.time())
     if entry is None or entry.id in runners:
         return False
@@ -131,6 +150,7 @@ def _start_one(ledger: otto_queue.ledger.Ledger, policy: otto_queue.slots.Policy
         return False
     admission = otto_queue.slots.try_admit(ledger.root, policy, entry_class)
     if admission.slot is None:
+        _note_refuse(notify, refused, entry, admission.reason)
         return False
     try:
         proc = subprocess.Popen(launcher.argv(entry, admission.slot.fd), pass_fds=(admission.slot.fd,),

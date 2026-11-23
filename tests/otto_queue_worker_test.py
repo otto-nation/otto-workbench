@@ -134,6 +134,18 @@ def test_a_second_worker_leaves_while_one_holds_the_lock(tmp_path):
     assert Ledger.open().get(entry_id).state is EntryState.QUEUED
 
 
+def test_worker_notes_when_admit_refuses_host_room(tmp_path):
+    entry_id = _enqueue(touch_argv(tmp_path / "ran"))
+    messages = []
+    started = {}
+    assert not otto_queue.worker._start_one(
+        Ledger.open(), Room(admit=False), LAUNCH, started, EntryClass.HEAVY,
+        messages.append)
+    assert started == {}
+    assert any("not started:" in m for m in messages)
+    assert Ledger.open().get(entry_id).state is EntryState.QUEUED
+
+
 def test_an_older_waiting_ticket_goes_before_a_job():
     ledger = Ledger.open()
     ticket = ledger.resolve(NewEntry(argv=("true",), cwd="/"), force=False, pid=os.getpid())

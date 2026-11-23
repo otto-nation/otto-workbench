@@ -65,9 +65,9 @@ def test_relative_repo_dir_yields_no_checkout():
     run = make_run([item])
     entries = batch.session_report.sessions(
         run, closeout=lambda d, b: debt, tree=None)
-    assert entries
-    assert batch.session_report.NO_CHECKOUT in entries[0].notes
-    assert entries[0].commands == []
+    argv = [c.argv for e in entries for c in e.commands]
+    assert not any("rel-repo" in a for a in argv)
+    assert entries == []
 
 
 def test_stack_order_emits_base_before_child():
@@ -131,9 +131,10 @@ def test_non_draft_note_only_when_pushing_a_public_pr(tmp_path):
     assert note not in draft_notes
 
 
-def test_publish_refusal_is_push_refused():
+def test_publish_refusal_is_push_refused(tmp_path):
     # Revert: map every publish Refusal to failed_unknown.
-    item = make_item(1)
+    wt = str(tmp_path)
+    item = make_item(1, worktree=wt, repo_dir=wt)
     tree = TreeState(local=SHA, remote="b" * 40,
                      divergence=RefDivergence(ahead=1, behind=0, comparable=True),
                      checked_out=item.branch)
@@ -146,9 +147,10 @@ def test_publish_refusal_is_push_refused():
         Refusal.REMOTE_MOVED.value)
 
 
-def test_closeout_command_never_track_all():
+def test_closeout_command_never_track_all(tmp_path):
     # Revert: use CloseoutDebt.command (adds --track-all when an issue is owed).
-    item = make_item(1, worktree="/no/such/wt", repo_dir="/abs/repo")
+    wt = str(tmp_path)
+    item = make_item(1, worktree=wt, repo_dir=wt)
     debt = CloseoutDebt(summary=True, deferred_issue=True)
     run = make_run([item])
     entries = batch.session_report.sessions(
@@ -246,9 +248,10 @@ def test_not_incorporated_remote_carries_commits_and_expect_push_command(tmp_pat
                             "--no-verify", "--repo-dir", wt)
 
 
-def test_running_run_sessions_only_terminal_items():
-    settled = make_item(1, status=ItemStatus.NEEDS_SESSION)
-    inflight = make_item(2, status=ItemStatus.RUNNING)
+def test_running_run_sessions_only_terminal_items(tmp_path):
+    wt = str(tmp_path)
+    settled = make_item(1, worktree=wt, repo_dir=wt, status=ItemStatus.NEEDS_SESSION)
+    inflight = make_item(2, worktree=wt, repo_dir=wt, status=ItemStatus.RUNNING)
     running = make_run(
         [settled, inflight],
         [
@@ -272,8 +275,9 @@ def test_running_run_sessions_only_terminal_items():
     assert batch.session_report.sessions(waiting, closeout=no_debt, tree=None)
 
 
-def test_schema3_running_run_includes_nonterminal_items():
-    inflight = make_item(1, status=ItemStatus.QUEUED)
+def test_schema3_running_run_includes_nonterminal_items(tmp_path):
+    wt = str(tmp_path)
+    inflight = make_item(1, worktree=wt, repo_dir=wt, status=ItemStatus.QUEUED)
     run = make_run([inflight], status=RunStatus.RUNNING)
     assert run.schema_version >= 3
     debt = CloseoutDebt(summary=True)

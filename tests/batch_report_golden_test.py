@@ -1,7 +1,9 @@
 """One golden markdown report for a mixed v1 run.
 
-Worktree paths are non-existent and fixed so the fixture does not depend on
-the machine. Rewrite it with `REGEN_GOLDENS=1 pytest -k regenerate`.
+Worktrees are real directories under `tmp_path` (a session names a PR worktree
+only when it exists); the rendered text maps that root to a fixed prefix so the
+fixture does not depend on the machine. Rewrite it with
+`REGEN_GOLDENS=1 pytest -k regenerate`.
 """
 
 import os
@@ -26,18 +28,21 @@ from rebase.types import RefDivergence  # noqa: E402
 
 FIXTURE = Path(__file__).resolve().parent / "fixtures" / "batch_report" / "mixed.md"
 
-WT1 = "/no/such/wt/o-r-1"
-WT2 = "/no/such/wt/o-r-2"
-WT3 = "/no/such/wt/o-r-3"
 REPO = "/no/such/repo"
+FIXED_ROOT = "/no/such/wt"
 
 
-def _mixed_markdown() -> str:
-    base = make_item(1, worktree=WT1, repo_dir=REPO, branch="feat-base",
+def _mixed_markdown(root: Path) -> str:
+    wts = []
+    for n in (1, 2, 3):
+        wt = root / f"o-r-{n}"
+        wt.mkdir()
+        wts.append(str(wt))
+    base = make_item(1, worktree=wts[0], repo_dir=REPO, branch="feat-base",
                      status=ItemStatus.AWAITING_DECISION, is_draft=False)
-    child = make_item(2, worktree=WT2, repo_dir=REPO, branch="feat-child",
+    child = make_item(2, worktree=wts[1], repo_dir=REPO, branch="feat-child",
                       status=ItemStatus.AWAITING_DECISION, stacked_on=base.key)
-    refused = make_item(3, worktree=WT3, repo_dir=REPO, branch="feat-moved",
+    refused = make_item(3, worktree=wts[2], repo_dir=REPO, branch="feat-moved",
                         status=ItemStatus.DONE, is_draft=False)
     run = make_run(
         [child, refused, base],
@@ -63,15 +68,15 @@ def _mixed_markdown() -> str:
     sessions = [e.to_dict() for e in batch.session_report.sessions(
         run, closeout=closeout, tree=tree)]
     doc = batch.report.build(run, active=False, sessions=sessions)
-    return batch.report_md.render_markdown(doc)
+    return batch.report_md.render_markdown(doc).replace(str(root), FIXED_ROOT)
 
 
 @pytest.mark.skipif(os.environ.get("REGEN_GOLDENS") != "1",
                     reason="set REGEN_GOLDENS=1 to rewrite fixtures")
-def test_regenerate_golden():
+def test_regenerate_golden(tmp_path):
     FIXTURE.parent.mkdir(parents=True, exist_ok=True)
-    FIXTURE.write_text(_mixed_markdown())
+    FIXTURE.write_text(_mixed_markdown(tmp_path))
 
 
-def test_mixed_run_markdown():
-    assert _mixed_markdown() == FIXTURE.read_text()
+def test_mixed_run_markdown(tmp_path):
+    assert _mixed_markdown(tmp_path) == FIXTURE.read_text()

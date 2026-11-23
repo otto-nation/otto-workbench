@@ -271,3 +271,20 @@ def test_empty_owed_threads_drops_stored_threads(tmp_path, monkeypatch):
     entries = batch.session_report.sessions(
         make_run([item]), closeout=no_debt, tree=_even)
     assert FindingReason.THREADS_NEED_HUMAN not in _reasons(entries)
+
+
+def test_gone_worktree_does_not_emit_fix_against_repo_dir(tmp_path):
+    # Revert: `_checkout` falling back to repo_dir (usually main) when the
+    # PR worktree is gone, so Now prints `pr ci --fix --repo-dir MAIN --branch`.
+    main = tmp_path / "main"
+    main.mkdir()
+    item = make_item(
+        1, worktree=str(tmp_path / "missing-wt"), repo_dir=str(main),
+        branch="feat")
+    item.findings = [Finding(FindingReason.CI_FAILING, "ci")]
+    entries = batch.session_report.sessions(
+        make_run([item]), closeout=no_debt, tree=None)
+    argv = [c.argv for e in entries for c in e.commands]
+    assert not any(str(main) in a for a in argv)
+    assert FindingReason.CI_FAILING not in _reasons(entries)
+    assert entries == []

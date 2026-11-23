@@ -9,8 +9,8 @@ non-terminal), then severity (block > wait > act), then PR key.
 Filing commands (`files_issue`) are never first, never `--track-all`, and
 carry one `--track` per id. Run one only when the user asks.
 
-Argv rules: bare `pr`; `--repo-dir` is an absolute worktree, or absolute
-`repo_dir` plus `--branch` when the worktree is gone; never a relative path;
+Argv rules: bare `pr`; `--repo-dir` is an absolute PR worktree that exists;
+never `repo_dir` plus `--branch` when that worktree is gone; never a relative path;
 no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
 `git -C WT` for direct git. Closeout is the bare `CLOSEOUT_COMMAND`
 (`closeout owed per pr state`), never `CloseoutDebt.command` (which appends
@@ -88,6 +88,23 @@ _PUBLISHED_DROPS = frozenset({
     FindingReason.READY_TO_PUSH,
     FindingReason.WRONG_BRANCH,
     FindingReason.BUDGET_EXHAUSTED,
+})
+
+# Findings whose only session action is a mutating command. Without a PR
+# worktree the report must not print `--repo-dir` of `repo_dir` (usually the
+# default-branch checkout) plus `--branch`.
+_NO_CHECKOUT_DROPS = frozenset({
+    FindingReason.CONFLICT_HANDWRITTEN,
+    FindingReason.CONFLICT_GENERATED,
+    FindingReason.STALE_GENERATED,
+    FindingReason.DIRTY_WORKTREE,
+    FindingReason.WRONG_BRANCH,
+    FindingReason.CI_FAILING,
+    FindingReason.REVIEW_FINDINGS,
+    FindingReason.THREADS_NEED_HUMAN,
+    FindingReason.CLOSEOUT_OWED,
+    FindingReason.READY_TO_PUSH,
+    FindingReason.PUSH_REFUSED,
 })
 
 
@@ -252,6 +269,10 @@ def _refresh_live(item: Item, findings: list[Finding]) -> None:
     The builder never writes. Closeout is refreshed in `_session` from
     `CloseoutDebt`; rebase/push findings are `_refresh_stored`.
     """
+    if _checkout(item) is None:
+        for reason in _NO_CHECKOUT_DROPS:
+            _drop(findings, reason)
+        return
     _drop_clean_dirty(item, findings)
     state = batch.plan.pr_state(item.repo_dir, item.branch)
     if state is None:
@@ -518,11 +539,8 @@ def _notes(item: Item, findings: list[Finding], commands: list[SessionCommand],
 
 def _checkout(item: Item) -> str | None:
     wt = item.worktree
-    if wt and Path(wt).is_dir():
-        return wt if Path(wt).is_absolute() else None
-    repo = item.repo_dir
-    if repo and Path(repo).is_absolute():
-        return repo
+    if wt and Path(wt).is_absolute() and Path(wt).is_dir():
+        return wt
     return None
 
 

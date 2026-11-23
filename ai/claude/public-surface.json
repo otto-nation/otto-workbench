@@ -43,6 +43,7 @@
     "command:review-threads",
     "command:rules-canary",
     "command:run-auto-task",
+    "command:standup",
     "command:validate-review-positions",
     "command:wiki",
     "command:workbench-export",

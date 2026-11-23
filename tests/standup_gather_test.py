@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 
 import gh.client
-from standup.gather import gather, main, resolve_org
+from cli.standup import gather, main, resolve_org
 
 
 def test_resolve_org_prefers_flag():
@@ -65,13 +65,13 @@ def test_gather_buckets_open_and_recent_merges(monkeypatch):
 
 
 def test_main_fails_when_org_missing(monkeypatch, capsys):
-    monkeypatch.setattr("standup.gather.resolve_org", lambda *_a, **_k: None)
+    monkeypatch.setattr("cli.standup.resolve_org", lambda *_a, **_k: None)
     assert main(["--cwd", "/tmp"]) == 2
     assert "pass --org" in capsys.readouterr().err
 
 
 def test_main_uses_at_me_when_login_blank(monkeypatch):
-    monkeypatch.setattr("standup.gather.resolve_org", lambda *_a, **_k: "acme")
+    monkeypatch.setattr("cli.standup.resolve_org", lambda *_a, **_k: "acme")
     monkeypatch.setattr(gh.client, "login", lambda: "")
     captured: dict = {}
 
@@ -79,7 +79,7 @@ def test_main_uses_at_me_when_login_blank(monkeypatch):
         captured["author"] = author
         return {"org": org, "author": author, "days": days, "buckets": {}}
 
-    monkeypatch.setattr("standup.gather.gather", fake_gather)
-    monkeypatch.setattr("standup.gather.json.dump", lambda *_a, **_k: None)
+    monkeypatch.setattr("cli.standup.gather", fake_gather)
+    monkeypatch.setattr("cli.standup.json.dump", lambda *_a, **_k: None)
     assert main([]) == 0
     assert captured["author"] == "@me"

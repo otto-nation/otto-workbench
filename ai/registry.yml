@@ -107,6 +107,12 @@ tools:
     visibility: brief
     description: "Mechanical operations over a compiled knowledge base — status, lint, signals, archive, source hashes, index, browsing link, snapshots"
 
+  - name: standup
+    parser: cli.standup:build_parser
+    permission: true
+    visibility: brief
+    description: "JSON inventory of the current user's PRs in one GitHub org"
+
   - name: workbench-reference
     permission: true
     visibility: brief

@@ -4417,14 +4417,6 @@ a target directory that does not exist: the target lock creates it, and a
 history never resurrects a pruned target. An append that fails warns once per
 target on stderr and never fails the command.
 
-### standup/buckets.py
-
-Classify a PR into a standup bucket from GitHub list/search fields.
-
-### standup/gather.py
-
-Fetch the current user's PRs in one GitHub org and bucket them.
-
 ## Batch
 
 Running rebase, CI fixes, comments and self-review across many open PRs at once: otto-queue tickets for every queued step, scheduling, step processes, publishing, and the decisions a run waits on. Plain rebase is a light ticket; plain CI is unqueued.
@@ -10127,6 +10119,10 @@ flag says so in both without anyone editing this module.
 `SCRIPT` is the literal `"pr"` rather than anything derived from `__file__`.
 This module is `schema.py`, and a tool name taken from its own filename would
 advertise the wrong command.
+
+### cli/standup.py
+
+JSON inventory of the current user's PRs in one GitHub org.
 
 ### cli/wiki.py
 

@@ -1,6 +1,6 @@
 """Standup bucket classification — no GitHub."""
 
-from standup.buckets import (
+from cli.standup import (
     APPROVED,
     BLOCKED,
     DRAFT,

@@ -12,8 +12,6 @@ Default org is the owner of the cwd repo. Author is the gh login, or ``@me``
 when the token cannot read /user.
 """
 
-from __future__ import annotations
-
 import os
 import sys
 from pathlib import Path
@@ -27,6 +25,6 @@ if os.environ.get("WORKBENCH_AI_LIB_DIR"):
     _AI_LIB_DIR = pinned_ai_lib_dir()
 sys.path.insert(0, str(_AI_LIB_DIR))
 
-from standup.gather import main  # noqa: E402
+from cli.standup import main  # noqa: E402
 
-raise SystemExit(main())
+sys.exit(main(sys.argv[1:]))

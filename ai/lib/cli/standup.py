@@ -1,6 +1,6 @@
-"""Fetch the current user's PRs in one GitHub org and bucket them."""
+"""JSON inventory of the current user's PRs in one GitHub org."""
 
-# doc-group: pr-state
+# doc-group: cli
 
 from __future__ import annotations
 
@@ -13,23 +13,33 @@ from typing import Any
 
 import gh.client
 
-from standup.buckets import (
-    APPROVED,
-    BLOCKED,
-    BUCKETS,
-    DRAFT,
-    LANDED,
-    WAITING,
-    item_from_merged,
-    item_from_open,
-)
+WAITING = "waiting_on_review"
+APPROVED = "approved_not_merged"
+BLOCKED = "ci_or_conflicts"
+DRAFT = "still_draft"
+LANDED = "landed"
+BUCKETS = (LANDED, WAITING, APPROVED, BLOCKED, DRAFT)
 
+_FAIL = frozenset({"FAILURE", "ERROR", "TIMED_OUT", "CANCELLED"})
+_PENDING = frozenset({"PENDING", "QUEUED", "IN_PROGRESS", "EXPECTED", "?"})
 _OPEN_JSON = (
     "number,title,isDraft,mergeable,reviewDecision,url,additions,deletions,"
     "statusCheckRollup"
 )
 _SEARCH_OPEN_JSON = "number,repository"
 _SEARCH_MERGED_JSON = "number,title,url,repository,additions,closedAt"
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """The standup parser, for `main` and for rendering usage."""
+    parser = argparse.ArgumentParser(
+        prog="standup",
+        description="JSON inventory of the current user's PRs in one GitHub org",
+    )
+    parser.add_argument("--org", help="GitHub org (default: owner of the cwd repo)")
+    parser.add_argument("--days", type=int, default=7, help="merged-since window")
+    parser.add_argument("--cwd", default=None, help="repo used to resolve --org")
+    return parser
 
 
 def resolve_org(cwd: str | None, org: str | None) -> str | None:
@@ -47,6 +57,71 @@ def resolve_org(cwd: str | None, org: str | None) -> str | None:
 def resolve_author() -> str:
     """gh login, or ``@me`` when the token cannot read /user."""
     return gh.client.login() or "@me"
+
+
+def ci_fail_names(rollup: object) -> list[str]:
+    """Check names whose conclusion is a failure. Empty when CI is green or absent."""
+    names: list[str] = []
+    for check in _checks(rollup):
+        name = _fail_name(check)
+        if name:
+            names.append(name)
+    return names
+
+
+def ci_pending(rollup: object) -> bool:
+    """True when any check is still running or unreported."""
+    return any(_conclusion(check) in _PENDING for check in _checks(rollup))
+
+
+def bucket_open(pr: dict[str, Any]) -> str:
+    """Which standup section an open PR belongs in."""
+    if pr.get("isDraft"):
+        return DRAFT
+    if pr.get("reviewDecision") == "APPROVED":
+        return APPROVED
+    mergeable = pr.get("mergeable") or ""
+    if mergeable in {"CONFLICTING", "UNKNOWN", "DIRTY"}:
+        return BLOCKED
+    rollup = pr.get("statusCheckRollup")
+    if ci_fail_names(rollup) or ci_pending(rollup):
+        return BLOCKED
+    return WAITING
+
+
+def item_from_open(pr: dict[str, Any], repo: str) -> dict[str, Any]:
+    """JSON row for an open PR."""
+    rollup = pr.get("statusCheckRollup")
+    return {
+        "number": pr.get("number"),
+        "title": pr.get("title") or "",
+        "url": pr.get("url") or "",
+        "repo": repo,
+        "additions": pr.get("additions") or 0,
+        "deletions": pr.get("deletions") or 0,
+        "isDraft": bool(pr.get("isDraft")),
+        "mergeable": pr.get("mergeable") or "",
+        "reviewDecision": pr.get("reviewDecision") or "",
+        "fail": ci_fail_names(rollup),
+        "pending": ci_pending(rollup),
+        "bucket": bucket_open(pr),
+    }
+
+
+def item_from_merged(pr: dict[str, Any]) -> dict[str, Any]:
+    """JSON row for a recently merged PR (search payload)."""
+    repository = pr.get("repository") or {}
+    repo = _merged_repo(repository)
+    return {
+        "number": pr.get("number"),
+        "title": pr.get("title") or "",
+        "url": pr.get("url") or "",
+        "repo": repo,
+        "additions": pr.get("additions") or 0,
+        "deletions": pr.get("deletions"),
+        "closedAt": pr.get("closedAt") or "",
+        "bucket": LANDED,
+    }
 
 
 def gather(org: str, author: str, days: int, now: datetime | None = None) -> dict[str, Any]:
@@ -67,13 +142,7 @@ def gather(org: str, author: str, days: int, now: datetime | None = None) -> dic
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(
-        description="JSON inventory of the current user's PRs in one GitHub org",
-    )
-    parser.add_argument("--org", help="GitHub org (default: owner of the cwd repo)")
-    parser.add_argument("--days", type=int, default=7, help="merged-since window")
-    parser.add_argument("--cwd", default=None, help="repo used to resolve --org")
-    args = parser.parse_args(argv)
+    args = build_parser().parse_args(argv)
     org = resolve_org(args.cwd, args.org)
     if not org:
         print("standup: could not resolve GitHub org from cwd; pass --org", file=sys.stderr)
@@ -82,6 +151,32 @@ def main(argv: list[str] | None = None) -> int:
     json.dump(payload, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
+
+
+def _fail_name(check: dict[str, Any]) -> str | None:
+    if _conclusion(check) not in _FAIL:
+        return None
+    name = check.get("name")
+    if isinstance(name, str) and name:
+        return name
+    return None
+
+
+def _checks(rollup: object) -> list[dict[str, Any]]:
+    if not isinstance(rollup, list):
+        return []
+    return [c for c in rollup if isinstance(c, dict)]
+
+
+def _conclusion(check: dict[str, Any]) -> str:
+    value = check.get("conclusion") or check.get("state") or "?"
+    return str(value)
+
+
+def _merged_repo(repository: object) -> str:
+    if not isinstance(repository, dict):
+        return ""
+    return str(repository.get("nameWithOwner") or "")
 
 
 def _open_items(org: str, author: str) -> list[dict[str, Any]]:
@@ -199,7 +294,3 @@ def _on_or_after(closed_at: str, since: datetime) -> bool:
     if stamp.tzinfo is None:
         stamp = stamp.replace(tzinfo=timezone.utc)
     return stamp >= since
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

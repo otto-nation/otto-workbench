@@ -25,7 +25,7 @@ tree.
    named one):
 
 ```bash
-python3 ~/.agents/skills/standup/gather.py
+standup
 ```
 
 A non-zero exit is a hard stop: print stderr and do not invent buckets.

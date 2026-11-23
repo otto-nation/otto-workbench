@@ -520,6 +520,8 @@ def _status(_args: argparse.Namespace) -> int:
 
 
 def _write(args: argparse.Namespace) -> int:
+    if (why := agent.harness_models.alias_tier_refusal(args.key, args.value)):
+        raise config.workbench_config.ConfigValueError(why)
     if not (args.project or args.container):
         config.workbench_config_write.set_value(args.key, args.value)
         return _wrote(args, config.workbench_config.global_config_path(), "every repo")

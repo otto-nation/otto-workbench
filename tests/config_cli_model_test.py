@@ -39,6 +39,29 @@ def test_haiku_is_refused_where_a_review_would_read_it(target, capsys):
     assert not config.workbench_config.global_config_path().exists() or "haiku" not in config.workbench_config.global_config_path().read_text()
 
 
+@pytest.mark.parametrize("alias", ["sonnet", "opus", "haiku", "opusplan", "default", "sonnet[1m]", "Opus"])
+@pytest.mark.parametrize("argv_for", [
+    lambda alias: ["set", "models.light", alias],
+    lambda alias: ["model", "light", alias],
+])
+def test_a_tier_named_by_an_alias_is_refused_and_not_written(alias, argv_for, capsys):
+    assert config_cli.main(argv_for(alias)) == 1
+    err = capsys.readouterr().err
+    assert "Claude alias" in err and "claude-sonnet-5-5" in err
+    path = config.workbench_config.global_config_path()
+    assert not path.exists() or "models" not in path.read_text()
+
+
+def test_a_tier_named_by_a_full_id_is_still_written():
+    assert config_cli.main(["set", "models.standard", "claude-sonnet-5-5[1m]"]) == 0
+    assert _loaded().models.standard == "claude-sonnet-5-5[1m]"
+
+
+def test_a_session_may_still_be_an_alias():
+    assert config_cli.main(["set", "models.session", "opusplan"]) == 0
+    assert _loaded().models.session == "opusplan"
+
+
 def test_an_unknown_target_is_refused(capsys):
     assert config_cli.main(["model", "bogus", GEMINI]) == 1
     assert "neither a phase" in capsys.readouterr().err

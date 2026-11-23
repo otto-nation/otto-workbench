@@ -62,13 +62,16 @@ def _main(argv):
         return exc.code
 
 
-def _seeded():
-    rows = [PlanRow("o/r", "/r", 1, "t", "b1", "h", False,
+def _seeded(*, worktree=""):
+    repo_dir = worktree or "/r"
+    rows = [PlanRow("o/r", repo_dir, 1, "t", "b1", "h", False,
                     {Step.REBASE: StepNeed(True, "x")})]
     run = batch.scheduler.new_run(rows, steps=[Step.REBASE], selected=None, pool=1,
-                                  checkouts=["/r"])
+                                  checkouts=[repo_dir])
     run.items[0].findings.append(Finding(FindingReason.CI_FAILING, "ci", "red on main"))
     run.items[0].status = ItemStatus.NEEDS_SESSION
+    if worktree:
+        run.items[0].worktree = worktree
     return seed(run)
 
 
@@ -128,8 +131,9 @@ def test_latest_decisions_and_skipped_lines_agree_with_python(capsys):
     assert python == {"o/r#1\u0000ci_failing:ci": "fixed"}
 
 
-def test_the_now_block_renders_the_real_report_with_its_latest_decision(capsys):
-    run = _seeded()
+def test_the_now_block_renders_the_real_report_with_its_latest_decision(tmp_path, capsys):
+    wt = str(tmp_path)
+    run = _seeded(worktree=wt)
     _note(run, "deferred", "first look")
     _note(run, "fixed", "re-ran green")
     capsys.readouterr()
@@ -143,7 +147,7 @@ def test_the_now_block_renders_the_real_report_with_its_latest_decision(capsys):
     assert "- finding `ci_failing:ci` — red on main" in text
     assert "  decided: fixed — re-ran green" in text
     assert "first look" not in text
-    assert "- run `pr ci --fix --repo-dir /r --branch b1` — fix failing CI" in text
+    assert f"- run `pr ci --fix --repo-dir {wt}` — fix failing CI" in text
 
 
 def test_the_extension_reads_the_file_core_run_events_writes():

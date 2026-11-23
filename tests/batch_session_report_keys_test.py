@@ -26,8 +26,9 @@ def test_keys_cover_stored_and_v1_findings():
     assert {"ci_failing:ci", "threads_need_human:comments"} <= keys
 
 
-def test_every_finding_a_session_shows_is_a_key():
-    item = make_item(1)
+def test_every_finding_a_session_shows_is_a_key(tmp_path):
+    wt = str(tmp_path)
+    item = make_item(1, worktree=wt, repo_dir=wt)
     run = make_run([item])
     moved = TreeState(local=SHA, remote="b" * 40,
                       divergence=RefDivergence(ahead=1, behind=0, comparable=True),

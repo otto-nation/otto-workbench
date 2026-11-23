@@ -5128,19 +5128,25 @@ bound the count, and only the host check can race.
 
 ### otto_queue/stuck.py
 
-When a queued job is stuck: worker alive, nothing of its class running, never claimed.
+When a queued job is stuck: worker alive, could admit, never claimed.
 
-A live worker polls every second and starts the oldest ready job. Tickets wait
-behind that job while `worker_alive` is true, so a worker that holds the lock
-and never claims leaves every heavy ticket sitting until something else kills
-the waiter. That is not a busy queue.
+A live worker polls every second and starts the oldest job it can admit.
+Tickets wait behind that job while `worker_alive` is true, so a worker that
+holds the lock and never claims a job it *could* start leaves every heavy
+ticket sitting until something else kills the waiter. That is not a busy
+queue, and it is not a job waiting on host pressure: tickets skip a job
+`try_admit(host_room=True)` would refuse (`otto_queue.ticket._waiting_ahead`).
 
 Observed 2026-11 through pi's `job_start`: a maintenance job queued 10h with
 the worker process up and 0/2 heavy running; `pr review` and `pr create`
-waited until a harness timeout cancelled them. `--no-queue` is not the retry.
+waited until a harness timeout cancelled them. A later incident was PSI
+blocking admit, misread as this wedge; skipping the un-admittable job is
+the fix, not raising `UNCLAIMED_S`. `--no-queue` is not the retry for a
+true wedge.
 
-Upgrade trigger: if a healthy worker can leave a job unclaimed longer than
-`UNCLAIMED_S` with empty slots (a start delay we have measured), raise it.
+Upgrade trigger: if a healthy worker can leave an *admittable* job unclaimed
+longer than `UNCLAIMED_S` with empty slots (a start delay we have measured),
+raise it.
 
 ### otto_queue/submit.py
 
@@ -5234,8 +5240,9 @@ the machine's budget, and runs once per idempotency key.
    a ticket is already in-process work, so memory and CPU pressure do not hold
    it. Production `QueuePolicy` therefore admits on count alone; a policy that
    still refuses for MEMORY or CPU is fail-fast (tempfail 75) rather than
-   waited out. An older job that a live worker is not claiming is fail-fast
-   too (`stuck`, exit 1): waiting will not start it. The first wait prints a
+   waited out. A queued job the worker cannot admit (host pressure) is not
+   ahead of a ticket. An older job the worker *could* admit but is not
+   claiming is fail-fast (`stuck`, exit 1): waiting will not start it. The first wait prints a
    short block naming the entry and how to check or cancel it; later waits
    print only when the kind of reason changes,
    at most once per 30s, with no changing numbers. Admission after a wait

@@ -1,16 +1,22 @@
-"""When a queued job is stuck: worker alive, nothing of its class running, never claimed.
+"""When a queued job is stuck: worker alive, could admit, never claimed.
 
-A live worker polls every second and starts the oldest ready job. Tickets wait
-behind that job while `worker_alive` is true, so a worker that holds the lock
-and never claims leaves every heavy ticket sitting until something else kills
-the waiter. That is not a busy queue.
+A live worker polls every second and starts the oldest job it can admit.
+Tickets wait behind that job while `worker_alive` is true, so a worker that
+holds the lock and never claims a job it *could* start leaves every heavy
+ticket sitting until something else kills the waiter. That is not a busy
+queue, and it is not a job waiting on host pressure: tickets skip a job
+`try_admit(host_room=True)` would refuse (`otto_queue.ticket._waiting_ahead`).
 
 Observed 2026-11 through pi's `job_start`: a maintenance job queued 10h with
 the worker process up and 0/2 heavy running; `pr review` and `pr create`
-waited until a harness timeout cancelled them. `--no-queue` is not the retry.
+waited until a harness timeout cancelled them. A later incident was PSI
+blocking admit, misread as this wedge; skipping the un-admittable job is
+the fix, not raising `UNCLAIMED_S`. `--no-queue` is not the retry for a
+true wedge.
 
-Upgrade trigger: if a healthy worker can leave a job unclaimed longer than
-`UNCLAIMED_S` with empty slots (a start delay we have measured), raise it.
+Upgrade trigger: if a healthy worker can leave an *admittable* job unclaimed
+longer than `UNCLAIMED_S` with empty slots (a start delay we have measured),
+raise it.
 """
 
 # doc-group: queue

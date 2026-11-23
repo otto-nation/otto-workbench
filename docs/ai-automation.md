@@ -40,7 +40,7 @@ component configures it and `wt-init` runs it.
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, diverge, dream, finishing-a-development-branch, git-workflow, issue-tracker, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review, self-review-fix, subagents, test-verification, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, diverge, dream, finishing-a-development-branch, git-workflow, issue-tracker, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review, self-review-fix, standup, subagents, test-verification, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -272,6 +272,16 @@ Run self-review and auto-fix findings. Wraps pr review --self --fix --push. Can 
 ```
 **Trigger:** Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR.
 **Skip:** Do not use for reviewing someone else's PR (use code-review or review instead). Do not use for addressing existing PR review comments (use pr-comments instead).
+
+### `/standup`
+
+Inventory the current user's PRs in this GitHub org and format a standup update (landed, waiting on review, approved, blocked, drafts). TRIGGER when: user asks for a standup, standup update, or what landed vs what they are working on. SKIP: reviewing a single PR (use code-review or pr-comments); sweeping many PRs with pr batch; filing or pushing.
+
+```
+/standup
+```
+**Trigger:** Use when the user asks for a standup, standup update, or a landed vs working-on breakdown of their PRs.
+**Skip:** Do not use for reviewing one PR, addressing review comments, or running pr batch.
 
 ### `/subagents`
 

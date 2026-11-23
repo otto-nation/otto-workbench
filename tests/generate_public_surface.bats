@@ -180,7 +180,7 @@ EOF
   done < <(yq -r '.tools[].name' "$REPO_ROOT/ai/claude/registry.yml")
 }
 
-@test "every ai/claude agent has a matching agent entry" {
+@test "every agent has a matching agent entry" {
   _shared_snapshot
   for f in "$REPO_ROOT"/ai/agents/*.md; do
     name="$(basename "$f" .md)"

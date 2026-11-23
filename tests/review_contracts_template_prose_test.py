@@ -9,10 +9,11 @@ from pathlib import Path
 
 import pytest
 
+from review_contracts_support import AGENTS_DIR
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
 TEMPLATE_DIR = LIB_DIR / "review-templates"
-AGENTS_DIR = REPO_ROOT / "ai" / "claude" / "agents"
 
 # Insert lib dir so we can import the review modules directly
 if str(LIB_DIR) not in sys.path:

@@ -4749,8 +4749,8 @@ non-terminal), then severity (block > wait > act), then PR key.
 Filing commands (`files_issue`) are never first, never `--track-all`, and
 carry one `--track` per id. Run one only when the user asks.
 
-Argv rules: bare `pr`; `--repo-dir` is an absolute worktree, or absolute
-`repo_dir` plus `--branch` when the worktree is gone; never a relative path;
+Argv rules: bare `pr`; `--repo-dir` is an absolute PR worktree that exists;
+never `repo_dir` plus `--branch` when that worktree is gone; never a relative path;
 no `cd`, no `&&`, no `;`. Push `--expect` is the full 40-hex SHA.
 `git -C WT` for direct git. Closeout is the bare `CLOSEOUT_COMMAND`
 (`closeout owed per pr state`), never `CloseoutDebt.command` (which appends

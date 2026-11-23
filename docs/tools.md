@@ -28,6 +28,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `retro-scan` | Scan PR review comments and cross-reference against coding rules |
 | `retro-consume` | Delete the local reviews a retro consumed, for the scan ID that recorded them |
 | `wiki` | Mechanical operations over a compiled knowledge base — status, lint, signals, archive, source hashes, index, browsing link, snapshots |
+| `standup` | JSON inventory of the current user's PRs in one GitHub org |
 | `workbench-reference` | Reference card — lists all workbench skills, agents, and reuse modes |
 | `ci-check` | Fetch CI run data, classify failures, and output status dashboard |
 | `pr-rebase` | Rebase current branch onto its base with conflict detection and force-push |
@@ -1382,6 +1383,28 @@ default branch has no checkout is an error rather than a write into the
 container, where nothing would read the file and no `.gitignore` rule, review,
 or CI check could reach it. A directory outside any repository is left alone —
 scaffolding there is a real thing to want.
+
+### `standup`
+
+JSON inventory of the current user's PRs in one GitHub org.
+
+Called by the `standup` skill (`ai/skills/standup`). Prints buckets for
+landed, waiting on review, approved, CI/conflicts, and drafts.
+
+```
+standup [--org ORG] [--days N] [--cwd DIR]
+```
+
+Default org is the owner of the cwd repo. Author is the gh login, or ``@me``
+when the token cannot read /user.
+
+**Flags**
+
+| Flag | Description |
+|------|-------------|
+| `--org` `<org>` | GitHub org (default: owner of the cwd repo). |
+| `--days` `<days>` | merged-since window. Default: `7`. |
+| `--cwd` `<cwd>` | repo used to resolve --org. |
 
 ### `wiki`
 

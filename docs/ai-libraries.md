@@ -10120,6 +10120,10 @@ flag says so in both without anyone editing this module.
 This module is `schema.py`, and a tool name taken from its own filename would
 advertise the wrong command.
 
+### cli/standup.py
+
+JSON inventory of the current user's PRs in one GitHub org.
+
 ### cli/wiki.py
 
 Mechanical operations over a compiled knowledge base.

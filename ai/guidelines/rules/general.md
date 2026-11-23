@@ -46,6 +46,23 @@ The recommendation is the option you would still defend a year from now, not the
 - The reuse ladder below and `reuse.level` govern how a chosen design is *built* — reuse before writing, shortest diff that implements it. They never choose *which* design to recommend
 - "Long-term" means removing the cause of a defect that exists, not preparing for ones that might. A design that defends against an unobserved scenario is not the long-term option, it is the speculative one (see § Solve the Confirmed Problem below)
 
+## Symptom vs cause
+
+Do this while debugging and planning, not only when a list of options is already on the table.
+
+A change that stops this instance and leaves the cause representable is an
+interim patch, not the recommendation. Name what let the defect happen. If
+that is a fallback, a second writer, or a contract that prints an unsafe
+command, the fix is there.
+
+Do not over-engineer: the root fix is the smallest change that makes the bad
+state unrepresentable, not a new layer around it. If the better direction is
+broader than the task, present it as the recommendation and offer the local
+patch as the interim. Do not ship the patch as the end state without saying so.
+
+A greater cause still needs evidence from this failure. Unobserved scenarios
+are not a broader fix; they are speculation (see § Solve the Confirmed Problem).
+
 ## Solve the Confirmed Problem
 
 Design for what is true now: the failure that was reproduced, the requirement that was stated, the caller that exists. A scenario nobody has observed is not a requirement, and handling it is cost with no benefit you can show.
@@ -62,7 +79,7 @@ Design for what is true now: the failure that was reproduced, the requirement th
 Before code changes, walk this ladder — stop at the first unmet gate:
 
 1. **Scope clear?** — target branch/worktree, what's in scope, and desired depth must all be unambiguous. If the user's prompt is ambiguous on any of these, ask before acting
-2. **Plan needed?** — for multi-step modifications, present options with pros/cons and a recommendation. Wait for approval. Never proceed without it
+2. **Plan needed?** — for multi-step modifications, present options with pros/cons and a recommendation. The recommendation is the root fix (§ Symptom vs cause), not the smallest patch that hides the instance. Wait for approval. Never proceed without it
 3. **Plan verified?** — verify every API, method signature, and constant referenced against the actual codebase. Plans are written before reading code — specifics will be wrong
 4. **Build** — each phase independently committable, shippable state. If too large for one commit, split it
 

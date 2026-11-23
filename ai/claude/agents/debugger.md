@@ -46,7 +46,7 @@ Produce a structured diagnosis:
 - **Evidence:** What you read that supports this conclusion
 
 ### 5. Recommend
-- Suggest the minimal fix — describe what should change and why
+- Suggest the fix that removes the cause (`general.md` § Symptom vs cause). If that is larger than a local patch, say so and offer the patch as the interim, not the end state
 - Flag related code that has the same bug — the same pattern, copy-paste, or shared caller you actually found, not code that might
 - Note if the fix needs a new or updated test
 

@@ -439,6 +439,17 @@ def _new_global(home: Path, text: str) -> None:
     (d / "github.env").write_text(text)
 
 
+def test_global_env_path_uses_config_dir_when_home_omitted(monkeypatch, tmp_path):
+    custom = tmp_path / "xdg-config" / "workbench"
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(custom))
+    assert pr.gh_token.global_env_path() == custom / "github.env"
+
+
+def test_global_env_path_home_override_ignores_config_dir(monkeypatch, tmp_path, home):
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(tmp_path / "other"))
+    assert pr.gh_token.global_env_path(home) == home / ".config" / "workbench" / "github.env"
+
+
 def test_new_global_file_is_read(tmp_path, home):
     _new_global(home, "GH_TOKEN=ghp_new\n")
     token = pr.gh_token.resolve(_repo(tmp_path), environ={}, home=home)

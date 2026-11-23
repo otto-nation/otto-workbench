@@ -78,6 +78,16 @@ _run_repo() {
   grep -qx 'GH_TOKEN=repo-old' "$tree/.taskfile/taskfile.env"
 }
 
+@test "checkout copy is a no-op when .workbench/github.env already exists" {
+  local tree="$TMPDIR/wt-exists"
+  mkdir -p "$tree/.taskfile" "$tree/.workbench"
+  printf 'GH_TOKEN=new\n' > "$tree/.workbench/github.env"
+  printf 'GH_TOKEN=old\n' > "$tree/.taskfile/taskfile.env"
+  run _run_repo "$tree"
+  [ "$status" -eq 3 ]
+  grep -qx 'GH_TOKEN=new' "$tree/.workbench/github.env"
+}
+
 @test "checkout copy defers when the source is missing" {
   local tree="$TMPDIR/wt2"
   mkdir -p "$tree"

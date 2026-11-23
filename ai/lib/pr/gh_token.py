@@ -84,7 +84,10 @@ class TokenNotConfigured(Exception):
 
 def global_env_path(home: Path | None = None) -> Path:
     """``$WORKBENCH_CONFIG_DIR/github.env`` — ``WORKBENCH_GITHUB_ENV``."""
-    return (home or Path.home()) / ".config" / "workbench" / "github.env"
+    if home is not None:
+        return home / ".config" / "workbench" / "github.env"
+    import core.workbench_paths
+    return core.workbench_paths.config_dir() / "github.env"
 
 
 def legacy_global_env_path(home: Path | None = None) -> Path:

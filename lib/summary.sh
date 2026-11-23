@@ -150,16 +150,17 @@ print_workbench_summary() {
   fi
 
   # GitHub token — the tiers pr/gh_token.py reads from github.env
-  local _gh_set=false
-  if [[ -f "$TASKFILE_ENV" ]]; then
-    if grep -qE "$GH_TOKEN_SET_RE" "$TASKFILE_ENV" 2>/dev/null; then
+  local _gh_file="" _gh_set=false
+  for _gh_file in "$WORKBENCH_GITHUB_ENV" "$TASKFILE_ENV"; do
+    if [[ -f "$_gh_file" ]] && grep -qE "$GH_TOKEN_SET_RE" "$_gh_file" 2>/dev/null; then
       _gh_set=true
+      break
     fi
-  fi
+  done
   if [[ "$_gh_set" == true ]]; then
-    summary_ok "GH_TOKEN          ${DIM}${TASKFILE_ENV/#"$HOME"/$home_short}  configured${NC}"
+    summary_ok "GH_TOKEN          ${DIM}${_gh_file/#"$HOME"/$home_short}  configured${NC}"
   else
-    summary_warn "GH_TOKEN          ${DIM}${TASKFILE_ENV/#"$HOME"/$home_short}  not set — run: otto-workbench install ai${NC}"
+    summary_warn "GH_TOKEN          ${DIM}${WORKBENCH_GITHUB_ENV/#"$HOME"/$home_short}  not set — run: otto-workbench install ai${NC}"
   fi
 
   summary_info "shell rc          ${DIM}${ZSHRC_FILE/#"$HOME"/$home_short}${NC}"

@@ -6,7 +6,6 @@
 # Taps
 # ---------------------------------------------------------------------------
 tap "DomT4/autoupdate"
-tap "go-task/tap"
 tap "otto-nation/tap"
 
 # ---------------------------------------------------------------------------
@@ -35,7 +34,6 @@ brew "bats-core"  # mise: bats; cmd: bats
 brew "delta"  # mise: delta
 brew "parallel"  # linux: system
 brew "gh"  # mise: gh
-brew "go-task/tap/go-task"  # mise: task; cmd: task
 brew "worktrunk"  # mise: worktrunk; cmd: wt
 brew "otto-nation/tap/otto-stack"  # mise: github:otto-nation/otto-stack
 brew "shellcheck"  # mise: shellcheck

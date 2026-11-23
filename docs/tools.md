@@ -69,7 +69,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `herdr-app` | Open the main Herdr window detached from the terminal (no-op when running), or run a Herdr command. Operator tool |
 | `herdr-app-untrusted` | Launch an isolated Herdr window (HC_SESSION=untrusted) with no local terminals. Operator tool |
 | `serena-mcp` | Scaffolds Serena MCP into a project's .mcp.json for project-scoped code intelligence |
-| `run-tests` | Runs the bats and pytest suites with the repo's parallelism settings — the single entry point used by the Taskfile, the pre-push hook, and CI |
+| `run-tests` | Runs the bats and pytest suites with the repo's parallelism settings — the single entry point used by the pre-push hook and CI |
 | `validate-all` | Runs every validator discovered in bin/ and bin/local/ — the single entry point used by the pre-push hook and CI |
 | `installed-copy-check` | Exit 0 when a directory is in the installed copy's repository — the fact the guards use to keep sessions out of it |
 | `queue-guard-check` | Exit 0, with the reason on stdout, when an agent command is heavy and must run through otto-queue — the fact both harness guards use |
@@ -122,7 +122,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `generate-public-surface` | Generates the per-package public surface snapshot from the registries, config schema, and shipped artifacts |
 | `validate-public-surface` | Validates that the committed public surface snapshots match the registries, config schema, and shipped artifacts they are generated from |
 | `generate-test-weights` | Writes tests/weights.tsv from a bats junit report — the measured per-file runtimes the CI shard packer balances on |
-| `dev-deps` | Declares, installs (without root) and checks the workbench's development and test dependencies — run by task dev:setup, checked by the pre-push hook |
+| `dev-deps` | Declares, installs (without root) and checks the workbench's development and test dependencies — run by bin/local/dev-deps, checked by the pre-push hook |
 | `select-tests` | Emits the bats test files affected by a set of changed paths — used by the pre-push hook for change-based selection |
 | `select-pytest` | Emits the pytest files affected by a set of changed paths, resolved through the import graph — the pytest counterpart of select-tests |
 | `claim-job-slots` | Holds a share of the machine's test-parallelism slots while a command runs, so concurrent suites in several worktrees divide the cores instead of each taking all of them |
@@ -1637,7 +1637,6 @@ Takes no flags.
 | [jq](https://jqlang.github.io/jq/manual/) | JSON processor for querying, filtering, and transforming JSON data |
 | [yq](https://mikefarah.gitbook.io/yq/) | YAML/JSON/TOML processor — like jq but for YAML |
 | [gh](https://cli.github.com/manual/) | GitHub CLI — manage PRs, issues, repos, checks, and releases from the terminal |
-| [go-task](https://taskfile.dev) | Task runner with YAML-defined tasks (runs the repo-local Taskfile.yml) |
 | [shellcheck](https://www.shellcheck.net/) | Static analysis tool for shell scripts — catches bugs and style issues |
 | [bats-core](https://bats-core.readthedocs.io/) | Bash Automated Testing System — unit testing framework for shell scripts |
 | [parallel](https://www.gnu.org/software/parallel/) | GNU parallel — run shell commands in parallel (required by bats --jobs for parallel test execution) |

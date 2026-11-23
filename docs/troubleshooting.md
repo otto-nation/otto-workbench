@@ -101,7 +101,7 @@ exec zsh              # reloads the shell
 Hooks need to be activated once per clone:
 
 ```bash
-task dev:setup
+bin/local/dev-deps
 ```
 
 This sets the *global* `core.hooksPath` to the workbench's [`git/hooks/`](../git/hooks/) directory (via `~/.git-hooks/`).
@@ -270,7 +270,7 @@ The clause after `busy:` is the holder's role: `driving it` (`pr batch run` / `p
 
 ## A tree is declared under validation
 
-While a gate runs — `task test`, `bin/local/validate-all`, or a `git push` that
+While a gate runs — `bin/local/run-tests`, `bin/local/validate-all`, or a `git push` that
 triggers the pre-push hook — the worktree is declared under validation. Editing
 a tree mid-validation silently invalidates the run, and nothing in the output
 says so; the lock makes that state visible. Both agent harnesses read it and

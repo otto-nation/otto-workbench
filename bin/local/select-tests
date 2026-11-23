@@ -42,7 +42,6 @@ FULL_SUITE_TRIGGERS=(
   tests/test_helper.bash
   tests/conftest.py
   bin/local/run-tests
-  Taskfile.yml
 )
 # bin/local/select-tests and select-pytest are not triggers: each selector's
 # own suite is selected by a path literal, and running every other suite does
@@ -355,7 +354,7 @@ _has_source_refs() {
 # _extract_refs FILE — emit the source paths a bats test references.
 # Looks for $REPO_ROOT/path and $WORKBENCH_DIR/path patterns, including the
 # "$REPO_ROOT"/path spelling, a bare directory ("$REPO_ROOT/lib/"*.sh reads as
-# lib), and a file at the repo root (Taskfile.yml, install.components).
+# lib), and a file at the repo root (install.components).
 _extract_refs() {
   local file="$1" root='(\$REPO_ROOT|\$WORKBENCH_DIR|\$\{REPO_ROOT\}|\$\{WORKBENCH_DIR\})"?/'
   {

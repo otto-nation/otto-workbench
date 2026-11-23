@@ -283,10 +283,8 @@ teardown() {
   [ "$status" -ne 0 ]
 }
 
-@test "run-tests, Taskfile and conftest trigger the full suite" {
+@test "run-tests and conftest trigger the full suite" {
   run _is_full_suite_trigger "bin/local/run-tests"
-  [ "$status" -eq 0 ]
-  run _is_full_suite_trigger "Taskfile.yml"
   [ "$status" -eq 0 ]
   run _is_full_suite_trigger "tests/conftest.py"
   [ "$status" -eq 0 ]
@@ -514,11 +512,11 @@ lib/ui.sh" ]
 
 @test "extract_refs: a file at the repo root is a ref" {
   local f="$BATS_TEST_TMPDIR/t.bats"
-  printf 'yq . "$REPO_ROOT/Taskfile.yml"\nwhile read -r c; do :; done < "$REPO_ROOT/install.components"\n' > "$f"
+  printf 'yq . "$REPO_ROOT/README.md"\nwhile read -r c; do :; done < "$REPO_ROOT/install.components"\n' > "$f"
   run _extract_refs "$f"
   [ "$status" -eq 0 ]
   [ "${#lines[@]}" -eq 2 ]
-  [[ " ${lines[*]} " == *" Taskfile.yml "* ]]
+  [[ " ${lines[*]} " == *" README.md "* ]]
   [[ " ${lines[*]} " == *" install.components "* ]]
 }
 

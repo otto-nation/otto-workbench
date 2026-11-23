@@ -1,11 +1,9 @@
 #!/usr/bin/env bash
 # run-tests — run the bats and pytest suites with the repo's parallelism settings.
 #
-# The three callers that run the suites — Taskfile.yml, the pre-push hook, and
-# CI — used to spell the invocation out themselves, and drifted: pre-push passed
-# --jobs 8, CI passed --jobs 4, and the Taskfile passed nothing at all, so
-# `task test` took 318s for the suite pre-push finished in 92s. The flags live
-# here now, and all three call this.
+# The callers that run the suites — the pre-push hook and CI — used to spell the
+# invocation out themselves, and drifted: pre-push passed --jobs 8, CI passed
+# --jobs 4. The flags live here now, and both call this.
 #
 # Output is the runner's own, unfiltered: pre-push parses the TAP stream for its
 # slow-test report, so nothing may rewrite the stream between bats and its caller (the heartbeat

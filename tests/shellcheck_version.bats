@@ -59,7 +59,7 @@ _pinned() {
   # A declared dependency (bin/local/dev-deps) wherever the gate lints, so its
   # absence is a failure naming the fix, not a skip.
   command -v shellcheck >/dev/null 2>&1 || {
-    echo "shellcheck is not installed — run: bin/local/dev-deps (or: task dev:setup)"
+    echo "shellcheck is not installed — run: bin/local/dev-deps"
     return 1
   }
 

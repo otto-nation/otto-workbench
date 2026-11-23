@@ -39,7 +39,7 @@ _assert_not_real_repo() {
 # inside a test, or plainly in setup().
 require_zsh() {
   command -v zsh >/dev/null 2>&1 && return 0
-  echo "zsh is not installed — a declared dependency; run: bin/local/dev-deps (or: task dev:setup)" >&2
+  echo "zsh is not installed — a declared dependency; run: bin/local/dev-deps" >&2
   return 1
 }
 

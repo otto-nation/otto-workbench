@@ -15,7 +15,7 @@ bin/local/run-tests            # both whole suites: CI and the pre-push hook onl
 bin/local/run-tests --bats     # the whole bats suite: CI and the pre-push hook only, never by hand
 bin/local/run-tests --pytest   # the whole pytest suite: CI and the pre-push hook only, never by hand
 shellcheck <file>.sh           # lint a script
-task dev:setup                 # hooks + development dependencies (bin/local/dev-deps)
+bin/local/dev-deps             # hooks + development dependencies
 bin/local/dev-deps --check     # report missing development dependencies, install nothing
 bin/local/validate-all               # run every validator
 bin/validate-* / bin/local/validate-*  # the individual validators validate-all discovers

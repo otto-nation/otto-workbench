@@ -88,7 +88,6 @@ FULL_SUITE_TRIGGERS = {
     "pyproject.toml",
     "bin/local/run-tests",
     "tests/test_helper.bash",
-    "Taskfile.yml",
 }
 
 # Prefixes under which any change runs everything, for the same reason.

@@ -2,15 +2,15 @@
 
 ## Setup
 
-Requires go-task (`brew install go-task/tap/go-task`, `mise use -g task`, or `otto-workbench install packages`).
-
 ```bash
 git clone https://github.com/otto-nation/otto-workbench ~/otto-workbench
 cd ~/otto-workbench
-task dev:setup
+bin/local/dev-deps
 ```
 
-`task dev:setup` activates the git hooks in `git/hooks/`, which run ShellCheck, validate registries, and regenerate tool context before every push.
+`bin/local/dev-deps` installs development dependencies and activates the git
+hooks in `git/hooks/`, which run ShellCheck, validate registries, and regenerate
+tool context before every push.
 
 ## Dev Dependencies
 
@@ -48,20 +48,15 @@ the install above:
 ## Running Tests
 
 ```bash
-task gate          # the whole pre-push gate, exactly as pushing runs it
-task test          # the tests your branch can affect (bats, then pytest)
-task test:all      # every test, selection off
-task test:pytest   # only the pytest suite, still selected
-task lint          # ShellCheck all shell scripts
+git/hooks/pre-push-workbench </dev/null   # the whole pre-push gate
+bin/local/run-tests --changed             # tests your branch can affect
+bin/local/run-tests                       # every test, selection off
+bin/local/run-tests --pytest --changed    # only pytest, still selected
 ```
 
-`task gate` is the one to reach for before pushing. It delegates to
-`git/hooks/pre-push-workbench` rather than repeating its steps, so what it runs is
-the same sequence in the same order with the same exit-code handling — the hook
-stays the single definition of green and the task is a name for it. There is no
+`git/hooks/pre-push-workbench` is the one to reach for before pushing. There is no
 flag to skip the slow half: a gate with one is a gate people run with it. When you
-want only a part, run the part — `task test`, `task test:pytest`, `task lint` —
-rather than a gate that reports on less than it says.
+want only a part, run that part rather than a gate that reports on less than it says.
 Captured validator steps honour `WORKBENCH_PREPUSH_STEP_TIMEOUT` (default 1800
 seconds; 0 = unbounded): a step still running after that is killed and the push
 is refused. They print a "still running" line every `TEST_HEARTBEAT_SECS`
@@ -73,15 +68,15 @@ read as a pass: `bin/local/run-tests | tail -40` reports `tail`'s exit status an
 not the suite's, and deciding pass/fail by grepping output for `✗` reads text
 where there is a status to check.
 
-`task test` runs only what your branch can reach, through `bin/local/select-tests` and
+`bin/local/run-tests --changed` runs only what your branch can reach, through `bin/local/select-tests` and
 `bin/local/select-pytest`. On this repo's recent history that is a median of 45 of 154
 bats files and 28 of 187 pytest files. A per-area bats helper selects the suites that
 `load` it. A change to the fixtures every suite shares — `test_helper.bash` for bats,
 `conftest.py` for pytest — selects everything, and so does a change to the test machinery
-itself (`bin/local/run-tests`, the selectors, `Taskfile.yml`, `.github/workflows/*`)
+itself (`bin/local/run-tests`, the selectors, `.github/workflows/*`)
 and a selector that fails or cannot narrow: failing towards the whole suite is the only
 safe direction, since a selection that silently narrowed to nothing would report green
-having run no tests. Reach for `task test:all` when you suspect the map rather than the code.
+having run no tests. Reach for `bin/local/run-tests` (no `--changed`) when you suspect the map rather than the code.
 
 CI on `pull_request` uses that same selection (`bin/local/run-tests --changed --base origin/<base>`),
 including the bats shards of the selected files. A PR that reaches no test file still

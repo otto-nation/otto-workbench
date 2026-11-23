@@ -21,7 +21,7 @@ skip: "Do not use when opening a PR (use git-workflow) or when only reading an i
 
 ## Writing an issue (any tracker)
 
-- Describe the problem and desired outcome — not implementation details. Structure as: Context (what prompted this), Problem (what's wrong), Goal (desired outcome). Keep specific files, code snippets, and implementation steps out of the issue body. On Linear, that write-up is a document on the issue (`linear document create --issue`). A repo implementation plan still goes under `resolve-workspace`'s `plans/` — a Linear document is not a substitute. GitHub has no document type: put the write-up in a comment (`gh issue comment`), not in the issue body
+- Describe the problem and desired outcome — not implementation details. Structure as: Context (what prompted this), Problem (what's wrong), Goal (desired outcome). Keep specific files, code snippets, and implementation steps out of the issue body; they belong in `resolve-workspace`'s `plans/`. Do not upload that write-up as a Linear document or a GitHub comment unless the user asks — the recipes live under Linear and GitHub below
 - Titles follow conventional commit format: `type(scope): subject` — same rules as git commit headers (72 chars, allowed types, no period). This keeps issues, commits, and PRs consistent
 - When an issue's scope expands beyond its original title/description, retitle and rewrite the description to reflect the broader scope. If the original scope was a meaningful unit of work, preserve it as a sub-issue rather than losing that context
 - Prefer sub-issues over expanding a single issue's scope when the work has distinct deliverables. A parent issue should describe the initiative; sub-issues should each be independently completable. Don't nest sub-issues more than one level
@@ -87,7 +87,7 @@ Applies only when the resolved provider is `github`.
 |---------|-------|
 | `gh issue view <N> --repo <owner>/<repo> --json title,body,comments` | Pipe through `head` before jq |
 | `gh issue create --repo <owner>/<repo> --title "..." --body-file <path> --assignee @me` | `--body-file` for anything multi-line |
-| `gh issue comment <N> --repo <owner>/<repo> --body-file <path>` | Write-up that would be a Linear document. GitHub has no document type |
+| `gh issue comment <N> --repo <owner>/<repo> --body-file <path>` | Analysis the user asks to upload. GitHub has no document type; do not comment implementation that belongs in `plans/` unless they asked |
 | `gh issue create ... --label follow-up` | Repeatable or comma-separated. Fails without filing when the label does not exist |
 | `gh label list --repo <owner>/<repo> --limit 200 --json name` | Default limit is 30, which reads a label past it as missing |
 | `gh label create follow-up --repo <owner>/<repo>` | Exits non-zero when it already exists. Not `--force`: that overwrites colour and description |

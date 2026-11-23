@@ -163,12 +163,12 @@ Git and PR procedures: creating and describing a PR with pr create, the PR templ
 
 ### `/issue-tracker`
 
-Issue tracker conventions: resolving which tracker a repo uses (github, linear, jira), filing, assigning, labelling and linking issues, and per-provider CLI patterns. TRIGGER when: creating, editing, searching or closing an issue, filing a follow-up or deferred item, or asked which tracker a repo uses. SKIP: opening a PR (see git-workflow); reading an issue a user pasted.
+Issue tracker conventions: resolving which tracker a repo uses (github, linear, jira), filing, assigning, labelling and linking issues, attaching analysis as a tracker document, and per-provider CLI patterns. TRIGGER when: creating, editing, searching or closing an issue, filing a follow-up or deferred item, attaching an analysis or plan to an issue, or asked which tracker a repo uses. SKIP: opening a PR (see git-workflow); reading an issue a user pasted.
 
 ```
 /issue-tracker
 ```
-**Trigger:** Use when creating, editing, searching or closing an issue, filing a follow-up or deferred item, or when asked which issue tracker a repo uses.
+**Trigger:** Use when creating, editing, searching or closing an issue, filing a follow-up or deferred item, attaching an analysis or plan to an issue, or when asked which issue tracker a repo uses.
 **Skip:** Do not use when opening a PR (use git-workflow) or when only reading an issue the user pasted.
 
 ### `/machine`

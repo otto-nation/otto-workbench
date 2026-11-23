@@ -561,7 +561,7 @@ _write_skill() {
 # _write_agent NAME — writes a minimal agent .md into the fake AI tree.
 _write_agent() {
   local name="$1"
-  mkdir -p "$AI_DIR/claude/agents"
+  mkdir -p "$AI_DIR/agents"
   {
     echo "---"
     echo "name: $name"
@@ -569,7 +569,7 @@ _write_agent() {
     echo "---"
     echo ""
     echo "# $name"
-  } > "$AI_DIR/claude/agents/$name.md"
+  } > "$AI_DIR/agents/$name.md"
 }
 
 @test "the Claude Code skills list names an ordinary skill" {

@@ -3,7 +3,7 @@
 # All paths come from lib/constants.sh.
 
 # ─── Agents ──────────────────────────────────────────────────────────────────
-# Each agent in ai/claude/agents/ declares a tier rather than a model; these
+# Each agent in ai/agents/ declares a tier rather than a model; these
 # install it with that tier's model from the machine-wide `models.*`.
 
 # _claude_tier_table VIEW — prints one `tier<TAB>model<TAB>effort` line per
@@ -65,8 +65,8 @@ _claude_render_agent() {
 }
 
 # step_claude_agents — copies each agent markdown file into ~/.claude/agents/.
-# Supports user overrides: user/ai/claude/agents/<name>.md replaces the default,
-# user/ai/claude/agents/<name>.disabled suppresses it entirely.
+# Supports user overrides: user/ai/agents/<name>.md replaces the default,
+# user/ai/agents/<name>.disabled suppresses it entirely.
 #
 # An agent whose frontmatter declares `tier: deep|standard|light` is installed
 # with that tier's model from the machine-wide `models.*` (see

@@ -16,7 +16,7 @@ This location is the same regardless of how you installed the workbench (git clo
 | Rules | `ai/guidelines/rules/*.md` | `overrides/ai/guidelines/rules/*.md` | Same-name file replaces base |
 | Skills | `ai/skills/<name>/` | `overrides/ai/skills/<name>/` | Same-name directory replaces base |
 | Pi extensions | `ai/pi/extensions/<name>/` | `overrides/ai/pi/extensions/<name>/` | Same-name directory replaces base |
-| Agents | `ai/claude/agents/*.md` | `overrides/ai/claude/agents/*.md` | Same-name file replaces base |
+| Agents | `ai/agents/*.md` | `overrides/ai/agents/*.md` | Same-name file replaces base |
 | Guidelines | `ai/claude/guidelines.md` | `overrides/ai/claude/CLAUDE.md` | Full replacement |
 | Guidelines | `ai/claude/guidelines.md` | `overrides/ai/claude/CLAUDE.local.md` | Appended after base |
 | Settings | `ai/claude/settings.json` | `overrides/ai/claude/settings.json` | Deep JSON merge (user wins) |
@@ -31,7 +31,7 @@ Create a `.disabled` sentinel in the user directory to suppress a base item enti
 
 ```
 ~/.config/workbench/overrides/ai/skills/some-skill.disabled
-~/.config/workbench/overrides/ai/claude/agents/reviewer.disabled
+~/.config/workbench/overrides/ai/agents/reviewer.disabled
 ~/.config/workbench/overrides/ai/guidelines/rules/security.disabled
 ```
 
@@ -42,13 +42,13 @@ The sentinel is an empty file — only the name matters.
 ```
 ~/.config/workbench/overrides/
 └── ai/
+    ├── agents/
+    │   ├── debugger.md        # replaces base debugger agent
+    │   └── reviewer.disabled  # suppresses base reviewer agent
     ├── claude/
     │   ├── CLAUDE.md              # full guidelines replacement
     │   ├── CLAUDE.local.md        # guidelines append
-    │   ├── settings.json          # settings merge
-    │   └── agents/
-    │       ├── debugger.md        # replaces base debugger agent
-    │       └── reviewer.disabled  # suppresses base reviewer agent
+    │   └── settings.json          # settings merge
     ├── skills/
     │   └── my-skill/              # adds a new skill
     │       └── skill.md
@@ -87,7 +87,7 @@ Replace the debugger agent with a custom version:
 
 ```bash
 otto-workbench ai override agent debugger --add
-# edit ~/.config/workbench/overrides/ai/claude/agents/debugger.md
+# edit ~/.config/workbench/overrides/ai/agents/debugger.md
 otto-workbench sync
 ```
 

@@ -370,7 +370,7 @@ _emit_ai_installs() {
   local claude_rules="~${CLAUDE_RULES_DIR#"$HOME"}"
   # Source dirs within the repo
   local skills_src="$AI_DIR/skills"
-  local claude_agents_src="$AI_DIR/claude/agents"
+  local claude_agents_src="$AI_DIR/agents"
   local claude_mcps_src="$AI_DIR/claude/mcps"
 
   printf '**Claude Code:**\n'

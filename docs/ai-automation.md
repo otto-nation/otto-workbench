@@ -143,13 +143,13 @@ Memory consolidation for Claude Code. Scans session transcripts for corrections,
 
 ### `/finishing-a-development-branch`
 
-Complete a development branch — verify tests, self-review, then open a draft PR. TRIGGER when: implementation is complete and the work needs to reach main. SKIP: work still in progress; a branch whose PR is already open.
+Complete a development branch — verify tests, self-review, then open a draft PR. TRIGGER when: implementation is complete and the work needs to reach main, even if the user did not ask for a PR. SKIP: work still in progress; a branch whose PR is already open; the user named a different next step.
 
 ```
 /finishing-a-development-branch
 ```
-**Trigger:** Use when implementation is complete and the work needs to reach main, or when the user asks to finish, wrap up, or ship a branch.
-**Skip:** Do not use while work is still in progress, or on a branch whose PR is already open — prefer a follow-up PR.
+**Trigger:** Use when implementation is complete and the work needs to reach main — including when the user did not ask to finish or open a PR — or when the user asks to finish, wrap up, or ship a branch.
+**Skip:** Do not use while work is still in progress, or on a branch whose PR is already open — prefer a follow-up PR — or when the user named a different next step.
 
 ### `/git-workflow`
 

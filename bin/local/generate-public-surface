@@ -205,7 +205,7 @@ _component_entries() {
 # _claude_artifacts — prints agent, skill, and settings entries for otto-ai-tools.
 _claude_artifacts() {
   local f d
-  for f in "$REPO_ROOT"/ai/claude/agents/*.md; do
+  for f in "$REPO_ROOT"/ai/agents/*.md; do
     [[ -f "$f" ]] || continue
     printf 'agent:%s\n' "$(basename "$f" .md)"
   done

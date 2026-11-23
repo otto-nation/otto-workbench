@@ -138,7 +138,7 @@ _build_tarball() {
 
 @test "_export_claude_config: copies all agent files" {
   local src_count dest_count
-  src_count=$(find "$REPO_ROOT/ai/claude/agents" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
+  src_count=$(find "$REPO_ROOT/ai/agents" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
   dest_count=$(find "$EXPORT_DIR/agents" -maxdepth 1 -name '*.md' -type f | wc -l | tr -d ' ')
   [ "$src_count" -gt 0 ]
   [ "$src_count" -eq "$dest_count" ]

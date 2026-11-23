@@ -188,7 +188,7 @@ bare-repo container, where a report is tracked by nothing and reached by no revi
 #### <Title>
 - **Source:** <project> / <memory file> / <entry>
 - **Proposal:** <what to change>
-- **Target:** `ai/claude/agents/<file>.md` or `ai/skills/<dir>/`
+- **Target:** `ai/agents/<file>.md` or `ai/skills/<dir>/`
 - **Rationale:** <what's missing or wrong in current protocol>
 
 ## Skipped

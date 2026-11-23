@@ -11,4 +11,4 @@ trigger: "Loaded automatically for incident triage. Pi has no agent files, so th
      full transcript of it in the skill index. ai/skills/steps.sh splices the
      agent body in below at install time. -->
 
-<!-- AGENT_PROTOCOL_PLACEHOLDER: replaced at install with the body of ai/claude/agents/incident.md -->
+<!-- AGENT_PROTOCOL_PLACEHOLDER: replaced at install with the body of ai/agents/incident.md -->

@@ -12,7 +12,7 @@
 #   - lifecycle_scope is one of: per-project, global
 #   - lifecycle_cadence matches the sibling should-*.sh's *_INTERVAL_HOURS, and
 #     the skill states that script's MIN_SESSIONS floor where it has one
-#   - agent (optional) resolves to an ai/claude/agents/<name>.md file
+#   - agent (optional) resolves to an ai/agents/<name>.md file
 #   - invocation is required unless the skill declares an agent
 #   - name and description satisfy the Agent Skills standard (64 / 1024 chars)
 #   - every non-programmatic agent has a matching agent-backed skill
@@ -111,10 +111,10 @@ _validate_skill_agent() {
   local agent="$1" display="$2"
   [[ -n "$agent" ]] || return 0
 
-  if [[ -f "$WORKBENCH_DIR/ai/claude/agents/$agent.md" ]]; then
+  if [[ -f "$WORKBENCH_DIR/ai/agents/$agent.md" ]]; then
     _pass "$display: agent '$agent' resolves"
   else
-    _fail "$display: agent '$agent' has no ai/claude/agents/$agent.md"
+    _fail "$display: agent '$agent' has no ai/agents/$agent.md"
   fi
 }
 
@@ -392,7 +392,7 @@ done
 # directory whose field points elsewhere installs that other agent's protocol
 # twice under two names and leaves this one reaching Pi nowhere — which a
 # filename check reports as covered.
-AGENTS_DIR="$WORKBENCH_DIR/ai/claude/agents"
+AGENTS_DIR="$WORKBENCH_DIR/ai/agents"
 for agent_file in "$AGENTS_DIR"/*.md; do
   [[ -f "$agent_file" ]] || continue
   agent_name="$(basename "$agent_file" .md)"

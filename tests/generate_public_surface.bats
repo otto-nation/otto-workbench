@@ -182,7 +182,7 @@ EOF
 
 @test "every ai/claude agent has a matching agent entry" {
   _shared_snapshot
-  for f in "$REPO_ROOT"/ai/claude/agents/*.md; do
+  for f in "$REPO_ROOT"/ai/agents/*.md; do
     name="$(basename "$f" .md)"
     run jq -e --arg e "agent:$name" '.entries | index($e)' "$TMPDIR/ai/claude/public-surface.json"
     [ "$status" -eq 0 ]

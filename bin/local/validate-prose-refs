@@ -34,7 +34,7 @@ Three checks, each against the live source of truth rather than a list kept here
                     A `name.md` § span that names no file in the repo fails as
                     an unknown rule file.
 
-With no files, scans every hand-written markdown file: ai/claude/agents/,
+With no files, scans every hand-written markdown file: ai/agents/,
 ai/skills/, ai/guidelines/rules/, docs/ and the top-level AGENTS.md, README.md
 and CONTRIBUTING.md. A `*.generated.md` file, and a page composed from a
 sibling `<name>.src.md`, is skipped: its source is what gets scanned.
@@ -64,7 +64,7 @@ import core.cli_reference  # noqa: E402
 import core.tool_parser  # noqa: E402
 import core.trail  # noqa: E402
 
-PROSE_DIRS = ("ai/claude/agents", "ai/skills", "ai/guidelines/rules", "docs")
+PROSE_DIRS = ("ai/agents", "ai/skills", "ai/guidelines/rules", "docs")
 PROSE_FILES = ("AGENTS.md", "README.md", "CONTRIBUTING.md")
 
 # Slash commands a workbench hook answers rather than a skill.

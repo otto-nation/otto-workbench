@@ -33,7 +33,7 @@ SCRIPT = "promote-scan"
 LAST_PROMOTE_STAMP = "last-promote"
 
 RULES_REL = Path("ai") / "guidelines" / "rules"
-AGENTS_REL = Path("ai") / "claude" / "agents"
+AGENTS_REL = Path("ai") / "agents"
 SETTINGS_REL = Path("ai") / "claude" / "settings.json"
 BACKED_UP_MEMORY_REL = Path("ai") / "memory"
 BIN_REL = Path("bin")

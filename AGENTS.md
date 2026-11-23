@@ -83,7 +83,7 @@ and reported with the exact command, and nothing in the repo runs `sudo`.
 
 There is no virtualenv and no Python dependency manager here — `pyproject.toml` only sets
 pytest's `testpaths`, and nothing is installed from it. Run `pytest` and `bats` as bare
-commands off `PATH`, the way the Taskfile, CI, and the pre-push hook do. `uv run pytest`
+commands off `PATH`, the way CI and the pre-push hook do. `uv run pytest`
 and `.venv/bin/python -m pytest` reach nothing the bare command does not, and neither is
 allow-listed, so they only add a permission prompt.
 

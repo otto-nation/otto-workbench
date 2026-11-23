@@ -86,7 +86,7 @@ selectors own the fallback list — the workflow only passes flags, and has no `
 filter, so the required checks still report on a docs-only change.
 
 Every test target goes through `bin/local/run-tests`, which owns the parallelism settings
-for the whole repo — the Taskfile, the pre-push hook, and CI all call it rather than
+for the whole repo — the pre-push hook and CI both call it rather than
 spelling the flags out themselves. It asks for one job per core, capped at 12, and claims
 that many slots from a machine-wide pool under `~/.local/state/workbench/test-slots/`.
 A slot is *held* for the length of the run, so a suite starting beside another one sees

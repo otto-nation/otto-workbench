@@ -349,8 +349,8 @@ run_bats() {
   #
   # Pinned here rather than in common_setup because setup_file() runs before
   # any per-test setup, and a file that swaps HOME there is already too late
-  # for the helper to correct. This is the one place every caller — pre-push,
-  # CI, the Taskfile — goes through.
+  # for the helper to correct. This is the one place every caller — pre-push
+  # and CI — goes through.
   export MISE_GLOBAL_CONFIG_FILE="${MISE_GLOBAL_CONFIG_FILE:-$HOME/.config/mise/config.toml}"
 
   # The same swap moves mise's data dir, where its installs live, so under the

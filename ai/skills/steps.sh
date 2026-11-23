@@ -32,7 +32,7 @@ _resolve_agent_file() {
     printf '%s' "$USER_AGENTS_DIR/${agent}.md"
     return 0
   fi
-  printf '%s' "$CLAUDE_AGENTS_SRC_DIR/${agent}.md"
+  printf '%s' "$AGENTS_SRC_DIR/${agent}.md"
 }
 
 # _skill_symlink_owned PATH — true when PATH is a symlink the workbench wrote

@@ -13,7 +13,7 @@ setup() {
   mkdir -p "$HOME"
 
   FAKE_WORKBENCH="$TMPDIR/workbench"
-  mkdir -p "$FAKE_WORKBENCH/ai/skills" "$FAKE_WORKBENCH/ai/claude/agents"
+  mkdir -p "$FAKE_WORKBENCH/ai/skills" "$FAKE_WORKBENCH/ai/agents"
   cp "$REPO_ROOT/ai/skills/steps.sh" "$FAKE_WORKBENCH/ai/skills/steps.sh"
 }
 
@@ -43,7 +43,7 @@ _make_skill() {
 # _make_agent NAME BODY — writes an agent file with frontmatter and a body.
 _make_agent() {
   printf -- '---\nname: %s\n---\n%s\n' "$1" "$2" \
-    > "$FAKE_WORKBENCH/ai/claude/agents/$1.md"
+    > "$FAKE_WORKBENCH/ai/agents/$1.md"
 }
 
 # _run_step — sources the real libraries against the fake workbench and runs the step.
@@ -422,7 +422,7 @@ _run_summary() {
 
 @test "an agent file with no frontmatter is skipped rather than spliced empty" {
   _make_skill reviewer reviewer
-  printf 'JUST A BODY\n' > "$FAKE_WORKBENCH/ai/claude/agents/reviewer.md"
+  printf 'JUST A BODY\n' > "$FAKE_WORKBENCH/ai/agents/reviewer.md"
 
   _run_step
   [ "$status" -eq 0 ]
@@ -453,7 +453,7 @@ _run_summary() {
   local name
   for name in reviewer reviewer-lite debugger incident migrate; do
     [ -f "$REPO_ROOT/ai/skills/$name/SKILL.md" ]
-    [ -f "$REPO_ROOT/ai/claude/agents/$name.md" ]
+    [ -f "$REPO_ROOT/ai/agents/$name.md" ]
   done
 }
 

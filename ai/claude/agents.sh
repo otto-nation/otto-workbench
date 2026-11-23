@@ -81,12 +81,12 @@ _claude_render_agent() {
 # `inherit`. The view is fetched here rather than handed over by the settings
 # step, because each step must run on its own.
 step_claude_agents() {
-  [[ -d "$CLAUDE_AGENTS_SRC_DIR" ]] || { warn "No agents found in $CLAUDE_AGENTS_SRC_DIR — skipping"; return; }
+  [[ -d "$AGENTS_SRC_DIR" ]] || { warn "No agents found in $AGENTS_SRC_DIR — skipping"; return; }
   mkdir -p "$CLAUDE_AGENTS_DIR"
   [[ "${WORKBENCH_SYNC:-}" != true ]] && info "Installing Claude Code agents to $CLAUDE_AGENTS_DIR/" || true
 
   local -A layers
-  resolve_layers "$CLAUDE_AGENTS_SRC_DIR" "$USER_AGENTS_DIR" "*.md" layers
+  resolve_layers "$AGENTS_SRC_DIR" "$USER_AGENTS_DIR" "*.md" layers
 
   # Prune agents in target that are no longer in either layer
   local item

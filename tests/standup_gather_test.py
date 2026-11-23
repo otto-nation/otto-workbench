@@ -68,3 +68,18 @@ def test_main_fails_when_org_missing(monkeypatch, capsys):
     monkeypatch.setattr("standup.gather.resolve_org", lambda *_a, **_k: None)
     assert main(["--cwd", "/tmp"]) == 2
     assert "pass --org" in capsys.readouterr().err
+
+
+def test_main_uses_at_me_when_login_blank(monkeypatch):
+    monkeypatch.setattr("standup.gather.resolve_org", lambda *_a, **_k: "acme")
+    monkeypatch.setattr(gh.client, "login", lambda: "")
+    captured: dict = {}
+
+    def fake_gather(org, author, days):
+        captured["author"] = author
+        return {"org": org, "author": author, "days": days, "buckets": {}}
+
+    monkeypatch.setattr("standup.gather.gather", fake_gather)
+    monkeypatch.setattr("standup.gather.json.dump", lambda *_a, **_k: None)
+    assert main([]) == 0
+    assert captured["author"] == "@me"

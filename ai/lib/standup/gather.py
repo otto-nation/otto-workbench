@@ -44,13 +44,9 @@ def resolve_org(cwd: str | None, org: str | None) -> str | None:
     return login if isinstance(login, str) and login else None
 
 
-def resolve_author() -> str | None:
-    """Logged-in gh user login."""
-    user = gh.client.json_out("api", "user", default=None)
-    if not isinstance(user, dict):
-        return None
-    login = user.get("login")
-    return login if isinstance(login, str) and login else None
+def resolve_author() -> str:
+    """gh login, or ``@me`` when the token cannot read /user."""
+    return gh.client.login() or "@me"
 
 
 def gather(org: str, author: str, days: int, now: datetime | None = None) -> dict[str, Any]:
@@ -82,11 +78,7 @@ def main(argv: list[str] | None = None) -> int:
     if not org:
         print("standup: could not resolve GitHub org from cwd; pass --org", file=sys.stderr)
         return 2
-    author = resolve_author()
-    if not author:
-        print("standup: could not resolve gh user (gh api user)", file=sys.stderr)
-        return 2
-    payload = gather(org, author, args.days)
+    payload = gather(org, resolve_author(), args.days)
     json.dump(payload, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0

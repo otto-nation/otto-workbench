@@ -31,7 +31,7 @@ own installer (`https://mise.run`), so a fresh Linux account needs nothing
 beforehand. worktrunk is installed by the git component as well, since that
 component configures it and `wt-init` runs it.
 
-`ai/setup.sh` also scaffolds `~/.config/task/taskfile.env`, the GitHub PATs `pr create` and `pr describe --post` publish with (`GH_TOKEN`, optional `GH_TOKEN__<ORG>`). See `security-secrets.md` for the two-file secret model.
+`ai/setup.sh` also scaffolds `~/.config/workbench/github.env`, the GitHub PATs `pr create` and `pr describe --post` publish with (`GH_TOKEN`, optional `GH_TOKEN__<ORG>`). See `security-secrets.md` for the two-file secret model. Legacy `~/.config/task/taskfile.env` is still read.
 
 ## What Gets Installed
 

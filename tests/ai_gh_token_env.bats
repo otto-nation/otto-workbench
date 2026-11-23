@@ -7,7 +7,7 @@ setup() {
   common_setup
   FAKE_HOME="$TMPDIR/home"
   mkdir -p "$FAKE_HOME"
-  ENV_FILE="$FAKE_HOME/.config/task/taskfile.env"
+  ENV_FILE="$FAKE_HOME/.config/workbench/github.env"
   # file_mode, for the permissions case; the scaffold itself runs in a child bash.
   # shellcheck source=../lib/portable.sh
   . "$REPO_ROOT/lib/portable.sh"

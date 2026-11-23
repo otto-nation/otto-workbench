@@ -159,22 +159,22 @@ state_select_tools "$_STATE_KEY" "${SELECTED_TOOLS[@]}"
 
 # ─── GitHub token file ────────────────────────────────────────────────────
 
-# configure_gh_token — ensures $TASKFILE_ENV holds the GH_TOKEN template and
-# offers to edit it when no token is set yet. "Set" means an uncommented
+# configure_gh_token — ensures $WORKBENCH_GITHUB_ENV holds the GH_TOKEN template
+# and offers to edit it when no token is set yet. "Set" means an uncommented
 # GH_TOKEN or GH_TOKEN__<ORG> line with a value — the tiers gh_token.py reads.
 configure_gh_token() {
   echo; info "GitHub token for pr create / pr describe --post"
-  ai_scaffold_gh_token_env "$TASKFILE_ENV"
-  if grep -qE "$GH_TOKEN_SET_RE" "$TASKFILE_ENV"; then
+  ai_scaffold_gh_token_env "$WORKBENCH_GITHUB_ENV"
+  if grep -qE "$GH_TOKEN_SET_RE" "$WORKBENCH_GITHUB_ENV"; then
     success "GH_TOKEN already configured"
     return 0
   fi
-  [[ -t 0 ]] || { warn "Edit $TASKFILE_ENV before running pr create"; return 0; }
+  [[ -t 0 ]] || { warn "Edit $WORKBENCH_GITHUB_ENV before running pr create"; return 0; }
   if confirm "  Add a GitHub token now?"; then
-    ${EDITOR:-nano} "$TASKFILE_ENV"
+    ${EDITOR:-nano} "$WORKBENCH_GITHUB_ENV"
     success "Token file updated"
   else
-    warn "Edit $TASKFILE_ENV before running pr create"
+    warn "Edit $WORKBENCH_GITHUB_ENV before running pr create"
   fi
 }
 

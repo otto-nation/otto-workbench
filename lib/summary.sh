@@ -149,7 +149,7 @@ print_workbench_summary() {
     summary_warn "shell secrets     ${DIM}${ENV_LOCAL_FILE/#"$HOME"/$home_short}  not created — see ${ENV_LOCAL_FILE/#"$HOME"/$home_short}.template${NC}"
   fi
 
-  # GitHub token — the tiers pr/gh_token.py reads from taskfile.env
+  # GitHub token — the tiers pr/gh_token.py reads from github.env
   local _gh_set=false
   if [[ -f "$TASKFILE_ENV" ]]; then
     if grep -qE "$GH_TOKEN_SET_RE" "$TASKFILE_ENV" 2>/dev/null; then

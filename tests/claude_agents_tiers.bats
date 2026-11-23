@@ -1,6 +1,6 @@
 #!/usr/bin/env bats
 # Tests for step_claude_agents rendering an agent's `tier:` into the model and effort Claude Code reads.
-# select-on: ai/claude/agents.sh ai/lib/agent/harness_models.py lib/config_cli.py ai/claude/agents/*.md
+# select-on: ai/claude/agents.sh ai/lib/agent/harness_models.py lib/config_cli.py ai/agents/*.md
 
 setup() {
   load 'test_helper'
@@ -78,7 +78,7 @@ _frontmatter() {
   _seed_config 'models:' '  deep: claude-opus-5-5'
   run _agents_run
   [ "$status" -eq 0 ]
-  diff <(awk 'f; /^---$/ && ++n == 2 { f = 1 }' "$REPO_ROOT/ai/claude/agents/reviewer.md") \
+  diff <(awk 'f; /^---$/ && ++n == 2 { f = 1 }' "$REPO_ROOT/ai/agents/reviewer.md") \
        <(awk 'f; /^---$/ && ++n == 2 { f = 1 }' "$AGENTS_OUT/reviewer.md")
 }
 

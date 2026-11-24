@@ -117,6 +117,22 @@ class TestBuildSummaryBody:
         assert "need discussion" not in body
         assert pr.summary_model.HumanReason.CONTESTED.prose not in body
 
+    def test_questions_reach_the_body_beside_replies_with_no_table_rows(self, content):
+        """Unfolded NEEDS_HUMAN is not a table row, so replies must not drop it."""
+        cp = pr.attribution.CommitPushResult(None, "no_changes", "")
+        body = pr.summary_render.build_summary_body(
+            content(
+                needs_human=[CommentItem(
+                    summary="question", file="a.py", line=1, reason="contested",
+                )],
+                source_replies={"rb-88": "Done."},
+            ),
+            cp, "owner/repo", 1, {},
+        )
+        assert "### Replies to review comments" in body
+        assert "### Questions" in body
+        assert "question" in body
+
     def test_empty_returns_no_table(self, content):
         cp = pr.attribution.CommitPushResult(None, "no_changes", "")
         body = pr.summary_render.build_summary_body(content(), cp, "owner/repo", 1, {})

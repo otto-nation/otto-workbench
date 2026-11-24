@@ -318,10 +318,11 @@ def build_summary_body(
         content, scope, kept_replies or {}, repo, pr_number, host)
     parts = [SUMMARY_MARKER, pr.published_record.FORMAT_MARKER]
     # A replies-only publish — `pr comments --reply` before any fix pass ran —
-    # has no row and no note to put under the heading, and an empty heading
-    # over an empty count line reads as a table lost. A round with no replies
-    # keeps it: that is the "nothing to say" summary every round has posted.
-    if rows or open_earlier or settled_earlier or not replies:
+    # has no row, no question, and no note to put under the heading, and an
+    # empty heading over an empty count line reads as a table lost. A round
+    # with no replies keeps it: that is the "nothing to say" summary every
+    # round has posted.
+    if rows or shown_questions or open_earlier or settled_earlier or not replies:
         parts.extend(table)
 
     if not has_comment_items:

@@ -4,9 +4,11 @@ One owner for the per-org PAT routing the ``pr`` commands use, kept apart
 from the interactive ``gh`` login. Resolution order,
 first match wins:
 
-1. ``GH_TOKEN`` in ``<repo>/.taskfile/taskfile.env`` — a per-repo pin
-2. ``GH_TOKEN__<ORG>`` in ``~/.config/task/taskfile.env``, ORG from ``origin``
-3. ``GH_TOKEN`` in ``~/.config/task/taskfile.env``
+1. ``GH_TOKEN`` in ``<repo>/.workbench/github.env`` — a per-repo pin
+   (legacy: ``<repo>/.taskfile/taskfile.env``)
+2. ``GH_TOKEN__<ORG>`` in ``$WORKBENCH_CONFIG_DIR/github.env``, ORG from ``origin``
+   (legacy: ``~/.config/task/taskfile.env``)
+3. ``GH_TOKEN`` in ``$WORKBENCH_CONFIG_DIR/github.env`` (then the legacy file)
 4. a non-empty ``GH_TOKEN`` already in the environment (CI, ``~/.env.local``)
 
 An empty value (``GH_TOKEN=`` with nothing after) is treated as unset in every
@@ -48,7 +50,8 @@ import gh.client
 import pr.target
 
 TOKEN_VAR = "GH_TOKEN"
-LOCAL_ENV_PATH = Path(".taskfile") / "taskfile.env"
+LOCAL_ENV_PATH = Path(".workbench") / "github.env"
+LEGACY_LOCAL_ENV_PATH = Path(".taskfile") / "taskfile.env"
 
 _UPPER = str.maketrans("abcdefghijklmnopqrstuvwxyz-", "ABCDEFGHIJKLMNOPQRSTUVWXYZ_")
 
@@ -80,7 +83,15 @@ class TokenNotConfigured(Exception):
 
 
 def global_env_path(home: Path | None = None) -> Path:
-    """``~/.config/task/taskfile.env`` — ``TASKFILE_ENV`` in lib/constants.sh."""
+    """``$WORKBENCH_CONFIG_DIR/github.env`` — ``WORKBENCH_GITHUB_ENV``."""
+    if home is not None:
+        return home / ".config" / "workbench" / "github.env"
+    import core.workbench_paths
+    return core.workbench_paths.config_dir() / "github.env"
+
+
+def legacy_global_env_path(home: Path | None = None) -> Path:
+    """``~/.config/task/taskfile.env`` — ``TASKFILE_ENV``, read after the new path."""
     return (home or Path.home()) / ".config" / "task" / "taskfile.env"
 
 
@@ -142,19 +153,26 @@ def resolve(
     env = os.environ if environ is None else environ
 
     local = read_env_value(cwd / LOCAL_ENV_PATH, TOKEN_VAR)
+    if local is None:
+        local = read_env_value(cwd / LEGACY_LOCAL_ENV_PATH, TOKEN_VAR)
     if local is not None:
         return Token(local, TokenSource.LOCAL, TOKEN_VAR)
 
     env_file = global_env_path(home)
+    legacy_file = legacy_global_env_path(home)
     identity = pr.target.repo_identity_from_origin(str(cwd))
     org = _org(identity)
     if org:
         variable = org_variable(org)
         value = read_env_value(env_file, variable)
+        if value is None:
+            value = read_env_value(legacy_file, variable)
         if value is not None:
             return Token(value, TokenSource.ORG, variable)
 
     value = read_env_value(env_file, TOKEN_VAR)
+    if value is None:
+        value = read_env_value(legacy_file, TOKEN_VAR)
     if value is not None:
         return Token(value, TokenSource.DEFAULT, TOKEN_VAR)
 

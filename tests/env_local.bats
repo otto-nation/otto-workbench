@@ -25,8 +25,8 @@ teardown() {
   [ "$lines" -gt 5 ]
 }
 
-@test ".env.local template documents the taskfile.env distinction" {
-  grep -q 'taskfile.env' "$REPO_ROOT/zsh/.env.local.template"
+@test ".env.local template documents the github.env distinction" {
+  grep -q 'github.env' "$REPO_ROOT/zsh/.env.local.template"
 }
 
 @test ".env.local template has ENV auto-generation markers" {

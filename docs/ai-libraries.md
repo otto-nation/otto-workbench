@@ -2857,9 +2857,11 @@ One owner for the per-org PAT routing the ``pr`` commands use, kept apart
 from the interactive ``gh`` login. Resolution order,
 first match wins:
 
-1. ``GH_TOKEN`` in ``<repo>/.taskfile/taskfile.env`` — a per-repo pin
-2. ``GH_TOKEN__<ORG>`` in ``~/.config/task/taskfile.env``, ORG from ``origin``
-3. ``GH_TOKEN`` in ``~/.config/task/taskfile.env``
+1. ``GH_TOKEN`` in ``<repo>/.workbench/github.env`` — a per-repo pin
+   (legacy: ``<repo>/.taskfile/taskfile.env``)
+2. ``GH_TOKEN__<ORG>`` in ``$WORKBENCH_CONFIG_DIR/github.env``, ORG from ``origin``
+   (legacy: ``~/.config/task/taskfile.env``)
+3. ``GH_TOKEN`` in ``$WORKBENCH_CONFIG_DIR/github.env`` (then the legacy file)
 4. a non-empty ``GH_TOKEN`` already in the environment (CI, ``~/.env.local``)
 
 An empty value (``GH_TOKEN=`` with nothing after) is treated as unset in every

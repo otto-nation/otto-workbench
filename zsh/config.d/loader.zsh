@@ -58,7 +58,7 @@ _wb_load() {
 # source line comes too late. ~/.env.local is sourced after the PATH so a
 # machine-specific PATH there still wins, and before the layers so every layer
 # can read it. See zsh/.env.local.template for what belongs there vs
-# ~/.config/task/taskfile.env.
+# ~/.config/workbench/github.env.
 if [[ -f "$HOME/.config/zsh/env.sh" ]]; then
   source "$HOME/.config/zsh/env.sh"
   workbench_env

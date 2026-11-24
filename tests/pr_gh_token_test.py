@@ -69,7 +69,7 @@ def test_a_commented_out_key_is_not_configured(tmp_path, home):
 def test_guidance_names_the_global_file(tmp_path, home):
     with pytest.raises(TokenNotConfigured) as exc:
         pr.gh_token.resolve(_repo(tmp_path), environ={}, home=home)
-    assert str(home / ".config" / "task" / "taskfile.env") in exc.value.guidance
+    assert str(home / ".config" / "workbench" / "github.env") in exc.value.guidance
 
 
 def test_guidance_links_public_github_by_default(tmp_path, home):
@@ -431,3 +431,50 @@ def test_ready_for_publishing_names_an_unreadable_file(tmp_path, monkeypatch, ca
     monkeypatch.setattr(pr.gh_token, "use_for_publishing", unreadable)
     assert pr.gh_token.ready_for_publishing(tmp_path) is False
     assert "✗ Could not read /cfg/taskfile.env: Permission denied" in capsys.readouterr().err
+
+
+def _new_global(home: Path, text: str) -> None:
+    d = home / ".config" / "workbench"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "github.env").write_text(text)
+
+
+def test_global_env_path_uses_config_dir_when_home_omitted(monkeypatch, tmp_path):
+    custom = tmp_path / "xdg-config" / "workbench"
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(custom))
+    assert pr.gh_token.global_env_path() == custom / "github.env"
+
+
+def test_global_env_path_home_override_ignores_config_dir(monkeypatch, tmp_path, home):
+    monkeypatch.setenv("WORKBENCH_CONFIG_DIR", str(tmp_path / "other"))
+    assert pr.gh_token.global_env_path(home) == home / ".config" / "workbench" / "github.env"
+
+
+def test_new_global_file_is_read(tmp_path, home):
+    _new_global(home, "GH_TOKEN=ghp_new\n")
+    token = pr.gh_token.resolve(_repo(tmp_path), environ={}, home=home)
+    assert token.value == "ghp_new"
+    assert token.source is TokenSource.DEFAULT
+
+
+def test_new_global_wins_when_both_exist(tmp_path, home):
+    _global(home, "GH_TOKEN=ghp_old\n")
+    _new_global(home, "GH_TOKEN=ghp_new\n")
+    token = pr.gh_token.resolve(_repo(tmp_path), environ={}, home=home)
+    assert token.value == "ghp_new"
+
+
+def test_legacy_global_still_works(tmp_path, home):
+    _global(home, "GH_TOKEN=ghp_old\n")
+    token = pr.gh_token.resolve(_repo(tmp_path), environ={}, home=home)
+    assert token.value == "ghp_old"
+
+
+def test_new_local_wins_over_legacy_local(tmp_path, home):
+    repo = _repo(tmp_path)
+    _local(repo, "GH_TOKEN=ghp_legacy_local\n")
+    (repo / ".workbench").mkdir()
+    (repo / ".workbench" / "github.env").write_text("GH_TOKEN=ghp_new_local\n")
+    token = pr.gh_token.resolve(repo, environ={}, home=home)
+    assert token.value == "ghp_new_local"
+    assert token.source is TokenSource.LOCAL

@@ -1,4 +1,4 @@
-"""``pi-sessions`` — list pi sessions with their briefs, and act on live ones.
+"""``pi-sessions`` — list pi and Claude Code sessions, and act on live ones.
 
 Usage:
   pi-sessions list [--since DAYS] [--all] [--json]
@@ -16,7 +16,11 @@ prints ``{"worktrees", "prs"}`` for one session file: its worktrees
 cached ``pr board`` listing (``board.cache``, no GitHub call) merged with those
 its ``pr`` / ``gh pr`` commands named. ``live`` records or clears a pi process's
 live marker (``pi_sessions.live``); the session-brief Pi extension calls it.
-``close`` sends SIGTERM to the session's live pi; the file stays.
+``close`` sends SIGTERM to the session's live pi or Claude Code; the file stays.
+
+Claude Code sessions (``pi_sessions.claude``) list beside pi's with ``harness: "claude"``
+on the row and no brief; ``list`` and ``show`` read both, newest first, and ``close`` finds
+the id in either. Claude's root is ``$CLAUDE_CONFIG_DIR`` else ``~/.claude``.
 
 Exit codes: 0 done; 1 no such session, or not running here; 2 usage.
 """
@@ -35,6 +39,7 @@ from pathlib import Path
 
 import board.cache
 import pi_sessions.facts
+import pi_sessions.claude
 import pi_sessions.listing
 import pi_sessions.live
 import pi_sessions.session_file
@@ -70,6 +75,10 @@ def _root() -> Path:
     return pi_sessions.session_file.sessions_root(os.environ)
 
 
+def _claude_root() -> Path:
+    return pi_sessions.claude.claude_root(os.environ)
+
+
 def _line(row: pi_sessions.listing.SessionRow) -> str:
     state = "live" if row.live else "closed"
     return f"{row.id}  {row.last_active}  {state}  {row.name or row.title_set or ''}"
@@ -79,6 +88,10 @@ def _list(args: argparse.Namespace) -> int:
     now = time.time()
     rows = pi_sessions.listing.list_sessions(_root(), now=now, since_days=args.since,
                                              live=pi_sessions.live.running(now), include_all=args.all)
+    rows += pi_sessions.listing.list_claude(_claude_root(), now=now, since_days=args.since,
+                                            live=pi_sessions.claude.running(_claude_root(), now),
+                                            include_all=args.all)
+    rows.sort(key=lambda row: row.last_active, reverse=True)
     if not args.json:
         for row in rows:
             print(_line(row))
@@ -90,7 +103,10 @@ def _list(args: argparse.Namespace) -> int:
 
 
 def _show(args: argparse.Namespace) -> int:
-    row = pi_sessions.listing.show(_root(), args.id, live=pi_sessions.live.running(time.time()))
+    now = time.time()
+    row = (pi_sessions.listing.show(_root(), args.id, live=pi_sessions.live.running(now))
+           or pi_sessions.listing.show_claude(_claude_root(), args.id,
+                                              live=pi_sessions.claude.running(_claude_root(), now)))
     if row is None:
         print(f"{SCRIPT}: no pi session {args.id}", file=sys.stderr)
         return 1
@@ -131,7 +147,9 @@ def _live(args: argparse.Namespace) -> int:
 def _close(args: argparse.Namespace) -> int:
     path = pi_sessions.session_file.find_session(_root(), args.id)
     marker = pi_sessions.live.marker_for(str(path)) if path else None
-    if marker is None or not pi_sessions.live.close(marker):
+    if marker is not None and pi_sessions.live.close(marker):
+        return 0
+    if not pi_sessions.claude.close(_claude_root(), args.id):
         print(f"{SCRIPT}: {args.id} is not running here", file=sys.stderr)
         return 1
     return 0

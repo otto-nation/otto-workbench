@@ -1,5 +1,6 @@
-// Sessions pane: machines home, then one machine's folders of pi sessions — title,
-// close-candidate mark, TL;DR, PR tags, state line, and Open / Close / Rename. Draws only.
+// Sessions pane: machines home, then one machine's folders of pi and Claude Code sessions —
+// title, harness tag, close-candidate mark, TL;DR, PR tags, state line, and Open / Close / Rename
+// (pi only). Draws only.
 import { div } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
 import { theme } from "herdr";
@@ -23,7 +24,7 @@ function renderActions(row, props) {
   return h_flex().gap(SP.xs).items_center()
     .child(button(`sessions-open-${row.key}`, "Open", () => props.onOpen(row)))
     .when(row.live, (e) => e.child(button(`sessions-close-${row.key}`, "Close", () => props.onClose(row))))
-    .when(!row.live && !renaming, (e) => e.child(button(`sessions-rename-${row.key}`, "Rename", () => props.onRenameStart(row))));
+    .when(!row.live && !renaming && row.harness === "pi", (e) => e.child(button(`sessions-rename-${row.key}`, "Rename", () => props.onRenameStart(row))));
 }
 
 function renderRow(row, props) {
@@ -32,6 +33,7 @@ function renderRow(row, props) {
   return card(`sessions-row-${row.key}`, { linked: false }).gap(SP.xs)
     .child(h_flex().gap(SP.sm).items_center().min_w(0)
       .child(type(div().min_w(0).flex_1().truncate(), "body").text_color(t.foreground).child(row.title))
+      .child(tag(row.harness))
       .when(row.candidate, (e) => e.child(statusText("warn", "close candidate"))))
     .when(row.tldr !== "", (e) => e.child(text("meta", row.tldr, t.muted)))
     .when(row.prs.length > 0, (e) => e.child(h_flex().gap(SP.xs).children(row.prs.map((p) => tag(p.label)))))
@@ -88,7 +90,7 @@ function renderMachinePage(props) {
   if (page.status === "error") {
     return scrollBody().p(SP.md).gap(SP.md).child(body).child(statusText("fail", page.error));
   }
-  if (!page.groups.length) body.child(placeholder("No pi sessions in this window"));
+  if (!page.groups.length) body.child(placeholder("No sessions in this window"));
   return scrollBody().p(SP.md).gap(SP.md)
     .child(body)
     .children((page.groups ?? []).map((group) => renderFolder(group, props)))

@@ -9,7 +9,12 @@ title its last brief recorded), newest first. ``show(root, key, live=)``
 is one session by id or path, whatever its age. A ``SessionRow`` carries the
 header, the tail's name and brief (``title_set``, ``tldr``, ``worktrees``,
 ``prs``, ``spend``) and the ``Live`` facts; ``to_json()`` is the row
-``pi-sessions list --json`` prints.
+``pi-sessions list --json`` prints. ``harness`` says which tool owns the session
+(``pi`` or ``claude``). ``list_claude(root, now=, since_days=, live=, include_all=)``
+and ``show_claude(root, key, live=)`` are the same two reads over Claude Code's
+transcripts (``pi_sessions.claude``): a Claude row has no brief, so it is listed when
+it is live, titled by a person, or recent and titled (every recent one with
+*include_all*).
 """
 
 # ceiling: every listing stats every session file and tail-reads the ones in the
@@ -25,6 +30,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pi_sessions.claude
 from pi_sessions.live import Live
 from pi_sessions.session_file import Tail, find_session, read_header, read_tail, session_files
 
@@ -49,12 +55,14 @@ class SessionRow:
     prs: tuple[dict, ...]
     live: Live | None
     spend: tuple[dict, ...]
+    harness: str = "pi"
 
     def to_json(self) -> dict:
         return {"id": self.id, "file": self.file, "cwd": self.cwd, "started": self.started,
                 "last_active": self.last_active, "name": self.name, "title_set": self.title_set,
                 "tldr": self.tldr, "worktrees": list(self.worktrees), "prs": list(self.prs),
-                "live": self.live.to_json() if self.live else None, "spend": list(self.spend)}
+                "live": self.live.to_json() if self.live else None, "spend": list(self.spend),
+                "harness": self.harness}
 
 
 def _iso(ts: float) -> str:
@@ -125,3 +133,45 @@ def show(root: Path, key: str, *, live: Mapping[str, Live]) -> SessionRow | None
     except OSError:
         return None
     return _row(path, mtime, read_tail(path), live.get(str(path)))
+
+
+def _claude_row(path: Path, mtime: float, titles: pi_sessions.claude.Titles, live: Live | None) -> SessionRow | None:
+    header = pi_sessions.claude.read_header(path)
+    if header is None:
+        return None
+    return SessionRow(
+        id=header.id, file=str(path), cwd=header.cwd, started=header.timestamp,
+        last_active=_iso(mtime), name=titles.custom, title_set=titles.ai, tldr="",
+        worktrees=(), prs=(), live=live, spend=(), harness="claude")
+
+
+def list_claude(root: Path, *, now: float, since_days: int, live: Mapping[str, Live],
+                include_all: bool = False) -> list[SessionRow]:
+    cutoff = now - since_days * DAY_S
+    found: list[tuple[float, SessionRow]] = []
+    for path in pi_sessions.claude.transcripts(root):
+        try:
+            mtime = path.stat().st_mtime
+        except OSError:
+            continue
+        alive = live.get(str(path))
+        recent = mtime >= cutoff
+        titles = pi_sessions.claude.read_titles(
+            path, limit=pi_sessions.claude.TITLE_LIMIT if recent or alive else pi_sessions.claude.OLD_TITLE_LIMIT)
+        wanted = alive is not None or titles.custom is not None or (recent and (include_all or titles.ai is not None))
+        row = _claude_row(path, mtime, titles, alive) if wanted else None
+        if row is not None:
+            found.append((mtime, row))
+    found.sort(key=lambda pair: pair[0], reverse=True)
+    return [row for _, row in found]
+
+
+def show_claude(root: Path, key: str, *, live: Mapping[str, Live]) -> SessionRow | None:
+    path = pi_sessions.claude.find_transcript(root, key)
+    if path is None:
+        return None
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return None
+    return _claude_row(path, mtime, pi_sessions.claude.read_titles(path), live.get(str(path)))

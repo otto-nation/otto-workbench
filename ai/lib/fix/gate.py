@@ -471,7 +471,9 @@ def verify_claims(
         if verdict.ok is True:
             outcome.verified = True
             continue
-        if verdict.ok is None and not _ask_remains(verdict.detail):
+        if verdict.ok is None and not (
+            _gated_addressed(outcome) and _ask_remains(verdict.detail)
+        ):
             outcome.verified = False
             continue
         # Falsified. NEEDS_HUMAN rather than DEFERRED: the pass already had its
@@ -525,15 +527,14 @@ _FALSIFIED_REASON = {
 
 # Phrases a **not verified** detail uses when the gate did see that the ask is
 # incomplete. That is **broken**, filed under the wrong label; matching here
-# demotes it the way a `ok is False` already does. Silence and "cannot tell"
-# stay unverified. Observed 2026-11 through `pr comments --fix`: "half the ask
-# remains" was published as Addressed and the thread was resolved.
+# demotes an already-addressed row the way a `ok is False` already does.
+# Silence and "cannot tell" stay unverified. Short substrings such as
+# "ask remains" also match honest hedges ("cannot tell whether the ask
+# remains") and must not. Observed 2026-11 through `pr comments --fix`:
+# "half the ask remains" was published as Addressed and the thread was resolved.
 _ASK_REMAINS_MARKERS = (
     "half the ask",
     "half remains",
-    "ask remains",
-    "part of what was asked",
-    "part of the ask",
 )
 
 

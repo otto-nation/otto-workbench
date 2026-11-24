@@ -13,6 +13,23 @@ set -e
 real="${WORKBENCH_REAL_GIT:-}"
 guarded="${WORKBENCH_GUARDED_GIT_DIR:-}"
 [[ -n "$real" ]] || { echo "git-guard: WORKBENCH_REAL_GIT is unset" >&2; exit 1; }
+
+# Drop this installed path from PATH so $real cannot reenter the shim.
+# $0 is the temp symlink, not the script in ai/lib/agent — realpath would
+# strip the wrong directory and leave the shim first on PATH.
+_here="${0%/*}"
+_keep=""
+_left="${PATH:+$PATH:}"
+while [[ -n "$_left" ]]; do
+  _d="${_left%%:*}"
+  _left="${_left#*:}"
+  [[ "$_d" == "$_here" ]] && continue
+  _keep="${_keep:+$_keep:}$_d"
+done
+PATH="$_keep"
+export PATH
+unset _here _keep _left _d
+
 [[ -n "$guarded" ]] || exec "$real" "$@"
 
 pass() { exec "$real" "$@"; }

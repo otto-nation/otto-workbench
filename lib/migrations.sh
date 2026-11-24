@@ -625,7 +625,7 @@ _prune_stale_migration_state() {
 # written in advance had thought to list.
 readonly _LEGACY_CONFIG_ENTRIES=(
   overrides reuse-level reuse-default review.yml
-  config.yml config.schema.json
+  config.yml config.schema.json github.env
 )
 
 # What no root holds any more. A completed migration removed these on purpose,
@@ -840,7 +840,10 @@ adopt_legacy_workbench_root() {
     if [[ "$target" == "$legacy" ]]; then
       continue
     fi
-    _adopt_entry "$entry" "$target/$name"
+    # Guarded like _adopt_dir: a leftover returns 1, and bin/otto-workbench
+    # runs under set -e, so an unguarded call aborts the sync before the
+    # post-loop warning that the leftover still sits in $legacy.
+    _adopt_entry "$entry" "$target/$name" || true
   done
 
   if (( _ADOPT_MOVED > 0 )); then

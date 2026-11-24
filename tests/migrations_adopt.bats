@@ -77,6 +77,20 @@ teardown() {
   done <<< "$names"
 }
 
+@test "adoption sends github.env to the config root" {
+  # Named rather than relying on the list walk above: a config file that is
+  # missing from _LEGACY_CONFIG_ENTRIES is silently adopted as state, and the
+  # walk cannot notice a name that was never added.
+  mkdir -p "$FAKE_LEGACY"
+  echo "token" > "$FAKE_LEGACY/github.env"
+
+  run adopt_in_fake
+  [ "$status" -eq 0 ]
+
+  [ "$(cat "$FAKE_CONFIG/github.env")" = "token" ]
+  [ ! -e "$FAKE_STATE/github.env" ]
+}
+
 @test "adoption leaves behind an entry no root claims" {
   # <state>/logs/ is deleted on purpose. Adoption runs before any migration
   # reads its bookkeeping, so carrying logs/ across would reinstate a directory
@@ -177,6 +191,20 @@ teardown() {
 
   [ "$(cat "$FAKE_STATE/migrations.applied")" = "new" ]
   [ "$(cat "$FAKE_LEGACY/migrations.applied")" = "old" ]
+}
+
+@test "adoption leftover under set -e does not abort the sync" {
+  # adopt_in_fake does not arm errexit; bin/otto-workbench does. An unguarded
+  # _adopt_entry that returns 1 on a leftover is a warning in the test above
+  # and a dead sync in production.
+  mkdir -p "$FAKE_LEGACY" "$FAKE_STATE"
+  echo "old" > "$FAKE_LEGACY/migrations.applied"
+  echo "new" > "$FAKE_STATE/migrations.applied"
+
+  run run_migrations_in_fake
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"kept the new one"* ]]
+  [[ "$output" == *"SYNC CONTINUED"* ]]
 }
 
 @test "adoption merges a trail both roots hold rather than keeping both" {

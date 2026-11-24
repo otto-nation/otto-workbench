@@ -140,12 +140,24 @@ the project's checks. It reaches one of three verdicts per fix:
 | Verdict | What happens |
 |---|---|
 | verified | Stays fixed. The reply and summary claim the fix plainly |
-| not verified | Stays fixed, and every surface says so — the reply carries `Not verified automatically` with the reason, the summary cell reads `(unverified)` |
+| not verified | Stays claimed with a hedge — the reply carries `Not verified automatically` with the reason, the summary cell reads `(unverified)`. The thread is **not** resolved. If the reason says the ask remains (half-done, one bullet of a bundle, the published artifact still leaks), that is **broken**, not a footnote |
 | broken | Demoted to needs-a-person before the commit. The reviewer is never told it was fixed |
 
 A ticked `fixed` box means an edit was made, which is not the same claim as the
 edit working — and publishing the second on the strength of the first is what
 turns a wrong guess into a retraction under your name.
+
+**A generated verdict is not the tree.** `already_addressed`, `Applied`, and a
+verify cell are agent boxes. The published table is what reviewers read. Do not
+resolve a thread whose verify cell is not `verified`, or whose reason says the
+ask remains — that round is not clean, even when the JSON still lists the item
+as `already_addressed`. Check the claim against the artifact the reviewer would
+see (generated spec, MDX, the live site), not a nearby source file. A roots list
+is not `@public` text; a hide-list is not a rewrite. A bundled comment is one
+GitHub thread and several asks: `already_addressed` is invalid unless every
+bullet holds. Observed 2026-11 through `pr comments --fix`: a verify cell that
+said half the ask remained was still published as Addressed and the thread was
+resolved. Revisit if the comments verify gate starts demoting that shape.
 
 A green suite is not automatically a verdict: where the tests covering a path
 mock the thing that was fixed, the gate is told to report `not verified` rather
@@ -194,7 +206,7 @@ rather than in this table. `planned` and `escalated` count staged-path work.
 | `needs_human` **(field)** | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) — **also** where a fix the verify gate falsified ends up, carrying the gate's detail as its reason, where a `declined` outcome (below) travels, and where a staged-path hand-back lands with `escalation_note`. High-complexity valids go through the plan when `fix.plan_stage` is on, not this bucket |
 | `dismissed` **(field)** | Threads and items dismissed because the reviewer's premise was factually wrong. Triage's call, made before any agent looked |
 | `declined` (not a field) | The agent read the item and argued it should not be acted on. Distinct from `dismissed`: a considered disagreement rather than a triage verdict. A decline with no reason is recorded as `needs_human` instead. It has no key of its own — it is folded into `needs_human` above, and travels with it at every reviewer-facing surface |
-| `already_addressed` **(field)** | Threads and items the code already satisfies — agreement with the reviewer, not rejection. The published Action cell is `Addressed in <sha>`, never the words "already addressed". Triage checks the citation resolves, not that the behaviour is really there, so treat it as the least-checked verdict in the set |
+| `already_addressed` **(field)** | Threads and items the code already satisfies — agreement with the reviewer, not rejection. The published Action cell is `Addressed in <sha>`, never the words "already addressed". Triage checks the citation resolves, not that the behaviour is really there, so treat it as the least-checked verdict in the set. A bundled comment is this only when every bullet holds against the published artifact, not a nearby source file. The cited `file:line` must implement the reviewer's claim |
 | `deferred` **(field)** | Threads the agent could not auto-fix in the current pass |
 | `skipped` (not a field) | Never attempted — the pass excludes items of this kind on sight before `fix_pass` is built, so no key here records them |
 | `settled_elsewhere` (not a field) | Resolved on GitHub with no reply of ours naming a verdict. Nothing is owed and nothing is claimed; it is a reconciliation result reported after `--finish`, not a key of this object |
@@ -546,6 +558,8 @@ Print summary: fixes applied, replies posted, threads resolved, threads still op
   choosing to — deferral is a decision, not a fallback for a failed fix pass.
   Pass their chosen ids to `--track`; `--track-all` is the one blanket form,
   and only after they have reviewed the whole set
-- Never auto-resolve contested or ambiguous threads — only verified ones
+- Never auto-resolve contested or ambiguous threads — only verified ones. Never resolve a thread whose verify cell is not `verified` or whose reason says the ask remains; that demotes to `needs_human`, not a hedged `already_addressed`
+- Never `already_addressed` a bundled comment unless every bullet is checked against the published artifact (generated spec / MDX), not a nearby source file
+- A reply that names a `file:line` must be the file that implements the reviewer's claim. A roots list, hide-list, or exclude map is not the rewrite
 - Handle bot reviewers (Gemini, CodeRabbit, etc.) the same as humans
 - If conflicting suggestions exist, flag both and apply neither until resolved

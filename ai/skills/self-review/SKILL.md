@@ -170,6 +170,22 @@ This is the same failure as a masked exit status (`testing.md` § Reading a Suit
 an artifact that reports on work is not the work, and the report is the thing that can
 quietly be wrong while the work is fine — or the reverse.
 
+## Published surface PRs
+
+A PR whose goal is a share-ready docs or OpenAPI surface is reviewed against the
+generated artifact, not the generator. Self-review includes a grep of
+`doc-serve/api` (or the repo's equivalent published output) for the leak classes
+in the ticket. Mechanism (an exclude-method works; a root was dropped) is not
+the review; the contract is (can a partner follow the quickstart; would you hand
+this URL to a prospect). A self-review that does not open the generated specs is
+the same class of error as `already_addressed` pointing at the wrong file.
+
+Known leaks on a goal-named PR stay in the diff. Putting them in Follow-ups so
+the title can still say share-ready is the PR incomplete, not a follow-up.
+Observed 2026-11 through `pr review --self` on a share-ready docs PR: leaks the
+pass deferred were the ones external review treated as blocking. Revisit when a
+docs-surface self-review is required to grep the published output.
+
 ## Three Rounds Means the Review Is Not Seeing the Defect
 
 A review round answers the findings in front of it, and a fix round answers them one at a

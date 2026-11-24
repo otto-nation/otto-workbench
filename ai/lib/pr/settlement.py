@@ -507,6 +507,12 @@ def resolve_fixed_threads(
     threads, or items added by callers for a different purpose.  Do not add
     comment items to `fixed` expecting them to be resolved here.
 
+    An entry the verify gate could not establish (`verified is False`) is also
+    skipped. The reply may still go out with the unverified hedge; resolving
+    the thread is the claim that the ask is done, and a hedge is not that
+    claim. `verified is None` is the gate never having run (`--no-verify`) and
+    still resolves — same as before this guard.
+
     The prior buckets rather than a count, because every caller resolves threads
     after the persisted tally was written and has to tell it which buckets these
     left — see `CommentsSummary.move_to_resolved`.
@@ -517,6 +523,8 @@ def resolve_fixed_threads(
         if thread is None:
             continue
         if thread.is_resolved:
+            continue
+        if entry.verified is False:
             continue
         if pr.comments.resolve_thread(entry.id, repo=repo):
             # Written back so a second caller over the same report skips it. A

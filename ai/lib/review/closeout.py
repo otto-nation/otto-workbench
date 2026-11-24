@@ -319,6 +319,10 @@ class SkipReason(StrEnum):
     ORPHANED = "fix commit rewritten away"
     RESOLVE_FAILED = "resolve failed"
     NOT_ON_PR = "not on the PR"
+    # The verify gate could not establish the claim. resolve_fixed_threads
+    # never calls GitHub, so this is not a failed mutation. The thread staying
+    # open is the point: a hedge is not a claim the ask is done.
+    UNVERIFIED = "unverified"
 
 
 @dataclass(frozen=True)
@@ -373,6 +377,8 @@ def _skip_reason_for(
             return SkipReason.NEVER_COMMITTED
         if landing is pr.attribution.FixLanding.ORPHANED:
             return SkipReason.ORPHANED
+    if item.verified is False:
+        return SkipReason.UNVERIFIED
     return SkipReason.RESOLVE_FAILED
 
 
@@ -419,7 +425,11 @@ def _keep_skipped_debt(
     keep_debt = False
     for skipped in _skipped_after_drain(items, threads_by_id, landing):
         core.log.warn(f"{skipped.id}: left open — {skipped.reason}")
-        keep_debt = keep_debt or skipped.reason is not SkipReason.NOT_ON_PR
+        # NOT_ON_PR cannot be resolved here. UNVERIFIED must not be: the skip
+        # in resolve_fixed_threads is the claim that a hedge is not done.
+        keep_debt = keep_debt or skipped.reason not in {
+            SkipReason.NOT_ON_PR, SkipReason.UNVERIFIED,
+        }
     return keep_debt
 
 

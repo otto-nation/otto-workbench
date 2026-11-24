@@ -85,6 +85,11 @@ class TestTheGateChecksAnAlreadyAddressedVerdict:
         item = fix.gate._verify_item(_addressed(), None, "thread")
         assert "do not spend turns confirming the line exists" in item.body
 
+    def test_it_asks_whether_the_citation_implements_the_claim(self):
+        item = fix.gate._verify_item(_addressed(), None, "thread")
+        assert "must implement the reviewer's claim" in item.body
+        assert "Half-done is **broken**" in item.body
+
     def test_a_falsified_verdict_goes_to_a_person(self):
         outcome = _addressed()
         fix.gate.verify_claims(
@@ -111,6 +116,72 @@ class TestTheGateChecksAnAlreadyAddressedVerdict:
             [outcome], lambda *_a, **_k: {}, _GATE_ADAPTER, {}, None,
         )
         assert outcome.outcome is FixOutcome.ALREADY_ADDRESSED
+        assert outcome.verified is False
+
+    def test_not_verified_with_no_detail_does_not_demote_it(self):
+        outcome = _addressed()
+        fix.gate.verify_claims(
+            [outcome],
+            lambda *_a, **_k: {"t1": fix.gate.Verdict(
+                ok=None, detail="cannot tell from this tree")},
+            _GATE_ADAPTER, {}, None,
+        )
+        assert outcome.outcome is FixOutcome.ALREADY_ADDRESSED
+        assert outcome.verified is False
+
+    def test_not_verified_when_the_ask_remains_goes_to_a_person(self):
+        """Half-done filed as not-verified is broken, not a hedged Addressed.
+
+        The gate agent used the wrong label; the detail still said the ask
+        remained. Publishing that as already_addressed resolved the thread.
+        """
+        outcome = _addressed()
+        fix.gate.verify_claims(
+            [outcome],
+            lambda *_a, **_k: {"t1": fix.gate.Verdict(
+                ok=None, detail="Not verified — half the ask remains")},
+            _GATE_ADAPTER, {}, None,
+        )
+        assert outcome.outcome is FixOutcome.NEEDS_HUMAN
+        assert "half the ask remains" in outcome.reason
+        assert outcome.verified is False
+
+    def test_cannot_tell_whether_the_ask_remains_stays_unverified(self):
+        """Honest hedges must not match the half-done markers."""
+        outcome = _addressed()
+        fix.gate.verify_claims(
+            [outcome],
+            lambda *_a, **_k: {"t1": fix.gate.Verdict(
+                ok=None, detail="cannot tell whether the ask remains")},
+            _GATE_ADAPTER, {}, None,
+        )
+        assert outcome.outcome is FixOutcome.ALREADY_ADDRESSED
+        assert outcome.verified is False
+
+    def test_cannot_tell_if_this_is_part_of_the_ask_stays_unverified(self):
+        outcome = _addressed()
+        fix.gate.verify_claims(
+            [outcome],
+            lambda *_a, **_k: {"t1": fix.gate.Verdict(
+                ok=None, detail="cannot tell if this is part of the ask")},
+            _GATE_ADAPTER, {}, None,
+        )
+        assert outcome.outcome is FixOutcome.ALREADY_ADDRESSED
+        assert outcome.verified is False
+
+    def test_a_fix_not_verified_that_mentions_ask_remains_is_not_demoted(self):
+        """Half-done demotion is only for already-addressed rows."""
+        outcome = ItemOutcome(
+            id="t1", outcome=FixOutcome.FIXED, summary="add the guard",
+            file="a.py", line=9,
+        )
+        fix.gate.verify_claims(
+            [outcome],
+            lambda *_a, **_k: {"t1": fix.gate.Verdict(
+                ok=None, detail="cannot tell whether the ask remains")},
+            _GATE_ADAPTER, {}, None,
+        )
+        assert outcome.outcome is FixOutcome.FIXED
         assert outcome.verified is False
 
 
@@ -260,6 +331,19 @@ class TestRunPassChecksBeforeItReplies:
         assert run.gate_ids == []
         assert sorted(run.posted) == [100, 200]
         assert [e.id for e in run.result.already_addressed] == ["t1", "t2"]
+
+    def test_a_hedged_addressed_reply_does_not_resolve(self, tmp_path, publishing_on):
+        """ok is None: the reply may go out; the thread stays open."""
+        run = _Run(tmp_path, {
+            "t1": fix.gate.Verdict(ok=None, detail="cannot tell from this tree"),
+            "t2": fix.gate.Verdict(ok=True, detail="ok"),
+        })
+        assert 100 in run.posted
+        assert "t1" not in run.resolved
+        assert "t2" in run.resolved
+        by_id = {o.id: o for o in run.persisted.fix.items}
+        assert by_id["t1"].outcome is FixOutcome.ALREADY_ADDRESSED
+        assert by_id["t1"].verified is False
 
 
 def test_finish_does_not_republish_a_demoted_verdict(tmp_path, monkeypatch):

@@ -39,6 +39,12 @@ class TestTriagePromptVerificationValues:
         prompt = pr.triage_prompt.build_triage_prompt([], "diff")
         assert "is NEVER invalid" in prompt
 
+    def test_already_addressed_requires_the_implementing_file(self):
+        prompt = pr.triage_prompt.build_triage_prompt([], "diff")
+        assert "every bullet holds against the published artifact" in prompt
+        assert "must implement the claim" in prompt
+        assert "hide-list is not unpublished text" in prompt
+
     def test_commit_log_included_when_present(self):
         prompt = pr.triage_prompt.build_triage_prompt(
             [], "diff", commit_log="abc1234 fix(logging): inject logger",

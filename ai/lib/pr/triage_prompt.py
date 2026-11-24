@@ -51,7 +51,10 @@ VERIFICATION_GUIDANCE = {
         "     cycle — so a suggestion that looks satisfied is usually one that was ALREADY ACTED\n"
         "     ON in response to this very thread. This is agreement with the reviewer, not\n"
         "     rejection of them. Do not pick already_addressed from uncommitted or unpushed\n"
-        "     edits — the reviewer cannot see those."
+        "     edits — the reviewer cannot see those. A bundled comment is several asks:\n"
+        "     already_addressed only if every bullet holds against the published artifact,\n"
+        "     not a nearby source file. Cite the file that implements the claim — a roots\n"
+        "     list or hide-list is not the rewrite."
     ),
     Verification.INVALID: (
         "the reviewer's premise is factually wrong — they misread the code, or the\n"
@@ -223,7 +226,9 @@ For each thread, provide:
    REQUIRED for {Verification.ALREADY_ADDRESSED} and {Verification.INVALID} — those verdicts get posted back to the
    reviewer as a claim about their code, and a claim with no line to point at is not one
    you can make. Cite the line that already does what the reviewer asked
-   (already_addressed) or the line that contradicts their premise (invalid). For an
+   (already_addressed) or the line that contradicts their premise (invalid). The
+   cited file must implement the claim, not sit near it: a roots list is not a
+   rewrite of published copy, a hide-list is not unpublished text. For an
    unanchored review-body item or a commit-backed already_addressed, cite a file and
    1-based line the matching commit actually touched — a matching commit subject
    alone is not enough, and empty evidence_file still downgrades. If you cannot name

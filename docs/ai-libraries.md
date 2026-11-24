@@ -934,7 +934,9 @@ reviewer asked; triage has already refused a citation that does not resolve, so
 it judges behaviour only. A **broken** verdict is never posted or resolved: it
 moves to *needs a person*, is recorded that way in state so `--finish` cannot
 republish it, and holds publishing for the round. One the gate could not settle
-goes out with the `Not verified automatically` hedge.
+goes out with the `Not verified automatically` hedge and is not resolved. A
+**not verified** whose detail says the ask remains (half-done) is **broken**,
+not a footnote.
 
 ### fix/head_guard.py
 

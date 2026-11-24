@@ -85,6 +85,11 @@ class TestTheGateChecksAnAlreadyAddressedVerdict:
         item = fix.gate._verify_item(_addressed(), None, "thread")
         assert "do not spend turns confirming the line exists" in item.body
 
+    def test_it_asks_whether_the_citation_implements_the_claim(self):
+        item = fix.gate._verify_item(_addressed(), None, "thread")
+        assert "must implement the reviewer's claim" in item.body
+        assert "Half-done is **broken**" in item.body
+
     def test_a_falsified_verdict_goes_to_a_person(self):
         outcome = _addressed()
         fix.gate.verify_claims(
@@ -111,6 +116,34 @@ class TestTheGateChecksAnAlreadyAddressedVerdict:
             [outcome], lambda *_a, **_k: {}, _GATE_ADAPTER, {}, None,
         )
         assert outcome.outcome is FixOutcome.ALREADY_ADDRESSED
+        assert outcome.verified is False
+
+    def test_not_verified_with_no_detail_does_not_demote_it(self):
+        outcome = _addressed()
+        fix.gate.verify_claims(
+            [outcome],
+            lambda *_a, **_k: {"t1": fix.gate.Verdict(
+                ok=None, detail="cannot tell from this tree")},
+            _GATE_ADAPTER, {}, None,
+        )
+        assert outcome.outcome is FixOutcome.ALREADY_ADDRESSED
+        assert outcome.verified is False
+
+    def test_not_verified_when_the_ask_remains_goes_to_a_person(self):
+        """Half-done filed as not-verified is broken, not a hedged Addressed.
+
+        The gate agent used the wrong label; the detail still said the ask
+        remained. Publishing that as already_addressed resolved the thread.
+        """
+        outcome = _addressed()
+        fix.gate.verify_claims(
+            [outcome],
+            lambda *_a, **_k: {"t1": fix.gate.Verdict(
+                ok=None, detail="Not verified — half the ask remains")},
+            _GATE_ADAPTER, {}, None,
+        )
+        assert outcome.outcome is FixOutcome.NEEDS_HUMAN
+        assert "half the ask remains" in outcome.reason
         assert outcome.verified is False
 
 

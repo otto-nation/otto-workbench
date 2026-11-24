@@ -395,6 +395,28 @@ class TestResolveFixedThreads:
         assert resolved == []
         mock_resolve.assert_not_called()
 
+    def test_skips_an_unverified_entry(self):
+        """A hedge is not a claim the ask is done, so the thread stays open.
+
+        `verified is False` is the gate saying it could not establish the fix.
+        Resolving anyway is how a "Not verified — half remains" cell still
+        closed a thread as Addressed. `verified is None` (gate never ran) still
+        resolves — see test_resolves_unresolved_threads.
+        """
+        fixed = [
+            CommentItem(id="t1", verified=False),
+            CommentItem(id="t2", verified=True),
+        ]
+        threads_by_id = {
+            "t1": ReportThread(id="t1", state=ThreadState.NEW, is_resolved=False),
+            "t2": ReportThread(id="t2", state=ThreadState.ADDRESSED, is_resolved=False),
+        }
+        with patch("pr.comments.resolve_thread", return_value=True) as mock_resolve:
+            resolved = pr.settlement.resolve_fixed_threads(fixed, threads_by_id)
+        assert resolved == [ThreadState.ADDRESSED]
+        mock_resolve.assert_called_once_with("t2", repo="")
+        assert threads_by_id["t1"].is_resolved is False
+
     def test_skips_an_entry_absent_from_threads_by_id(self):
         """A synthetic comment id (ic-…/rb-…) is not a resolvable review thread.
 

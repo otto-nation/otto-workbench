@@ -25,7 +25,9 @@ reviewer asked; triage has already refused a citation that does not resolve, so
 it judges behaviour only. A **broken** verdict is never posted or resolved: it
 moves to *needs a person*, is recorded that way in state so `--finish` cannot
 republish it, and holds publishing for the round. One the gate could not settle
-goes out with the `Not verified automatically` hedge.
+goes out with the `Not verified automatically` hedge and is not resolved. A
+**not verified** whose detail says the ask remains (half-done) is **broken**,
+not a footnote.
 """
 
 # doc-group: pipeline
@@ -171,17 +173,27 @@ _ADDRESSED_ASK = (
     "Does the code at the cited line actually do what the reviewer asked? "
     "The citation resolves — that was checked before you were asked — so do "
     "not spend turns confirming the line exists. Judge only the behaviour.\n\n"
-    "Two ways the verdict commonly fails, both of which read as sound prose:\n\n"
+    "The cited file must implement the reviewer's claim, not sit near it. A "
+    "roots list is not a rewrite of the published spec; a hide-list or "
+    "exclude map is not unpublished copy; a proto comment is not the generated "
+    "OpenAPI or MDX. When the ask is about what a partner would see, check the "
+    "published artifact.\n\n"
+    "Three ways the verdict commonly fails, all of which read as sound prose:\n\n"
     "1. **The cited code is near the ask but not the ask.** A guard on a "
     "neighbouring path, a check that runs on one caller and not the one the "
     "reviewer named, a default that is overridden before it matters.\n"
     "2. **It does part of what was asked.** The reviewer asked for two things "
-    "and the cited line does one of them.\n\n"
-    "Answer **broken** when the behaviour is absent or wrong: this reply would "
-    "tell the reviewer their point was moot and resolve their thread, so a "
-    "verdict that does not hold goes to a person instead. Answer **verified** "
+    "and the cited line does one of them. A bundled comment is several asks, "
+    "not one: every bullet must hold against the published artifact, or the "
+    "verdict is broken.\n"
+    "3. **Half the ask remains.** The field is gone and the description still "
+    "names it; the RPC is hidden and the changelog still teaches it.\n\n"
+    "Answer **broken** when the behaviour is absent, wrong, or incomplete: "
+    "this reply would tell the reviewer their point was moot and resolve "
+    "their thread, so a verdict that does not hold goes to a person instead. "
+    "Half-done is **broken**, never **not verified**. Answer **verified** "
     "when you read or ran it and it does what was asked, and **not verified** "
-    "when you cannot tell."
+    "only when you cannot tell."
 )
 
 
@@ -376,7 +388,9 @@ def verify_claims(
     answered at all, both leave the outcome FIXED and unverified — silence is
     not evidence, and a gate that ran out of turns has not established that a
     fix is wrong. Demoting on absence would make the gate's own flakiness look
-    like the fix's.
+    like the fix's. A **not verified** whose detail says the ask remains is
+    not silence: the gate did tell us the work is incomplete, and that demotes
+    like **broken**.
 
     Mutates in place, before `landing` is asked for a spec, so the outcome the
     domain records and the outcome the commit carries cannot disagree.
@@ -457,7 +471,7 @@ def verify_claims(
         if verdict.ok is True:
             outcome.verified = True
             continue
-        if verdict.ok is None:
+        if verdict.ok is None and not _ask_remains(verdict.detail):
             outcome.verified = False
             continue
         # Falsified. NEEDS_HUMAN rather than DEFERRED: the pass already had its
@@ -508,6 +522,25 @@ _FALSIFIED_REASON = {
         "what the reviewer asked"
     ),
 }
+
+# Phrases a **not verified** detail uses when the gate did see that the ask is
+# incomplete. That is **broken**, filed under the wrong label; matching here
+# demotes it the way a `ok is False` already does. Silence and "cannot tell"
+# stay unverified. Observed 2026-11 through `pr comments --fix`: "half the ask
+# remains" was published as Addressed and the thread was resolved.
+_ASK_REMAINS_MARKERS = (
+    "half the ask",
+    "half remains",
+    "ask remains",
+    "part of what was asked",
+    "part of the ask",
+)
+
+
+def _ask_remains(detail: str) -> bool:
+    """True when a not-verified detail is half-done, not "cannot tell"."""
+    text = detail.lower()
+    return any(marker in text for marker in _ASK_REMAINS_MARKERS)
 
 
 def _report_ungated(contradicted: set[str], trail: Trail | None) -> None:

@@ -292,7 +292,7 @@ class TestAddressingCommitIsPerLine:
         with patch.object(git.topology, "default_branch_cached", return_value="main"):
             assert pr.attribution.find_addressing_commit(branch.path, "a.py", 99) is None
 
-    def test_two_threads_on_one_file_cite_no_commit(self, branch):
+    def test_two_threads_on_one_file_cite_the_tree(self, branch):
         entries = [
             CommentItem(id="t1", summary="line one", file="a.py", line=1),
             CommentItem(id="t2", summary="line two", file="a.py", line=2),
@@ -302,7 +302,8 @@ class TestAddressingCommitIsPerLine:
             "t2": ReportThread(id="t2", comments=[{"databaseId": 222}]),
         }
         with patch.object(git.topology, "default_branch_cached", return_value="main"), \
-             patch("pr.comments.post_thread_reply", return_value=True) as post:
+             patch("pr.comments.post_thread_reply", return_value=True) as post, \
+             patch("git.push.holds", return_value=True):
             pr.thread_replies.post_already_addressed_replies(
                 entries, threads_by_id, "owner/repo", 42, branch.path,
             )
@@ -397,7 +398,7 @@ class TestAttributionSurvivesARebase:
             history = pr.attribution.AddressingHistory(wt_path)
             return history.framing(entry, self._thread(entry.id))
 
-    def test_a_stale_line_coordinate_cites_no_commit(self, rebased):
+    def test_a_stale_line_coordinate_does_not_cite_line_history(self, rebased):
         """The recorded line now points at code the row was never about."""
         entry = CommentItem(id="t1", summary="guard it", file="moved.py",
                             line=1, read_sha=rebased.read)

@@ -597,6 +597,7 @@ class ActionCell(_ActionVocabulary):
     PENDING = ("Fix pending", FixOutcome.FIXED)
     DEFERRED = ("Deferred", FixOutcome.DEFERRED)
     ADDRESSED_IN = ("Addressed in ", FixOutcome.ALREADY_ADDRESSED)
+    OUTSIDE_THE_PASS = ("Addressed outside the fix pass", FixOutcome.SETTLED_ELSEWHERE)
     DISMISSED = ("Dismissed (invalid)", FixOutcome.DISMISSED)
     CONTESTED = ("Contested — needs discussion", FixOutcome.NEEDS_HUMAN)
     CONFLICTING = ("Conflicting reviewer feedback", FixOutcome.NEEDS_HUMAN)
@@ -681,7 +682,6 @@ class RetiredActionCell(_ActionVocabulary):
     COMMITTED_AND_PUSHED = ("Fix committed and pushed", FixOutcome.FIXED)
     IN_DESCRIPTION = ("Added to the PR description (no commit)", FixOutcome.FIXED)
     ALREADY_ADDRESSED = ("Already addressed", FixOutcome.ALREADY_ADDRESSED)
-    OUTSIDE_THE_PASS = ("Addressed outside the fix pass", FixOutcome.SETTLED_ELSEWHERE)
 
 
 class HumanReason(Enum):

@@ -172,6 +172,48 @@ class TestShim:
         with agent.git_guard.guarded(dict(os.environ), str(tmp_path)) as env:
             assert agent.git_guard.ENV_GUARDED_GIT_DIR not in env
 
+    def test_a_path_walking_wrapper_does_not_reenter_the_shim(self, tmp_path):
+        wt = _repo(tmp_path, {"a.py": "one\n"})
+        wrap = tmp_path / "wrap"
+        wrap.mkdir()
+        counter = tmp_path / "reentries"
+        counter.write_text("0\n")
+        script = wrap / "git"
+        script.write_text(
+            "#!/usr/bin/env bash\n"
+            "set -euo pipefail\n"
+            f'n=$(cat "{counter}")\n'
+            "n=$((n + 1))\n"
+            f'printf "%s\\n" "$n" > "{counter}"\n'
+            'if [[ "$n" -gt 20 ]]; then\n'
+            '  echo "git-guard reentered via PATH wrapper" >&2\n'
+            "  exit 99\n"
+            "fi\n"
+            "real=\n"
+            "IFS=:\n"
+            "for d in $PATH; do\n"
+            '  cand="${d}/git"\n'
+            '  [[ -x "$cand" ]] || continue\n'
+            '  [[ "$cand" -ef "$0" ]] && continue\n'
+            '  real="$cand"\n'
+            "  break\n"
+            "done\n"
+            "unset IFS\n"
+            '[[ -n "$real" ]] || real=/usr/bin/git\n'
+            'exec "$real" "$@"\n'
+        )
+        script.chmod(0o755)
+        env = dict(os.environ)
+        env["PATH"] = str(wrap) + os.pathsep + env.get("PATH", "")
+        with agent.git_guard.guarded(env, str(wt)) as genv:
+            result = _git(
+                genv, ("-C", str(wt), "rev-parse", "--show-toplevel"),
+                cwd=tmp_path,
+            )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == str(wt)
+        assert int(counter.read_text().strip()) <= 5
+
 
 class TestInvokeFixGuard:
     def test_invoke_fix_hands_the_backend_a_guarded_env(self, tmp_path):

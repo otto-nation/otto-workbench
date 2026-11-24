@@ -12,7 +12,7 @@ tools:
   - name: run-tests
     permission: false
     visibility: brief
-    description: "Runs the bats and pytest suites with the repo's parallelism settings — the single entry point used by the Taskfile, the pre-push hook, and CI"
+    description: "Runs the bats and pytest suites with the repo's parallelism settings — the single entry point used by the pre-push hook and CI"
 
   - name: validate-all
     permission: false
@@ -277,7 +277,7 @@ tools:
   - name: dev-deps
     permission: false
     visibility: brief
-    description: "Declares, installs (without root) and checks the workbench's development and test dependencies — run by task dev:setup, checked by the pre-push hook"
+    description: "Declares, installs (without root) and checks the workbench's development and test dependencies — run by bin/local/dev-deps, checked by the pre-push hook"
 
   - name: select-tests
     permission: false

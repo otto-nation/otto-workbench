@@ -273,7 +273,7 @@ def test_the_cli_passes_the_grant_to_its_child():
 def test_the_fixture_leaves_no_marker_for_a_cli_child_to_inherit():
     """The nested case this suite actually runs in.
 
-    Under `task test` or pre-push an outer run-tests has already exported its
+    Under pre-push an outer run-tests has already exported its
     marker and grant into this process, and `_cli` passes no `env=`, so a child
     reads whatever `os.environ` holds. Were they still set, every CLI test here
     would take the pass-through branch, claim no slots, and assert on a number

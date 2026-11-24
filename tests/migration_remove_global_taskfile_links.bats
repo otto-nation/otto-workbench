@@ -44,7 +44,7 @@ _run_migration() {
 
 @test "removes both symlinks the task component created" {
   # Taskfile.yml -> a file, lib -> a directory: the shapes step_task_symlinks made.
-  ln -s "$REPO_ROOT/Taskfile.yml" "$CFG/Taskfile.yml"
+  ln -s "$REPO_ROOT/README.md" "$CFG/Taskfile.yml"
   ln -s "$REPO_ROOT/lib" "$CFG/lib"
   TASK_CONFIG_DIR="$CFG" run _run_migration
   [ "$status" -eq 0 ]

@@ -207,16 +207,14 @@ tools:
   mapfile -t perms < "$BATS_FILE_TMPDIR/real_perms.list"
 
   # Spot-check a few expected entries
-  local found_task=0 found_wt=0 found_bats=0 found_gh_pr=0
+  local found_wt=0 found_bats=0 found_gh_pr=0
   for p in "${perms[@]}"; do
     case "$p" in
-      "Bash(task:*)")    found_task=1 ;;
       "Bash(wt:*)")      found_wt=1 ;;
       "Bash(bats:*)")    found_bats=1 ;;
       "Bash(gh pr:*)")   found_gh_pr=1 ;;
     esac
   done
-  [[ "$found_task" -eq 1 ]]
   [[ "$found_wt" -eq 1 ]]
   [[ "$found_bats" -eq 1 ]]
   [[ "$found_gh_pr" -eq 1 ]]

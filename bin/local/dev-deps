@@ -16,7 +16,7 @@
 # installed: this script runs no sudo. A missing one is reported with the exact
 # command to run, and the run exits 1.
 #
-# Called by `task dev:setup` (install) and the workbench pre-push hook (check).
+# Called by contributors (install) and the workbench pre-push hook (check).
 #
 # Exit codes: 0 when every dependency is present, 1 when any is missing.
 
@@ -154,7 +154,7 @@ dev_deps_check() {
     fi
     cmd="${pkg[cmd]}"
     label="$entry"
-    _cmd_runnable "$cmd" || missing+=("$label — run: bin/local/dev-deps (or: task dev:setup)")
+    _cmd_runnable "$cmd" || missing+=("$label — run: bin/local/dev-deps")
   done
   for entry in "${DEV_DEPS_ROOT[@]}"; do
     IFS='|' read -r cmd label hint <<< "$entry"

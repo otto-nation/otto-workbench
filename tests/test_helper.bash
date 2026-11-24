@@ -39,7 +39,7 @@ _assert_not_real_repo() {
 # inside a test, or plainly in setup().
 require_zsh() {
   command -v zsh >/dev/null 2>&1 && return 0
-  echo "zsh is not installed — a declared dependency; run: bin/local/dev-deps (or: task dev:setup)" >&2
+  echo "zsh is not installed — a declared dependency; run: bin/local/dev-deps" >&2
   return 1
 }
 
@@ -78,8 +78,8 @@ pin_mise_to_real_home() {
   # failing for no visible reason. Exported because the tools under test are
   # subprocesses.
   #
-  # bin/local/run-tests exports this too, and is what pre-push, CI, and the
-  # Taskfile all go through — it has to, because setup_file() runs before any
+  # bin/local/run-tests exports this too, and is what pre-push and CI go
+  # through — it has to, because setup_file() runs before any
   # per-test setup and one file swaps HOME there, too early for this function
   # to correct. The line is kept here as well so a developer running `bats
   # tests/one.bats` by hand gets the same isolation.

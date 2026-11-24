@@ -63,12 +63,6 @@ tools:
     description: "GitHub CLI — manage PRs, issues, repos, checks, and releases from the terminal"
     docs: "https://cli.github.com/manual/"
 
-  - name: go-task
-    permission: "task"
-    visibility: hidden
-    description: "Task runner with YAML-defined tasks (runs the repo-local Taskfile.yml)"
-    docs: "https://taskfile.dev"
-
   - name: shellcheck
     permission: true
     visibility: brief

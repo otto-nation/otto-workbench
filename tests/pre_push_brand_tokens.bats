@@ -83,7 +83,7 @@ _run_hook() {
   touch "$FETCH_FAIL"
   _run_hook
   [ "$status" -ne 0 ]
-  [[ "$output" == *"Install them with: task dev:setup (bin/local/dev-deps)"* ]]
+  [[ "$output" == *"Install them with: bin/local/dev-deps"* ]]
   [[ "$output" == *"otto brand tokens (herdr-app theme)"* ]]
   [[ "$output" != *"pre-push hook failed"* ]]
 

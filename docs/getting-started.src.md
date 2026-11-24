@@ -11,7 +11,7 @@ description: Install the workbench, run your first sync, and find your way aroun
 - bash (to run `install.sh`)
 - git (to clone the repo)
 
-Everything else — Homebrew (macOS), Docker, language tooling — is either auto-installed or available through the optional component menu. Task (go-task) is only needed to contribute to the workbench itself; install it first (`brew install go-task/tap/go-task`, or pick it from `otto-workbench install packages`) before running `task dev:setup`.
+Everything else — Homebrew (macOS), Docker, language tooling — is either auto-installed or available through the optional component menu. To contribute to the workbench itself, run `bin/local/dev-deps` from a clone (hooks and test tools).
 
 ## Installation
 

@@ -332,7 +332,6 @@ def test_a_fixture_change_selects_everything(monkeypatch, capsys):
     ".github/workflows/site.yml",
     "bin/local/run-tests",
     "tests/test_helper.bash",
-    "Taskfile.yml",
 ])
 def test_test_machinery_selects_everything(changed, monkeypatch, capsys):
     """CI on pull_request selects through this map, so a machinery change

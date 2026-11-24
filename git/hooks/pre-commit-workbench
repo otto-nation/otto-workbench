@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Pre-commit hook for otto-workbench: regenerates gitignored AI context files.
-# Dispatched from .git/hooks/pre-commit via `task dev:setup`.
+# Dispatched from .git/hooks/pre-commit via `bin/local/dev-deps`.
 # Called via delegation from the global pre-commit hook (~/.git-hooks/pre-commit).
 
 set -euo pipefail

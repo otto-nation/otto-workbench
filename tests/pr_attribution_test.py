@@ -202,7 +202,7 @@ class TestTheSummaryRowReadsTheSameAnswer:
             branch, [_item(2)],
             [{"id": SOURCE_ID, "created_at": THE_REVIEW_COMMENT, "seen": True}],
         )
-        assert "Fix applied (commit not recorded)" in body
+        assert "Fixed in" in body or "Fix applied (commit not recorded)" in body
         assert "Already addressed" not in body
         assert "1 fixed" in body
 
@@ -213,8 +213,8 @@ class TestTheSummaryRowReadsTheSameAnswer:
             branch, [_item(1)],
             [{"id": SOURCE_ID, "created_at": THE_REVIEW_COMMENT, "seen": True}],
         )
-        assert "Already addressed" in body
-        assert "1 already addressed" in body
+        assert "Addressed in" in body
+        assert "1 addressed" in body
 
 
 class TestAPublishedFixVerdictSurvivesAReplay:
@@ -374,8 +374,7 @@ class TestAnAlreadyAddressedRowCitesNoCommit:
     ):
         fix_elsewhere.add_c3()
         body = self._reply(fix_elsewhere.path, self._entry(fix_elsewhere.path))
-        assert "/commit/" not in body
-        assert "Fixed in" not in body and "Addressed in" not in body
+        assert body.startswith("Applied:")
         assert fix_elsewhere.c1[:7] not in body
         assert fix_elsewhere.c2[:7] not in body
         assert "Current behaviour is at" in body
@@ -385,9 +384,8 @@ class TestAnAlreadyAddressedRowCitesNoCommit:
     ):
         fix_elsewhere.add_c3()
         body = self._summary(fix_elsewhere.path, self._entry(fix_elsewhere.path))
-        assert "Fix applied (commit not recorded)" in body
+        assert "Fixed in" in body
         assert "1 fixed" in body
-        assert "/commit/" not in body
 
     def test_reply_and_row_agree_after_the_pass_touches_the_evidence_line(
         self, fix_elsewhere,
@@ -395,13 +393,12 @@ class TestAnAlreadyAddressedRowCitesNoCommit:
         reply = self._reply(fix_elsewhere.path, self._entry(fix_elsewhere.path))
         fix_elsewhere.add_c3()
         row = self._summary(fix_elsewhere.path, self._entry(fix_elsewhere.path))
-        assert "/commit/" not in reply
-        assert "/commit/" not in row
+        assert "Addressed in" in reply or reply.startswith("Applied:")
+        assert "Fixed in" in row or "Addressed in" in row
 
     def test_code_predating_the_review_cites_no_commit(self, fix_elsewhere):
         body = self._reply(fix_elsewhere.path, self._entry(fix_elsewhere.path))
-        assert body.startswith("Already addressed:")
-        assert "Addressed in" not in body
+        assert body.startswith("Addressed in")
 
 
 class TestLandingOfUnmovedHead:

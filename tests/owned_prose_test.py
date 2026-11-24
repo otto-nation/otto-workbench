@@ -67,7 +67,7 @@ def test_self_review_quotes_the_untested_detail_prefix():
 def test_already_addressed_table_quotes_action_cells():
     prose = AI_AUTOMATION.read_text()
     assert ActionCell.UNATTRIBUTED.value in prose
-    assert ActionCell.ALREADY_ADDRESSED.value in prose
+    assert ActionCell.ADDRESSED_IN.value in prose
 
 
 def test_ai_automation_quotes_claude_code_min_version():

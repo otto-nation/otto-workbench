@@ -837,15 +837,15 @@ action while the paragraph below it cited a commit made after they made it
 ([#815](https://github.com/otto-nation/otto-workbench/issues/815)).
 
 So the reply and the summary row ask when the code became true, relative to
-when the thread was opened. Already-addressed rows never cite that date's
-commit:
+when the thread was opened. An addressed row always names a commit — the tree
+that satisfies the comment (HEAD, or `--commit`), never a line-history guess:
 
 | The branch shows | Reply | Summary cell |
 |---|---|---|
-| a commit on the thread's line, dated after the review comment | `Applied:` … `Current behaviour is at <permalink>` | `Fix applied (commit not recorded)`, counted with the fixes |
-| a commit on that line, dated before the comment | `Already addressed:` … `Current behaviour is at <permalink>` | `Already addressed` |
-| no commit on that line — the code predates the branch | `Already addressed:` | `Already addressed` |
-| the thread's line no longer means what it did when it was read | `Already addressed:` | `Already addressed` |
+| a commit on the thread's line, dated after the review comment | `Applied:` … `Current behaviour is at <permalink>` | `Fixed in <sha>` when the tree is known, else `Fix applied (commit not recorded)`, counted with the fixes |
+| a commit on that line, dated before the comment | `Addressed in <sha>:` … `Current behaviour is at <permalink>` | `Addressed in <sha>` |
+| no commit on that line — the code predates the branch | `Addressed in <sha>:` | `Addressed in <sha>` |
+| the thread's line no longer means what it did when it was read | `Addressed in <sha>:` | `Addressed in <sha>` |
 
 The newest commit `git log -L` names for the thread's line only dates the
 reading and is never cited. Both the line and the date are checked so a rebase
@@ -922,7 +922,7 @@ item split out of a top-level comment has a synthetic id and no review thread,
 so there is no thread state to read it from
 ([#776](https://github.com/otto-nation/otto-workbench/issues/776)). `--finish`
 asks the same question of its source instead: a reply of ours further down the
-PR that opens `Applied:` / `Already addressed` /
+PR that opens `Applied:` / `Addressed in` / `Already addressed` /
 `Suggestion reviewed and determined to be inapplicable` and cites
 the source comment's permalink settles the item, exactly as the equivalent reply
 on a thread settles a thread. An item that restates an inline thread settles

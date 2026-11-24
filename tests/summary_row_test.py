@@ -88,8 +88,8 @@ class TestSettledRowsAreNotCreditedToThePass:
                             settled_by=SettledBy.OPERATOR)
         cp = pr.attribution.CommitPushResult("aaa1111", "pushed", "")
         cell = pr.summary_row.fixed_status_for(entry, cp, "owner/repo")
-        assert cell == ActionCell.RECONCILED
-        assert cell != ActionCell.UNATTRIBUTED
+        assert "aaa1111" not in cell
+        assert cell == ActionCell.UNATTRIBUTED
 
     def test_a_settled_row_that_resolved_a_commit_cites_that_one(self):
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,

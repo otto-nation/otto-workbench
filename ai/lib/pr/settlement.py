@@ -19,20 +19,22 @@ decides what happened and records it; the surfaces read the record.
 
 `--settle <id>` is how the operator tells the CLI what they did by hand. It is
 repeatable, and `--as` picks which of the three terminal outcomes to record —
-`fixed` (the default), `dismissed`, or `already_addressed`. From there the thread
+`fixed` (the default), `dismissed`, or `addressed` (`already_addressed` is the
+same outcome, kept so existing invocations still parse). From there the thread
 is indistinguishable from one the pass settled: `--finish` replies on it,
 resolves it, and gives it a summary row attributed to the commit that carries
 the change. `--as dismissed` requires `--reason <text>`, which becomes the body
 of the reply; the other two outcomes render no reason and refuse the flag rather
-than swallowing it. `--as fixed` cites a commit only when `--commit <sha>`
-names one; without it, nothing is inferred from line history. A `--commit` the
-remote does not hold is an error rather than a dropped citation — a link to a
-commit still sitting on the machine 404s for the reviewer it was written for.
-When no commit is named, the row reads `Addressed outside the fix pass` and
-the run says so. Naming an id no fix pass recorded is an error listing the threads
-that are waiting on a person, unless that id is still open on the PR — then
-it is recorded from the PR rather than refused. Recording the outcome a
-thread already carries is a no-op that says so; recording a different
+than swallowing it. `--as fixed` and `--as addressed` cite a commit when `--commit <sha>`
+names one; without it, nothing is inferred from line history. The closeout
+still names HEAD on an addressed row that stored no SHA, because the Action
+cell is a commit, not a verdict word.
+A `--commit` the remote does not hold is an error rather than a dropped
+citation — a link to a commit still sitting on the machine 404s for the
+reviewer it was written for. Naming an id no fix pass recorded is an error
+listing the threads that are waiting on a person, unless that id is still open
+on the PR — then it is recorded from the PR rather than refused. Recording the
+outcome a thread already carries is a no-op that says so; recording a different
 terminal outcome replaces it.
 Recording is its own step: `--settle` publishes nothing and refuses `--post` and
 every other phase flag alongside it (the argparse layer in `cli.review_threads`).
@@ -91,6 +93,27 @@ SETTLE_OUTCOMES = (
     FixOutcome.DISMISSED,
     FixOutcome.ALREADY_ADDRESSED,
 )
+
+# What `--as` accepts. `addressed` is the operator-facing name; the persisted
+# outcome string is still `already_addressed`, and that spelling remains a
+# valid `--as` so existing invocations still parse.
+SETTLE_AS = {
+    "fixed": FixOutcome.FIXED,
+    "dismissed": FixOutcome.DISMISSED,
+    "addressed": FixOutcome.ALREADY_ADDRESSED,
+    "already_addressed": FixOutcome.ALREADY_ADDRESSED,
+}
+
+
+def settle_label(kind: FixOutcome) -> str:
+    """The `--as` name an operator reads, for logs.
+
+    The persisted outcome string for an addressed row is still
+    `already_addressed`; the operator-facing name is not.
+    """
+    if kind is FixOutcome.ALREADY_ADDRESSED:
+        return "addressed"
+    return kind.value
 
 # The outcomes a later run re-checks against GitHub before republishing them.
 # Each records work someone still owes, and each has an ending the tool never
@@ -645,7 +668,7 @@ def report_unanswered_handbacks(owed: list[ItemOutcome]) -> None:
         "answer in your own words",
         '  pr comments --settle <id> --as dismissed --reason "<why>"  '
         "the point does not apply",
-        "  pr comments --settle <id> --as fixed|already_addressed     "
+        "  pr comments --settle <id> --as fixed|addressed             "
         "the code handles it",
         "  (a needs_human thread can instead be filed with "
         "--finish --post --track <id>)",
@@ -770,8 +793,8 @@ def settled_commits(
     half landed. Nothing here mutates an outcome, so returning None discards the
     whole run rather than half of it.
 
-    Only a fix cites a commit — the other two settlements render from the
-    summary — so the rest come back uncited without git being asked at all.
+    A fix or an addressed row cites a commit — dismissed does not — so the
+    rest come back uncited without git being asked at all.
     """
     if not kind.may_cite_a_commit:
         return ["" for _ in picked]
@@ -792,17 +815,26 @@ def report_settlement(
     on it: the row is settled either way, but it names no commit until they pass
     `--commit <sha>` for the one that carries it.
     """
-    replaced = f" (was {was.value})" if was != kind else ""
-    cited = f", fixed in {sha}" if sha else ""
+    replaced = f" (was {settle_label(was)})" if was != kind else ""
+    cited = (
+        f", addressed in {sha}" if kind is FixOutcome.ALREADY_ADDRESSED and sha
+        else f", fixed in {sha}" if sha else ""
+    )
     finding = quoted_finding(outcome.summary)
     quoted = f" — {finding}" if finding else ""
-    core.log.info(f"{outcome.id}: recorded as {kind.value}{replaced}{cited}{quoted}")
+    core.log.info(f"{outcome.id}: recorded as {settle_label(kind)}{replaced}{cited}{quoted}")
     if kind.may_cite_a_commit and not sha:
-        core.log.info(
-            f"{outcome.id}: no commit cited — the summary row will read "
-            f"\"{pr.summary_model.ActionCell.RECONCILED}\". Pass --commit <sha> "
-            f"to cite one"
-        )
+        if kind is FixOutcome.ALREADY_ADDRESSED:
+            core.log.info(
+                f"{outcome.id}: no commit cited — the summary row will cite HEAD. "
+                f"Pass --commit <sha> to name a specific tree"
+            )
+        else:
+            core.log.info(
+                f"{outcome.id}: no commit cited — the summary row will read "
+                f"\"{pr.summary_model.ActionCell.UNATTRIBUTED}\". Pass --commit <sha> "
+                f"to cite one"
+            )
 
 
 def settle_flag_error(kind: FixOutcome, reason: str, commit: str) -> str:
@@ -819,9 +851,15 @@ def settle_flag_error(kind: FixOutcome, reason: str, commit: str) -> str:
             "is worse than no reply at all"
         )
     if reason and kind is not FixOutcome.DISMISSED:
-        return f"--reason is only read for --as dismissed; --as {kind.value} renders none"
+        return (
+            f"--reason is only read for --as dismissed; "
+            f"--as {settle_label(kind)} renders none"
+        )
     if commit and not kind.may_cite_a_commit:
-        return f"--commit is only read for --as fixed; --as {kind.value} cites no commit"
+        return (
+            f"--commit is only read for --as fixed or --as addressed; "
+            f"--as {settle_label(kind)} cites no commit"
+        )
     return ""
 
 
@@ -878,7 +916,11 @@ def run_settle(
     `fetch_threads` is lazy: it is only called when an id is missing from the
     snapshot. A thread it returns can be recorded even when no fix pass ran.
     """
-    kind = FixOutcome(as_name)
+    try:
+        kind = SETTLE_AS[as_name]
+    except KeyError:
+        core.log.error(f"--as {as_name} is not a settlement outcome")
+        return 1
     flag_error = settle_flag_error(kind, reason, commit)
     if flag_error:
         core.log.error(flag_error)
@@ -947,7 +989,7 @@ def run_settle(
         was = outcome.outcome
         if not record_settlement(outcome, kind, reason, sha):
             core.log.info(
-                f"{outcome.id}: already recorded as {kind.value} — nothing to do"
+                f"{outcome.id}: already recorded as {settle_label(kind)} — nothing to do"
             )
             continue
         settled += 1
@@ -955,7 +997,7 @@ def run_settle(
             report_settlement(outcome, kind, was, sha)
             continue
         core.log.info(
-            f"{outcome.id}: recorded as {kind.value} "
+            f"{outcome.id}: recorded as {settle_label(kind)} "
             f"(not in the fix snapshot — taken from the PR)"
         )
         thread = (threads or {}).get(outcome.id)

@@ -67,7 +67,7 @@ def test_fix_render_needs_human():
 
 def test_fix_render_already_addressed():
     lines = _summary(FixOutcome.ALREADY_ADDRESSED).render_status()
-    assert "1 already addressed" in lines[0]
+    assert "1 addressed" in lines[0]
 
 
 def test_fix_render_settled_elsewhere():
@@ -108,7 +108,7 @@ class TestCountLine:
             FixOutcome.DEFERRED: 1, FixOutcome.ALREADY_ADDRESSED: 1,
         })
         assert line == (
-            "**1 fixed** · 1 already addressed · 1 deferred · 1 need discussion")
+            "**1 fixed** · 1 addressed · 1 deferred · 1 need discussion")
 
     def test_extras_are_appended_after_the_verdicts(self):
         """The summary counts two things no `FixOutcome` names."""

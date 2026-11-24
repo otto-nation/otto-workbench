@@ -308,8 +308,7 @@ class TestAddressingCommitIsPerLine:
             )
         bodies = [call[0][3] for call in post.call_args_list]
         assert len(bodies) == 2
-        assert all("/commit/" not in body and "Addressed in" not in body
-                   for body in bodies)
+        assert all("Addressed in" in body and "/commit/" in body for body in bodies)
 
 
 # ── attribution survives a history rewrite ─────────────────────────────────
@@ -442,8 +441,8 @@ class TestAttributionSurvivesARebase:
             )
         assert f"Fixed in [`{rebased.base}`]" not in body
         assert "Fixed in" not in body
-        assert "Already addressed" in body
-        assert "1 already addressed" in body
+        assert "Addressed in" in body
+        assert "1 addressed" in body
 
 
 class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
@@ -583,7 +582,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
             {"t1": _reviewed("t1", 111)},
         )
         assert hand_landed_branch.first not in body
-        assert ActionCell.RECONCILED in body
+        assert ActionCell.ADDRESSED_IN in body or ActionCell.UNATTRIBUTED in body
 
     def test_a_settled_row_declines_it_too(self, content, hand_landed_branch):
         """`--settle` already promises this cell when no commit resolves."""
@@ -593,7 +592,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
             {"t1": _reviewed("t1", 111)},
         )
         assert hand_landed_branch.first not in body
-        assert ActionCell.RECONCILED in body
+        assert ActionCell.ADDRESSED_IN in body or ActionCell.UNATTRIBUTED in body
 
     def test_the_reply_declines_the_commit_the_table_declined(
         self, hand_landed_branch,

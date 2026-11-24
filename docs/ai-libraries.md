@@ -2988,20 +2988,22 @@ decides what happened and records it; the surfaces read the record.
 
 `--settle <id>` is how the operator tells the CLI what they did by hand. It is
 repeatable, and `--as` picks which of the three terminal outcomes to record —
-`fixed` (the default), `dismissed`, or `already_addressed`. From there the thread
+`fixed` (the default), `dismissed`, or `addressed` (`already_addressed` is the
+same outcome, kept so existing invocations still parse). From there the thread
 is indistinguishable from one the pass settled: `--finish` replies on it,
 resolves it, and gives it a summary row attributed to the commit that carries
 the change. `--as dismissed` requires `--reason <text>`, which becomes the body
 of the reply; the other two outcomes render no reason and refuse the flag rather
-than swallowing it. `--as fixed` cites a commit only when `--commit <sha>`
-names one; without it, nothing is inferred from line history. A `--commit` the
-remote does not hold is an error rather than a dropped citation — a link to a
-commit still sitting on the machine 404s for the reviewer it was written for.
-When no commit is named, the row reads `Addressed outside the fix pass` and
-the run says so. Naming an id no fix pass recorded is an error listing the threads
-that are waiting on a person, unless that id is still open on the PR — then
-it is recorded from the PR rather than refused. Recording the outcome a
-thread already carries is a no-op that says so; recording a different
+than swallowing it. `--as fixed` and `--as addressed` cite a commit when `--commit <sha>`
+names one; without it, nothing is inferred from line history. The closeout
+still names HEAD on an addressed row that stored no SHA, because the Action
+cell is a commit, not a verdict word.
+A `--commit` the remote does not hold is an error rather than a dropped
+citation — a link to a commit still sitting on the machine 404s for the
+reviewer it was written for. Naming an id no fix pass recorded is an error
+listing the threads that are waiting on a person, unless that id is still open
+on the PR — then it is recorded from the PR rather than refused. Recording the
+outcome a thread already carries is a no-op that says so; recording a different
 terminal outcome replaces it.
 Recording is its own step: `--settle` publishes nothing and refuses `--post` and
 every other phase flag alongside it (the argparse layer in `cli.review_threads`).

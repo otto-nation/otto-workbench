@@ -112,7 +112,7 @@ def count_line(
 # round re-parses the comment it published. `count_line` is the one renderer.
 STATUS_LABELS: dict[FixOutcome, str] = {
     FixOutcome.FIXED: "**{n} fixed**",
-    FixOutcome.ALREADY_ADDRESSED: "{n} already addressed",
+    FixOutcome.ALREADY_ADDRESSED: "{n} addressed",
     FixOutcome.DISMISSED: "{n} dismissed",
     FixOutcome.SETTLED_ELSEWHERE: "{n} settled elsewhere",
     FixOutcome.DEFERRED: "{n} deferred",

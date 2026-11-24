@@ -178,6 +178,8 @@ class TestHandWrittenRepliesSurvive:
     @pytest.mark.parametrize("body", [
         "Applied: fix it",
         "Applied: fix it\n\nResult is in [`a.py`](https://github.com/o/r/blob/s/a.py).",
+        "Addressed in [`abc1234`](https://github.com/o/r/commit/abc1234): fix it",
+        "Addressed in [`abc1234`](https://github.com/o/r/commit/abc1234): fix it\n\nCurrent behaviour is at https://x/#L1.",
         "Already addressed: fix it\n\nCurrent behaviour is at https://x/#L1.",
         "Already addressed in the current implementation: fix it",
         "Suggestion reviewed and determined to be inapplicable: nope",

@@ -537,7 +537,7 @@ def test_a_pre_fold_state_file_reports_the_same_status_line():
     assert "1 deferred" in line
     assert "1 dismissed" in line
     assert "1 need discussion" in line
-    assert "1 already addressed" in line
+    assert "1 addressed" in line
     assert "abc1234" in line
     assert "pushed" in line
 

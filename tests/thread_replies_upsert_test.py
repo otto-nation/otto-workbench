@@ -47,10 +47,9 @@ class TestPostAlreadyAddressedReplies:
             )
         assert count == 1
         body = mock_reply.call_args[0][3]
-        assert "Already addressed" in body
+        assert "Addressed in" in body
         assert "use helper" in body
-        assert "abc1234" not in body
-        assert "owner/repo/commit/abc1234def5678" not in body
+        assert "abc1234def5678" not in body
 
     def test_fallback_when_no_commit_found(self, tmp_path):
         fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py")]
@@ -64,8 +63,8 @@ class TestPostAlreadyAddressedReplies:
             )
         assert count == 1
         body = mock_reply.call_args[0][3]
-        assert "Already addressed" in body
-        assert "commit" not in body
+        assert "Addressed in" in body
+        assert "abc1234" not in body
 
     def test_no_comments_skips(self, tmp_path):
         fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py")]

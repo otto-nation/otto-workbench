@@ -135,28 +135,30 @@ class TestDatingAnItemAgainstItsSourceComment:
         framing = history.framing(_item(1), None)
         assert not framing.in_response
 
-    def test_an_undatable_source_still_declines(self, branch, on_main):
-        """No timestamp for the comment is no evidence, which is the old reading.
+    def test_an_undatable_source_reads_as_in_response(self, branch, on_main):
+        """No timestamp for the comment is unproven, which reads as a fix.
 
-        Claiming credit for a fix is the assertion that needs evidence, so a run
-        that cannot date the comment keeps the wording it had before.
+        Addressed is the assertion that needs evidence, so a run that cannot
+        date the comment does not claim the code predates the review.
         """
         history = pr.attribution.AddressingHistory(branch.path, {})
-        assert not history.framing(_item(2), None).in_response
+        assert history.framing(_item(2), None).in_response
 
-    def test_a_history_built_without_timestamps_declines(self, branch, on_main):
-        """The default: a caller with no comment listing claims nothing new."""
-        history = pr.attribution.AddressingHistory(branch.path)
-        assert not history.framing(_item(2), None).in_response
-
-    def test_an_entry_that_is_not_a_comment_item_is_unaffected(
+    def test_a_history_built_without_timestamps_reads_as_in_response(
         self, branch, on_main,
     ):
-        """A thread id parses to no source, so there is nothing to look up."""
+        """The default: a caller with no comment listing still counts as a fix."""
+        history = pr.attribution.AddressingHistory(branch.path)
+        assert history.framing(_item(2), None).in_response
+
+    def test_an_entry_that_is_not_a_comment_item_reads_as_in_response(
+        self, branch, on_main,
+    ):
+        """A thread id parses to no source, so asked_at is missing: in-response."""
         history = pr.attribution.AddressingHistory(
             branch.path, {SOURCE_ID: THE_REVIEW_COMMENT})
         entry = CommentItem(id="t1", file="a.py", line=2, reviewer="kgn")
-        assert not history.framing(entry, None).in_response
+        assert history.framing(entry, None).in_response
 
     def test_the_thread_still_wins_where_there_is_one(self, branch, on_main):
         """A thread dates itself; the comment map is for the rows that cannot.

@@ -793,8 +793,6 @@ verdict.
 Review, comments and CI fixes, and `already_addressed` verdicts, are checked by
 one verify gate before they land or post: [`fix/gate.py`](ai-libraries.md#fixgatepy).
 A verdict the gate could not write down stays unverified and is never demoted.
-A **not verified** whose detail says the ask remains (half-done) is **broken**
-and demotes to needs-a-person. Unverified threads are not resolved.
 
 ### What pr rebase replays
 

@@ -587,15 +587,17 @@ class AddressingHistory:
     ) -> bool:
         """Whether `sha` landed after the reviewer raised this entry's point.
 
-        Either timestamp missing reads as "no", which keeps the pre-existing
-        prefix: claiming credit for a fix is the assertion that needs evidence,
-        and there is none when the run cannot date one side of the comparison.
+        Addressed is the assertion that needs evidence: the commit must be
+        dated before the review. Missing dates do not prove the code predates
+        the review, so either timestamp missing reads as in-response.
         """
         if sha not in self._committed_at:
             self._committed_at[sha] = commit_timestamp(self._wt_path, sha)
         landed_at = self._committed_at[sha]
         asked_at = self._asked_at(entry, thread)
-        return bool(landed_at and asked_at) and landed_at > asked_at
+        if not landed_at or not asked_at:
+            return True
+        return landed_at > asked_at
 
     def _asked_at(self, entry: CommentItem, thread: ReportThread | None) -> float:
         """When the reviewer raised this entry's point, or 0.0 when unknown.

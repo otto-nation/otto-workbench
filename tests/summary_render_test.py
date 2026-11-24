@@ -439,14 +439,14 @@ class TestAddressedInResponseFraming:
         assert "Applied:" not in body
         assert "Already addressed" not in body
 
-    def test_an_undated_thread_keeps_the_pre_existing_reading(self, branch):
-        """Claiming credit is the assertion that needs evidence, not the absence."""
+    def test_an_undated_thread_reads_as_a_fix(self, branch):
+        """Addressed is the claim that needs dates. Missing them is not proof."""
         body = self._reply_body(
             CommentItem(id="t2", summary="rename it", file="a.py", line=2),
             ReportThread(id="t2", comments=[{"databaseId": 222}]), branch.path,
         )
-        assert body.startswith("Addressed in")
-        assert "rename it" in body
+        assert body.startswith("Applied: rename it")
+        assert "Addressed in" not in body
 
     def test_a_fix_the_resolver_cannot_cite_still_reads_as_a_fix(self, branch):
         """#827's caller: a FIXED entry whose commit a hook rejected lands here.
@@ -497,6 +497,16 @@ class TestAddressedInResponseFraming:
         assert "Addressed in" in body
         assert "1 addressed" in body
         assert "fixed" not in body
+
+    def test_an_undated_summary_row_reads_as_fixed(self, content, branch):
+        body = self._summary(
+            content,
+            CommentItem(id="t2", summary="rename it", file="a.py", line=2),
+            ReportThread(id="t2", comments=[{"databaseId": 222}]),
+            branch.path,
+        )
+        assert "Fixed in" in body or "Fix applied (commit not recorded)" in body
+        assert "Addressed in" not in body
 
 
 class TestDuplicateFindingRendersOnce:

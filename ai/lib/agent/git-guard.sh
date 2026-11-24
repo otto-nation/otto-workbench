@@ -18,18 +18,17 @@ guarded="${WORKBENCH_GUARDED_GIT_DIR:-}"
 # $0 is the temp symlink, not the script in ai/lib/agent — realpath would
 # strip the wrong directory and leave the shim first on PATH.
 _here="${0%/*}"
-_keep=()
-_ifs="$IFS"
-IFS=:
-for _d in $PATH; do
+_keep=""
+_left="${PATH:+$PATH:}"
+while [[ -n "$_left" ]]; do
+  _d="${_left%%:*}"
+  _left="${_left#*:}"
   [[ "$_d" == "$_here" ]] && continue
-  _keep+=("$_d")
+  _keep="${_keep:+$_keep:}$_d"
 done
-IFS=:
-PATH="${_keep[*]}"
-IFS="$_ifs"
+PATH="$_keep"
 export PATH
-unset _here _keep _ifs _d
+unset _here _keep _left _d
 
 [[ -n "$guarded" ]] || exec "$real" "$@"
 

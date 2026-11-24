@@ -212,7 +212,8 @@ class TestShim:
             )
         assert result.returncode == 0, result.stderr
         assert result.stdout.strip() == str(wt)
-        assert int(counter.read_text().strip()) <= 5
+        n = int(counter.read_text().strip())
+        assert 1 <= n <= 2, n
 
 
 class TestInvokeFixGuard:

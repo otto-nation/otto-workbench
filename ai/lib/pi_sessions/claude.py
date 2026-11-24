@@ -67,17 +67,21 @@ def find_transcript(root: Path, key: str) -> Path | None:
     return found[0] if found else None
 
 
+def _head_entries(path: Path) -> list[dict | None]:
+    with path.open("rb") as fh:
+        return [parse_entry(line) for _, line in zip(range(HEADER_LINES), fh)]
+
+
 def read_header(path: Path) -> Header | None:
     """The id from the file name; the cwd and start from the first entry that names a cwd."""
     try:
-        with path.open("rb") as fh:
-            for _, line in zip(range(HEADER_LINES), fh):
-                entry = parse_entry(line)
-                cwd = entry.get("cwd") if entry else None
-                if isinstance(cwd, str) and cwd:
-                    return Header(id=path.stem, cwd=cwd, timestamp=str(entry.get("timestamp") or ""))
+        entries = _head_entries(path)
     except OSError:
         return None
+    for entry in entries:
+        cwd = entry.get("cwd") if entry else None
+        if isinstance(cwd, str) and cwd:
+            return Header(id=path.stem, cwd=cwd, timestamp=str(entry.get("timestamp") or ""))
     return None
 
 
@@ -86,23 +90,27 @@ def _title(entry: dict, key: str) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
-def read_titles(path: Path, *, limit: int = TITLE_LIMIT) -> Titles:
-    """The latest custom and AI titles within the last *limit* bytes of *path*."""
+def _scan_titles(path: Path, limit: int) -> Titles:
     custom: str | None = None
     ai: str | None = None
+    for line in lines_from_end(path, limit):
+        entry = parse_entry(line)
+        kind = entry.get("type") if entry else None
+        if kind == "custom-title" and custom is None:
+            custom = _title(entry, "customTitle")
+        elif kind == "ai-title" and ai is None:
+            ai = _title(entry, "aiTitle")
+        if custom is not None and ai is not None:
+            break
+    return Titles(custom=custom, ai=ai)
+
+
+def read_titles(path: Path, *, limit: int = TITLE_LIMIT) -> Titles:
+    """The latest custom and AI titles within the last *limit* bytes of *path*."""
     try:
-        for line in lines_from_end(path, limit):
-            entry = parse_entry(line)
-            kind = entry.get("type") if entry else None
-            if kind == "custom-title" and custom is None:
-                custom = _title(entry, "customTitle")
-            elif kind == "ai-title" and ai is None:
-                ai = _title(entry, "aiTitle")
-            if custom is not None and ai is not None:
-                break
+        return _scan_titles(path, limit)
     except OSError:
         return Titles(custom=None, ai=None)
-    return Titles(custom=custom, ai=ai)
 
 
 def _record(path: Path) -> tuple[int, str] | None:

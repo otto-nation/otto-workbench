@@ -1,6 +1,6 @@
 """Tests for `pr.thread_replies` — the reply paths nothing exercised directly.
 
-The four builders and the two predicates are covered heavily through
+The five builders and the two predicates are covered heavily through
 `thread_replies_dispatch_test.py` and `thread_replies_upsert_test.py`, which
 drive them end to end. What had no test at all
 is the machinery underneath: the upsert's three branches, and the two log lines
@@ -48,13 +48,14 @@ class TestHandledPrefixesTrackTheGeneratedSet:
     """
 
     def test_only_the_openings_that_say_work_remains_are_excluded(self):
-        """Both say the opposite of handled, so counting either would make the
+        """Each says the opposite of handled, so counting any would make the
         thread reconcile itself on the second --finish."""
         assert set(pr.thread_replies.GENERATED_REPLY_PREFIXES) - set(
             pr.thread_replies.HANDLED_REPLY_PREFIXES,
         ) == {
             pr.thread_replies.DEFERRED_REPLY_PREFIX,
             pr.thread_replies.NEEDS_HUMAN_REPLY_PREFIX,
+            pr.thread_replies.QUESTION_REPLY_PREFIX,
         }
 
     def test_every_handled_opening_is_a_generated_one(self):
@@ -64,6 +65,11 @@ class TestHandledPrefixesTrackTheGeneratedSet:
 
     def test_deferring_is_not_handling(self):
         assert pr.thread_replies.DEFERRED_REPLY_PREFIX not in (
+            pr.thread_replies.HANDLED_REPLY_PREFIXES
+        )
+
+    def test_asking_is_not_handling(self):
+        assert pr.thread_replies.QUESTION_REPLY_PREFIX not in (
             pr.thread_replies.HANDLED_REPLY_PREFIXES
         )
 
@@ -86,6 +92,11 @@ class TestWhatCountsAsNamingAVerdict:
     def test_the_deferred_template_still_names_none(self):
         assert not pr.thread_replies.names_a_verdict(
             f"{pr.thread_replies.DEFERRED_REPLY_PREFIX} tracked in ENG-1.",
+        )
+
+    def test_the_question_template_still_names_none(self):
+        assert not pr.thread_replies.names_a_verdict(
+            f"{pr.thread_replies.QUESTION_REPLY_PREFIX} which one?",
         )
 
     @pytest.mark.parametrize("word", pr.thread_replies.HANDWRITTEN_VERDICT_WORDS)
@@ -277,6 +288,13 @@ class TestTheFollowupPatternKnowsEveryLead:
         self._assert_all_ours(captured)
         assert "Unchanged at" in captured[0]
 
+    def test_a_question_is_recognised(self, captured, entry, threads, tree):
+        pr.thread_replies.post_question_replies(
+            [entry], threads, _REPO, _PR, tree)
+        self._assert_all_ours(captured)
+        assert captured[0].startswith("Question:")
+        assert "Unchanged at" in captured[0]
+
     def test_a_lead_the_pattern_does_not_know_is_not_ours(self):
         """The failure this guards, shown once.
 
@@ -459,3 +477,20 @@ class TestPostFixRepliesAnnotationsResolve:
         import typing
         hints = typing.get_type_hints(pr.thread_replies.post_fix_replies)
         assert hints["history"] == pr.attribution.AddressingHistory | None
+
+
+def test_needs_human_reply_is_the_question():
+    entry = CommentItem(id="t1", summary="which one?", file="f.py", line=5)
+    thread = ReportThread(id="t1", comments=[{"databaseId": 106}])
+    with patch("pr.comments.post_thread_reply", return_value=True) as post:
+        posted = pr.thread_replies.post_question_replies(
+            [entry], {"t1": thread}, "owner/repo", 42,
+        )
+    assert posted == 1
+    body = post.call_args[0][3]
+    assert body.startswith("Question: which one?")
+    assert "Needs a person:" not in body
+    assert "Question for the author" not in body
+    assert pr.thread_replies.QUESTION_REPLY_PREFIX in (
+        pr.thread_replies._UNHANDLED_REPLY_PREFIXES
+    )

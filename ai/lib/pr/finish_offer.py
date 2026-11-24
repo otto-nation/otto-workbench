@@ -46,22 +46,23 @@ def _text_of(entry: dict) -> str:
     return "\n".join(b["text"] for b in blocks if isinstance(b, dict) and isinstance(b.get("text"), str))
 
 
+def _json_entry(line: str) -> dict | None:
+    try:
+        value = json.loads(line)
+    except ValueError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def last_assistant_text(transcript: str | Path) -> str:
     """The text of the transcript's last assistant entry, "" when there is none or it cannot be read."""
     try:
         lines = Path(transcript).read_text().splitlines()
     except OSError:
         return ""
-    for line in reversed(lines):
-        try:
-            entry = json.loads(line)
-        except ValueError:
-            continue
-        if isinstance(entry, dict) and entry.get("type") == "assistant":
-            text = _text_of(entry)
-            if text:
-                return text
-    return ""
+    entries = (_json_entry(line) for line in reversed(lines))
+    texts = (_text_of(e) for e in entries if e is not None and e.get("type") == "assistant")
+    return next((text for text in texts if text), "")
 
 
 def should_block(message: str, cwd: str | Path) -> bool:

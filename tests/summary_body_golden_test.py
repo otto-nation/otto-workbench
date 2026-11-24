@@ -155,7 +155,7 @@ def _threads():
 def _full_body():
     """One body reaching every branch that composes with the others.
 
-    Fourteen entries over every outcome bucket, rendering thirteen rows: three
+    Fourteen entries over every outcome bucket, rendering twelve rows: three
     are left to an earlier summary and render as notes instead, one is held
     back by a hand edit and renders as the published text rather than this
     round's, and two more arrive already rendered as `carried_over`. Every
@@ -215,9 +215,9 @@ def _full_body():
             CommentItem(id="t6", summary="which one?", reviewer="kgn",
                         file="f.py", line=5, reason="contested"),
         ],
-        # Folded into the same "need discussion" count as NEEDS_HUMAN by
-        # `_NEEDS_A_PERSON`, and rendered by the same `HumanReason` prose. Both
-        # buckets are here because the fold is the thing worth recording.
+        # DECLINED stays a table status (`N declined`); NEEDS_HUMAN is the
+        # Questions section, not a second row under the same heading. Both
+        # buckets are here because that split is the thing worth recording.
         declined=[
             CommentItem(id="t7", summary="premise is wrong", reviewer="amp",
                         file="g.py", line=8),

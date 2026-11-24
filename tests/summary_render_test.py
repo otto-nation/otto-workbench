@@ -90,15 +90,13 @@ class TestBuildSummaryBody:
             ]),
             cp, "owner/repo", 1, {},
         )
-        assert pr.summary_model.HumanReason.CONTESTED.prose in body
+        assert "### Questions" in body
+        assert "question" in body
+        assert pr.summary_model.HumanReason.CONTESTED.prose not in body
+        assert "need discussion" not in body
+        assert "| question" not in body
 
     def test_a_declined_entry_reaches_the_table_beside_needs_human(self, content):
-        """The coarsening `RoundContent.needs_a_person` owns, seen from the table.
-
-        `DECLINED` is a bucket of its own in the state file and shares the
-        reviewer-facing one with `NEEDS_HUMAN`; a renderer reading only the
-        latter would drop the entries the agent argued against.
-        """
         cp = pr.attribution.CommitPushResult(None, "no_changes", "")
         body = pr.summary_render.build_summary_body(
             content(
@@ -112,9 +110,12 @@ class TestBuildSummaryBody:
             ),
             cp, "owner/repo", 1, {},
         )
+        assert "### Questions" in body
         assert "question" in body
         assert "premise is wrong" in body
-        assert "2 need discussion" in body
+        assert "1 declined" in body
+        assert "need discussion" not in body
+        assert pr.summary_model.HumanReason.CONTESTED.prose not in body
 
     def test_empty_returns_no_table(self, content):
         cp = pr.attribution.CommitPushResult(None, "no_changes", "")
@@ -304,7 +305,10 @@ class TestEveryVerdictReachesTheTable:
             [True] * len(verdicts)
         )
         counts = next(ln for ln in body.split("\n") if "fixed**" in ln)
-        assert sum(int(n) for n in re.findall(r"\d+", counts)) == len(verdicts)
+        table_verdicts = [o for o in verdicts if o is not FixOutcome.NEEDS_HUMAN]
+        assert sum(int(n) for n in re.findall(r"\d+", counts)) == len(table_verdicts)
+        assert "need discussion" not in counts
+        assert "### Questions" in body
 
 
 # ── _summarize_comment_body ─────────────────────────────────────────────────
@@ -519,7 +523,9 @@ class TestDuplicateFindingRendersOnce:
 
     def test_another_line_is_another_finding(self, content):
         body = self._body(content, [self._thread()], [self._item(line=9)])
-        assert len(pr.summary_scope.table_rows(body)) == 2
+        assert len(pr.summary_scope.table_rows(body)) == 1
+        assert "### Questions" in body
+        assert "also drop the retry" in body
 
     def test_an_item_naming_no_line_falls_back_to_its_text(self, content):
         """No line is "cannot answer", and the text signal answers instead.
@@ -530,11 +536,15 @@ class TestDuplicateFindingRendersOnce:
         enough to carry the match.
         """
         body = self._body(content, [self._thread()], [self._item(line=0)])
-        assert len(pr.summary_scope.table_rows(body)) == 2
+        assert len(pr.summary_scope.table_rows(body)) == 1
+        assert "### Questions" in body
+        assert "also drop the retry" in body
 
     def test_another_reviewers_point_is_another_finding(self, content):
         body = self._body(content, [self._thread()], [self._item(reviewer="amp")])
-        assert len(pr.summary_scope.table_rows(body)) == 2
+        assert len(pr.summary_scope.table_rows(body)) == 1
+        assert "### Questions" in body
+        assert "also drop the retry" in body
 
     def test_two_real_threads_are_never_folded_together(self, content):
         threads = self._threads()
@@ -545,12 +555,15 @@ class TestDuplicateFindingRendersOnce:
             [self._thread(id="t2", summary="and rename it")],
             threads,
         )
-        assert len(pr.summary_scope.table_rows(body)) == 2
+        assert len(pr.summary_scope.table_rows(body)) == 1
+        assert "### Questions" in body
+        assert "and rename it" in body
 
     def test_an_item_with_no_thread_to_fold_into_still_renders(self, content):
         body = self._body(content, [], [self._item()], {})
         rows = pr.summary_scope.table_rows(body)
-        assert len(rows) == 1
+        assert len(rows) == 0
+        assert "### Questions" in body
         assert "#issuecomment-77" in body
 
     def test_the_folded_locations_are_where_the_folded_ids_were(self, content):
@@ -644,19 +657,24 @@ class TestALineLessItemFoldsOnItsText:
             content, [self._thread_entry()],
             [self._item(summary="this variable name is misleading to the reader")],
         )
-        assert len(pr.summary_scope.table_rows(body)) == 2
+        assert len(pr.summary_scope.table_rows(body)) == 1
+        assert "### Questions" in body
         assert "#issuecomment-77" in body
 
     def test_another_reviewers_restatement_is_another_finding(self, content):
         """Two people writing about one point are writing about two things."""
         body = self._body(
             content, [self._thread_entry()], [self._item(reviewer="amp")])
-        assert len(pr.summary_scope.table_rows(body)) == 2
+        assert len(pr.summary_scope.table_rows(body)) == 1
+        assert "### Questions" in body
+        assert "the retry loop is unbounded" in body
 
     def test_a_restatement_of_another_file_is_another_finding(self, content):
         body = self._body(
             content, [self._thread_entry()], [self._item(file="b.go")])
-        assert len(pr.summary_scope.table_rows(body)) == 2
+        assert len(pr.summary_scope.table_rows(body)) == 1
+        assert "### Questions" in body
+        assert "the retry loop is unbounded" in body
 
     def test_a_short_restatement_is_left_alone(self, content):
         """Below the length gate, containment is coincidence rather than evidence."""
@@ -664,7 +682,8 @@ class TestALineLessItemFoldsOnItsText:
             content, [self._thread_entry(summary="drop it")],
             [self._item(summary="drop it")],
         )
-        assert len(pr.summary_scope.table_rows(body)) == 2
+        assert len(pr.summary_scope.table_rows(body)) == 1
+        assert "### Questions" in body
 
     def test_the_reviewers_own_comment_body_can_carry_the_match(self, content):
         """Triage summarises a thread; the item is likelier to quote the comment."""
@@ -690,7 +709,8 @@ class TestALineLessItemFoldsOnItsText:
         """A line that answers "no" is an answer; only "" falls through."""
         body = self._body(
             content, [self._thread_entry()], [self._item(line=9)])
-        assert len(pr.summary_scope.table_rows(body)) == 2
+        assert len(pr.summary_scope.table_rows(body)) == 1
+        assert "### Questions" in body
 
     def test_the_folded_text_is_reported_for_the_carry_forward_step(
         self, content,

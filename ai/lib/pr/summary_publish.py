@@ -686,8 +686,9 @@ def render_deferred_summary(
 
     # A plain partition over every outcome, with nothing dropped: this renderer
     # is the only one --finish reaches, and the condition that routes here is
-    # the presence of needs_human, so omitting that bucket would omit exactly
-    # the threads that took the most operator judgment.
+    # the presence of needs_human. Those threads are the Questions section
+    # (and, after Task 2, the question reply), not table rows — omitting the
+    # bucket would drop the items that took the most operator judgment.
     #
     # _finish_deferred_work reconciles the snapshot against GitHub before
     # calling this, so a thread settled outside the fix pass has already left

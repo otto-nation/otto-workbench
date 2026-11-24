@@ -26,6 +26,7 @@ import core.text
 import git.client
 import pr.attribution
 import pr.comments_fix
+import pr.permalinks
 import pr.published_record
 import pr.summary_model
 import pr.summary_replies
@@ -35,6 +36,7 @@ from pr.fix import FixOutcome
 from pr.thread_models import CommentItem, ReportThread
 
 SUMMARY_MARKER = "<!-- pr-comments:summary -->"
+QUESTIONS_HEADING = "### Questions"
 
 # Re-exported rather than defined here: `pr.settlement` names a thread the same
 # way and sits below this module, so the one implementation lives in `core.text`
@@ -118,7 +120,8 @@ def build_summary_body(
     already_addressed = unfolded(FixOutcome.ALREADY_ADDRESSED)
     dismissed = unfolded(FixOutcome.DISMISSED)
     settled_elsewhere = unfolded(FixOutcome.SETTLED_ELSEWHERE)
-    needs_human = [e for e in content.needs_a_person if e.id not in folded]
+    open_questions = unfolded(FixOutcome.NEEDS_HUMAN)
+    declined = unfolded(FixOutcome.DECLINED)
     deferred = unfolded(FixOutcome.DEFERRED)
 
     rows: list[str] = []
@@ -241,11 +244,25 @@ def build_summary_body(
              FixOutcome.SETTLED_ELSEWHERE)
         for e in settled_elsewhere
     ])
-    human_count = sum([
+    declined_count = sum([
         emit(e, pr.summary_model.HumanReason.prose_for(e.reason), link_sha,
-             FixOutcome.NEEDS_HUMAN, open_thread=True)
-        for e in needs_human
+             FixOutcome.DECLINED)
+        for e in declined
     ])
+    shown_questions: list[CommentItem] = []
+    for entry in open_questions:
+        status = pr.summary_model.HumanReason.prose_for(entry.reason)
+        cells = pr.summary_row.row_cells_for(
+            entry, status, threads_by_id, repo, pr_number, link_sha, wt_path, host)
+        marked = pr.summary_row.marked_row(cells, status, FixOutcome.NEEDS_HUMAN)
+        if not scope.covers(
+            marked.key,
+            pr.summary_rounds.entry_activity_at(entry, threads_by_id, sources_at),
+            FixOutcome.NEEDS_HUMAN, entry.settled_by,
+        ):
+            open_earlier.append(marked.key)
+            continue
+        shown_questions.append(entry)
     deferred_count = sum([
         emit(e, deferred_status, link_sha, FixOutcome.DEFERRED) for e in deferred
     ])
@@ -270,7 +287,7 @@ def build_summary_body(
         FixOutcome.DISMISSED: dismissed_count,
         FixOutcome.SETTLED_ELSEWHERE: settled_count,
         FixOutcome.DEFERRED: deferred_count,
-        FixOutcome.NEEDS_HUMAN: human_count,
+        FixOutcome.DECLINED: declined_count,
     }, extras))
     table.append("")
 
@@ -279,6 +296,9 @@ def build_summary_body(
         table.append(pr.summary_model.TABLE_DIVIDER)
         table.extend(rows)
         table.append("")
+
+    table.extend(_render_questions(
+        shown_questions, threads_by_id, repo, pr_number, host))
 
     table.extend(_table_note(
         held_count, "row", "kept as published — the Action cell was written by "
@@ -312,6 +332,25 @@ def build_summary_body(
     parts.extend(_render_round_chain(chain))
 
     return "\n".join(parts)
+
+
+def _render_questions(
+    entries: list[CommentItem],
+    threads_by_id: dict[str, ReportThread],
+    repo: str,
+    pr_number: int,
+    host: str,
+) -> list[str]:
+    if not entries:
+        return []
+    lines = [QUESTIONS_HEADING, ""]
+    for entry in entries:
+        url = pr.permalinks.thread_permalink(
+            entry, threads_by_id, repo, pr_number, host)
+        label = entry.summary or "—"
+        lines.append(f"- [{label}]({url})" if url else f"- {label}")
+    lines.append("")
+    return lines
 
 
 def _table_note(count: int, noun: str, rest: str) -> list[str]:

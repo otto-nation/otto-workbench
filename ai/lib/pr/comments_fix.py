@@ -60,7 +60,7 @@ CLOSEOUT_COMMAND = "pr comments --finish --post"
 
 # The two status cells that decline to name a commit used to be spelled here,
 # for the reason STATUS_LABELS below still is. They now live on
-# `summary_model.ActionCell`, as RECONCILED and UNATTRIBUTED, beside every other
+# `summary_model.ActionCell`, as ADDRESSED_IN and UNATTRIBUTED, beside every other
 # Action-cell wording: they reach the published summary comment and nothing
 # else, so the summary vocabulary is where their one owner belongs. STATUS_LABELS
 # stays because it is the *counts* vocabulary, printed on the state dashboard as

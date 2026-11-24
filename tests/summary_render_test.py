@@ -390,7 +390,8 @@ class TestAddressedInResponseFraming:
 
     def _reply_body(self, entry, thread, wt_path, **kwargs):
         with patch.object(git.topology, "default_branch_cached", return_value="main"), \
-             patch("pr.comments.post_thread_reply", return_value=True) as post:
+             patch("pr.comments.post_thread_reply", return_value=True) as post, \
+             patch("git.push.holds", return_value=True):
             pr.thread_replies.post_already_addressed_replies(
                 [entry], {entry.id: thread}, "owner/repo", 42, wt_path, **kwargs,
             )

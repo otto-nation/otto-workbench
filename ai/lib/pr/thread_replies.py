@@ -55,6 +55,7 @@ import core.log
 import core.publishing
 from gh.pr_data import PRData, fetch_pr_data
 import git.client
+import git.push
 import pr.attribution
 import pr.comments
 import pr.context
@@ -522,6 +523,8 @@ def post_already_addressed_replies(
         # The line was read at HEAD, so that is the tree the link has to pin to;
         # the addressing commit answers "when", not "where".
         cite = entry.commit_sha or head_sha
+        if cite and not git.push.holds(wt_path, cite):
+            cite = ""
         if framing.in_response:
             parts = [f"{APPLIED_REPLY_PREFIX}: {entry.summary}"]
         elif cite:
@@ -530,7 +533,7 @@ def post_already_addressed_replies(
                 f"{ADDRESSED_REPLY_PREFIX}[`{cite}`]({commit_url}): {entry.summary}"
             ]
         else:
-            parts = [f"{ADDRESSED_REPLY_PREFIX}HEAD: {entry.summary}"]
+            parts = [f"{RETIRED_ADDRESSED_REPLY_PREFIX}: {entry.summary}"]
         # No evidence check: triage.downgrade_unsupported_verdicts already refused to
         # let an already_addressed verdict through without a citation that
         # resolves. Checking again here would only overrule it with a weaker

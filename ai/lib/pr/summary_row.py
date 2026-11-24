@@ -116,9 +116,9 @@ def fixed_status_for(
     # resolve. That is true of the row whatever the running pass did, so it is
     # answered before the pass-level text gets a say.
     if settled_outside_the_pass(entry, cp):
-        sha = attributed.sha or entry.commit_sha
-        if sha:
-            return ActionCell.addressed_in(sha, repo, host, verified=entry.verified)
+        # Do not reach past the resolver for entry.commit_sha: when that field
+        # is set and attributed.sha is empty, attribute_commit withheld the SHA
+        # because it is unpushed. Citing it here would 404.
         return ActionCell.UNATTRIBUTED
     if attributed.claim is pr.attribution.CommitClaim.PASS:
         return fixed_status_text(cp, repo, host)
@@ -147,7 +147,8 @@ def addressed_status_for(
         return ActionCell.UNATTRIBUTED
     if sha:
         return ActionCell.addressed_in(sha, repo, host, verified=verified)
-    return f"{ActionCell.ADDRESSED_IN}HEAD"
+    # No SHA to permalink. The opening is the cell; do not name HEAD unlinked.
+    return ActionCell.ADDRESSED_IN
 
 
 def row_cells_for(

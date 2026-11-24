@@ -271,7 +271,7 @@ class TestActionCellOutcome:
         cells += [ActionCell.deferred(i, u) for i, u in _DEFERRED_ARGS]
         cells += [pr.summary_model.HumanReason.prose_for(r) for r in (
             *(m.value for m in pr.summary_model.HumanReason), "wat_is_this", "")]
-        cells += [ActionCell.DISMISSED]
+        cells += [ActionCell.DISMISSED, ActionCell.OUTSIDE_THE_PASS]
         stale = [c for c in cells
                  if not isinstance(pr.summary_model._ActionVocabulary.matching(c), ActionCell)]
         assert stale == []
@@ -306,6 +306,14 @@ class TestActionCellOutcome:
         assert cell == ActionCell.addressed_in("9f2e1a0", "owner/repo")
         assert "(unverified)" not in cell
 
+    def test_a_row_with_no_sha_does_not_name_head(self):
+        cell = pr.summary_row.addressed_status_for(
+            pr.attribution.AddressedFraming(in_response=False),
+            sha="", repo="owner/repo",
+        )
+        assert cell == ActionCell.ADDRESSED_IN
+        assert "HEAD" not in cell
+
     def test_no_live_wording_is_unreachable_from_the_builders(self):
         """A member nobody emits is a retired wording still filed as live.
 
@@ -335,7 +343,7 @@ class TestActionCellOutcome:
             for r in (True, False)
         }
         # The three the renderer writes directly, and the five HumanReason names.
-        emitted |= {ActionCell.DISMISSED, ActionCell.DEFERRED}
+        emitted |= {ActionCell.DISMISSED, ActionCell.DEFERRED, ActionCell.OUTSIDE_THE_PASS}
         emitted |= {m.cell for m in pr.summary_model.HumanReason}
         assert set(ActionCell) - emitted == set()
 
@@ -443,6 +451,7 @@ class TestActionCellOutcome:
             "Fix pending": FixOutcome.FIXED,
             "Deferred": FixOutcome.DEFERRED,
             "Addressed in ": FixOutcome.ALREADY_ADDRESSED,
+            "Addressed outside the fix pass": FixOutcome.SETTLED_ELSEWHERE,
             "Dismissed (invalid)": FixOutcome.DISMISSED,
             "Contested — needs discussion": FixOutcome.NEEDS_HUMAN,
             "Conflicting reviewer feedback": FixOutcome.NEEDS_HUMAN,
@@ -464,7 +473,6 @@ class TestActionCellOutcome:
             "Fix committed and pushed": FixOutcome.FIXED,
             "Added to the PR description (no commit)": FixOutcome.FIXED,
             "Already addressed": FixOutcome.ALREADY_ADDRESSED,
-            "Addressed outside the fix pass": FixOutcome.SETTLED_ELSEWHERE,
         }
 
     def test_a_retired_wording_still_parses_and_is_not_emittable(self):
@@ -478,13 +486,14 @@ class TestActionCellOutcome:
             RetiredActionCell.IN_DESCRIPTION)
         assert "IN_DESCRIPTION" not in ActionCell.__members__
 
-    def test_a_row_settled_outside_the_pass_cites_the_tree(self):
-        """The Action is a commit, not a verdict that the pass could not name it."""
+    def test_a_row_settled_outside_the_pass_does_not_cite_an_unpushed_sha(self):
+        """attribute_commit withheld the SHA; the cell must not reach past it."""
         entry = CommentItem(id="t1", summary="s", file="a.py", line=1,
                             commit_sha="9f2e1a0")
-        cp = pr.attribution.CommitPushResult(None, CommitStatus.RECONCILED, "")
+        cp = pr.attribution.CommitPushResult("9f2e1a0", CommitStatus.RECONCILED, "")
         cell = pr.summary_row.fixed_status_for(entry, cp, "owner/repo")
-        assert cell == ActionCell.fixed_in("9f2e1a0", "owner/repo")
+        assert cell == ActionCell.UNATTRIBUTED
+        assert "9f2e1a0" not in cell
         assert pr.summary_model.action_outcome(cell) is FixOutcome.FIXED
 
     def test_a_row_with_no_action_cell_is_re_rendered(self):

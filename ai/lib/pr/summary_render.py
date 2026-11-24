@@ -162,7 +162,10 @@ def build_summary_body(
         """
         cells = pr.summary_row.row_cells_for(
             entry, status, threads_by_id, repo, pr_number, sha, wt_path, host)
-        outcome = entry.outcome or bucket
+        # Prefer the bucket this render chose over `entry.outcome`: an
+        # in-response already-addressed row publishes as FIXED so replay
+        # compares FIXED to FIXED rather than suppressing a wording change.
+        outcome = bucket
         marked = pr.summary_row.marked_row(cells, status, outcome)
         key = marked.key
         if not scope.covers(
@@ -215,7 +218,7 @@ def build_summary_body(
                 framing, sha=e.commit_sha or link_sha, repo=repo, host=host,
                 verified=e.verified),
             e.commit_sha or link_sha,
-            FixOutcome.ALREADY_ADDRESSED,
+            FixOutcome.FIXED if framing.in_response else FixOutcome.ALREADY_ADDRESSED,
         ))
         for e, framing in zip(already_addressed, addressed_framings, strict=True)
     ]
@@ -231,17 +234,12 @@ def build_summary_body(
     # Its own count, kept out of the fixed one. The row reports that the thread
     # is no longer owed, which is all its evidence supports: GitHub's resolve
     # button covers a reviewer who was answered or who withdrew the point as
-    # readily as one whose fix landed.
+    # readily as one whose fix landed. No SHA is named — resolution is not a
+    # claim about the tree.
     settled_count = sum([
-        emit(
-            e,
-            pr.summary_row.addressed_status_for(
-                pr.attribution.AddressedFraming(False),
-                sha=e.commit_sha or link_sha, repo=repo, host=host,
-                verified=e.verified),
-            e.commit_sha or link_sha,
-            FixOutcome.SETTLED_ELSEWHERE,
-        ) for e in settled_elsewhere
+        emit(e, pr.summary_model.ActionCell.OUTSIDE_THE_PASS, link_sha,
+             FixOutcome.SETTLED_ELSEWHERE)
+        for e in settled_elsewhere
     ])
     human_count = sum([
         emit(e, pr.summary_model.HumanReason.prose_for(e.reason), link_sha,

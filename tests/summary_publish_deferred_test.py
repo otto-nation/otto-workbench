@@ -186,7 +186,8 @@ class TestRenderDeferredSummary:
             review.closeout.finish_deferred_work(ctx, report, track=review.deferred_issue.TRACK_ALL)
         body = mock_post.call_args[0][2]
         assert "premise disputed" in body
-        assert "Addressed in" in body
+        assert ActionCell.OUTSIDE_THE_PASS in body
+        assert "Addressed in" not in body
         assert "need discussion" not in body
 
     def test_reconstructs_commit_link(self):
@@ -395,7 +396,8 @@ class TestSummaryUsesPerThreadCommit:
                           reason=RECONCILED_REASON),
             commit_sha="def5678", commit_status="pushed",
         )
-        assert ActionCell.ADDRESSED_IN in body
+        assert ActionCell.OUTSIDE_THE_PASS in body
+        assert ActionCell.ADDRESSED_IN not in body
         assert "fixed**" not in body
         assert "1 settled elsewhere" in body
 

@@ -312,8 +312,8 @@ class TestReadingATimestamp:
         assert pr.attribution.posix_seconds("") == 0.0
 
 
-class TestAnAlreadyAddressedRowCitesNoCommit:
-    """Line history dates the reading; it is never the commit a row cites."""
+class TestAnAlreadyAddressedRowCitesTheTree:
+    """Line history dates the reading; the row cites the tree, not that commit."""
 
     @pytest.fixture
     def fix_elsewhere(self, worktree, on_main):
@@ -352,7 +352,8 @@ class TestAnAlreadyAddressedRowCitesNoCommit:
         )
 
     def _reply(self, wt, entry):
-        with patch("pr.comments.post_thread_reply", return_value=True) as post:
+        with patch("pr.comments.post_thread_reply", return_value=True) as post, \
+             patch("git.push.holds", return_value=True):
             pr.thread_replies.post_already_addressed_replies(
                 [entry], {entry.id: _thread()}, "owner/repo", 42, wt,
             )
@@ -384,21 +385,32 @@ class TestAnAlreadyAddressedRowCitesNoCommit:
     ):
         fix_elsewhere.add_c3()
         body = self._summary(fix_elsewhere.path, self._entry(fix_elsewhere.path))
+        tree = _sha(fix_elsewhere.path)[:7]
         assert "Fixed in" in body
+        assert tree in body
+        assert fix_elsewhere.c1[:7] not in body
+        assert fix_elsewhere.c2[:7] not in body
         assert "1 fixed" in body
 
     def test_reply_and_row_agree_after_the_pass_touches_the_evidence_line(
         self, fix_elsewhere,
     ):
         reply = self._reply(fix_elsewhere.path, self._entry(fix_elsewhere.path))
-        fix_elsewhere.add_c3()
         row = self._summary(fix_elsewhere.path, self._entry(fix_elsewhere.path))
-        assert "Addressed in" in reply or reply.startswith("Applied:")
+        tree = _sha(fix_elsewhere.path)[:7]
+        assert tree in reply
+        assert tree in row
+        assert fix_elsewhere.c1[:7] not in reply
+        assert fix_elsewhere.c1[:7] not in row
+        assert reply.startswith("Applied:") or "Addressed in" in reply
         assert "Fixed in" in row or "Addressed in" in row
 
-    def test_code_predating_the_review_cites_no_commit(self, fix_elsewhere):
+    def test_code_predating_the_review_cites_the_tree(self, fix_elsewhere):
         body = self._reply(fix_elsewhere.path, self._entry(fix_elsewhere.path))
+        tree = _sha(fix_elsewhere.path)[:7]
         assert body.startswith("Addressed in")
+        assert tree in body
+        assert fix_elsewhere.c1[:7] not in body
 
 
 class TestLandingOfUnmovedHead:

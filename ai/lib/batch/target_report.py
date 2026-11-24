@@ -35,7 +35,8 @@ SCHEMA_VERSION = 1
 FINDING_KEYS = frozenset(f"{reason}:{step}"
                          for reason, step in pr.needs_person.FINDING_STEPS.items())
 SETTLE_NOTE = ("settle one thread with pr comments --settle ID --as "
-               + "|".join(o.value for o in pr.settlement.SETTLE_OUTCOMES))
+               + "|".join(pr.settlement.settle_label(o)
+                           for o in pr.settlement.SETTLE_OUTCOMES))
 
 
 def pr_key_of(state: pr.state.PRState | None) -> str | None:

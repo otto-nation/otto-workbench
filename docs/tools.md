@@ -1055,9 +1055,9 @@ Exit codes: `0` ok · `1` failure · `2` usage · `4` refused · `75` tempfail �
 | `--reply` `<thread-comment-or-review-id>` | Reply to one thread, editing our standing reply if it is still the last comment. Accepts a thread node ID, a comment ID, or a #discussion_r... URL. Also answers a review body — a review ID, rb-REVIEW_ID or rb-REVIEW_ID-N — in the summary comment, since GitHub cannot reply to one. A write like any other: needs --post to leave the machine. |
 | `--body-file` `<path>` | File holding the --reply body ('-' for stdin). |
 | `--settle` `<thread-id>` | Phase: record that you settled this thread by hand (repeatable). An id on the PR but not in the fix snapshot is recorded from the PR rather than refused. Writes local state and nothing else; --finish then replies, resolves and reports it like any other settled thread. |
-| `--as` `<fixed\|dismissed\|already_addressed>` | What --settle records (default: fixed). |
+| `--as` `<fixed\|dismissed\|addressed\|already_addressed>` | What --settle records (default: fixed). addressed is the name; already_addressed is the same outcome. |
 | `--reason` `<text>` | Why, for --settle --as dismissed — it becomes the reply the reviewer reads. |
-| `--commit` `<sha>` | The commit carrying a --settle --as fixed change, for a fix that landed away from the line the thread is anchored to. Without it nothing is inferred and the row is recorded with no commit cited. Applies to every --settle in the run, so a batch where only some threads need it takes two runs. |
+| `--commit` `<sha>` | The commit carrying a --settle --as fixed or --as addressed change. Without it nothing is inferred from line history. An addressed row with no SHA still cites HEAD at closeout. Applies to every --settle in the run, so a batch where only some threads need it takes two runs. |
 
 Exit codes: `0` ok · `1` failure · `2` usage · `75` tempfail · `130` cancelled — writes remotely; [contract](ai-automation.md#pr-comments-contract)
 

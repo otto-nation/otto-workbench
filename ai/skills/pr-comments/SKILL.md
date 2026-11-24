@@ -23,7 +23,7 @@ decision waits for it. A **clean** round does not: see "Clean rounds close
 themselves" below.
 
 **Clean rounds close themselves.** A round is clean when every item is `fixed`,
-`already_addressed`, or `dismissed`; `needs_human` and `deferred` are empty; no
+`addressed` (`already_addressed` in the JSON), or `dismissed`; `needs_human` and `deferred` are empty; no
 publishing hold applies; `commit_status` is `pushed` or `no_changes`; and no
 verify-gate verdict is broken or unverified. For a clean round, run
 `pr comments --finish --post` yourself right after the fix pass (or after the
@@ -194,7 +194,7 @@ rather than in this table. `planned` and `escalated` count staged-path work.
 | `needs_human` **(field)** | Threads and items requiring user input (contested, conflicting, questions, needs_discussion) — **also** where a fix the verify gate falsified ends up, carrying the gate's detail as its reason, where a `declined` outcome (below) travels, and where a staged-path hand-back lands with `escalation_note`. High-complexity valids go through the plan when `fix.plan_stage` is on, not this bucket |
 | `dismissed` **(field)** | Threads and items dismissed because the reviewer's premise was factually wrong. Triage's call, made before any agent looked |
 | `declined` (not a field) | The agent read the item and argued it should not be acted on. Distinct from `dismissed`: a considered disagreement rather than a triage verdict. A decline with no reason is recorded as `needs_human` instead. It has no key of its own — it is folded into `needs_human` above, and travels with it at every reviewer-facing surface |
-| `already_addressed` **(field)** | Threads and items the code already satisfies — agreement with the reviewer, not rejection. Triage checks the citation resolves, not that the behaviour is really there, so treat it as the least-checked verdict in the set |
+| `already_addressed` **(field)** | Threads and items the code already satisfies — agreement with the reviewer, not rejection. The published Action cell is `Addressed in <sha>`, never the words "already addressed". Triage checks the citation resolves, not that the behaviour is really there, so treat it as the least-checked verdict in the set |
 | `deferred` **(field)** | Threads the agent could not auto-fix in the current pass |
 | `skipped` (not a field) | Never attempted — the pass excludes items of this kind on sight before `fix_pass` is built, so no key here records them |
 | `settled_elsewhere` (not a field) | Resolved on GitHub with no reply of ours naming a verdict. Nothing is owed and nothing is claimed; it is a reconciliation result reported after `--finish`, not a key of this object |
@@ -348,17 +348,20 @@ pr comments --settle <thread_id> [--settle <thread_id> ...] [--repo-dir <PATH>]
 `--settle` is repeatable and records `fixed` by default. `--as dismissed
 --reason "<text>"` records that the user rejected the reviewer's point — the
 reason becomes the reply a thread's reviewer reads, so it is required — and
-`--as already_addressed` records that the code already satisfied it. For a
-review-body item the same reason lands as `Dismissed: <finding> — <reason>` in
-that review's summary block, creating the block even with no `--reply`. A
-fix-pass or triage dismissal with a justification (the reason, or the
-reasoning) writes the same `Dismissed:` line. Only these three; a thread still
-awaiting an answer is not settled and stays as it is.
+`--as addressed` records that the code already satisfied it (`--as
+already_addressed` is the same outcome). For a review-body item the same reason
+lands as `Dismissed: <finding> — <reason>` in that review's summary block,
+creating the block even with no `--reply`. A fix-pass or triage dismissal with
+a justification (the reason, or the reasoning) writes the same `Dismissed:`
+line. Only these three; a thread still awaiting an answer is not settled and
+stays as it is.
 
-A citation needs `--commit <sha>` — without it the row is recorded uncited.
+`--as addressed` and `--as fixed` cite `--commit <sha>` when it is passed.
+Without it nothing is inferred from line history; an addressed row with no
+stored SHA still cites HEAD at closeout, because the Action cell is a commit.
 `--commit` is taken only once the remote holds that SHA; if the run says the
 named commit is not on the remote, have the user push it first rather than
-letting the row publish uncited.
+letting the row publish a 404.
 
 Recording is not publishing: `--settle` writes local state only and refuses
 `--post` and every other phase flag. Read back what it reports — it names the

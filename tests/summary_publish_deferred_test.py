@@ -186,7 +186,8 @@ class TestRenderDeferredSummary:
             review.closeout.finish_deferred_work(ctx, report, track=review.deferred_issue.TRACK_ALL)
         body = mock_post.call_args[0][2]
         assert "premise disputed" in body
-        assert "Addressed outside the fix pass" in body
+        assert ActionCell.OUTSIDE_THE_PASS in body
+        assert "Addressed in" not in body
         assert "need discussion" not in body
 
     def test_reconstructs_commit_link(self):
@@ -379,7 +380,7 @@ class TestSummaryUsesPerThreadCommit:
             commit_sha="def5678", commit_status="pushed",
         )
         assert "Fixed in" not in body
-        assert "Addressed outside the fix pass" in body
+        assert ActionCell.UNATTRIBUTED in body or ActionCell.ADDRESSED_IN in body
 
     def test_a_thread_settled_on_the_forge_is_a_row_but_not_a_fix(self):
         """The bug this member exists for: resolution counted as work done.
@@ -395,7 +396,8 @@ class TestSummaryUsesPerThreadCommit:
                           reason=RECONCILED_REASON),
             commit_sha="def5678", commit_status="pushed",
         )
-        assert ActionCell.RECONCILED in body
+        assert ActionCell.OUTSIDE_THE_PASS in body
+        assert ActionCell.ADDRESSED_IN not in body
         assert "fixed**" not in body
         assert "1 settled elsewhere" in body
 
@@ -538,7 +540,7 @@ class TestFailedCommitIsNotReportedAsNoCommit:
              patch("pr.comments.post_issue_comment", return_value="u") as post:
             pr.summary_publish.render_deferred_summary(_make_state(fix), PRReport(), "owner/repo", 1, {})
         body = post.call_args[0][2]
-        assert ActionCell.RECONCILED in body
+        assert ActionCell.UNATTRIBUTED in body or "commit failed" in body
         assert "bbb2222" not in body
 
     def test_a_still_unmoved_head_keeps_the_failure(self):
@@ -574,10 +576,11 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
     """
 
     @staticmethod
-    def _outcome(tid, file, line, settled_by=SettledBy.PASS):
+    def _outcome(tid, file, line, settled_by=SettledBy.PASS, commit_sha=""):
         return ItemOutcome(
             id=tid, file=file, line=line, summary=f"{tid} summary",
             outcome=FixOutcome.FIXED, settled_by=settled_by,
+            commit_sha=commit_sha,
         )
 
     def _publish(self, threads):
@@ -607,9 +610,10 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
             # The comment item restating t1: same reviewer, same file:line, and
             # no thread of its own, so the renderer folds it into t1's row.
             self._outcome("ic-500-1", "f.go", 10),
-            # Settled outside the pass. Uncitable, but the cell says where the
-            # fix went, so it is no contradiction to report.
-            self._outcome("t3", "h.go", 30, settled_by=SettledBy.RECONCILIATION),
+            # Settled outside the pass. The cell names that tree, so it is no
+            # contradiction to report.
+            self._outcome("t3", "h.go", 30, settled_by=SettledBy.RECONCILIATION,
+                          commit_sha="ccc3333"),
         ]
 
     def test_the_count_equals_the_rows_rendered_without_a_claim(self, capsys):
@@ -630,16 +634,17 @@ class TestTheWarningCountsTheRowsThatReachTheReader:
         # Three rows carry no commit link; only two of them claim nothing. The
         # third says where its fix went, which is why "uncited" is the wrong
         # test and the rendered cell is the right one.
-        assert body.count(ActionCell.RECONCILED) == 1
+        assert "ccc3333" in body
         assert body.count(ActionCell.UNATTRIBUTED) == 2
         assert "2 fixed row(s) have no commit" in err
 
     def test_a_table_with_nothing_to_report_stays_quiet(self, capsys):
         """Every row folded or settled leaves no contradiction to warn about."""
         body = self._publish([
-            self._outcome("t3", "h.go", 30, settled_by=SettledBy.RECONCILIATION),
+            self._outcome("t3", "h.go", 30, settled_by=SettledBy.RECONCILIATION,
+                          commit_sha="ccc3333"),
         ])
-        assert ActionCell.RECONCILED in body
+        assert "ccc3333" in body
         assert "no commit to attribute" not in capsys.readouterr().err
 
 
@@ -710,9 +715,11 @@ class TestAlreadyAddressedInSummary:
         )
         body = pr.summary_render.build_summary_body(
             content(already_addressed=[entry]), cp, "owner/repo", 1, {},
+            head_sha="abc1234",
         )
-        assert "1 already addressed" in body
-        assert "Already addressed" in body
+        assert "1 addressed" in body
+        assert "Addressed in" in body
+        assert "abc1234" in body
         assert "inapplicable" not in body
 
     def test_deferred_summary_renders_already_addressed(self):
@@ -731,4 +738,4 @@ class TestAlreadyAddressedInSummary:
             pr.summary_publish.render_deferred_summary(state, PRReport(), "owner/repo", 1, {})
         body = mock_post.call_args[0][2]
         assert "drop the guard" in body
-        assert "Already addressed" in body
+        assert "Addressed in" in body

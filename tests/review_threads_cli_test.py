@@ -96,6 +96,11 @@ class TestSettleFlagParsing:
         args = cli.review_threads.build_parser().parse_args(["--settle", "t1", "--as", outcome])
         assert args.settle_as == outcome
 
+    def test_addressed_is_the_operator_facing_name(self):
+        args = cli.review_threads.build_parser().parse_args(
+            ["--settle", "t1", "--as", "addressed"])
+        assert args.settle_as == "addressed"
+
     def test_deferral_is_not_a_settlement(self):
         """--track already files work still owed; --settle records work finished."""
         with pytest.raises(SystemExit):

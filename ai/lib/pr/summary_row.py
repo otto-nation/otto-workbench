@@ -49,7 +49,9 @@ def fixed_status_text(
     if cp.status == CommitStatus.COMMIT_FAILED:
         return ActionCell.COMMIT_FAILED
     if cp.status == CommitStatus.RECONCILED:
-        return ActionCell.RECONCILED
+        if cp.sha:
+            return ActionCell.addressed_in(cp.sha, repo, host)
+        return ActionCell.UNATTRIBUTED
     # Both callers refuse to render an unpushed commit, so these four are not
     # reachable today. They are spelled out anyway: the fallback below reads as
     # "not done yet", which would be a false claim about a commit that exists
@@ -114,7 +116,10 @@ def fixed_status_for(
     # resolve. That is true of the row whatever the running pass did, so it is
     # answered before the pass-level text gets a say.
     if settled_outside_the_pass(entry, cp):
-        return ActionCell.RECONCILED
+        # Do not reach past the resolver for entry.commit_sha: when that field
+        # is set and attributed.sha is empty, attribute_commit withheld the SHA
+        # because it is unpushed. Citing it here would 404.
+        return ActionCell.UNATTRIBUTED
     if attributed.claim is pr.attribution.CommitClaim.PASS:
         return fixed_status_text(cp, repo, host)
     return ActionCell.UNATTRIBUTED
@@ -122,17 +127,28 @@ def fixed_status_for(
 
 def addressed_status_for(
     framing: pr.attribution.AddressedFraming,
+    *,
+    sha: str,
+    repo: str,
+    host: str = "",
+    verified: bool | None = None,
 ) -> str:
     """Status cell for one satisfied row, in the framing its history earned.
 
     A row whose code became true after the review comment reports as a fix,
     because that is what it was — the same question the thread reply asks, read
     through the same resolver so the table and the reply cannot say different
-    things about one thread. Neither cites a commit from line history.
+    things about one thread. Both cells name a commit: the tree that satisfies
+    the comment, not a line-history guess at who wrote the line.
     """
     if framing.in_response:
+        if sha:
+            return ActionCell.fixed_in(sha, repo, host, verified=verified)
         return ActionCell.UNATTRIBUTED
-    return ActionCell.ALREADY_ADDRESSED
+    if sha:
+        return ActionCell.addressed_in(sha, repo, host, verified=verified)
+    # No SHA to permalink. The opening is the cell; do not name HEAD unlinked.
+    return ActionCell.ADDRESSED_IN
 
 
 def row_cells_for(
@@ -226,13 +242,21 @@ def record_for_cells(
     )
 
 
-def marked_row(cells: list[str], status: str) -> MarkedRow:
+def marked_row(
+    cells: list[str], status: str, outcome: FixOutcome | None = None,
+) -> MarkedRow:
     """One row as it is published: rendered, and marked as ours.
 
     The key and the fold keys are derived from the cells before they become
     markdown, and written into the row so a later round reads them back instead
     of re-deriving them from text a person may have changed.
+
+    `outcome` is the bucket that rendered the row. The Action cell is a
+    citation (`Addressed in <sha>` / `Fixed in <sha>`) and several buckets
+    share a wording, so the marker cannot be recovered from the cell text.
     """
-    record = record_for_cells(cells, pr.summary_model.action_outcome(status))
+    record = record_for_cells(
+        cells, outcome if outcome is not None else pr.summary_model.action_outcome(status),
+    )
     line = pr.published_record.mark_row(render_row(cells), record, ours=True)
     return MarkedRow(line, record.key)

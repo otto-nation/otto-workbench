@@ -131,11 +131,12 @@ class FixOutcome(StrEnum):
     def may_cite_a_commit(self) -> bool:
         """Whether a commit SHA may be attached to this item and shown for it.
 
-        Attribution is a claim that a named commit carries this item's fix. An
-        outcome that never changed code has no commit to name, and stamping the
-        running pass's SHA onto one credits it with work it did not do.
+        A named SHA is the tree the row points the reviewer at. FIXED cites the
+        commit that carried the change; ALREADY_ADDRESSED cites the tree that
+        already satisfies the comment (HEAD, or `--commit`). Outcomes that are
+        not a claim about code — dismissed, deferred, a question — have none.
         """
-        return self is FixOutcome.FIXED
+        return self in (FixOutcome.FIXED, FixOutcome.ALREADY_ADDRESSED)
 
 
 class SettledBy(StrEnum):

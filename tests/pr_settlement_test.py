@@ -634,13 +634,22 @@ class TestOneCitationPerSettlement:
     def picked(self):
         return [ItemOutcome(id="c1"), ItemOutcome(id="c2")]
 
-    @pytest.mark.parametrize(
-        "kind", [FixOutcome.DISMISSED, FixOutcome.ALREADY_ADDRESSED],
-    )
-    def test_a_settlement_that_cites_nothing_never_asks_git(self, picked, kind):
+    def test_a_settlement_that_cites_nothing_never_asks_git(self, picked):
         with patch.object(pr.settlement, "resolve_settled_commit") as resolve:
-            assert pr.settlement.settled_commits(None, picked, kind, "") == ["", ""]
+            assert pr.settlement.settled_commits(
+                None, picked, FixOutcome.DISMISSED, "") == ["", ""]
         assert not resolve.called
+
+    def test_an_addressed_row_cites_a_commit(self, picked, tmp_path):
+        answers = [
+            pr.settlement.SettledCommit(sha="aaa1111"),
+            pr.settlement.SettledCommit(sha="bbb2222"),
+        ]
+        with patch.object(pr.settlement, "resolve_settled_commit", side_effect=answers):
+            shas = pr.settlement.settled_commits(
+                tmp_path, picked, FixOutcome.ALREADY_ADDRESSED, "HEAD",
+            )
+        assert shas == ["aaa1111", "bbb2222"]
 
     def test_a_fix_cites_one_commit_per_row(self, picked, tmp_path):
         answers = [

@@ -178,6 +178,8 @@ class TestHandWrittenRepliesSurvive:
     @pytest.mark.parametrize("body", [
         "Applied: fix it",
         "Applied: fix it\n\nResult is in [`a.py`](https://github.com/o/r/blob/s/a.py).",
+        "Addressed in [`abc1234`](https://github.com/o/r/commit/abc1234): fix it",
+        "Addressed in [`abc1234`](https://github.com/o/r/commit/abc1234): fix it\n\nCurrent behaviour is at https://x/#L1.",
         "Already addressed: fix it\n\nCurrent behaviour is at https://x/#L1.",
         "Already addressed in the current implementation: fix it",
         "Suggestion reviewed and determined to be inapplicable: nope",
@@ -218,6 +220,24 @@ class TestHandWrittenRepliesSurvive:
         """
         body = "Applied: fix it\n\nFixed in the follow-up branch rather than here."
         assert pr.thread_replies.is_generated_reply(body) is True
+
+    def test_an_unpushed_head_is_not_permalinked(self, tmp_path):
+        entry = CommentItem(id="t1", summary="use helper", file="src/app.py",
+                            commit_sha="abc1234")
+        with patch("pr.comments.post_thread_reply", return_value=True) as post, \
+             patch("git.push.holds", return_value=False), \
+             patch("git.client.head_sha", return_value="abc1234"), \
+             patch.object(pr.attribution.AddressingHistory, "framing",
+                          return_value=pr.attribution.AddressedFraming(False)), \
+             patch.object(pr.permalinks, "code_link", return_value=""):
+            pr.thread_replies.post_already_addressed_replies(
+                [entry], {"t1": ReportThread(id="t1", comments=[{"databaseId": 111}])},
+                "owner/repo", 42, tmp_path,
+            )
+        body = post.call_args[0][3]
+        assert "HEAD" not in body
+        assert "/commit/" not in body
+        assert "abc1234" not in body
 
     def test_the_addressed_fallback_body_is_recognised(self, tmp_path):
         """The single-paragraph shapes are built by a different branch of the

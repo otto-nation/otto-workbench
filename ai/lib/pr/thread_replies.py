@@ -55,6 +55,7 @@ import core.log
 import core.publishing
 from gh.pr_data import PRData, fetch_pr_data
 import git.client
+import git.push
 import pr.attribution
 import pr.comments
 import pr.context
@@ -65,7 +66,10 @@ from pr.thread_models import THREAD_ANCHOR, CommentItem, CommentSourceKind, Repo
 
 
 APPLIED_REPLY_PREFIX = "Applied"
-ADDRESSED_REPLY_PREFIX = "Already addressed"
+ADDRESSED_REPLY_PREFIX = "Addressed in "
+# Live PRs still carry replies this tool used to open with. Kept in the
+# generated set so reconciliation recognises them; no builder emits it.
+RETIRED_ADDRESSED_REPLY_PREFIX = "Already addressed"
 DISMISSED_REPLY_PREFIX = "Suggestion reviewed and determined to be inapplicable"
 DEFERRED_REPLY_PREFIX = "Deferred:"
 # A thread handed to a person rather than put off. Separate from the deferral
@@ -79,6 +83,7 @@ NEEDS_HUMAN_REPLY_PREFIX = "Needs a person:"
 GENERATED_REPLY_PREFIXES = (
     APPLIED_REPLY_PREFIX,
     ADDRESSED_REPLY_PREFIX,
+    RETIRED_ADDRESSED_REPLY_PREFIX,
     DISMISSED_REPLY_PREFIX,
     DEFERRED_REPLY_PREFIX,
     NEEDS_HUMAN_REPLY_PREFIX,
@@ -134,6 +139,7 @@ HANDWRITTEN_VERDICT_RE = re.compile(
 _PREFIX_VERDICT_OUTCOME: dict[str, FixOutcome] = {
     APPLIED_REPLY_PREFIX: FixOutcome.FIXED,
     ADDRESSED_REPLY_PREFIX: FixOutcome.ALREADY_ADDRESSED,
+    RETIRED_ADDRESSED_REPLY_PREFIX: FixOutcome.ALREADY_ADDRESSED,
     DISMISSED_REPLY_PREFIX: FixOutcome.DISMISSED,
 }
 # Same for the words a person types instead of a template. Kept in step with
@@ -497,9 +503,9 @@ def post_already_addressed_replies(
 
     Two readings, one body. A thread whose code was made to satisfy the
     reviewer after they asked gets the `Applied:` framing the `fixed` verdict
-    uses, because that is what happened to it; `Already addressed` is left for
-    code that predates the comment. Neither cites a commit from line history;
-    the permalink is current behaviour at HEAD.
+    uses, because that is what happened to it; `Addressed in <sha>` is left for
+    code that predates the comment. The SHA is the tree that satisfies it
+    (HEAD, or the entry's cited commit), not a line-history guess.
 
     `acted` says the caller landed the change itself — the unattributed half of
     `reply_to_fixed`, which is here for the linkless body and not because the
@@ -516,10 +522,18 @@ def post_already_addressed_replies(
         framing = history.framing(entry, threads_by_id.get(entry.id), acted=acted)
         # The line was read at HEAD, so that is the tree the link has to pin to;
         # the addressing commit answers "when", not "where".
+        cite = entry.commit_sha or head_sha
+        if cite and not git.push.holds(wt_path, cite):
+            cite = ""
         if framing.in_response:
             parts = [f"{APPLIED_REPLY_PREFIX}: {entry.summary}"]
+        elif cite:
+            commit_url = pr.permalinks.commit_permalink(repo, cite, host)
+            parts = [
+                f"{ADDRESSED_REPLY_PREFIX}[`{cite}`]({commit_url}): {entry.summary}"
+            ]
         else:
-            parts = [f"{ADDRESSED_REPLY_PREFIX}: {entry.summary}"]
+            parts = [f"{RETIRED_ADDRESSED_REPLY_PREFIX}: {entry.summary}"]
         # No evidence check: triage.downgrade_unsupported_verdicts already refused to
         # let an already_addressed verdict through without a citation that
         # resolves. Checking again here would only overrule it with a weaker
@@ -537,11 +551,6 @@ def post_already_addressed_replies(
         note = unverified_note(entry)
         if note:
             parts.append(note)
-        if len(parts) == 1 and not framing.in_response:
-            return (
-                f"{ADDRESSED_REPLY_PREFIX} in the current implementation: "
-                f"{entry.summary}"
-            )
         return "\n\n".join(parts)
 
     posted = _post_thread_replies(fixed, threads_by_id, repo, pr_number, body_fn)

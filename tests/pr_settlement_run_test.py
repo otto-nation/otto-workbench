@@ -69,15 +69,16 @@ class TestSettleFlagValidation:
     def test_a_reason_no_reply_renders_is_refused(self, kind):
         assert "--reason is only read" in pr.settlement.settle_flag_error(kind, "because", "")
 
-    @pytest.mark.parametrize("kind,reason", [
-        (FixOutcome.DISMISSED, "not our layer"),
-        (FixOutcome.ALREADY_ADDRESSED, ""),
-    ])
-    def test_a_commit_no_row_cites_is_refused(self, kind, reason):
-        assert "--commit is only read" in pr.settlement.settle_flag_error(kind, reason, "abc1234")
+    def test_a_commit_no_row_cites_is_refused(self):
+        assert "--commit is only read" in pr.settlement.settle_flag_error(
+            FixOutcome.DISMISSED, "not our layer", "abc1234")
 
     def test_a_fix_may_name_the_commit_that_carries_it(self):
         assert pr.settlement.settle_flag_error(FixOutcome.FIXED, "", "abc1234") == ""
+
+    def test_an_addressed_row_may_name_the_tree_that_satisfies_it(self):
+        assert pr.settlement.settle_flag_error(
+            FixOutcome.ALREADY_ADDRESSED, "", "abc1234") == ""
 
 
 class TestSettleTargets:
@@ -173,18 +174,20 @@ class TestRecordSettlement:
         pr.settlement.record_settlement(outcome, FixOutcome.FIXED, "", "")
         assert outcome.commit_sha == "abc1234"
 
-    @pytest.mark.parametrize("kind,reason", [
-        (FixOutcome.DISMISSED, "not our layer"),
-        (FixOutcome.ALREADY_ADDRESSED, ""),
-    ])
-    def test_an_ending_that_cites_no_commit_drops_the_one_it_replaced(
-        self, kind, reason,
-    ):
+    def test_a_dismissal_drops_the_commit_it_replaced(self):
         """"Dismissed, fixed in abc1234" is not a state the operator can have meant."""
         outcome = self._outcome()
         pr.settlement.record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
-        assert pr.settlement.record_settlement(outcome, kind, reason, "")
+        assert pr.settlement.record_settlement(
+            outcome, FixOutcome.DISMISSED, "not our layer", "")
         assert outcome.commit_sha == ""
+
+    def test_an_addressed_re_settle_keeps_the_tree_it_already_named(self):
+        outcome = self._outcome()
+        pr.settlement.record_settlement(outcome, FixOutcome.FIXED, "", "abc1234")
+        assert pr.settlement.record_settlement(
+            outcome, FixOutcome.ALREADY_ADDRESSED, "", "")
+        assert outcome.commit_sha == "abc1234"
 
 
 class TestResolveSettledCommit:
@@ -354,7 +357,7 @@ class TestRunSettle:
         with self._resolves_to(""):
             assert pr.settlement.run_settle(ctx, ["t1"], "fixed", "", "") == 0
         err = capsys.readouterr().err
-        assert ActionCell.RECONCILED in err
+        assert ActionCell.UNATTRIBUTED in err
         assert "--commit" in err
 
 

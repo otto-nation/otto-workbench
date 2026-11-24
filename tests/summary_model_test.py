@@ -229,15 +229,17 @@ class TestActionCellOutcome:
         """Every wording but one, which says the fix landed out of the pass's reach."""
         for status in CommitStatus:
             expected = (
-                FixOutcome.SETTLED_ELSEWHERE if status == CommitStatus.RECONCILED
+                FixOutcome.ALREADY_ADDRESSED if status == CommitStatus.RECONCILED
                 else FixOutcome.FIXED
             )
             cp = pr.attribution.CommitPushResult("9f2e1a0", status, "")
             assert pr.summary_model.action_outcome(
                 pr.summary_row.fixed_status_text(cp, "owner/repo")) is expected
             bare = pr.attribution.CommitPushResult(None, status, "")
+            # No SHA: reconciled falls back to UNATTRIBUTED, which is a fix cell.
+            bare_expected = FixOutcome.FIXED
             assert pr.summary_model.action_outcome(
-                pr.summary_row.fixed_status_text(bare, "owner/repo")) is expected
+                pr.summary_row.fixed_status_text(bare, "owner/repo")) is bare_expected
 
     def test_every_cell_a_status_builder_can_emit_is_a_live_wording(self):
         """A wording with no member reads as hand-written and freezes its row.
@@ -262,41 +264,55 @@ class TestActionCellOutcome:
         cells += [
             pr.summary_row.addressed_status_for(
                 pr.attribution.AddressedFraming(in_response=r),
+                sha="9f2e1a0", repo="owner/repo",
             )
             for r in (True, False)
         ]
         cells += [ActionCell.deferred(i, u) for i, u in _DEFERRED_ARGS]
         cells += [pr.summary_model.HumanReason.prose_for(r) for r in (
             *(m.value for m in pr.summary_model.HumanReason), "wat_is_this", "")]
-        cells += [ActionCell.DISMISSED, ActionCell.RECONCILED]
+        cells += [ActionCell.DISMISSED, ActionCell.OUTSIDE_THE_PASS]
         stale = [c for c in cells
                  if not isinstance(pr.summary_model._ActionVocabulary.matching(c), ActionCell)]
         assert stale == []
 
-    def test_a_satisfied_row_reported_as_a_fix_names_no_commit(self):
+    def test_a_satisfied_row_reported_as_a_fix_cites_the_tree(self):
         """The table and the reply beside it must not disagree.
 
         A satisfied row whose code postdates the comment reports as a fix and
-        counts as one, but already-addressed rows never cite a line-history
-        commit.
+        counts as one. The SHA is the tree that satisfies it, not a line-history
+        guess.
         """
         cell = pr.summary_row.addressed_status_for(
             pr.attribution.AddressedFraming(in_response=True),
+            sha="9f2e1a0", repo="owner/repo",
+        )
+        assert cell == ActionCell.fixed_in("9f2e1a0", "owner/repo")
+        assert "(unverified)" not in cell
+
+    def test_a_satisfied_row_with_no_tree_to_name_stays_unattributed(self):
+        cell = pr.summary_row.addressed_status_for(
+            pr.attribution.AddressedFraming(in_response=True),
+            sha="", repo="owner/repo",
         )
         assert cell == ActionCell.UNATTRIBUTED
-        assert "(unverified)" not in cell
 
-    def test_a_row_whose_code_predates_the_comment_never_hedges(self):
-        """Not a fix and not a claim the gate could check.
-
-        `ALREADY_ADDRESSED` is the reviewer's own observation confirmed; there
-        is nothing for a hedge to weaken, and adding one would caveat rows that
-        never ran a gate.
-        """
+    def test_a_row_whose_code_predates_the_comment_cites_the_tree(self):
+        """Not a fix — the Action is the commit that already satisfies it."""
         cell = pr.summary_row.addressed_status_for(
             pr.attribution.AddressedFraming(in_response=False),
+            sha="9f2e1a0", repo="owner/repo",
         )
+        assert cell == ActionCell.addressed_in("9f2e1a0", "owner/repo")
         assert "(unverified)" not in cell
+
+    def test_a_row_with_no_sha_does_not_name_head(self):
+        cell = pr.summary_row.addressed_status_for(
+            pr.attribution.AddressedFraming(in_response=False),
+            sha="", repo="owner/repo",
+        )
+        assert cell == ActionCell.ADDRESSED_IN
+        assert "HEAD" not in cell
 
     def test_no_live_wording_is_unreachable_from_the_builders(self):
         """A member nobody emits is a retired wording still filed as live.
@@ -322,11 +338,12 @@ class TestActionCellOutcome:
         emitted |= {
             pr.summary_model._ActionVocabulary.matching(
                 pr.summary_row.addressed_status_for(
-                    pr.attribution.AddressedFraming(in_response=r)))
+                    pr.attribution.AddressedFraming(in_response=r),
+                    sha="9f2e1a0", repo="owner/repo"))
             for r in (True, False)
         }
         # The three the renderer writes directly, and the five HumanReason names.
-        emitted |= {ActionCell.DISMISSED, ActionCell.DEFERRED, ActionCell.RECONCILED}
+        emitted |= {ActionCell.DISMISSED, ActionCell.DEFERRED, ActionCell.OUTSIDE_THE_PASS}
         emitted |= {m.cell for m in pr.summary_model.HumanReason}
         assert set(ActionCell) - emitted == set()
 
@@ -432,9 +449,9 @@ class TestActionCellOutcome:
             "Fix committed and pushed (could not reach the remote to confirm)":
                 FixOutcome.FIXED,
             "Fix pending": FixOutcome.FIXED,
-            "Addressed outside the fix pass": FixOutcome.SETTLED_ELSEWHERE,
             "Deferred": FixOutcome.DEFERRED,
-            "Already addressed": FixOutcome.ALREADY_ADDRESSED,
+            "Addressed in ": FixOutcome.ALREADY_ADDRESSED,
+            "Addressed outside the fix pass": FixOutcome.SETTLED_ELSEWHERE,
             "Dismissed (invalid)": FixOutcome.DISMISSED,
             "Contested — needs discussion": FixOutcome.NEEDS_HUMAN,
             "Conflicting reviewer feedback": FixOutcome.NEEDS_HUMAN,
@@ -455,6 +472,7 @@ class TestActionCellOutcome:
             "Fix committed locally": FixOutcome.FIXED,
             "Fix committed and pushed": FixOutcome.FIXED,
             "Added to the PR description (no commit)": FixOutcome.FIXED,
+            "Already addressed": FixOutcome.ALREADY_ADDRESSED,
         }
 
     def test_a_retired_wording_still_parses_and_is_not_emittable(self):
@@ -468,19 +486,15 @@ class TestActionCellOutcome:
             RetiredActionCell.IN_DESCRIPTION)
         assert "IN_DESCRIPTION" not in ActionCell.__members__
 
-    def test_the_reconciled_cell_reports_settled_elsewhere_from_a_fixed_row(self):
-        """What the cell reports is the member's to say, not the bucket's.
-
-        A FIXED-bucket builder renders this deliberately: the cell says the
-        work landed somewhere this run cannot name, which is what a
-        settled-elsewhere row says. Tying the outcome to the emitting bucket
-        would make the row read as a fix and contradict its own wording.
-        """
-        entry = CommentItem(id="t1", summary="s", file="a.py", line=1)
-        cp = pr.attribution.CommitPushResult(None, CommitStatus.RECONCILED, "")
+    def test_a_row_settled_outside_the_pass_does_not_cite_an_unpushed_sha(self):
+        """attribute_commit withheld the SHA; the cell must not reach past it."""
+        entry = CommentItem(id="t1", summary="s", file="a.py", line=1,
+                            commit_sha="9f2e1a0")
+        cp = pr.attribution.CommitPushResult("9f2e1a0", CommitStatus.RECONCILED, "")
         cell = pr.summary_row.fixed_status_for(entry, cp, "owner/repo")
-        assert cell == ActionCell.RECONCILED
-        assert pr.summary_model.action_outcome(cell) is FixOutcome.SETTLED_ELSEWHERE
+        assert cell == ActionCell.UNATTRIBUTED
+        assert "9f2e1a0" not in cell
+        assert pr.summary_model.action_outcome(cell) is FixOutcome.FIXED
 
     def test_a_row_with_no_action_cell_is_re_rendered(self):
         """A shape this renderer no longer produces is repaired, not frozen."""

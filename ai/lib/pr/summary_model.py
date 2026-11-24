@@ -499,10 +499,10 @@ class _ActionVocabulary(StrEnum):
     there is only the one place.
 
     `outcome` is what a cell carrying this opening *reports*, which is not the
-    same question as which bucket rendered it. `ActionCell.RECONCILED` is the
-    case that makes the distinction load-bearing — a FIXED row renders it
-    deliberately — so the outcome rides on the member and the bucket stays a
-    fact about the caller.
+    same question as which bucket rendered it. A FIXED row can render
+    `ADDRESSED_IN` when the pass cannot name the commit, so the outcome rides
+    on the member and the bucket stays a fact about the caller. The published
+    marker carries the bucket; the cell is the citation.
 
     Subclassing `StrEnum` rather than holding a table of dataclasses keeps the
     member set closed at class-definition time. A registry populated as modules
@@ -572,11 +572,11 @@ class ActionCell(_ActionVocabulary):
     cell compared against a cell reports a change that did not happen, and
     restates the row for the life of the PR.
 
-    The two members with a variable tail are built through `fixed_in` and
-    `deferred` rather than by interpolating a literal. Both write the member as
-    their opening, so a dynamic cell cannot carry a wording this enum has not
-    declared — which is the half of the invariant a sweep test used to be the
-    only guard for.
+    The members with a variable tail are built through `fixed_in`,
+    `addressed_in` and `deferred` rather than by interpolating a literal. Each
+    writes the member as its opening, so a dynamic cell cannot carry a wording
+    this enum has not declared — which is the half of the invariant a sweep
+    test used to be the only guard for.
 
     A wording no builder produces any more belongs in `RetiredActionCell`, not
     here: a published summary outlives the code that wrote it, and dropping an
@@ -595,13 +595,9 @@ class ActionCell(_ActionVocabulary):
         "Fix committed and pushed (could not reach the remote to confirm)",
         FixOutcome.FIXED)
     PENDING = ("Fix pending", FixOutcome.FIXED)
-    # Not FIXED, though a fixed row can render it: the cell says the work landed
-    # somewhere this run cannot name, which is the same thing a settled-elsewhere
-    # row says. Both sides of the comparison read the cell, so a fixed row
-    # reading back as this one is not a change and does not restate the row.
-    RECONCILED = ("Addressed outside the fix pass", FixOutcome.SETTLED_ELSEWHERE)
     DEFERRED = ("Deferred", FixOutcome.DEFERRED)
-    ALREADY_ADDRESSED = ("Already addressed", FixOutcome.ALREADY_ADDRESSED)
+    ADDRESSED_IN = ("Addressed in ", FixOutcome.ALREADY_ADDRESSED)
+    OUTSIDE_THE_PASS = ("Addressed outside the fix pass", FixOutcome.SETTLED_ELSEWHERE)
     DISMISSED = ("Dismissed (invalid)", FixOutcome.DISMISSED)
     CONTESTED = ("Contested — needs discussion", FixOutcome.NEEDS_HUMAN)
     CONFLICTING = ("Conflicting reviewer feedback", FixOutcome.NEEDS_HUMAN)
@@ -628,6 +624,19 @@ class ActionCell(_ActionVocabulary):
         behaviour and no gate could say more than they did.
         """
         cell = f"{cls.FIXED_IN}[`{sha}`]({pr.permalinks.commit_permalink(repo, sha, host)})"
+        return f"{cell} (unverified)" if verified is False else cell
+
+    @classmethod
+    def addressed_in(
+        cls, sha: str, repo: str, host: str = "", *, verified: bool | None = None,
+    ) -> str:
+        """The status cell that names the tree that already satisfies a row.
+
+        Same shape as `fixed_in`: the Action is a commit, not a verdict word.
+        The hedge is a suffix for the same reason it is on `fixed_in` — so
+        `matching` still reads the opening as ADDRESSED_IN.
+        """
+        cell = f"{cls.ADDRESSED_IN}[`{sha}`]({pr.permalinks.commit_permalink(repo, sha, host)})"
         return f"{cell} (unverified)" if verified is False else cell
 
     @classmethod
@@ -672,6 +681,7 @@ class RetiredActionCell(_ActionVocabulary):
     COMMITTED_LOCALLY = ("Fix committed locally", FixOutcome.FIXED)
     COMMITTED_AND_PUSHED = ("Fix committed and pushed", FixOutcome.FIXED)
     IN_DESCRIPTION = ("Added to the PR description (no commit)", FixOutcome.FIXED)
+    ALREADY_ADDRESSED = ("Already addressed", FixOutcome.ALREADY_ADDRESSED)
 
 
 class HumanReason(Enum):

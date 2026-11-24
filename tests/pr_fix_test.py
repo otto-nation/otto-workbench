@@ -73,10 +73,10 @@ def test_only_a_fix_counts_as_one():
     assert counted == {pr.fix.FixOutcome.FIXED}
 
 
-def test_only_a_fix_may_name_a_commit():
-    """Stamping a SHA on anything else credits a commit with work it lacks."""
+def test_a_fix_or_an_addressed_row_may_name_a_commit():
+    """The SHA is the tree the row points at, not a claim the pass wrote it."""
     citing = {o for o in pr.fix.FixOutcome if o.may_cite_a_commit}
-    assert citing == {pr.fix.FixOutcome.FIXED}
+    assert citing == {pr.fix.FixOutcome.FIXED, pr.fix.FixOutcome.ALREADY_ADDRESSED}
 
 
 def test_a_thread_settled_on_the_forge_is_neither_fixed_nor_attributable():

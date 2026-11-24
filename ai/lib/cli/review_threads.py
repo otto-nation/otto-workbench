@@ -255,16 +255,18 @@ def build_parser() -> argparse.ArgumentParser:
                              "replies, resolves and reports it like any other "
                              "settled thread")
     parser.add_argument("--as", dest="settle_as", default=FixOutcome.FIXED.value,
-                        choices=[o.value for o in pr.settlement.SETTLE_OUTCOMES],
-                        help="What --settle records (default: fixed)")
+                        choices=list(pr.settlement.SETTLE_AS),
+                        help="What --settle records (default: fixed). "
+                             "addressed is the name; already_addressed is the "
+                             "same outcome")
     parser.add_argument("--reason", metavar="TEXT",
                         help="Why, for --settle --as dismissed — it becomes the "
                              "reply the reviewer reads")
     parser.add_argument("--commit", metavar="SHA",
-                        help="The commit carrying a --settle --as fixed change, "
-                             "for a fix that landed away from the line the thread "
-                             "is anchored to. Without it nothing is inferred and the row "
-                             "is recorded with no commit cited. "
+                        help="The commit carrying a --settle --as fixed or "
+                             "--as addressed change. Without it nothing is "
+                             "inferred from line history. An addressed row "
+                             "with no SHA still cites HEAD at closeout. "
                              "Applies to every --settle in the run, so a batch "
                              "where only some threads need it takes two runs")
     add_trail_args(parser)

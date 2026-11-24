@@ -292,7 +292,7 @@ class TestAddressingCommitIsPerLine:
         with patch.object(git.topology, "default_branch_cached", return_value="main"):
             assert pr.attribution.find_addressing_commit(branch.path, "a.py", 99) is None
 
-    def test_two_threads_on_one_file_cite_no_commit(self, branch):
+    def test_two_threads_on_one_file_cite_the_tree(self, branch):
         entries = [
             CommentItem(id="t1", summary="line one", file="a.py", line=1),
             CommentItem(id="t2", summary="line two", file="a.py", line=2),
@@ -302,14 +302,14 @@ class TestAddressingCommitIsPerLine:
             "t2": ReportThread(id="t2", comments=[{"databaseId": 222}]),
         }
         with patch.object(git.topology, "default_branch_cached", return_value="main"), \
-             patch("pr.comments.post_thread_reply", return_value=True) as post:
+             patch("pr.comments.post_thread_reply", return_value=True) as post, \
+             patch("git.push.holds", return_value=True):
             pr.thread_replies.post_already_addressed_replies(
                 entries, threads_by_id, "owner/repo", 42, branch.path,
             )
         bodies = [call[0][3] for call in post.call_args_list]
         assert len(bodies) == 2
-        assert all("/commit/" not in body and "Addressed in" not in body
-                   for body in bodies)
+        assert all("Addressed in" in body and "/commit/" in body for body in bodies)
 
 
 # ── attribution survives a history rewrite ─────────────────────────────────
@@ -398,7 +398,7 @@ class TestAttributionSurvivesARebase:
             history = pr.attribution.AddressingHistory(wt_path)
             return history.framing(entry, self._thread(entry.id))
 
-    def test_a_stale_line_coordinate_cites_no_commit(self, rebased):
+    def test_a_stale_line_coordinate_does_not_cite_line_history(self, rebased):
         """The recorded line now points at code the row was never about."""
         entry = CommentItem(id="t1", summary="guard it", file="moved.py",
                             line=1, read_sha=rebased.read)
@@ -442,8 +442,8 @@ class TestAttributionSurvivesARebase:
             )
         assert f"Fixed in [`{rebased.base}`]" not in body
         assert "Fixed in" not in body
-        assert "Already addressed" in body
-        assert "1 already addressed" in body
+        assert "Addressed in" in body
+        assert "1 addressed" in body
 
 
 class TestRowsResolveTheirOwnCommitAcrossHandLandedWork:
@@ -583,7 +583,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
             {"t1": _reviewed("t1", 111)},
         )
         assert hand_landed_branch.first not in body
-        assert ActionCell.RECONCILED in body
+        assert ActionCell.ADDRESSED_IN in body or ActionCell.UNATTRIBUTED in body
 
     def test_a_settled_row_declines_it_too(self, content, hand_landed_branch):
         """`--settle` already promises this cell when no commit resolves."""
@@ -593,7 +593,7 @@ class TestRowsTheFixPassDidNotLandCiteNoCommit:
             {"t1": _reviewed("t1", 111)},
         )
         assert hand_landed_branch.first not in body
-        assert ActionCell.RECONCILED in body
+        assert ActionCell.ADDRESSED_IN in body or ActionCell.UNATTRIBUTED in body
 
     def test_the_reply_declines_the_commit_the_table_declined(
         self, hand_landed_branch,

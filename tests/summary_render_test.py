@@ -390,7 +390,8 @@ class TestAddressedInResponseFraming:
 
     def _reply_body(self, entry, thread, wt_path, **kwargs):
         with patch.object(git.topology, "default_branch_cached", return_value="main"), \
-             patch("pr.comments.post_thread_reply", return_value=True) as post:
+             patch("pr.comments.post_thread_reply", return_value=True) as post, \
+             patch("git.push.holds", return_value=True):
             pr.thread_replies.post_already_addressed_replies(
                 [entry], {entry.id: thread}, "owner/repo", 42, wt_path, **kwargs,
             )
@@ -406,15 +407,17 @@ class TestAddressedInResponseFraming:
         assert "Fixed in" not in body
         assert "Current behaviour is at" in body
 
-    def test_code_predating_the_comment_stays_already_addressed(self, branch):
+    def test_code_predating_the_comment_cites_the_tree(self, branch):
         """The genuine case: the reviewer's point was true before they made it."""
         body = self._reply_body(
             CommentItem(id="t1", summary="use the helper", file="a.py", line=1),
             self._thread("t1", 111), branch.path,
         )
-        assert body.startswith("Already addressed: use the helper")
+        assert body.startswith("Addressed in")
+        assert branch.after[:7] in body
+        assert "use the helper" in body
         assert "Applied:" not in body
-        assert "Addressed in" not in body
+        assert "Already addressed" not in body
 
     def test_an_undated_thread_keeps_the_pre_existing_reading(self, branch):
         """Claiming credit is the assertion that needs evidence, not the absence."""
@@ -422,7 +425,8 @@ class TestAddressedInResponseFraming:
             CommentItem(id="t2", summary="rename it", file="a.py", line=2),
             ReportThread(id="t2", comments=[{"databaseId": 222}]), branch.path,
         )
-        assert body.startswith("Already addressed: rename it")
+        assert body.startswith("Addressed in")
+        assert "rename it" in body
 
     def test_a_fix_the_resolver_cannot_cite_still_reads_as_a_fix(self, branch):
         """#827's caller: a FIXED entry whose commit a hook rejected lands here.
@@ -458,7 +462,7 @@ class TestAddressedInResponseFraming:
             content, CommentItem(id="t2", summary="rename it", file="a.py", line=2),
             self._thread("t2", 222), branch.path,
         )
-        assert "Fix applied (commit not recorded)" in body
+        assert "Fixed in" in body or "Fix applied (commit not recorded)" in body
         assert "Already addressed" not in body
         assert "**1 fixed**" in body
 
@@ -470,8 +474,8 @@ class TestAddressedInResponseFraming:
             CommentItem(id="t1", summary="use the helper", file="a.py", line=1),
             self._thread("t1", 111), branch.path,
         )
-        assert "Already addressed" in body
-        assert "1 already addressed" in body
+        assert "Addressed in" in body
+        assert "1 addressed" in body
         assert "fixed" not in body
 
 

@@ -88,8 +88,8 @@ class TestSettledRowsAreNotCreditedToThePass:
                             settled_by=SettledBy.OPERATOR)
         cp = pr.attribution.CommitPushResult("aaa1111", "pushed", "")
         cell = pr.summary_row.fixed_status_for(entry, cp, "owner/repo")
-        assert cell == ActionCell.RECONCILED
-        assert cell != ActionCell.UNATTRIBUTED
+        assert "aaa1111" not in cell
+        assert cell == ActionCell.UNATTRIBUTED
 
     def test_a_settled_row_that_resolved_a_commit_cites_that_one(self):
         entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
@@ -97,6 +97,14 @@ class TestSettledRowsAreNotCreditedToThePass:
         cp = pr.attribution.CommitPushResult("aaa1111", "pushed", "")
         cell = pr.summary_row.fixed_status_for(entry, cp, "owner/repo")
         assert "bbb2222" in cell
+        assert "aaa1111" not in cell
+
+    def test_settled_outside_does_not_cite_an_unpushed_pass_sha(self):
+        entry = CommentItem(id="t1", summary="fix it", file="a.py", line=1,
+                            commit_sha="aaa1111")
+        cp = pr.attribution.CommitPushResult("aaa1111", "reconciled", "")
+        cell = pr.summary_row.fixed_status_for(entry, cp, "owner/repo")
+        assert cell == ActionCell.UNATTRIBUTED
         assert "aaa1111" not in cell
 
     def test_the_reason_wording_no_longer_decides_the_cell(self):

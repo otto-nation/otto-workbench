@@ -41,16 +41,17 @@ class TestPostAlreadyAddressedReplies:
         with (
             patch("pr.comments.post_thread_reply", return_value=True) as mock_reply,
             patch.object(pr.attribution, "find_addressing_commit", return_value="abc1234def5678"),
+            patch("git.push.holds", return_value=True),
+            patch("git.client.head_sha", return_value="deadbee"),
         ):
             count = pr.thread_replies.post_already_addressed_replies(
                 fixed, threads_by_id, "owner/repo", 42, tmp_path,
             )
         assert count == 1
         body = mock_reply.call_args[0][3]
-        assert "Already addressed" in body
+        assert "Addressed in" in body
         assert "use helper" in body
-        assert "abc1234" not in body
-        assert "owner/repo/commit/abc1234def5678" not in body
+        assert "abc1234def5678" not in body
 
     def test_fallback_when_no_commit_found(self, tmp_path):
         fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py")]
@@ -65,7 +66,8 @@ class TestPostAlreadyAddressedReplies:
         assert count == 1
         body = mock_reply.call_args[0][3]
         assert "Already addressed" in body
-        assert "commit" not in body
+        assert "HEAD" not in body
+        assert "abc1234" not in body
 
     def test_no_comments_skips(self, tmp_path):
         fixed = [CommentItem(id="t1", summary="use helper", file="src/app.py")]

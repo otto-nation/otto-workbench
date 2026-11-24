@@ -59,6 +59,7 @@ STATUSES = [
     "Fixed in [`9f2e1a0`](https://github.com/owner/repo/commit/9f2e1a0)",
     "Deferred",
     "Deferred → [ENG-1](https://linear.app/i/ENG-1)",
+    "Addressed in [`9f2e1a0`](https://github.com/owner/repo/commit/9f2e1a0)",
     "Already addressed",
     "Dismissed (invalid)",
     "Addressed outside the fix pass",

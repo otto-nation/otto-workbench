@@ -56,7 +56,7 @@ def test_every_finding_with_its_command():
 
 def test_the_settle_note_names_the_settle_verdicts():
     assert batch.target_report.SETTLE_NOTE == (
-        "settle one thread with pr comments --settle ID --as fixed|dismissed|already_addressed")
+        "settle one thread with pr comments --settle ID --as fixed|dismissed|addressed")
 
 
 def test_no_worktree_means_no_commands_and_says_so():

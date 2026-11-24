@@ -23,6 +23,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 import core.text
+import git.client
 import pr.attribution
 import pr.comments_fix
 import pr.published_record
@@ -128,13 +129,17 @@ def build_summary_body(
     settled_earlier: list[str] = []
     open_earlier: list[str] = []
     # The fix commit is the tree the table describes; fall back to the reviewed
-    # head when nothing was committed.
+    # head when nothing was committed, then to HEAD of the worktree so an
+    # addressed row always has a SHA to cite.
     link_sha = cp.sha or head_sha
+    if not link_sha and wt_path is not None:
+        link_sha = git.client.head_sha(short=True, cwd=wt_path) or ""
     deferred_status = pr.summary_model.ActionCell.deferred(
         deferred_issue_id, deferred_issue_url)
 
     def emit(
-        entry: CommentItem, status: str, sha: str, *, open_thread: bool = False,
+        entry: CommentItem, status: str, sha: str, bucket: FixOutcome,
+        *, open_thread: bool = False,
     ) -> bool:
         """Append this entry's row, or the published one a human rewrote.
 
@@ -157,11 +162,15 @@ def build_summary_body(
         """
         cells = pr.summary_row.row_cells_for(
             entry, status, threads_by_id, repo, pr_number, sha, wt_path, host)
-        marked = pr.summary_row.marked_row(cells, status)
+        # Prefer the bucket this render chose over `entry.outcome`: an
+        # in-response already-addressed row publishes as FIXED so replay
+        # compares FIXED to FIXED rather than suppressing a wording change.
+        outcome = bucket
+        marked = pr.summary_row.marked_row(cells, status, outcome)
         key = marked.key
         if not scope.covers(
             key, pr.summary_rounds.entry_activity_at(entry, threads_by_id, sources_at),
-            pr.summary_model.action_outcome(status), entry.settled_by,
+            outcome, entry.settled_by,
         ):
             (open_earlier if open_thread else settled_earlier).append(key)
             return False
@@ -195,16 +204,21 @@ def build_summary_body(
                 e, cp, repo, history, threads_by_id.get(e.id), host),
             pr.attribution.attribute_commit(
                 e, cp, history, threads_by_id.get(e.id)).sha or link_sha,
+            FixOutcome.FIXED,
         )
         for e in fixed
     ])
-    # link_sha, not a line-history commit: already-addressed rows cite no
-    # commit, and the file cell's line number was read at HEAD.
+    # The cited SHA is the tree that satisfies the comment: an operator's
+    # `--commit` when they named one, otherwise the same HEAD the file cell
+    # permalinks against. Line history is not asked.
     addressed_shown = [
         (framing, emit(
             e,
-            pr.summary_row.addressed_status_for(framing),
-            link_sha,
+            pr.summary_row.addressed_status_for(
+                framing, sha=e.commit_sha or link_sha, repo=repo, host=host,
+                verified=e.verified),
+            e.commit_sha or link_sha,
+            FixOutcome.FIXED if framing.in_response else FixOutcome.ALREADY_ADDRESSED,
         ))
         for e, framing in zip(already_addressed, addressed_framings, strict=True)
     ]
@@ -215,20 +229,26 @@ def build_summary_body(
         1 for f, shown in addressed_shown if shown and not f.in_response
     )
     dismissed_count = sum([
-        emit(e, pr.summary_model.ActionCell.DISMISSED, link_sha) for e in dismissed
+        emit(e, pr.summary_model.ActionCell.DISMISSED, link_sha, FixOutcome.DISMISSED) for e in dismissed
     ])
     # Its own count, kept out of the fixed one. The row reports that the thread
     # is no longer owed, which is all its evidence supports: GitHub's resolve
     # button covers a reviewer who was answered or who withdrew the point as
-    # readily as one whose fix landed.
+    # readily as one whose fix landed. No SHA is named — resolution is not a
+    # claim about the tree.
     settled_count = sum([
-        emit(e, pr.summary_model.ActionCell.RECONCILED, link_sha) for e in settled_elsewhere
+        emit(e, pr.summary_model.ActionCell.OUTSIDE_THE_PASS, link_sha,
+             FixOutcome.SETTLED_ELSEWHERE)
+        for e in settled_elsewhere
     ])
     human_count = sum([
-        emit(e, pr.summary_model.HumanReason.prose_for(e.reason), link_sha, open_thread=True)
+        emit(e, pr.summary_model.HumanReason.prose_for(e.reason), link_sha,
+             FixOutcome.NEEDS_HUMAN, open_thread=True)
         for e in needs_human
     ])
-    deferred_count = sum([emit(e, deferred_status, link_sha) for e in deferred])
+    deferred_count = sum([
+        emit(e, deferred_status, link_sha, FixOutcome.DEFERRED) for e in deferred
+    ])
     rows.extend(carried_over)
     held_count = len(held)
     carried_count = len(carried_over)

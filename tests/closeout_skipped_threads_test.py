@@ -48,6 +48,42 @@ def test_unanswered_already_addressed_drains_without_a_pending_flag(
     mock_resolve.assert_called_once()
 
 
+def test_an_unverified_addressed_thread_does_not_keep_closeout_owed(
+    publishing_on, capsys,
+):
+    """A hedge must not resolve, and that skip is not a failed mutation.
+
+    resolve_fixed_threads never calls GitHub when verified is False. Treating
+    the leftover open thread as RESOLVE_FAILED left pr status showing
+    closeout owed until someone resolved the thread this change forbids
+    resolving.
+    """
+    fix = _fix(
+        items=[ItemOutcome(
+            id="t1", outcome=FixOutcome.ALREADY_ADDRESSED,
+            summary="already done", file="x.py", line=1,
+            verified=False, verify_detail="cannot tell from this tree",
+        )],
+        commit_status="no_changes",
+        replies_pending=False,
+    )
+    threads_by_id = {"t1": _thread()}
+    state = _make_state(fix)
+    with patch.object(git.client, "head_sha", return_value="deadbee"), \
+            patch.object(pr.attribution, "find_addressing_commit", return_value=None), \
+            patch("pr.comments.post_thread_reply", return_value=True) as mock_reply, \
+            patch("pr.comments.resolve_thread") as mock_resolve:
+        review.closeout.post_pending_fix_replies(
+            state, "owner/repo", 1, threads_by_id)
+    mock_reply.assert_called_once()
+    mock_resolve.assert_not_called()
+    err = capsys.readouterr().err
+    assert "t1: left open — unverified" in err
+    assert "resolve failed" not in err
+    assert fix.replies_pending is False
+    assert threads_by_id["t1"].is_resolved is False
+
+
 def test_a_failed_resolve_keeps_closeout_owed(publishing_on, capsys):
     fix = _fix(
         items=[ItemOutcome(

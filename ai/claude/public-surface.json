@@ -20,6 +20,7 @@
     "command:dream-scan",
     "command:dream-verify",
     "command:eval-models",
+    "command:finish-guard",
     "command:otto-log",
     "command:otto-mcp-server",
     "command:otto-queue",

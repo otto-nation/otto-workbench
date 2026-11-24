@@ -61,6 +61,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `claude-bash-guard` | PreToolUse hook for the Bash tool — blocks command shapes that trigger unsuppressible permission prompts |
 | `claude-edit-guard` | PreToolUse hook for Edit/Write — blocks edits on main/master unless gitignored, and edits to a tree a validator holds |
 | `claude-session-lock` | Session hooks that record this session as editing its worktree — what stops an unattended fix pass committing over it |
+| `finish-guard` | Stop hook — blocks a turn that ends by offering to open a PR instead of opening it |
 | `reuse-mode-tracker` | Track /reuse lite|full|ultra commands via UserPromptSubmit hook |
 | `reuse-session-start` | SessionStart hook — inject reuse level and ceiling scan nudge |
 | `reuse-subagent-start` | SubagentStart hook — inject reuse level into spawned subagents |

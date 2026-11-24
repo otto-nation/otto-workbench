@@ -8714,6 +8714,19 @@ latest ``session_info`` seen. ``iter_entries(path)`` yields every entry, skippin
 the header and lines that do not parse. ``find_session(root, key)`` takes an
 absolute path or a session id.
 
+### pr/finish_offer.py
+
+Whether a turn ended by offering to open a PR instead of opening it.
+
+``offers_pr(message)`` is true when *message* asks or invites the user to have a
+PR opened ("want me to open the draft PR", "say if you want the PR") — the
+ending ``ai/guidelines/rules/general.md`` § Workflow forbids once a branch's
+implementation is complete. ``last_assistant_text(transcript)`` is the text of
+the last assistant message in a Claude Code transcript. ``should_block(message,
+cwd)`` is true when the turn offered a PR while *cwd* is on a feature branch with
+no open PR; a branch that is detached, is the default branch, or whose PR lookup
+failed is never blocked, because the guard only holds a rule it can see broken.
+
 ### pr/push_intent.py
 
 What every push on this machine was about to do, and whether it did it.
@@ -9441,6 +9454,19 @@ Usage:
   eval-models --corpus eval/corpus/ --models claude-sonnet-5,grok-4.7 --effort medium
   eval-models --entry unchecked-error-go --runs 3
   eval-models --dry-run
+
+### cli/finish_guard.py
+
+Stop hook entry point: refuse to end a turn that offers to open a PR instead of opening it.
+
+Reads the hook payload from stdin. When the last assistant message offers a PR
+and the working directory is on a feature branch with none open
+(``pr.finish_offer.should_block``), prints the ``{"decision": "block"}`` reply
+that sends Claude back to open it. A payload with ``stop_hook_active`` is never
+blocked a second time, so a turn that still ends on an offer ends. Failure is
+left to the hook command's ``|| true`` in settings.json.
+
+Exit codes: 0 always.
 
 ### cli/locks.py
 

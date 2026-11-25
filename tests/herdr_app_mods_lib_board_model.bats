@@ -40,12 +40,15 @@ _model() {
   _model '
     const oracle = (state, filters, tab, scope) => {
       const me = state.me ?? "";
-      const base = tab === "mine" ? state.prs.filter((p) => c.isMine(p, me) && (c.filterOn(filters, "mineDrafts") || !p.isDraft)) : c.filterPrs(state.prs, filters, me);
+      const member = (p) => c.isMine(p, me) === (tab === "mine")
+        && (c.filterOn(filters, tab === "mine" ? "mineDrafts" : "drafts") || !p.isDraft)
+        && (tab === "mine" || c.filterOn(filters, "landed") || c.laneOf(p, "team") !== "landed");
+      const base = state.prs.filter(member);
       const fv = f.facetView(base, filters, { tab, me, loadedRepos: state.repoSlugs, authorsFrom: state.prs });
       const mine = tab === "mine";
       const docSpec = c.columnsFor(state.columns, mine ? "mine" : "team");
       const spec = docSpec.length ? docSpec : mine ? c.MINE_COLUMNS : c.TEAM_COLUMNS;
-      const again = mine ? fv.list.filter((p) => c.isMine(p, me) && (c.filterOn(filters, "mineDrafts") || !p.isDraft)) : c.filterPrs(fv.list, filters, me);
+      const again = fv.list.filter(member);
       const shown = c.visibleColumns(c.groupColumns(again, (p) => c.laneOf(p, mine ? "mine" : "team"), spec), c.filterOn(filters, "empty"));
       const sections = cm.compactSections(c.groupColumns(fv.list, (p) => c.laneOf(p, mine ? "mine" : "team"), spec));
       const repos = scope === "all" ? [...state.repoSlugs].sort() : [];
@@ -74,13 +77,55 @@ _model() {
   [ "$output" = '{"bad":[],"fallback":true}' ]
 }
 
-@test "board model: Team by default lists open non-draft PRs by lane; labels are offered; no batch presets" {
+@test "board model: Team by default lists others' open non-draft PRs by lane, never the viewer's; no batch presets" {
   _model '
     const x = m.boardModel({ ...view, prs: rows, repoSlugs: ["acme/box"] }, { tab: "team", filters: f.normalizeFilters({}), scope: "this" });
     process.stdout.write(JSON.stringify({ cols: x.columns.map((l) => l.key + ":" + l.items.map((p) => p.number) + ":" + l.batch), labels: x.options.labels, repos: x.options.repos, count: x.filterCount }));
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '{"cols":["open:8:null","reviewed:7:null"],"labels":["comments"],"repos":[],"count":0}' ]
+  [ "$output" = '{"cols":["open:8:null"],"labels":[],"repos":[],"count":0}' ]
+}
+
+@test "board model: Team and Mine never share a PR under any Show flag combination" {
+  _model '
+    const drafted = { ...view, prs: [...view.prs, { ...rows[0], number: 14, isDraft: true },
+      { ...rows[1], number: 15, isDraft: true }, { ...rows[1], number: 16, lanes: { ...rows[1].lanes, team: "landed" } }] };
+    const bad = [];
+    const seen = { team: 0, mine: 0 };
+    for (const raw of [{}, { drafts: true }, { landed: true }, { mineDrafts: true },
+      { drafts: true, landed: true, mineDrafts: true }]) {
+      const filters = f.normalizeFilters(raw);
+      const team = m.tabList(drafted.prs, drafted.me, filters, "team").map((p) => p.number + "@" + p.repoSlug);
+      const mine = m.tabList(drafted.prs, drafted.me, filters, "mine").map((p) => p.number + "@" + p.repoSlug);
+      seen.team += team.length; seen.mine += mine.length;
+      const both = team.filter((k) => mine.includes(k));
+      if (both.length) bad.push({ raw, both });
+    }
+    process.stdout.write(JSON.stringify({ bad, populated: seen.team > 0 && seen.mine > 0 }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"bad":[],"populated":true}' ]
+}
+
+@test "board model: tabList applies each tab's own draft flag and Team's landed flag" {
+  _model '
+    const mk = (n, o) => ({ ...rows[0], number: n, isDraft: false, ...o });
+    const lanes = (team) => ({ ...rows[1].lanes, team });
+    const prs = [
+      mk(1, { isMine: false, isDraft: true }), mk(2, { isMine: true, isDraft: true }),
+      mk(3, { isMine: false, lanes: lanes("landed") }), mk(4, { isMine: true, lanes: lanes("landed") }),
+      mk(5, { isMine: false }), mk(6, { isMine: true }),
+    ];
+    const ids = (raw, tab) => m.tabList(prs, "someone-else", f.normalizeFilters(raw), tab).map((p) => p.number);
+    process.stdout.write(JSON.stringify({
+      teamDefault: ids({}, "team"), teamDrafts: ids({ drafts: true }, "team"), teamLanded: ids({ landed: true }, "team"),
+      teamIgnoresMineDrafts: ids({ mineDrafts: true }, "team"),
+      mineDefault: ids({}, "mine"), mineDrafts: ids({ mineDrafts: true }, "mine"), mineIgnoresDrafts: ids({ drafts: true }, "mine"),
+      mineLandedLane: ids({}, "mine").includes(4),
+    }));
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"teamDefault":[5],"teamDrafts":[1,5],"teamLanded":[3,5],"teamIgnoresMineDrafts":[5],"mineDefault":[4,6],"mineDrafts":[2,4,6],"mineIgnoresDrafts":[4,6],"mineLandedLane":true}' ]
 }
 
 @test "board model: Mine puts owed feedback in Has Comments with its Batch preset, on lanes and sections" {
@@ -125,16 +170,17 @@ _model() {
   _model '
     const lanes = { team: "open", mine: "awaiting-review", team_reviewing: "in-progress", mine_reviewing: "in-review" };
     const feat = ["queue-lanes"];
-    const base = { ...rows[0], isDraft: false, isMine: true, lanes, features: feat };
+    const base = { ...rows[0], isDraft: false, lanes, features: feat };
     const queued = { ...base, number: 21, queue: { state: "queued" } };
     const running = { ...base, number: 22, queue: { state: "running" } };
     const rest = { ...base, number: 23, queue: null, features: feat };
+    const as = (isMine, prs) => prs.map((p) => ({ ...p, isMine }));
     const viewOf = (prs) => ({ prs, me: doc.viewer, repoSlugs: ["acme/box"], columns: doc.columns });
     const pick = (model) => Object.fromEntries(model.columns.map((l) => [l.key, l.items.map((p) => p.number)]));
-    const team = m.boardModel(viewOf([queued, running, rest]), { tab: "team", filters: f.normalizeFilters({}), scope: "this" });
-    const mine = m.boardModel(viewOf([queued, running, rest]), { tab: "mine", filters: f.normalizeFilters({}), scope: "this" });
-    const old = m.boardModel(viewOf([{ ...queued, features: [] }]), { tab: "team", filters: f.normalizeFilters({}), scope: "this" });
-    const both = m.boardModel(viewOf([{ ...queued, reviewing: true }]), { tab: "team", filters: f.normalizeFilters({}), scope: "this" });
+    const team = m.boardModel(viewOf(as(false, [queued, running, rest])), { tab: "team", filters: f.normalizeFilters({}), scope: "this" });
+    const mine = m.boardModel(viewOf(as(true, [queued, running, rest])), { tab: "mine", filters: f.normalizeFilters({}), scope: "this" });
+    const old = m.boardModel(viewOf(as(false, [{ ...queued, features: [] }])), { tab: "team", filters: f.normalizeFilters({}), scope: "this" });
+    const both = m.boardModel(viewOf(as(false, [{ ...queued, reviewing: true }])), { tab: "team", filters: f.normalizeFilters({}), scope: "this" });
     process.stdout.write(JSON.stringify({ team: pick(team), mine: pick(mine), old: pick(old), both: pick(both), spec: team.spec.map((s) => s.key) }));
   '
   [ "$status" -eq 0 ]

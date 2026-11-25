@@ -181,6 +181,16 @@ _f() {
   [ "$output" = '{"authors":["bob","cam"],"ids":[2]}' ]
 }
 
+@test "facetView: a row's isMine strips its author even when me names someone else" {
+  _f '(() => {
+    const prs = [{n:1,author:"ann",isMine:true},{n:2,author:"bob",isMine:false},{n:3,author:"cam"}];
+    const v = m.facetView(prs, {authors:["ann","bob"]}, {tab:"team", me:"zed"});
+    return { authors: v.options.authors, counts: v.options.authorCounts, ids: v.list.map((p) => p.n) };
+  })()'
+  [ "$status" -eq 0 ]
+  [ "$output" = '{"authors":["bob","cam"],"counts":{"bob":1,"cam":1},"ids":[2]}' ]
+}
+
 @test "facetView: options.labels are after the repo facet; options.authors are sorted without the viewer" {
   _f '(() => {
     const prs = [

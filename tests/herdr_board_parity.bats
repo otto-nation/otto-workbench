@@ -50,7 +50,7 @@ views() {
 PULLS='pullTarget|pullOwed|loadBoard|docToState|mergeRows|withRunning|loadTerminals|runningFor|representatives|staleKeys|boardState|mergeStates|owedDue|OWED_TTL_MS|owedState|owedError|owedAt|assemble|loadOpenPrs|loadListing|loadLanded|loadRepo|loadUser|loadOwed|loadBatchDoc|loadBusy|board_pull|board_doc|board_data'
 # LANE_NEEDS/needStatus: a view never decides which lane waits on what, or its status; it draws
 # lane.status/lane.message. wantFor is allowed: a host asks it what its tab needs.
-LANES='groupColumns|visibleColumns|facetView|filterPrs|columnsFor|compactSections|teamColumn|mineColumn|TEAM_COLUMNS|MINE_COLUMNS|columnPreset|filterFacets|filterLabels|filterRepos|LANE_NEEDS|needStatus'
+LANES='groupColumns|visibleColumns|facetView|tabList|filterPrs|columnsFor|compactSections|teamColumn|mineColumn|TEAM_COLUMNS|MINE_COLUMNS|columnPreset|filterFacets|filterLabels|filterRepos|LANE_NEEDS|needStatus'
 # The Batch pages build the Batch form's own model (_lib/batch_launch.js); their orchestration is
 # otto-nation/otto-workbench#1943's remaining half, not this board's.
 LANE_EXEMPT='/prs/batch_page.js:|/web/public/batch_page.js:'

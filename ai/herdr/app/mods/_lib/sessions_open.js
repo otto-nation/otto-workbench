@@ -1,12 +1,12 @@
 /**
- * Open, rename and close a pi session from the Sessions panel.
+ * Open, rename and close a pi or Claude Code session from the Sessions panel.
  *
  * A live hc terminal labelled `otto.session=<id>` (written by `pi-sessions live` from the
  * session-brief extension, and by `hcSessionArgv` for a terminal started here) is brought
- * forward. A closed session starts as `hc run --bg pi --session <file>` in its cwd — with
- * `--name` to rename it — and is kept as a tab. A live session with no labelled terminal runs
+ * forward. A closed session starts as `hc run --bg pi --session <file>` (Claude Code:
+ * `claude --resume <id>`) in its cwd — pi with `--name` to rename it — and is kept as a tab. A live session with no labelled terminal runs
  * outside herdr and is never started a second time, and a live session is renamed from inside
- * (`/name`): nothing else may write its session file while pi holds it. Close asks
+ * (`/name`): nothing else may write its session file while pi holds it. A Claude Code session has no rename here. Close asks
  * `pi-sessions close <id>` on the session's machine. Pure over deps
  * {exec, run, panes, spaces, terminals, sleep}; never rejects.
  */
@@ -22,6 +22,7 @@ export function outsideText(pid) {
 }
 
 export function openArgv(row, name = null) {
+  if (row.harness === 'claude') return ['claude', '--resume', row.id];
   return name ? ['pi', '--session', row.file, '--name', name] : ['pi', '--session', row.file];
 }
 

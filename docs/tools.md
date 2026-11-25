@@ -15,7 +15,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `record-filed-issue` | Records an issue filed by hand in the branch's follow-up ledger — called by both harnesses' post-execution hooks |
 | `report-agent-worktree` | Labels the agent's herdr terminal with the worktree a tool call targeted — called by both harnesses' post-tool and session-start hooks |
 | `agent-worktree` | Decides and publishes an agent's worktree label on its herdr terminal — reached through report-agent-worktree |
-| `pi-sessions` | Lists pi sessions with their title, TL;DR, worktrees, PRs and live RSS/idle, and closes a live one — read by the Sessions herdr panel and written to by the session-brief Pi extension |
+| `pi-sessions` | Lists pi and Claude Code sessions with their title, TL;DR, worktrees, PRs and live RSS/idle, and closes a live one — read by the Sessions herdr panel and written to by the session-brief Pi extension |
 | `pr` | Unified PR lifecycle CLI — creation, CI failures, code review, and review comments |
 | `review` | Run the configured review agent on a PR with local worktree checkout and iterative review support |
 | `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |

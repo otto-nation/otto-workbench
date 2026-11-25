@@ -182,3 +182,14 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = '[["","This computer","1 live",null],["h","box","",{"kind":"fail","word":"error"}]]' ]
 }
+
+@test "rowModel: harness is claude only when the row says so; an older pi-sessions row is pi" {
+  _js '
+    out([s.rowModel(sess({ harness: "claude" }), null, NOW).harness,
+         s.rowModel(sess({ harness: "pi" }), null, NOW).harness,
+         s.rowModel(sess(), null, NOW).harness,
+         s.rowModel(sess({ harness: "other" }), null, NOW).harness]);
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '["claude","pi","pi","pi"]' ]
+}

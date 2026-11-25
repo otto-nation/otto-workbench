@@ -58,7 +58,7 @@ def session_files(root: Path) -> list[Path]:
     return sorted(root.glob("*/*.jsonl"))
 
 
-def _parse(line: bytes | str) -> dict | None:
+def parse_entry(line: bytes | str) -> dict | None:
     try:
         value = json.loads(line)
     except ValueError:
@@ -72,7 +72,7 @@ def read_header(path: Path) -> Header | None:
             first = fh.readline()
     except OSError:
         return None
-    value = _parse(first)
+    value = parse_entry(first)
     if not value or value.get("type") != "session":
         return None
     sid, cwd = value.get("id"), value.get("cwd")
@@ -81,7 +81,7 @@ def read_header(path: Path) -> Header | None:
     return Header(id=sid, cwd=cwd, timestamp=str(value.get("timestamp") or ""))
 
 
-def _lines_from_end(path: Path, limit: int) -> Iterator[bytes]:
+def lines_from_end(path: Path, limit: int) -> Iterator[bytes]:
     """Complete lines of *path*, last first, reading at most *limit* bytes."""
     with path.open("rb") as fh:
         pos = fh.seek(0, os.SEEK_END)
@@ -107,8 +107,8 @@ def _name_of(value: object) -> str | None:
 def _scan_tail(path: Path, limit: int) -> Tail:
     seen_info = False
     name: str | None = None
-    for line in _lines_from_end(path, limit):
-        entry = _parse(line)
+    for line in lines_from_end(path, limit):
+        entry = parse_entry(line)
         if entry is None:
             continue
         kind = entry.get("type")
@@ -132,7 +132,7 @@ def read_tail(path: Path, *, limit: int = TAIL_LIMIT) -> Tail:
 def _entries_after_header(fh) -> Iterator[dict]:
     fh.readline()
     for line in fh:
-        entry = _parse(line)
+        entry = parse_entry(line)
         if entry is not None:
             yield entry
 

@@ -1,5 +1,5 @@
 /**
- * The Sessions panel's model: pi sessions per machine from `pi-sessions list --json`.
+ * The Sessions panel's model: pi and Claude Code sessions per machine from `pi-sessions list --json`.
  * Pure. Python owns the facts — title, TL;DR, PRs, worktrees, live RSS and idle, spend, and the
  * close-candidate verdict (ai/lib/pi_sessions/live.py) — this only loads, words, groups and
  * orders them.
@@ -76,6 +76,8 @@ export function rowModel(session, on, nowMs) {
   return {
     key: `${on ?? ''}:${session.id}`,
     id: session.id,
+    // A machine on an older pi-sessions sends no harness: every row it lists is pi's.
+    harness: session.harness === 'claude' ? 'claude' : 'pi',
     file: session.file,
     cwd: session.cwd,
     on: on ?? null,

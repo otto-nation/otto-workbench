@@ -139,7 +139,7 @@ _js() {
     out([full, empty]);
   '
   [ "$status" -eq 0 ]
-  [ "$output" = '[{"rows":[{"key":"Claude model","value":"opusplan","mono":true},{"key":"ANTHROPIC_DEFAULT_OPUS_MODEL","value":"claude-opus-5-5","mono":true},{"key":"Pi default","value":"workbench/auto","mono":true},{"key":"Pi enabled","value":"anthropic/claude-opus-5-5, workbench/auto","mono":true}],"skipped":["models.light: openai/gpt-6 is not a Claude model"]},{"rows":[],"skipped":[]}]' ]
+  [ "$output" = '[{"rows":[{"key":"Claude model","value":"opusplan","mono":true},{"key":"ANTHROPIC_DEFAULT_OPUS_MODEL","value":"claude-opus-5-5","mono":true},{"key":"Pi default","value":"workbench/auto","mono":true},{"key":"Pi enabled","value":"anthropic/claude-opus-5-5, workbench/auto","mono":true,"wrap":true}],"skipped":["models.light: openai/gpt-6 is not a Claude model"]},{"rows":[],"skipped":[]}]' ]
 }
 
 @test "syncBarModel disables when clean, saving or syncing, and shows SYNC_CAPTION when dirty" {

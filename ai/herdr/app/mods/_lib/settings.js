@@ -226,7 +226,7 @@ export function previewModel(doc) {
     rows.push({ key: "Pi default", value: piDefaultText(pi), mono: true });
   }
   if (Array.isArray(pi?.enabledModels) && pi.enabledModels.length > 0) {
-    rows.push({ key: "Pi enabled", value: pi.enabledModels.join(", "), mono: true });
+    rows.push({ key: "Pi enabled", value: pi.enabledModels.join(", "), mono: true, wrap: true });
   }
   const skipped = Array.isArray(claude?.skipped) ? claude.skipped.filter(Boolean) : [];
   return { rows, skipped };

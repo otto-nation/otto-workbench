@@ -351,6 +351,21 @@ make_memory() {
 
 # ─── Memory directory: the two languages must agree ─────────────────────────
 
+@test "both languages key memory by hosted origin, not clone path" {
+  # A clone that moved, or that switched SSH for HTTPS, is still one repo.
+  # Keying on the shared git dir split those in two and left the old memory
+  # directory unswept.
+  local a="$TMPDIR/old/otto-workbench" b="$TMPDIR/new/otto-workbench"
+  mkdir -p "$a" "$b"
+  git -C "$a" init -q
+  git -C "$b" init -q
+  git -C "$a" remote add origin git@github.com:otto-nation/otto-workbench.git
+  git -C "$b" remote add origin https://github.com/otto-nation/otto-workbench.git
+  [ "$(memdir_shell "$a")" = "$(memdir_shell "$b")" ]
+  [ "$(memdir_python "$a")" = "$(memdir_python "$b")" ]
+  [ "$(memdir_shell "$a")" = "$(memdir_python "$a")" ]
+}
+
 @test "both languages agree on the memory key for one repo" {
   # The forward direction the gates use. Both halves slug the repo path and
   # digest the shared git dir; a drift in either sends the shell and Python to

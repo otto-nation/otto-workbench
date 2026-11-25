@@ -204,22 +204,96 @@ _claude_project_dir() {
   printf '%s/projects/%s' "$CLAUDE_DIR" "$(_encode_slug "$1" 'A-Za-z0-9')"
 }
 
-# _repo_key DIR — filesystem-safe directory name for DIR's authored memory.
-#
-# `<canonical_slug truncated to 64>-<sha256(git_shared_dir)[:8]>`. The digest
-# is what makes `/Users/x/a-b/c`, `/Users/x/a/b/c` and `/Users/x/a.b/c` three
-# directories rather than one. repo_key() in ai/lib/core/memory.py is the
-# Python half; tests/sessions_ssot.bats fails when the two drift. Non-zero
-# when git cannot name DIR's shared directory — there is then no repo to key.
-_repo_key() {
+# _origin_url DIR — remote.origin.url for DIR, or empty. GIT_DIR is cleared
+# because it beats `git -C`; the same reason git_shared_dir clears it.
+_origin_url() {
+  local dir="$1"
+  (
+    git_env_clear
+    git -C "$dir" config --get remote.origin.url
+  ) 2>/dev/null || true
+}
+
+# _canonical_hosted_origin URL — host/owner/repo for a hosted remote, empty
+# (status 1) for a local path. canonical_hosted_origin() in ai/lib/core/memory.py
+# is the Python half.
+_canonical_hosted_origin() {
+  local url="$1" host="" path="" rest scheme
+  url="${url#"${url%%[![:space:]]*}"}"
+  url="${url%"${url##*[![:space:]]}"}"
+  [[ -n "$url" ]] || return 1
+
+  if [[ "$url" == *://* ]]; then
+    scheme="${url%%://*}"
+    scheme="$(printf '%s' "$scheme" | tr '[:upper:]' '[:lower:]')"
+    case "$scheme" in
+      http|https|ssh|git) ;;
+      *) return 1 ;;
+    esac
+    rest="${url#*://}"
+    rest="${rest#*@}"
+    host="${rest%%/*}"
+    path="${rest#*/}"
+    [[ "$path" == "$rest" ]] && path=""
+  elif [[ "$url" == *:* ]]; then
+    rest="${url#*:}"
+    [[ "$rest" == /* || "$rest" == \\* ]] && return 1
+    host="${url%%:*}"
+    host="${host##*@}"
+    path="$rest"
+  else
+    return 1
+  fi
+  [[ -n "$host" && -n "$path" ]] || return 1
+  path="${path#/}"
+  path="${path%/}"
+  path="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
+  if [[ "$path" == *.git ]]; then
+    path="${path%.git}"
+  fi
+  path="${path#/}"
+  path="${path%/}"
+  [[ -n "$path" ]] || return 1
+  host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+  printf '%s/%s' "$host" "$path"
+}
+
+# _origin_identity DIR — hosted origin identity, or status 1 when DIR has none.
+_origin_identity() {
+  local url
+  url="$(_origin_url "$1")"
+  [[ -n "$url" ]] || return 1
+  _canonical_hosted_origin "$url"
+}
+
+# _repo_key_from_shared_dir DIR — the path-keyed name a memory directory had
+# before origin identity. The origin-key migration uses this to find the old
+# directory; nothing else should.
+_repo_key_from_shared_dir() {
   local dir="$1" identity slug digest
   identity="$(git_shared_dir "$dir")" || return 1
-  # Both halves come off the identity, never off the path the caller passed.
-  # Every worktree of a repo resolves to one shared git dir, and so does the
-  # same repo reached through a symlinked parent — on macOS /tmp and /var are
-  # symlinks, so the as-written and physical spellings of one repo differ. A
-  # slug taken from the argument would vary with the spelling while the digest
-  # stayed fixed, which is the per-cwd keying this store exists to end.
+  slug="$(_canonical_slug "$identity")"
+  slug="${slug:0:64}"
+  digest="$(printf '%s' "$identity" | shasum -a 256 | cut -c1-8)"
+  printf '%s-%s' "$slug" "$digest"
+}
+
+# _repo_key DIR — filesystem-safe directory name for DIR's authored memory.
+#
+# `<canonical_slug truncated to 64>-<sha256(identity)[:8]>`. Identity is the
+# hosted origin when DIR has one, so a moved clone keeps its directory, and
+# the shared git dir otherwise. The digest is what makes `/Users/x/a-b/c`,
+# `/Users/x/a/b/c` and `/Users/x/a.b/c` three directories rather than one.
+# repo_key() in ai/lib/core/memory.py is the Python half; tests/sessions_ssot.bats
+# fails when the two drift. Non-zero when git cannot name DIR's shared
+# directory — there is then no repo to key.
+_repo_key() {
+  local dir="$1" identity slug digest origin
+  identity="$(git_shared_dir "$dir")" || return 1
+  # Origin is stable across clone-path moves; shared_dir is not. Both halves
+  # still come off one identity, never off the path the caller passed, so
+  # worktrees and symlink spellings of one repo stay one directory.
+  origin="$(_origin_identity "$dir")" && identity="$origin"
   slug="$(_canonical_slug "$identity")"
   slug="${slug:0:64}"
   digest="$(printf '%s' "$identity" | shasum -a 256 | cut -c1-8)"

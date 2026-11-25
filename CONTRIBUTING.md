@@ -78,10 +78,11 @@ and a selector that fails or cannot narrow: failing towards the whole suite is t
 safe direction, since a selection that silently narrowed to nothing would report green
 having run no tests. Reach for `bin/local/run-tests` (no `--changed`) when you suspect the map rather than the code.
 
-The pre-push hook then applies a local pytest file cap (`PREPUSH_PYTEST_FILE_CAP` in
-`git/hooks/pre-push-workbench`): the transitive set if it fits, else `--direct`, else
-skip pytest and leave that set to CI. Hub-module diffs and `tests/fixtures/` full-suite
-triggers are why; a 4-core laptop is not the place to run 400–700 files. CI on
+The pre-push hook then applies a local file cap (`PREPUSH_FILE_CAP` in
+`git/hooks/pre-push-workbench`) to both suites: bats skips when over the cap; pytest
+uses the transitive set if it fits, else `--direct`, else skip. CI still runs the
+uncapped `--changed` set. Hub-module diffs, `tests/fixtures/` goldens, and a change to
+`bin/local/run-tests` are why; a 4-core laptop is not the place to run 300–700 files. CI on
 `pull_request` keeps the uncapped `--changed` selection (`bin/local/run-tests --changed --base origin/<base>`),
 including the bats shards of the selected files. A PR that reaches no test file still
 reports the required `Tests (bats)` / `Tests (pytest)` checks, cheaply (`no test files affected`).

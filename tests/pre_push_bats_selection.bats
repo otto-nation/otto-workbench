@@ -23,10 +23,11 @@ setup() {
   # shellcheck disable=SC2034  # read by the sourced _select_bats
   _default_branch=main
 
-  local fn
-  fn="$(sed -n '/^_select_bats()/,/^}/p' "$HOOK")"
-  [[ -n "$fn" ]] || { echo "_select_bats not found in $HOOK" >&2; return 1; }
-  eval "$fn"
+  local src
+  src="$(grep '^PREPUSH_FILE_CAP=' "$HOOK")"$'\n'"$(sed -n '/^_select_bats()/,/^}/p' "$HOOK")"
+  [[ -n "$src" ]] || { echo "PREPUSH_FILE_CAP/_select_bats not found in $HOOK" >&2; return 1; }
+  eval "$src"
+  [[ -n "${PREPUSH_FILE_CAP:-}" ]] || { echo "cap did not eval" >&2; return 1; }
 }
 
 teardown() {
@@ -52,6 +53,22 @@ _stub_selector() {
   _select_bats
   [ "$_bats_none" = true ]
   [ -z "$_bats_selected" ]
+  [ "$_bats_skip_detail" = "none affected by this diff" ]
+}
+
+@test "a set over the cap is skipped for CI" {
+  local over=$((PREPUSH_FILE_CAP + 1)) i body=""
+  i=1
+  while (( i <= over )); do
+    body+="echo \"\$PWD/tests/t${i}.bats\"; "
+    i=$((i + 1))
+  done
+  _stub_selector "$body"
+  _select_bats
+  [ "$_bats_none" = true ]
+  [ -z "$_bats_selected" ]
+  [[ "$_bats_skip_detail" == *"over cap of ${PREPUSH_FILE_CAP}"* ]]
+  [[ "$_bats_skip_detail" == *"CI"* ]]
 }
 
 @test "a selector that fails falls back to the whole suite, not to none" {

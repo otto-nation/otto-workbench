@@ -347,11 +347,18 @@ fi
 # full suite (_bats_selected empty) when the selector is unavailable or fails,
 # or when tests/test_helper.bash, which every suite loads, changed. A selector
 # that succeeds and selects nothing sets _bats_none, and the step is skipped
-# with a line saying so rather than silently.
+# with a line saying so rather than silently. A set over PREPUSH_FILE_CAP is
+# skipped the same way: CI runs the uncapped --changed set.
+#
+# 80 sits above typical diffs (18–42) and hub --direct (~47), below hub
+# transitive (366+) and a full-suite trigger (326 bats / 731 pytest).
+PREPUSH_FILE_CAP=80
+
 _select_bats() {
   _bats_selected=""
   _bats_label="tests"
   _bats_none=false
+  _bats_skip_detail=""
   [[ -x "$REPO_ROOT/bin/local/select-tests" ]] || return 0
   if ! _bats_selected=$("$REPO_ROOT/bin/local/select-tests" --base "$GIT_REMOTE/$_default_branch" 2>/dev/null); then
     _bats_selected=""
@@ -359,19 +366,21 @@ _select_bats() {
   fi
   if [[ -z "$_bats_selected" ]]; then
     _bats_none=true
+    _bats_skip_detail="none affected by this diff"
     return 0
   fi
   local count total
   count=$(echo "$_bats_selected" | wc -l | tr -d ' ')
   total=$(find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l | tr -d ' ')
   _bats_label="tests ($count/$total files)"
+  if (( count <= PREPUSH_FILE_CAP )); then
+    return 0
+  fi
+  _bats_none=true
+  _bats_selected=""
+  _bats_skip_detail="skipped: ${count} files over cap of ${PREPUSH_FILE_CAP}; CI will run them"
+  return 0
 }
-
-# Local pytest budget. A set at or under this runs as selected; over it,
-# retry with --direct; still over, skip and leave the set to CI.
-# 80 sits above typical diffs (18–42) and hub --direct (~47), below hub
-# transitive (366+) and a full-suite trigger (731).
-PREPUSH_PYTEST_FILE_CAP=80
 
 # _select_pytest — change-based pytest selection with the file cap above.
 # Sets _pytest_selected, _pytest_label, _pytest_none, and _pytest_skip_detail.
@@ -403,13 +412,13 @@ _select_pytest() {
   count=$(printf '%s\n' "$transitive" | wc -l | tr -d ' ')
   _pytest_selected="$transitive"
   _pytest_label="pytest ($count/$total files)"
-  if (( count <= PREPUSH_PYTEST_FILE_CAP )); then
+  if (( count <= PREPUSH_FILE_CAP )); then
     return 0
   fi
 
   if direct=$("$selector" --base "$base" --direct 2>/dev/null) && [[ -n "$direct" ]]; then
     direct_count=$(printf '%s\n' "$direct" | wc -l | tr -d ' ')
-    if (( direct_count <= PREPUSH_PYTEST_FILE_CAP )); then
+    if (( direct_count <= PREPUSH_FILE_CAP )); then
       _pytest_selected="$direct"
       _pytest_label="pytest ($direct_count/$total files, direct)"
       return 0
@@ -419,7 +428,7 @@ _select_pytest() {
   _pytest_none=true
   _pytest_selected=""
   _pytest_label="pytest"
-  _pytest_skip_detail="skipped: ${count} files over cap of ${PREPUSH_PYTEST_FILE_CAP}; CI will run them"
+  _pytest_skip_detail="skipped: ${count} files over cap of ${PREPUSH_FILE_CAP}; CI will run them"
   return 0
 }
 
@@ -506,8 +515,8 @@ _run_pytest_step() {
 
 _select_bats
 if $_bats_none; then
-  _step "Running tests"
-  _pass "none affected by this diff"
+  _step "Running $_bats_label"
+  _pass "$_bats_skip_detail"
 else
   _run_bats_step
 fi

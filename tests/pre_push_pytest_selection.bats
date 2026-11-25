@@ -21,10 +21,10 @@ setup() {
   _default_branch=main
 
   local src
-  src="$(sed -n '/^PREPUSH_PYTEST_FILE_CAP=/,/^}/p' "$HOOK")"
-  [[ -n "$src" ]] || { echo "PREPUSH_PYTEST_FILE_CAP/_select_pytest not found in $HOOK" >&2; return 1; }
+  src="$(grep '^PREPUSH_FILE_CAP=' "$HOOK")"$'\n'"$(sed -n '/^_select_pytest()/,/^}/p' "$HOOK")"
+  [[ -n "$src" ]] || { echo "PREPUSH_FILE_CAP/_select_pytest not found in $HOOK" >&2; return 1; }
   eval "$src"
-  [[ -n "${PREPUSH_PYTEST_FILE_CAP:-}" ]] || { echo "cap did not eval" >&2; return 1; }
+  [[ -n "${PREPUSH_FILE_CAP:-}" ]] || { echo "cap did not eval" >&2; return 1; }
 }
 
 teardown() {
@@ -66,7 +66,7 @@ EOF
 
 @test "a set over the cap retries with --direct and uses that when it fits" {
   _stub_selector
-  TRANSITIVE_N=$((PREPUSH_PYTEST_FILE_CAP + 10)) DIRECT_N=2 ALL_N=100 \
+  TRANSITIVE_N=$((PREPUSH_FILE_CAP + 10)) DIRECT_N=2 ALL_N=100 \
     _select_pytest
   [ "$_pytest_none" = false ]
   [ "$(echo "$_pytest_selected" | wc -l | tr -d ' ')" -eq 2 ]
@@ -76,11 +76,11 @@ EOF
 
 @test "a set still over the cap after --direct is skipped for CI" {
   _stub_selector
-  local over=$((PREPUSH_PYTEST_FILE_CAP + 10))
+  local over=$((PREPUSH_FILE_CAP + 10))
   TRANSITIVE_N=$over DIRECT_N=$over ALL_N=100 _select_pytest
   [ "$_pytest_none" = true ]
   [ -z "$_pytest_selected" ]
-  [[ "$_pytest_skip_detail" == *"over cap of ${PREPUSH_PYTEST_FILE_CAP}"* ]]
+  [[ "$_pytest_skip_detail" == *"over cap of ${PREPUSH_FILE_CAP}"* ]]
   [[ "$_pytest_skip_detail" == *"CI"* ]]
 }
 

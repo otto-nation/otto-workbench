@@ -121,8 +121,14 @@ node_body_read() {
 
 common_setup() {
   # Clear git env vars inherited from hooks (pre-push sets GIT_DIR which
-  # causes git commands in tests to target the real repo instead of temp repos)
-  unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
+  # causes git commands in tests to target the real repo instead of temp repos).
+  # git_env_clear is the one list; a hand-copied unset here stood a variable
+  # short of it. GIT_CONFIG_PARAMETERS is how a wrapping hooksPath arrives as
+  # `-c` and outranks the empty GIT_CONFIG_GLOBAL this function exports.
+  # shellcheck source=../lib/gitenv.sh
+  . "$REPO_ROOT/lib/gitenv.sh"
+  git_env_clear
+  unset GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT
 
   # Scratch that belongs to this case alone. run-tests passes --jobs, so cases
   # from different files run at once and an inherited TMPDIR is one directory

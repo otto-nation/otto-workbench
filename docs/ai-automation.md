@@ -275,7 +275,7 @@ Run self-review and auto-fix findings. Wraps pr review --self --fix --push. Can 
 
 ### `/session-postmortem`
 
-Write a living local session postmortem on this machine. TRIGGER when: the user asks for a session postmortem, living notes for this session, or runs /session-postmortem. SKIP: Grafana IRM or production-incident writeups (repo postmortem skill; incident for triage); knowledge-base log lines (wiki-capture).
+Write a living local session postmortem on this machine. TRIGGER when: the user asks for a local or session postmortem, living notes for this session, or runs /session-postmortem. SKIP: Grafana IRM or production-incident writeups (repo postmortem skill; incident for triage); knowledge-base log lines (wiki-capture).
 
 ```
 /session-postmortem

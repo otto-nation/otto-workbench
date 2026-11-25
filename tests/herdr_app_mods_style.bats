@@ -499,6 +499,15 @@ teardown() {
   grep -A6 'export function card(' "$MODS/_ui/ui.js" | grep -q 'overflow_hidden()'
 }
 
+@test "settings pane uses menuButton, keyValue, actionBar and Sync solidButton with no stub placeholder" {
+  grep -q 'menuButton(' "$MODS/settings/view.js"
+  grep -q 'keyValue(' "$MODS/settings/view.js"
+  grep -q 'actionBar(' "$MODS/settings/view.js"
+  grep -q 'solidButton("settings-sync", "Sync"' "$MODS/settings/view.js"
+  run grep -n 'placeholder("Settings")' "$MODS/settings/view.js"
+  [ "$status" -eq 1 ]
+}
+
 @test "sessions home uses machineCard; machine page uses Machines back" {
   grep -q 'machineCard(' "$MODS/sessions/view.js"
   grep -q '‹ Machines' "$MODS/sessions/view.js"

@@ -64,7 +64,8 @@ Conventions for the mods under this directory (`prs`, `queue`, `hosts`, `session
 
 ## Workbench hub
 
-- Hub tiles (`HUB_TILES` in `_lib/workbench.js`) open the destination panels; captions are static. The sticky `workbench-button` stays selected on any destination: hidden → hub, hub → hide, destination → hub. Settings is a stub pane
+- Hub tiles (`HUB_TILES` in `_lib/workbench.js`) open the destination panels; captions are static. The sticky `workbench-button` stays selected on any destination: hidden → hub, hub → hide, destination → hub
+- `settings/` edits machine-wide `models.session` (`otto-workbench config set models.session`) and `models.{deep,standard,light}` (`otto-workbench config model`) on this machine only, using `otto-workbench config models` for current values plus a read-only `keyValue` preview and `pr models --json` (plus `Auto (workbench tiers)` for Session) for choices (`_lib/settings.js`). Picker writes mark the pane dirty without syncing; `Sync` (`otto-workbench ai sync`) applies them
 
 ## Design
 

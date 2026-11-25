@@ -475,6 +475,35 @@ _run_bats_step() {
   fi
 }
 
+# _run_pytest_step — runs the selected pytest files (all of them when nothing
+# narrowed the selection).
+_run_pytest_step() {
+  # One invocation, built from a conditionally-populated array. Two copies of
+  # the call differing only in the selection argument means two copies of the
+  # failure handling, and a fix applied to only one of them is a gate that
+  # reports differently depending on whether the selection narrowed.
+  _pytest_args=(--pytest)
+  if [[ -n "$_pytest_selected" ]]; then
+    _pytest_args+=(--pytest-files "$_pytest_selected")
+  fi
+
+  _step "Running $_pytest_label"
+  # Same as the bats step: stderr streams below this line.
+  echo
+  _pytest_start=$SECONDS
+  # stdout only — see the bats capture above. The summary line the count is
+  # parsed from stays on stdout; heartbeats stream on stderr.
+  _pytest_output=$("$REPO_ROOT/bin/local/run-tests" "${_pytest_args[@]}" -- --tb=short -q) || {
+    printf "${RED}✗${NC}\n" >&2
+    echo "$_pytest_output"
+    err "Pytest failed"
+    exit 1
+  }
+  _pytest_elapsed=$(( SECONDS - _pytest_start ))
+  _pytest_count=$(echo "$_pytest_output" | awk '/passed/{print $1}')
+  _pass "${_pytest_count:-?} tests, ${_pytest_elapsed}s"
+}
+
 _select_bats
 if $_bats_none; then
   _step "Running tests"
@@ -496,30 +525,7 @@ else
     _step "Running $_pytest_label"
     _pass "$_pytest_skip_detail"
   else
-    # One invocation, built from a conditionally-populated array. Two copies of
-    # the call differing only in the selection argument means two copies of the
-    # failure handling, and a fix applied to only one of them is a gate that
-    # reports differently depending on whether the selection narrowed.
-    _pytest_args=(--pytest)
-    if [[ -n "$_pytest_selected" ]]; then
-      _pytest_args+=(--pytest-files "$_pytest_selected")
-    fi
-
-    _step "Running $_pytest_label"
-    # Same as the bats step: stderr streams below this line.
-    echo
-    _pytest_start=$SECONDS
-    # stdout only — see the bats capture above. The summary line the count is
-    # parsed from stays on stdout; heartbeats stream on stderr.
-    _pytest_output=$("$REPO_ROOT/bin/local/run-tests" "${_pytest_args[@]}" -- --tb=short -q) || {
-      printf "${RED}✗${NC}\n" >&2
-      echo "$_pytest_output"
-      err "Pytest failed"
-      exit 1
-    }
-    _pytest_elapsed=$(( SECONDS - _pytest_start ))
-    _pytest_count=$(echo "$_pytest_output" | awk '/passed/{print $1}')
-    _pass "${_pytest_count:-?} tests, ${_pytest_elapsed}s"
+    _run_pytest_step
   fi
 fi
 

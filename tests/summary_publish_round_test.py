@@ -349,8 +349,10 @@ class TestHandEditedCellsSurviveTheRender:
     def test_a_generated_cell_is_still_re_rendered(self):
         """Pairs with the cases above — proves those assertions are not vacuous."""
         body = self._render(_published_summary(ROUND_ONE_ROW))
-        assert "Conflicting reviewer feedback" in body
-        assert "1 need discussion" in body
+        assert "### Questions" in body
+        assert "drop the guard" in body
+        assert "Conflicting reviewer feedback" not in body
+        assert "need discussion" not in body
         assert "hand-written" not in body
 
     def test_the_fix_pass_upsert_holds_the_cell_too(self, content):
@@ -438,7 +440,7 @@ class TestAnsweredSummariesArePostedAgain:
         with _lookup_returns(marker), \
                 patch("pr.comments.post_issue_comment", return_value="https://url") as post:
             pr.summary_publish.publish_summary("owner/repo", 1,
-                                lambda carried_over, scope, chain: "body",
+                                lambda carried_over, scope, chain, **_: "body",
                                 activity_at=activity_at)
         return post.call_args
 
@@ -457,10 +459,10 @@ class TestAnsweredSummariesArePostedAgain:
                       return_value="https://url") as post:
             pr.summary_publish.publish_summary(
                 "owner/repo", 1,
-                lambda carried_over, scope, chain: "body")
+                lambda carried_over, scope, chain, **_: "body")
             pr.summary_publish.publish_summary(
                 "owner/repo", 1,
-                lambda carried_over, scope, chain: "body")
+                lambda carried_over, scope, chain, **_: "body")
         assert find.call_count == 2
         assert post.call_count == 2
         first, second = post.call_args_list
@@ -571,7 +573,8 @@ class TestASummaryDescribesItsOwnRound:
             threads=_reviewed_thread(_AFTER_THE_SUMMARY),
         )
         assert "drop the guard" in body
-        assert "1 need discussion" in body
+        assert "### Questions" in body
+        assert "need discussion" not in body
         assert "still open" not in body
 
     def test_a_newly_open_thread_is_written_whatever_else_is_dropped(self):

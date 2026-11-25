@@ -63,6 +63,7 @@ def build_summary_body(
     chain: list[pr.summary_rounds.SummaryRound] | None = None,
     host: str = "",
     kept_replies: Mapping[str, str] | None = None,
+    questions_as_rows: bool = False,
 ) -> str:
     """Build the markdown body for the fix summary comment.
 
@@ -102,6 +103,11 @@ def build_summary_body(
     They render in the `### Replies to review comments` section beside the
     blocks ``scope`` says this round writes, below every other section and
     above the footer.
+
+    ``questions_as_rows`` is the identity pass `_reconcile` runs so
+    `hand_written_rows` / `carried_over_rows` can match a published table row
+    against the question this render now writes as a bullet. Open questions
+    go through `emit` the way they used to, and that body is never posted.
     """
     carried_over = carried_over or []
     scope = scope or pr.summary_rounds.RoundScope()
@@ -251,24 +257,33 @@ def build_summary_body(
         for e in declined
     ])
     shown_questions: list[CommentItem] = []
-    for entry in open_questions:
-        status = pr.summary_model.HumanReason.prose_for(entry.reason)
-        cells = pr.summary_row.row_cells_for(
-            entry, status, threads_by_id, repo, pr_number, link_sha, wt_path, host)
-        marked = pr.summary_row.marked_row(cells, status, FixOutcome.NEEDS_HUMAN)
-        if not scope.covers(
-            marked.key,
-            pr.summary_rounds.entry_activity_at(entry, threads_by_id, sources_at),
-            FixOutcome.NEEDS_HUMAN, entry.settled_by,
-        ):
-            open_earlier.append(marked.key)
-            continue
-        published = held_by_key.get(marked.key)
-        if published is not None:
-            rows.append(published)
-            held.append(published)
-            continue
-        shown_questions.append(entry)
+    if questions_as_rows:
+        for entry in open_questions:
+            emit(
+                entry, pr.summary_model.HumanReason.prose_for(entry.reason),
+                link_sha, FixOutcome.NEEDS_HUMAN, open_thread=True)
+    else:
+        for entry in open_questions:
+            status = pr.summary_model.HumanReason.prose_for(entry.reason)
+            cells = pr.summary_row.row_cells_for(
+                entry, status, threads_by_id, repo, pr_number, link_sha,
+                wt_path, host)
+            marked = pr.summary_row.marked_row(
+                cells, status, FixOutcome.NEEDS_HUMAN)
+            if not scope.covers(
+                marked.key,
+                pr.summary_rounds.entry_activity_at(
+                    entry, threads_by_id, sources_at),
+                FixOutcome.NEEDS_HUMAN, entry.settled_by,
+            ):
+                open_earlier.append(marked.key)
+                continue
+            published = held_by_key.get(marked.key)
+            if published is not None:
+                rows.append(published)
+                held.append(published)
+                continue
+            shown_questions.append(entry)
     deferred_count = sum([
         emit(e, deferred_status, link_sha, FixOutcome.DEFERRED) for e in deferred
     ])

@@ -49,7 +49,8 @@ class TestPostAlreadyAddressedReplies:
             )
         assert count == 1
         body = mock_reply.call_args[0][3]
-        assert "Addressed in" in body
+        assert "Applied" in body
+        assert "Addressed in" not in body
         assert "use helper" in body
         assert "abc1234def5678" not in body
 

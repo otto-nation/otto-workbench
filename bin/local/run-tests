@@ -32,7 +32,11 @@ WORKBENCH_DIR="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 # config. tests/test_helper.bash clears these per test as well — this is the
 # belt to that suspenders, since the hook is the only caller that sets them and
 # this is the one place every hook-run suite passes through.
-unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES
+#
+# `git_env_clear` is the one list (`lib/gitenv.sh`, already sourced via ui.sh).
+# A hand-copied unset here stood a variable short of it (GIT_INDEX_FILE), so a
+# pre-push still pointed every test commit at the workbench index.
+git_env_clear
 
 # Both suites are bound by disk contention rather than CPU — every case builds a
 # temp tree and shells out to git — so throughput plateaus well below the core

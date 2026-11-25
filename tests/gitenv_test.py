@@ -28,6 +28,14 @@ def test_the_two_halves_name_the_same_variables():
     assert _shell_overrides() == set(gitenv.GIT_ENV_OVERRIDES)
 
 
+def test_run_tests_uses_the_shared_clear():
+    """A hand-copied unset in run-tests stood a variable short of gitenv.sh,
+    so a pre-push still pointed test commits at the workbench index."""
+    body = (REPO_ROOT / "bin" / "local" / "run-tests").read_text()
+    assert "git_env_clear" in body
+    assert "unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY" not in body
+
+
 def test_clearing_drops_every_override():
     env = {name: "/somewhere" for name in gitenv.GIT_ENV_OVERRIDES}
     assert gitenv.git_env_clear(env) == {}

@@ -86,13 +86,6 @@ The Linear write tools' text fields (`LINEAR_TEXT_TOOLS`, including a release `v
 judged against the group of the session's checkout. oneshot-publish-guard refuses
 both sets in one-shot sessions.
 
-ci-failures-guard refuses `gh_ci_failures` in every session mode and drops it
-from the active set. The tool dumps full job logs into the prompt and has
-compacted sessions; `pr ci` is the path that does not. Pipeline agents already
-omit it from `--tools`; interactive sessions still get it from the github-pr
-package until this guard and `defaultTools: ["-gh_ci_failures"]` take it off.
-Pi-only — Claude Code has no such tool.
-
 ## agent-worktree
 
 Publishes the worktree an interactive session works in on its herdr terminal

@@ -1,6 +1,5 @@
 {
   "enableInstallTelemetry": false,
-  "defaultTools": ["-gh_ci_failures"],
   "defaultThinkingLevel": "medium",
   "packages": [
     {

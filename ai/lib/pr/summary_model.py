@@ -45,10 +45,11 @@ TABLE_HEADER = core.markdown.render_row(list(TABLE_COLUMNS))
 TABLE_DIVIDER = core.markdown.table_divider(len(TABLE_COLUMNS))
 
 
-# The outcomes the summary shows a reviewer under one heading. A thread the
-# agent argued against and one it could not decide both end the same way — an
-# operator has to read it — and the reason is carried per row either way, so the
-# distinction the state file keeps buys the summary nothing.
+# Outcomes that still owe an operator. They share this fold for the publish
+# hold and for `needs_a_person`, not a single reviewer-facing heading: declined
+# prints as a table Action cell, and needs-human as `### Questions` with no
+# count of its own. The state file keeps the two apart because the reason each
+# carries is worth telling apart.
 NEEDS_A_PERSON = (FixOutcome.NEEDS_HUMAN, FixOutcome.DECLINED)
 
 

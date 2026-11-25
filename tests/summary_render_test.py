@@ -25,6 +25,7 @@ import git.topology
 from git.land import CommitStatus
 import pr.thread_replies
 import pr.attribution
+import pr.permalinks
 import pr.summary_model
 import pr.summary_render
 import pr.summary_scope
@@ -95,6 +96,22 @@ class TestBuildSummaryBody:
         assert pr.summary_model.HumanReason.CONTESTED.prose not in body
         assert "need discussion" not in body
         assert "| question" not in body
+
+    def test_questions_bullet_uses_thread_cell(self, content):
+        """The bullet is `- ` plus permalinks.thread_cell, not a third spelling."""
+        entry = CommentItem(
+            id="t1", summary="a | b", file="a.py", line=1, reason="contested",
+        )
+        threads = {
+            "t1": ReportThread(id="t1", comments=[{"databaseId": 42}]),
+        }
+        body = pr.summary_render.build_summary_body(
+            content(needs_human=[entry]),
+            pr.attribution.CommitPushResult(None, "no_changes", ""),
+            "owner/repo", 1, threads,
+        )
+        cell = pr.permalinks.thread_cell(entry, threads, "owner/repo", 1, "")
+        assert f"- {cell}" in body
 
     def test_a_declined_entry_reaches_the_table_beside_needs_human(self, content):
         cp = pr.attribution.CommitPushResult(None, "no_changes", "")

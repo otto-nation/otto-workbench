@@ -78,8 +78,9 @@ def build_summary_body(
     write: the Action cell was rewritten by hand — see `summary_scope.hand_written_rows`.
     Each one is re-emitted in the position its entry would have taken, and the
     entry behind it is dropped from the header counts, because a row reading
-    ``Superseded`` under a header reading ``1 need discussion`` reopens the
-    question the hand edit closed.
+    ``Superseded`` under a header that still counted it (``1 declined``, or a
+    ``### Questions`` bullet for the same thread) reopens the question the hand
+    edit closed.
 
     ``wt_path`` is what lets a satisfied row say who satisfied it: the branch
     is the only place the answer lives. Without it every such row falls back to
@@ -366,11 +367,9 @@ def _render_questions(
         return []
     lines = [QUESTIONS_HEADING, ""]
     for entry in entries:
-        url = pr.permalinks.thread_permalink(
+        cell = pr.permalinks.thread_cell(
             entry, threads_by_id, repo, pr_number, host)
-        label = core.markdown.escape_cell(
-            (entry.summary or "—").replace("]", "\\]").replace("\n", " "))
-        lines.append(f"- [{label}]({url})" if url else f"- {label}")
+        lines.append(f"- {cell}")
     lines.append("")
     return lines
 

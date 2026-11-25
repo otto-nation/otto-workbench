@@ -2749,7 +2749,8 @@ A thread's lifecycle state is what decides whether the run may report itself
 done. `--post` is a request, not a guarantee: if triage routes any thread to
 `needs_human` — contested, conflicting, a question, or needs discussion —
 the fix pass *holds* publishing for the rest of the process, and the
-hold outranks `--post`. Nothing reopens it (see `publishing`).
+hold outranks `--post`. Nothing reopens it (see `publishing`). The
+published summary does not name that outcome as a table status.
 
 The fixes still get applied and still get committed. What waits is everything
 that asserts the work is done: the push, the `Fixed in <sha>` replies, the
@@ -3207,13 +3208,13 @@ against the digest its marker recorded rather than tracking a round number,
 because the round a reply was written in says nothing about whether it is still
 ours.
 
-Four builders sit on one driver. They look alike and are not: each reads a
+Five builders sit on one driver. They look alike and are not: each reads a
 different field, links through a different permalink helper with a different
 fallback, and words its log line differently. The differences are load-bearing
 and are named where they occur.
 
 The hand-written reply (`run_reply`, at the foot of this module) goes through
-the same upsert as all four. It used to post straight to the REST endpoint with
+the same upsert as all five. It used to post straight to the REST endpoint with
 no dedup on that path at all, which is how one thread ends up carrying three of
 our comments that contradict each other — so the one-per-thread rule is the
 module's, not the fix pass's.

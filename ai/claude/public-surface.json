@@ -80,6 +80,7 @@
     "skill:reviewer-lite",
     "skill:self-review",
     "skill:self-review-fix",
+    "skill:session-postmortem",
     "skill:standup",
     "skill:subagents",
     "skill:test-verification",

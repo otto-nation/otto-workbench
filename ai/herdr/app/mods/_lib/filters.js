@@ -10,6 +10,7 @@ import {
   filterLabels,
   filterOn,
   filterRepos,
+  isMine,
 } from './columns.js';
 
 export const SEARCH_MIN = 8;
@@ -172,11 +173,10 @@ function dropExcluded(prs, exclude, field) {
 }
 
 function authorStats(prs, me) {
-  const who = fold(me);
   const counts = new Map();
   for (const pr of prs ?? []) {
     const a = fold(pr?.author);
-    if (!a || a === who) continue;
+    if (!a || isMine(pr, me)) continue;
     counts.set(a, (counts.get(a) ?? 0) + 1);
   }
   const authors = [...counts.keys()].sort((a, b) => a.localeCompare(b));
@@ -198,9 +198,8 @@ export function facetView(base, filters, {
   list = filterLabels(list, f.labels, knownLabels ?? offered);
   list = dropExcluded(list, f.excludeLabels, 'labels');
   if (tab === 'team') {
-    const who = fold(me);
     const known = new Set(authors);
-    const includeAuthors = f.authors.filter((a) => a !== who && known.has(a));
+    const includeAuthors = f.authors.filter((a) => known.has(a));
     if (includeAuthors.length > 0) {
       const want = new Set(includeAuthors);
       list = list.filter((p) => want.has(fold(p.author)));

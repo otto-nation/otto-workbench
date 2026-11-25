@@ -7,7 +7,7 @@
  * `view` is scope.js boardState output or the web snapshot ({prs, me, repoSlugs, columns}). Pure.
  */
 import {
-  MINE_COLUMNS, TEAM_COLUMNS, columnsFor, filterOn, filterPrs, groupColumns, isMine, laneOf,
+  MINE_COLUMNS, TEAM_COLUMNS, columnsFor, filterOn, groupColumns, isMine, laneOf,
   visibleColumns,
 } from './columns.js';
 import { barModel, facetView } from './filters.js';
@@ -15,10 +15,18 @@ import { compactSections } from './compact.js';
 import { columnPreset } from './batch_launch.js';
 import { friendlyError } from './scope.js';
 
-// Mine: the viewer's PRs, drafts only with Mine's Drafts chip. Team: filterPrs (drafts, landed).
+// The one owner of board membership. Both tabs partition on isMine, so Team (others' PRs) and Mine (the
+// viewer's) never overlap. Mine shows drafts with Mine's Drafts chip; Team with Drafts, and hides landed
+// unless Landed is on.
 export function tabList(prs, me, filters, tab) {
-  if (tab === 'mine') return (prs ?? []).filter((p) => isMine(p, me) && (filterOn(filters, 'mineDrafts') || !p.isDraft));
-  return filterPrs(prs ?? [], filters, me);
+  const mine = tab === 'mine';
+  const drafts = filterOn(filters, mine ? 'mineDrafts' : 'drafts');
+  const landed = filterOn(filters, 'landed');
+  return (prs ?? []).filter((p) => (
+    isMine(p, me) === mine
+    && (drafts || !p.isDraft)
+    && (mine || landed || laneOf(p, 'team') !== 'landed')
+  ));
 }
 
 // The document's columns for the tab once one has landed; the static list labels lanes before that.

@@ -20,18 +20,6 @@ _cols() {
   "
 }
 
-# prs JSON, filters JSON, me; print JSON array of PR numbers.
-_filter() {
-  run node --input-type=module -e "
-    const { filterPrs } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
-    const prs = JSON.parse(process.argv[1]);
-    const filters = JSON.parse(process.argv[2]);
-    const me = process.argv[3];
-    process.stdout.write(JSON.stringify(filterPrs(prs, filters, me).map((p) => p.number)));
-  " -- "$1" "$2" "$3"
-}
-
-
 @test "isMine: viewer wins over me; author vs me is case-insensitive" {
   run node --input-type=module -e "
     const { isMine } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
@@ -42,6 +30,42 @@ _filter() {
   "
   [ "$status" -eq 0 ]
   jq -e '.a and .b' <<<"$output"
+}
+
+@test "isMine: a boolean row isMine wins over the login comparison" {
+  run node --input-type=module -e "
+    const { isMine } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    process.stdout.write(JSON.stringify([
+      isMine({author:'bob',isMine:false}, 'bob'),
+      isMine({author:'carol',isMine:true}, 'bob'),
+    ]));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '[false,true]' ]
+}
+
+@test "isMine: an empty viewer or author is never mine" {
+  run node --input-type=module -e "
+    const { isMine } = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    process.stdout.write(JSON.stringify([
+      isMine({author:''}, ''),
+      isMine({}, undefined),
+      isMine({author:'bob'}, ''),
+      isMine({author:'', viewer:'bob'}, 'bob'),
+      isMine(undefined, 'bob'),
+    ]));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = '[false,false,false,false,false]' ]
+}
+
+@test "filterPrs is retired: tabList owns board membership" {
+  run node --input-type=module -e "
+    const m = await import('$REPO_ROOT/ai/herdr/app/mods/_lib/columns.js');
+    process.stdout.write(String(typeof m.filterPrs));
+  "
+  [ "$status" -eq 0 ]
+  [ "$output" = 'undefined' ]
 }
 
 @test "DEFAULT_FILTERS hides drafts, mine drafts, landed, and empty" {
@@ -66,30 +90,6 @@ _filter() {
   "
   [ "$status" -eq 0 ]
   [ "$output" = '{"unsetDrafts":false,"unsetMine":false,"storedTrue":true,"storedFalse":false,"unknown":false}' ]
-}
-
-@test "filterPrs: drafts hidden by default" {
-  _filter '[{"number":1,"author":"alice","isDraft":true,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"alice","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{}' 'alice'
-  [ "$status" -eq 0 ]
-  [ "$output" = "[2]" ]
-}
-
-@test "filterPrs: drafts shown with drafts:true" {
-  _filter '[{"number":1,"author":"alice","isDraft":true,"state":"OPEN","reviewRuns":[]},{"number":2,"author":"alice","isDraft":false,"state":"OPEN","reviewRuns":[]}]' '{"drafts":true}' 'alice'
-  [ "$status" -eq 0 ]
-  [ "$output" = "[1,2]" ]
-}
-
-@test "filterPrs: landed column hidden by default" {
-  _filter '[{"number":1,"author":"bob","isDraft":false,"state":"MERGED","lanes":{"team":"landed"},"reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","lanes":{"team":"open"},"reviewRuns":[]}]' '{}' 'alice'
-  [ "$status" -eq 0 ]
-  [ "$output" = "[2]" ]
-}
-
-@test "filterPrs: landed shown with landed:true" {
-  _filter '[{"number":1,"author":"bob","isDraft":false,"state":"MERGED","lanes":{"team":"landed"},"reviewRuns":[]},{"number":2,"author":"bob","isDraft":false,"state":"OPEN","lanes":{"team":"open"},"reviewRuns":[]}]' '{"landed":true}' 'alice'
-  [ "$status" -eq 0 ]
-  [ "$output" = "[1,2]" ]
 }
 
 @test "visibleColumns: drops empty columns when showEmpty is false" {

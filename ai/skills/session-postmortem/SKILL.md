@@ -1,6 +1,6 @@
 ---
 name: session-postmortem
-description: "Write a living local session postmortem on this machine. TRIGGER when: the user asks for a session postmortem, living notes for this session, or runs /session-postmortem. SKIP: Grafana IRM or production-incident writeups (repo postmortem skill; incident for triage); knowledge-base log lines (wiki-capture)."
+description: "Write a living local session postmortem on this machine. TRIGGER when: the user asks for a local or session postmortem, living notes for this session, or runs /session-postmortem. SKIP: Grafana IRM or production-incident writeups (repo postmortem skill; incident for triage); knowledge-base log lines (wiki-capture)."
 source: otto-workbench/ai/skills/session-postmortem/SKILL.md
 invocation: "/session-postmortem"
 trigger: "Use when the user asks for a local or session postmortem, living notes for this session, or runs /session-postmortem."

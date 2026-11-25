@@ -116,6 +116,10 @@ class TestBuildSummaryBody:
         assert "1 declined" in body
         assert "need discussion" not in body
         assert pr.summary_model.HumanReason.CONTESTED.prose not in body
+        assert any(
+            r.rstrip().endswith("| Declined |")
+            for r in pr.summary_scope.table_rows(body)
+        )
 
     def test_questions_reach_the_body_beside_replies_with_no_table_rows(self, content):
         """Unfolded NEEDS_HUMAN is not a table row, so replies must not drop it."""

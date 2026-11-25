@@ -14,7 +14,7 @@
 | <!-- pr-comments:row k=7c430fa3240349e8 out=dismissed d=399570b5790c0ae0 --> [nope \| really](https://github.com/owner/repo/pull/42#discussion_r104) | @kgn | [`d.py`](https://github.com/owner/repo/blob/abc1234/d.py) | Dismissed (invalid) |
 | <!-- pr-comments:row k=c93303fd64261586 out=dismissed d=950df2cff4a3931f --> use a \|\| b, not a \| b | — | — | Dismissed (invalid) |
 | <!-- pr-comments:row k=6c552840df24052f out=settled_elsewhere d=dd7530b598364f0c --> [resolved on the forge](https://github.com/owner/repo/pull/42#discussion_r105) | @amp | [`e.py`](https://github.com/owner/repo/blob/abc1234/e.py) | Addressed outside the fix pass |
-| <!-- pr-comments:row k=766c16b008f6d95e out=declined d=f63192d2b6cbf542 --> [premise is wrong](https://github.com/owner/repo/pull/42#discussion_r107) | @amp | [`g.py`](https://github.com/owner/repo/blob/abc1234/g.py) | Needs discussion |
+| <!-- pr-comments:row k=766c16b008f6d95e out=declined d=98e3b913c03c040e --> [premise is wrong](https://github.com/owner/repo/pull/42#discussion_r107) | @amp | [`g.py`](https://github.com/owner/repo/blob/abc1234/g.py) | Declined |
 | <!-- pr-comments:row k=f43828af0cff35eb txt=fd21d94991e897f3 out=deferred d=d069666015e6131f --> [too big](https://github.com/owner/repo/pull/42#issuecomment-900) | @kgn | [`j.py`](https://github.com/owner/repo/blob/abc1234/j.py) | Deferred → [ENG-456](https://linear.app/team/issue/ENG-456) |
 | [old row](https://github.com/owner/repo/pull/42#discussion_r999) | @kgn | `old.go:4` | Fixed in `9f2e1a0` |
 | [older row](https://github.com/owner/repo/pull/42#discussion_r998) | @amp | `old.go:9` | Deferred |

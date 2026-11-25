@@ -144,6 +144,7 @@ class TestGeneratedActionCell:
     @pytest.mark.parametrize("cell", [
         "Already addressed",
         "Dismissed (invalid)",
+        "Declined",
         "Deferred",
         "Deferred → ENG-1",
         "Deferred → [ENG-1](https://linear.app/i/ENG-1)",
@@ -271,7 +272,7 @@ class TestActionCellOutcome:
         cells += [ActionCell.deferred(i, u) for i, u in _DEFERRED_ARGS]
         cells += [pr.summary_model.HumanReason.prose_for(r) for r in (
             *(m.value for m in pr.summary_model.HumanReason), "wat_is_this", "")]
-        cells += [ActionCell.DISMISSED, ActionCell.OUTSIDE_THE_PASS]
+        cells += [ActionCell.DISMISSED, ActionCell.OUTSIDE_THE_PASS, ActionCell.DECLINED]
         stale = [c for c in cells
                  if not isinstance(pr.summary_model._ActionVocabulary.matching(c), ActionCell)]
         assert stale == []
@@ -343,7 +344,8 @@ class TestActionCellOutcome:
             for r in (True, False)
         }
         # The three the renderer writes directly, and the five HumanReason names.
-        emitted |= {ActionCell.DISMISSED, ActionCell.DEFERRED, ActionCell.OUTSIDE_THE_PASS}
+        emitted |= {ActionCell.DISMISSED, ActionCell.DEFERRED, ActionCell.OUTSIDE_THE_PASS,
+                    ActionCell.DECLINED}
         emitted |= {m.cell for m in pr.summary_model.HumanReason}
         assert set(ActionCell) - emitted == set()
 
@@ -361,6 +363,7 @@ class TestActionCellOutcome:
     @pytest.mark.parametrize("cell,outcome", [
         ("Already addressed", FixOutcome.ALREADY_ADDRESSED),
         ("Dismissed (invalid)", FixOutcome.DISMISSED),
+        ("Declined", FixOutcome.DECLINED),
         ("Deferred", FixOutcome.DEFERRED),
         ("Deferred → ENG-1", FixOutcome.DEFERRED),
         ("Addressed outside the fix pass", FixOutcome.SETTLED_ELSEWHERE),
@@ -453,6 +456,7 @@ class TestActionCellOutcome:
             "Addressed in ": FixOutcome.ALREADY_ADDRESSED,
             "Addressed outside the fix pass": FixOutcome.SETTLED_ELSEWHERE,
             "Dismissed (invalid)": FixOutcome.DISMISSED,
+            "Declined": FixOutcome.DECLINED,
             "Contested — needs discussion": FixOutcome.NEEDS_HUMAN,
             "Conflicting reviewer feedback": FixOutcome.NEEDS_HUMAN,
             "Question for the author": FixOutcome.NEEDS_HUMAN,

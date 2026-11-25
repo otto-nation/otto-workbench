@@ -22,6 +22,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
+import core.markdown
 import core.text
 import git.client
 import pr.attribution
@@ -245,8 +246,8 @@ def build_summary_body(
         for e in settled_elsewhere
     ])
     declined_count = sum([
-        emit(e, pr.summary_model.HumanReason.prose_for(e.reason), link_sha,
-             FixOutcome.DECLINED)
+        emit(e, pr.summary_model.ActionCell.DECLINED, link_sha,
+             FixOutcome.DECLINED, open_thread=True)
         for e in declined
     ])
     shown_questions: list[CommentItem] = []
@@ -261,6 +262,11 @@ def build_summary_body(
             FixOutcome.NEEDS_HUMAN, entry.settled_by,
         ):
             open_earlier.append(marked.key)
+            continue
+        published = held_by_key.get(marked.key)
+        if published is not None:
+            rows.append(published)
+            held.append(published)
             continue
         shown_questions.append(entry)
     deferred_count = sum([
@@ -348,7 +354,8 @@ def _render_questions(
     for entry in entries:
         url = pr.permalinks.thread_permalink(
             entry, threads_by_id, repo, pr_number, host)
-        label = entry.summary or "—"
+        label = core.markdown.escape_cell(
+            (entry.summary or "—").replace("]", "\\]").replace("\n", " "))
         lines.append(f"- [{label}]({url})" if url else f"- {label}")
     lines.append("")
     return lines

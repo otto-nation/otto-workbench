@@ -599,6 +599,7 @@ class ActionCell(_ActionVocabulary):
     ADDRESSED_IN = ("Addressed in ", FixOutcome.ALREADY_ADDRESSED)
     OUTSIDE_THE_PASS = ("Addressed outside the fix pass", FixOutcome.SETTLED_ELSEWHERE)
     DISMISSED = ("Dismissed (invalid)", FixOutcome.DISMISSED)
+    DECLINED = ("Declined", FixOutcome.DECLINED)
     CONTESTED = ("Contested — needs discussion", FixOutcome.NEEDS_HUMAN)
     CONFLICTING = ("Conflicting reviewer feedback", FixOutcome.NEEDS_HUMAN)
     QUESTION = ("Question for the author", FixOutcome.NEEDS_HUMAN)

@@ -144,6 +144,20 @@ class TestDatingAnItemAgainstItsSourceComment:
         history = pr.attribution.AddressingHistory(branch.path, {})
         assert history.framing(_item(2), None).in_response
 
+    def test_cited_commit_is_empty_when_the_thread_cannot_be_dated(
+        self, branch, on_main,
+    ):
+        """A SHA that cannot be proven to postdate the review is not named.
+
+        `_postdates` reads missing dates as in-response so framing publishes
+        Fixed, not Addressed. The citation is a stronger claim: naming a
+        line-history SHA that may predate the review.
+        """
+        history = pr.attribution.AddressingHistory(branch.path, {})
+        entry = _item(2)
+        assert history.framing(entry, None).in_response
+        assert history.cited_commit(entry, None) == ""
+
     def test_a_history_built_without_timestamps_reads_as_in_response(
         self, branch, on_main,
     ):

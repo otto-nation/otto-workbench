@@ -687,7 +687,7 @@ def render_deferred_summary(
     # A plain partition over every outcome, with nothing dropped: this renderer
     # is the only one --finish reaches, and the condition that routes here is
     # the presence of needs_human. Those threads are the Questions section
-    # (and, after Task 2, the question reply), not table rows — omitting the
+    # (and, for inline threads, the question reply), not table rows — omitting the
     # bucket would drop the items that took the most operator judgment.
     #
     # _finish_deferred_work reconciles the snapshot against GitHub before

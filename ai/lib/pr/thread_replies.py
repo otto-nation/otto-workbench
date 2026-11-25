@@ -18,7 +18,7 @@ fallback, and words its log line differently. The differences are load-bearing
 and are named where they occur.
 
 The hand-written reply (`run_reply`, at the foot of this module) goes through
-the same upsert as all four. It used to post straight to the REST endpoint with
+the same upsert as all five. It used to post straight to the REST endpoint with
 no dedup on that path at all, which is how one thread ends up carrying three of
 our comments that contradict each other — so the one-per-thread rule is the
 module's, not the fix pass's.

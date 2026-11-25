@@ -431,13 +431,16 @@ export function badge(b) {
   return text("meta", b.text, theme().muted);
 }
 // Compact two-column facts. DESIGN.md has no key-value entry; keys use table-header
-// (section, muted) and values use meta, with the code role for paths.
+// (section, muted) and values use meta, with the code role for paths. A value truncates to one
+// line unless its row sets `wrap` (a list that is the point of the row, such as enabled models).
 export function keyValue(rows) {
   const t = theme();
-  return v_flex().gap(SP.xxs).children((rows ?? []).map((row) =>
-    h_flex().gap(SP.sm).items_center().min_w(0)
+  return v_flex().gap(SP.xxs).children((rows ?? []).map((row) => {
+    const value = text(row.mono ? "code" : "meta", row.value).min_w(0).flex_1();
+    return h_flex().gap(SP.sm).items_center().min_w(0)
       .child(text("section", row.key, t.muted).flex_none())
-      .child(text(row.mono ? "code" : "meta", row.value).min_w(0).flex_1().truncate())));
+      .child(row.wrap ? value : value.truncate());
+  }));
 }
 
 // A wrapping row of badges: a card's badge row, the detail's status row.

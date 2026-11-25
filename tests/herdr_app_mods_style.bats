@@ -513,3 +513,7 @@ teardown() {
   grep -q '‹ Machines' "$MODS/sessions/view.js"
   grep -q 'sessions.open' "$MODS/sessions/main.js"
 }
+
+@test "keyValue truncates a value unless its row sets wrap" {
+  grep -A8 'export function keyValue(' "$MODS/_ui/ui.js" | grep -q 'row.wrap ? value : value.truncate()'
+}

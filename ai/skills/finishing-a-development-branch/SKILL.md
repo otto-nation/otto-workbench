@@ -176,6 +176,7 @@ and the push owes `pr review --self --fix --push`
 |--------|---------|
 | "I'll offer merge / PR / keep and let them choose" | The rules forbid a completion menu. Open the PR. |
 | "They didn't ask for a PR" / "I'll wait until they say finish" | Implementation complete is the trigger. Open the draft. |
+| "I'll end by offering to open the PR" / "`git.local.md` says to skip review, so I should check first" | An offer is the wait this skill forbids, and `git.local.md` names the command to run. Run it and report the URL. |
 | "It's a small change — merge it into main locally" | Every change reaches `main` through a merged PR, no exceptions. |
 | "I'll open it ready, it's finished" | `--draft`. Ready is the reviewer's signal, not yours. |
 | "`gh pr create` is right here" | `pr create` applies the template, issue linking, and assignee rules. |

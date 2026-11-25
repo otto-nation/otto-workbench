@@ -11,6 +11,7 @@
 - Never put a bare coreutils `timeout` around a long `pr review --self --fix` (`subagents/SKILL.md` § Implementation)
 - At session start in a repo, check `~/.local/state/workbench/reviews/` for a self-review of this branch (`self-review/SKILL.md` § Session-Start)
 - When implementation on a branch is complete, load `finishing-a-development-branch` and open the draft PR. Do not wait to be asked
+- The turn that finishes the implementation ends with a PR URL, or with the failure that stopped `pr create`. It never ends with an offer or a question about opening one ("say if you want the PR", "want me to open it?"): that hands the user the step this rule gives you, and they have had to ask for it repeatedly. A `git.local.md` rule that names the invocation (`pr create --draft --skip-review`) is the authorization to run it, not a reason to ask first. Pausing is for a red suite or a stale base, as the skill says; a PR that exists is the report
 
 ## Upstream Repositories
 

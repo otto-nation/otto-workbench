@@ -36,8 +36,8 @@ needs: the suite for each file you touched, and any suite whose subject you chan
 change, a revert check, and confirming a fix — none of them is a reason to run every file.
 Not `bin/local/run-tests` with no `--files`, not `bats tests/`, not a bare `pytest`, and not
 in a background job either. Push and let CI answer for the rest; the pre-push hook already
-runs `bin/local/validate-all` and the suites your diff selects, so a whole-suite run before
-pushing buys nothing and costs twice.
+runs `bin/local/validate-all` and the suites your diff selects (pytest over its file cap
+is left to CI), so a whole-suite run before pushing buys nothing and costs twice.
 
 When CI fails, run the failing file locally, not the suite around it. When you need to know
 which files a change reaches, `bin/local/select-tests --base origin/main` and

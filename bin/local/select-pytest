@@ -517,8 +517,9 @@ def dependency_map(direct_only: bool = False) -> dict[str, set[str]]:
 
     *direct_only* keeps each test's own imports and path refs, plus one hop
     through any `tests/` sibling it imports, and closes over nothing — the
-    fix pass's selection (`--direct`), where a test of a module's importer's
-    importer is the pre-push gate's business rather than the pass's.
+    fix pass's selection (`--direct`). Pre-push falls back to this when the
+    transitive set is over its file cap; a test of a module's importer's
+    importer that still does not fit is left to CI.
     """
     index = _module_index()
     graph = _forward_graph(index)

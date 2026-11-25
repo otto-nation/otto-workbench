@@ -367,6 +367,62 @@ _select_bats() {
   _bats_label="tests ($count/$total files)"
 }
 
+# Local pytest budget. A set at or under this runs as selected; over it,
+# retry with --direct; still over, skip and leave the set to CI.
+# 80 sits above typical diffs (18–42) and hub --direct (~47), below hub
+# transitive (366+) and a full-suite trigger (731).
+PREPUSH_PYTEST_FILE_CAP=80
+
+# _select_pytest — change-based pytest selection with the file cap above.
+# Sets _pytest_selected, _pytest_label, _pytest_none, and _pytest_skip_detail.
+# A selector that fails falls back to the whole suite (empty selected, none
+# false), matching _select_bats: an unknown set is not "none affected".
+_select_pytest() {
+  _pytest_selected=""
+  _pytest_label="pytest"
+  _pytest_none=false
+  _pytest_skip_detail=""
+  [[ -x "$REPO_ROOT/bin/local/select-pytest" ]] || return 0
+
+  local selector="$REPO_ROOT/bin/local/select-pytest"
+  local base="$GIT_REMOTE/$_default_branch"
+  local total count direct_count
+  local transitive="" direct=""
+
+  total=$("$selector" --all 2>/dev/null | wc -l | tr -d ' ') || total=0
+
+  if ! transitive=$("$selector" --base "$base" 2>/dev/null); then
+    return 0
+  fi
+  if [[ -z "$transitive" ]]; then
+    _pytest_none=true
+    _pytest_skip_detail="none affected by this diff"
+    return 0
+  fi
+
+  count=$(printf '%s\n' "$transitive" | wc -l | tr -d ' ')
+  _pytest_selected="$transitive"
+  _pytest_label="pytest ($count/$total files)"
+  if (( count <= PREPUSH_PYTEST_FILE_CAP )); then
+    return 0
+  fi
+
+  if direct=$("$selector" --base "$base" --direct 2>/dev/null) && [[ -n "$direct" ]]; then
+    direct_count=$(printf '%s\n' "$direct" | wc -l | tr -d ' ')
+    if (( direct_count <= PREPUSH_PYTEST_FILE_CAP )); then
+      _pytest_selected="$direct"
+      _pytest_label="pytest ($direct_count/$total files, direct)"
+      return 0
+    fi
+  fi
+
+  _pytest_none=true
+  _pytest_selected=""
+  _pytest_label="pytest"
+  _pytest_skip_detail="skipped: ${count} files over cap of ${PREPUSH_PYTEST_FILE_CAP}; CI will run them"
+  return 0
+}
+
 # _run_bats_step — runs the selected bats files (all of them when nothing
 # narrowed the selection), reports the count, and warns about slow tests.
 _run_bats_step() {
@@ -432,48 +488,39 @@ fi
 if ! command -v pytest >/dev/null 2>&1; then
   warn "pytest not found — skipping Python tests (brew install pytest, or: mise use -g pipx:pytest[uvx_args=--with pytest-xdist])"
 else
-  # Change-based selection, the same shape as the bats step above: only the
-  # pytest files the diff can reach. Falls back to the whole suite when the
-  # selector is unavailable or when it reports a full-suite trigger.
-  _pytest_selected=""
-  _pytest_label="pytest"
-  if [[ -x "$REPO_ROOT/bin/local/select-pytest" ]]; then
-    _pytest_selected=$("$REPO_ROOT/bin/local/select-pytest" --base "$GIT_REMOTE/$_default_branch" 2>/dev/null) || _pytest_selected=""
-  fi
-  if [[ -n "$_pytest_selected" ]]; then
-    _pytest_file_count=$(echo "$_pytest_selected" | wc -l | tr -d ' ')
-    # From the selector, not a find spelled here: a second definition of "every
-    # test file" drifts from the first, and this one did — it read 193/187 once
-    # the selector learned to recurse into the tests package that a maxdepth 1
-    # find cannot see.
-    _pytest_total=$("$REPO_ROOT/bin/local/select-pytest" --all 2>/dev/null | wc -l | tr -d ' ')
-    _pytest_label="pytest ($_pytest_file_count/$_pytest_total files)"
-  fi
+  # Change-based selection with a local file cap (see _select_pytest). CI on
+  # pull_request still runs the transitive --changed set; a full-suite trigger
+  # that stays over the cap is skipped here rather than run unbounded.
+  _select_pytest
+  if $_pytest_none; then
+    _step "Running $_pytest_label"
+    _pass "$_pytest_skip_detail"
+  else
+    # One invocation, built from a conditionally-populated array. Two copies of
+    # the call differing only in the selection argument means two copies of the
+    # failure handling, and a fix applied to only one of them is a gate that
+    # reports differently depending on whether the selection narrowed.
+    _pytest_args=(--pytest)
+    if [[ -n "$_pytest_selected" ]]; then
+      _pytest_args+=(--pytest-files "$_pytest_selected")
+    fi
 
-  # One invocation, built from a conditionally-populated array. Two copies of
-  # the call differing only in the selection argument means two copies of the
-  # failure handling, and a fix applied to only one of them is a gate that
-  # reports differently depending on whether the selection narrowed.
-  _pytest_args=(--pytest)
-  if [[ -n "$_pytest_selected" ]]; then
-    _pytest_args+=(--pytest-files "$_pytest_selected")
+    _step "Running $_pytest_label"
+    # Same as the bats step: stderr streams below this line.
+    echo
+    _pytest_start=$SECONDS
+    # stdout only — see the bats capture above. The summary line the count is
+    # parsed from stays on stdout; heartbeats stream on stderr.
+    _pytest_output=$("$REPO_ROOT/bin/local/run-tests" "${_pytest_args[@]}" -- --tb=short -q) || {
+      printf "${RED}✗${NC}\n" >&2
+      echo "$_pytest_output"
+      err "Pytest failed"
+      exit 1
+    }
+    _pytest_elapsed=$(( SECONDS - _pytest_start ))
+    _pytest_count=$(echo "$_pytest_output" | awk '/passed/{print $1}')
+    _pass "${_pytest_count:-?} tests, ${_pytest_elapsed}s"
   fi
-
-  _step "Running $_pytest_label"
-  # Same as the bats step: stderr streams below this line.
-  echo
-  _pytest_start=$SECONDS
-  # stdout only — see the bats capture above. The summary line the count is
-  # parsed from stays on stdout; heartbeats stream on stderr.
-  _pytest_output=$("$REPO_ROOT/bin/local/run-tests" "${_pytest_args[@]}" -- --tb=short -q) || {
-    printf "${RED}✗${NC}\n" >&2
-    echo "$_pytest_output"
-    err "Pytest failed"
-    exit 1
-  }
-  _pytest_elapsed=$(( SECONDS - _pytest_start ))
-  _pytest_count=$(echo "$_pytest_output" | awk '/passed/{print $1}')
-  _pass "${_pytest_count:-?} tests, ${_pytest_elapsed}s"
 fi
 
 # ── Tree unchanged ───────────────────────────────────────────────────────────

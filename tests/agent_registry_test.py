@@ -270,6 +270,18 @@ class TestOptionalPhases:
                 assert PHASES[phase].optional, f"{effort} skips required {phase}"
 
 
+class TestReviewTiers:
+    """How much model each reviewing phase needs.
+
+    Group agents stay on standard because a later deep pass judges them.
+    The single-agent path is the whole review, so it takes the same model
+    as synthesis.
+    """
+
+    def test_single_uses_the_deep_tier(self):
+        assert PHASES[Phase.SINGLE].tier is Tier.DEEP
+
+
 class TestPhaseAgentPins:
     """Three phases are pinned to reviewer-lite regardless of --effort.
 

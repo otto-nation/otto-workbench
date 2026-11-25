@@ -31,6 +31,7 @@ export default class Settings extends View {
     this.note = null;
     this.inflight = false;
     this.again = false;
+    this.writes = 0;
     this.refreshSince = null;
     this.shown = panelOn(layout(), PANEL);
 
@@ -61,6 +62,8 @@ export default class Settings extends View {
       return;
     }
     this.inflight = true;
+    // A write bumps `writes`; a load that started before it holds a pre-write read and is dropped.
+    const startedAt = this.writes;
     this.refreshSince = Date.now();
     cx.timer.after(LOAD_DELAY_MS, (cx) => { if (this.refreshSince != null) cx.notify(); });
     cx.spawn(async (cx) => {
@@ -69,8 +72,12 @@ export default class Settings extends View {
           loadConfigModels(exec),
           loadModelChoices(exec),
         ]);
-        this.models = models;
-        this.choices = choices;
+        if (startedAt === this.writes) {
+          this.models = models;
+          if (choices.ok || this.choices == null) this.choices = choices;
+        } else {
+          this.again = true;
+        }
       } finally {
         this.inflight = false;
         this.refreshSince = null;
@@ -136,6 +143,7 @@ export default class Settings extends View {
           return;
         }
         this.dirty = true;
+        this.writes += 1;
         const [models, choices] = await Promise.all([
           loadConfigModels(exec),
           loadModelChoices(exec),
@@ -174,7 +182,11 @@ export default class Settings extends View {
         }
         this.dirty = false;
         const models = await loadConfigModels(exec);
-        if (models.ok) this.models = models;
+        if (models.ok) {
+          this.models = models;
+        } else {
+          this.note = models.error?.message ?? "Synced, but could not reload settings";
+        }
       } finally {
         this.syncing = false;
         cx.notify();

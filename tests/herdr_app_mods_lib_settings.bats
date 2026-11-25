@@ -29,6 +29,12 @@ _js() {
   [ "$output" = '[["config","models"],["config","set","models.session","auto"],["config","model","deep","anthropic/claude-opus-5-5:high"],null,["ai","sync"]]' ]
 }
 
+@test "writeTargetArgv refuses a value the CLI would read as a flag" {
+  _js 'out([s.writeTargetArgv("deep", "--help"), s.writeTargetArgv("session", "-x")])'
+  [ "$status" -eq 0 ]
+  [ "$output" = '[null,null]' ]
+}
+
 @test "parseConfigModels requires claude, pi and tiers objects" {
   _js 'out([s.parseConfigModels({claude:{},pi:{},tiers:{}}).ok, s.parseConfigModels(null).ok, s.parseConfigModels({claude:{},pi:{}}).ok])'
   [ "$status" -eq 0 ]

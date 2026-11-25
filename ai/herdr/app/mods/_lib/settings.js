@@ -51,7 +51,8 @@ export function configModelsArgv() {
 
 export function writeTargetArgv(target, value) {
   const trimmed = String(value ?? "").trim();
-  if (!trimmed) return null;
+  // A leading dash would be read by the CLI as a flag, not a model id.
+  if (!trimmed || trimmed.startsWith("-")) return null;
   if (target === "session") return ["config", "set", "models.session", trimmed];
   if (TIER_TARGETS.has(target)) return ["config", "model", target, trimmed];
   throw new Error(`unknown settings target: ${target}`);

@@ -40,7 +40,7 @@ component configures it and `wt-init` runs it.
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, diverge, dream, finishing-a-development-branch, git-workflow, issue-tracker, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review, self-review-fix, standup, subagents, test-verification, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, diverge, dream, finishing-a-development-branch, git-workflow, issue-tracker, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review, self-review-fix, session-postmortem, standup, subagents, test-verification, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -272,6 +272,18 @@ Run self-review and auto-fix findings. Wraps pr review --self --fix --push. Can 
 ```
 **Trigger:** Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR.
 **Skip:** Do not use for reviewing someone else's PR (use code-review or review instead). Do not use for addressing existing PR review comments (use pr-comments instead).
+
+### `/session-postmortem`
+
+Write a living local session postmortem on this machine. TRIGGER when: the user asks for a session postmortem, living notes for this session, or runs /session-postmortem. SKIP: Grafana IRM or production-incident writeups (repo postmortem skill; incident for triage); knowledge-base log lines (wiki-capture).
+
+```
+/session-postmortem
+```
+
+**Output:** `~/.local/state/workbench/sessions/<id>/POSTMORTEM.md`
+**Trigger:** Use when the user asks for a local or session postmortem, living notes for this session, or runs /session-postmortem.
+**Skip:** Do not use for Grafana IRM or production-incident writeups — that is the repo postmortem skill, or incident for triage. Do not use for knowledge-base log lines — that is wiki-capture.
 
 ### `/standup`
 

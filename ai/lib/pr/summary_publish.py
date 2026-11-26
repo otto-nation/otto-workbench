@@ -359,8 +359,9 @@ def _reconcile(
     """Render the round, then re-render around the rows it must not write.
 
     Held rows are resolved before carried ones, and the carry-forward set is
-    then computed against the body that already holds them, so a hand-edited
-    row is kept once rather than emitted twice.
+    then computed against the identity body — open questions as table rows,
+    the way `emit` used to write them — so a published question row is held
+    or dropped rather than carried *and* listed under Questions.
 
     The reply blocks to keep are known before the first render — they depend
     only on the target and the reply set — so every render carries them.
@@ -377,15 +378,15 @@ def _reconcile(
         chain=_earlier_rounds(marked, None if answered else existing.comment_id),
         **({"kept_replies": replies.blocks} if replies.blocks else {}),
     )
-    body = render(carried_over=[])
-    hand_held = pr.summary_scope.hand_written_rows(marked.bodies, body)
-    if hand_held:
-        body = render(carried_over=[], hand_held=hand_held)
+    identity = render(carried_over=[], questions_as_rows=True)
+    hand_held = pr.summary_scope.hand_written_rows(marked.bodies, identity)
+    body = render(carried_over=[], hand_held=hand_held)
     # Only against the comment being replaced. A row on any other summary
     # comment is still published there, and lifting it into this one would
-    # restate the round the chain already carries.
+    # restate the round the chain already carries. Matching uses the identity
+    # body so a question this round accounts for is not treated as lost.
     carried = pr.summary_scope.carried_over_rows(
-        "" if answered else existing.body, body, scope.elsewhere_keys, folded,
+        "" if answered else existing.body, identity, scope.elsewhere_keys, folded,
         folded_texts)
     if carried:
         body = render(carried_over=carried, hand_held=hand_held)
@@ -686,8 +687,9 @@ def render_deferred_summary(
 
     # A plain partition over every outcome, with nothing dropped: this renderer
     # is the only one --finish reaches, and the condition that routes here is
-    # the presence of needs_human, so omitting that bucket would omit exactly
-    # the threads that took the most operator judgment.
+    # the presence of needs_human. Those threads are the Questions section
+    # (and, for inline threads, the question reply), not table rows — omitting the
+    # bucket would drop the items that took the most operator judgment.
     #
     # _finish_deferred_work reconciles the snapshot against GitHub before
     # calling this, so a thread settled outside the fix pass has already left

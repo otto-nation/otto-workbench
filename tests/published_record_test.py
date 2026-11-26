@@ -207,7 +207,7 @@ def test_an_edit_past_the_comment_limit_is_posted_fresh_instead():
     history = pr.comments.MarkerHistory(found=True, comments=(existing,))
     seen_scopes = []
 
-    def build_body(carried_over, scope, chain, hand_held=None):
+    def build_body(carried_over, scope, chain, hand_held=None, **_):
         seen_scopes.append(scope)
         # Edits carry the target's rows forward; a fresh post does not.
         return _body(_marked(url=_OTHER).line, *carried_over)

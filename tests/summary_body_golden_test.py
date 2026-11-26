@@ -155,7 +155,7 @@ def _threads():
 def _full_body():
     """One body reaching every branch that composes with the others.
 
-    Fourteen entries over every outcome bucket, rendering thirteen rows: three
+    Fourteen entries over every outcome bucket, rendering twelve rows: three
     are left to an earlier summary and render as notes instead, one is held
     back by a hand edit and renders as the published text rather than this
     round's, and two more arrive already rendered as `carried_over`. Every
@@ -215,9 +215,9 @@ def _full_body():
             CommentItem(id="t6", summary="which one?", reviewer="kgn",
                         file="f.py", line=5, reason="contested"),
         ],
-        # Folded into the same "need discussion" count as NEEDS_HUMAN by
-        # `_NEEDS_A_PERSON`, and rendered by the same `HumanReason` prose. Both
-        # buckets are here because the fold is the thing worth recording.
+        # DECLINED stays a table status (`N declined`); NEEDS_HUMAN is the
+        # Questions section, not a second row under the same heading. Both
+        # buckets are here because that split is the thing worth recording.
         declined=[
             CommentItem(id="t7", summary="premise is wrong", reviewer="amp",
                         file="g.py", line=8),
@@ -537,6 +537,64 @@ class TestTheSummaryTableRendersOnTheForgeThePRIsOn:
         the host on unconditionally.
         """
         assert f"https://github.com/{_REPO}/commit/{_LINK_SHA}" in _full_body()
+
+
+class TestHandHeldQuestionsAndDeclinedRows:
+    """Rows the questions loop and declined emit must not drop or mislabel."""
+
+    def test_a_hand_held_needs_human_row_is_kept_not_reopened(self):
+        """A rewritten Action cell on a NEEDS_HUMAN row stays in the table.
+
+        The questions loop used to skip `held_by_key`, so a hand edit such as
+        `Superseded` was deleted and the point reopened under Questions.
+        """
+        tid = "PRRT_held"
+        threads = {
+            tid: ReportThread(id=tid, comments=[{"databaseId": 555}]),
+        }
+        key = pr.published_record.fingerprint("#discussion_r555")
+        published = (
+            "| [which one?](https://github.com/owner/repo/pull/1#discussion_r555) "
+            "| @kgn | `a.py:1` | Superseded |"
+        )
+        body = pr.summary_render.build_summary_body(
+            _round_content(needs_human=[CommentItem(
+                id=tid, summary="which one?", file="a.py", line=1,
+                reason="contested",
+            )]),
+            pr.attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, ""),
+            _REPO, 1, threads,
+            hand_held=[pr.summary_model.HeldRow(
+                key=key, published=published, replaced_by="Needs discussion",
+            )],
+        )
+        assert "Superseded" in body
+        assert "### Questions" not in body
+        assert "1 hand-written" in body
+
+    def test_a_declined_row_left_to_an_earlier_comment_is_still_open(self):
+        """An earlier declined row is still owed an answer, not settled."""
+        tid = "PRRT_old"
+        threads = {
+            tid: ReportThread(id=tid, comments=[
+                {"databaseId": 109, "createdAt": "2020-01-01T00:00:00Z"},
+            ]),
+        }
+        key = pr.published_record.fingerprint("#discussion_r109")
+        body = pr.summary_render.build_summary_body(
+            _round_content(declined=[CommentItem(
+                id=tid, summary="premise is wrong", file="a.py", line=1,
+            )]),
+            pr.attribution.CommitPushResult(None, CommitStatus.NO_CHANGES, ""),
+            _REPO, 1, threads,
+            scope=pr.summary_rounds.RoundScope(
+                since=_SCOPE_SINCE,
+                published_keys=frozenset({key}),
+                published_outcomes={key: FixOutcome.DECLINED},
+            ),
+        )
+        assert "still open" in body
+        assert "settled in an earlier round" not in body
 
 
 class TestTheRenderedSummaryIsRecorded:

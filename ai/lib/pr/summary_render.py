@@ -22,10 +22,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from pathlib import Path
 
+import core.markdown
 import core.text
 import git.client
 import pr.attribution
 import pr.comments_fix
+import pr.permalinks
 import pr.published_record
 import pr.summary_model
 import pr.summary_replies
@@ -35,6 +37,7 @@ from pr.fix import FixOutcome
 from pr.thread_models import CommentItem, ReportThread
 
 SUMMARY_MARKER = "<!-- pr-comments:summary -->"
+QUESTIONS_HEADING = "### Questions"
 
 # Re-exported rather than defined here: `pr.settlement` names a thread the same
 # way and sits below this module, so the one implementation lives in `core.text`
@@ -60,6 +63,7 @@ def build_summary_body(
     chain: list[pr.summary_rounds.SummaryRound] | None = None,
     host: str = "",
     kept_replies: Mapping[str, str] | None = None,
+    questions_as_rows: bool = False,
 ) -> str:
     """Build the markdown body for the fix summary comment.
 
@@ -74,8 +78,9 @@ def build_summary_body(
     write: the Action cell was rewritten by hand — see `summary_scope.hand_written_rows`.
     Each one is re-emitted in the position its entry would have taken, and the
     entry behind it is dropped from the header counts, because a row reading
-    ``Superseded`` under a header reading ``1 need discussion`` reopens the
-    question the hand edit closed.
+    ``Superseded`` under a header that still counted it (``1 declined``, or a
+    ``### Questions`` bullet for the same thread) reopens the question the hand
+    edit closed.
 
     ``wt_path`` is what lets a satisfied row say who satisfied it: the branch
     is the only place the answer lives. Without it every such row falls back to
@@ -99,6 +104,11 @@ def build_summary_body(
     They render in the `### Replies to review comments` section beside the
     blocks ``scope`` says this round writes, below every other section and
     above the footer.
+
+    ``questions_as_rows`` is the identity pass `_reconcile` runs so
+    `hand_written_rows` / `carried_over_rows` can match a published table row
+    against the question this render now writes as a bullet. Open questions
+    go through `emit` the way they used to, and that body is never posted.
     """
     carried_over = carried_over or []
     scope = scope or pr.summary_rounds.RoundScope()
@@ -118,7 +128,8 @@ def build_summary_body(
     already_addressed = unfolded(FixOutcome.ALREADY_ADDRESSED)
     dismissed = unfolded(FixOutcome.DISMISSED)
     settled_elsewhere = unfolded(FixOutcome.SETTLED_ELSEWHERE)
-    needs_human = [e for e in content.needs_a_person if e.id not in folded]
+    open_questions = unfolded(FixOutcome.NEEDS_HUMAN)
+    declined = unfolded(FixOutcome.DECLINED)
     deferred = unfolded(FixOutcome.DEFERRED)
 
     rows: list[str] = []
@@ -241,11 +252,38 @@ def build_summary_body(
              FixOutcome.SETTLED_ELSEWHERE)
         for e in settled_elsewhere
     ])
-    human_count = sum([
-        emit(e, pr.summary_model.HumanReason.prose_for(e.reason), link_sha,
-             FixOutcome.NEEDS_HUMAN, open_thread=True)
-        for e in needs_human
+    declined_count = sum([
+        emit(e, pr.summary_model.ActionCell.DECLINED, link_sha,
+             FixOutcome.DECLINED, open_thread=True)
+        for e in declined
     ])
+    shown_questions: list[CommentItem] = []
+    for entry in open_questions:
+        if questions_as_rows:
+            emit(
+                entry, pr.summary_model.HumanReason.prose_for(entry.reason),
+                link_sha, FixOutcome.NEEDS_HUMAN, open_thread=True)
+            continue
+        status = pr.summary_model.HumanReason.prose_for(entry.reason)
+        cells = pr.summary_row.row_cells_for(
+            entry, status, threads_by_id, repo, pr_number, link_sha,
+            wt_path, host)
+        marked = pr.summary_row.marked_row(
+            cells, status, FixOutcome.NEEDS_HUMAN)
+        if not scope.covers(
+            marked.key,
+            pr.summary_rounds.entry_activity_at(
+                entry, threads_by_id, sources_at),
+            FixOutcome.NEEDS_HUMAN, entry.settled_by,
+        ):
+            open_earlier.append(marked.key)
+            continue
+        published = held_by_key.get(marked.key)
+        if published is not None:
+            rows.append(published)
+            held.append(published)
+            continue
+        shown_questions.append(entry)
     deferred_count = sum([
         emit(e, deferred_status, link_sha, FixOutcome.DEFERRED) for e in deferred
     ])
@@ -270,7 +308,7 @@ def build_summary_body(
         FixOutcome.DISMISSED: dismissed_count,
         FixOutcome.SETTLED_ELSEWHERE: settled_count,
         FixOutcome.DEFERRED: deferred_count,
-        FixOutcome.NEEDS_HUMAN: human_count,
+        FixOutcome.DECLINED: declined_count,
     }, extras))
     table.append("")
 
@@ -279,6 +317,9 @@ def build_summary_body(
         table.append(pr.summary_model.TABLE_DIVIDER)
         table.extend(rows)
         table.append("")
+
+    table.extend(_render_questions(
+        shown_questions, threads_by_id, repo, pr_number, host))
 
     table.extend(_table_note(
         held_count, "row", "kept as published — the Action cell was written by "
@@ -298,10 +339,11 @@ def build_summary_body(
         content, scope, kept_replies or {}, repo, pr_number, host)
     parts = [SUMMARY_MARKER, pr.published_record.FORMAT_MARKER]
     # A replies-only publish — `pr comments --reply` before any fix pass ran —
-    # has no row and no note to put under the heading, and an empty heading
-    # over an empty count line reads as a table lost. A round with no replies
-    # keeps it: that is the "nothing to say" summary every round has posted.
-    if rows or open_earlier or settled_earlier or not replies:
+    # has no row, no question, and no note to put under the heading, and an
+    # empty heading over an empty count line reads as a table lost. A round
+    # with no replies keeps it: that is the "nothing to say" summary every
+    # round has posted.
+    if rows or shown_questions or open_earlier or settled_earlier or not replies:
         parts.extend(table)
 
     if not has_comment_items:
@@ -312,6 +354,24 @@ def build_summary_body(
     parts.extend(_render_round_chain(chain))
 
     return "\n".join(parts)
+
+
+def _render_questions(
+    entries: list[CommentItem],
+    threads_by_id: dict[str, ReportThread],
+    repo: str,
+    pr_number: int,
+    host: str,
+) -> list[str]:
+    if not entries:
+        return []
+    lines = [QUESTIONS_HEADING, ""]
+    for entry in entries:
+        cell = pr.permalinks.thread_cell(
+            entry, threads_by_id, repo, pr_number, host)
+        lines.append(f"- {cell}")
+    lines.append("")
+    return lines
 
 
 def _table_note(count: int, noun: str, rest: str) -> list[str]:

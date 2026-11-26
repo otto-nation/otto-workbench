@@ -8,7 +8,8 @@ A thread's lifecycle state is what decides whether the run may report itself
 done. `--post` is a request, not a guarantee: if triage routes any thread to
 `needs_human` — contested, conflicting, a question, or needs discussion —
 the fix pass *holds* publishing for the rest of the process, and the
-hold outranks `--post`. Nothing reopens it (see `publishing`).
+hold outranks `--post`. Nothing reopens it (see `publishing`). The
+published summary does not name that outcome as a table status.
 
 The fixes still get applied and still get committed. What waits is everything
 that asserts the work is done: the push, the `Fixed in <sha>` replies, the

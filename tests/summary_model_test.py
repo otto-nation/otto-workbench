@@ -17,7 +17,6 @@ from review_threads_support import (  # noqa: E402
     _no_published_summary, _published_summary, _unmarked, content,
 )
 from pr.comments_state import ThreadState
-import core.markdown
 from git.land import CommitStatus
 import pr.thread_replies
 import pr.attribution
@@ -144,6 +143,7 @@ class TestGeneratedActionCell:
     @pytest.mark.parametrize("cell", [
         "Already addressed",
         "Dismissed (invalid)",
+        "Declined",
         "Deferred",
         "Deferred → ENG-1",
         "Deferred → [ENG-1](https://linear.app/i/ENG-1)",
@@ -271,7 +271,7 @@ class TestActionCellOutcome:
         cells += [ActionCell.deferred(i, u) for i, u in _DEFERRED_ARGS]
         cells += [pr.summary_model.HumanReason.prose_for(r) for r in (
             *(m.value for m in pr.summary_model.HumanReason), "wat_is_this", "")]
-        cells += [ActionCell.DISMISSED, ActionCell.OUTSIDE_THE_PASS]
+        cells += [ActionCell.DISMISSED, ActionCell.OUTSIDE_THE_PASS, ActionCell.DECLINED]
         stale = [c for c in cells
                  if not isinstance(pr.summary_model._ActionVocabulary.matching(c), ActionCell)]
         assert stale == []
@@ -343,7 +343,8 @@ class TestActionCellOutcome:
             for r in (True, False)
         }
         # The three the renderer writes directly, and the five HumanReason names.
-        emitted |= {ActionCell.DISMISSED, ActionCell.DEFERRED, ActionCell.OUTSIDE_THE_PASS}
+        emitted |= {ActionCell.DISMISSED, ActionCell.DEFERRED, ActionCell.OUTSIDE_THE_PASS,
+                    ActionCell.DECLINED}
         emitted |= {m.cell for m in pr.summary_model.HumanReason}
         assert set(ActionCell) - emitted == set()
 
@@ -361,6 +362,7 @@ class TestActionCellOutcome:
     @pytest.mark.parametrize("cell,outcome", [
         ("Already addressed", FixOutcome.ALREADY_ADDRESSED),
         ("Dismissed (invalid)", FixOutcome.DISMISSED),
+        ("Declined", FixOutcome.DECLINED),
         ("Deferred", FixOutcome.DEFERRED),
         ("Deferred → ENG-1", FixOutcome.DEFERRED),
         ("Addressed outside the fix pass", FixOutcome.SETTLED_ELSEWHERE),
@@ -453,6 +455,7 @@ class TestActionCellOutcome:
             "Addressed in ": FixOutcome.ALREADY_ADDRESSED,
             "Addressed outside the fix pass": FixOutcome.SETTLED_ELSEWHERE,
             "Dismissed (invalid)": FixOutcome.DISMISSED,
+            "Declined": FixOutcome.DECLINED,
             "Contested — needs discussion": FixOutcome.NEEDS_HUMAN,
             "Conflicting reviewer feedback": FixOutcome.NEEDS_HUMAN,
             "Question for the author": FixOutcome.NEEDS_HUMAN,
@@ -542,38 +545,44 @@ class TestActionCellOutcome:
 
 
 class TestHumanReason:
-    """The Action cell of a needs-human row reads as prose, never as a token."""
+    """A needs-human entry is a Questions bullet, never a table row."""
 
-    def _action_cell(self, content, reason):
-        """The rendered Action cell for a needs-human entry with this reason."""
+    def _body(self, content, reason, summary="s"):
+        """The summary body for a needs-human entry with this reason."""
         cp = pr.attribution.CommitPushResult(None, "no_changes", "")
-        body = pr.summary_render.build_summary_body(
+        return pr.summary_render.build_summary_body(
             content(needs_human=[
-                CommentItem(summary="s", file="a.py", line=1, reason=reason),
+                CommentItem(summary=summary, file="a.py", line=1, reason=reason),
             ]),
             cp, "owner/repo", 1, {},
         )
-        rows = pr.summary_scope.table_rows(body)
-        assert len(rows) == 1
-        return core.markdown.row_cells(rows[0])[-1]
+
+    def _assert_question(self, body, summary="s"):
+        """The question reaches ### Questions, not a needs-human Action cell."""
+        assert pr.summary_render.QUESTIONS_HEADING in body
+        assert summary in body
+        assert pr.summary_scope.table_rows(body) == []
+        assert f"| {summary}" not in body
+        for member in pr.summary_model.HumanReason:
+            assert member.prose not in body
 
     @pytest.mark.parametrize("reason", [
         "contested", "conflicting", "question", "complex", "needs_discussion",
     ])
     def test_every_known_reason_renders_as_prose(self, content, reason):
-        assert self._action_cell(content, reason) == pr.summary_model.HumanReason(reason).prose
+        self._assert_question(self._body(content, reason))
 
     def test_no_rendered_cell_holds_a_snake_case_token(self, content):
         for member in pr.summary_model.HumanReason:
-            cell = self._action_cell(content, member.value)
-            assert "_" not in cell
-            assert cell[0].isupper()
+            self._assert_question(self._body(content, member.value))
 
     def test_an_unknown_reason_falls_back_to_readable_text(self, content):
-        assert self._action_cell(content, "wat_is_this") == "Needs discussion"
+        self._assert_question(self._body(content, "wat_is_this"))
+        assert pr.summary_model.HumanReason.prose_for("wat_is_this") == "Needs discussion"
 
     def test_an_empty_reason_falls_back_to_readable_text(self, content):
-        assert self._action_cell(content, "") == "Needs discussion"
+        self._assert_question(self._body(content, ""))
+        assert pr.summary_model.HumanReason.prose_for("") == "Needs discussion"
 
     def test_the_persisted_tokens_stay_stable(self):
         """State files written before the enum existed must still read back."""
@@ -611,10 +620,10 @@ class TestHumanReason:
         ]
 
     def test_a_token_read_back_from_state_renders_as_prose(self, content):
-        """The round trip the token stability exists for: state file → Action cell.
+        """The round trip the token stability exists for: state file → Questions.
 
         `--finish` rebuilds the needs-human bucket out of persisted
-        `ItemOutcome`s rather than the triage entries, so the prose mapping has
+        `ItemOutcome`s rather than the triage entries, so the question has
         to hold across the rehydration `from_outcome` performs.
         """
         cp = pr.attribution.CommitPushResult(None, "no_changes", "")
@@ -624,5 +633,4 @@ class TestHumanReason:
         ))
         body = pr.summary_render.build_summary_body(
             content(needs_human=[entry]), cp, "owner/repo", 1, {})
-        rows = pr.summary_scope.table_rows(body)
-        assert core.markdown.row_cells(rows[0])[-1] == pr.summary_model.HumanReason.CONTESTED.prose
+        self._assert_question(body, summary="premise disputed")

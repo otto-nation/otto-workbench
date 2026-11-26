@@ -275,6 +275,10 @@ class TestTheInheritedGitEnvironment:
         conftest that clears a shorter one than the gates do fails here."""
         assert [n for n in gitenv.GIT_ENV_OVERRIDES if n in os.environ] == []
 
+    def test_a_wrapping_hooks_path_does_not_survive_into_a_test(self):
+        """`GIT_CONFIG_PARAMETERS` is how a push-wrapper injects hooksPath as `-c`."""
+        assert "GIT_CONFIG_PARAMETERS" not in os.environ
+
 
 class TestALeakedIdentityIsCaughtAndUndone:
     """The whole guard, driven by the write it exists for.

@@ -309,7 +309,9 @@ class TestAddressingCommitIsPerLine:
             )
         bodies = [call[0][3] for call in post.call_args_list]
         assert len(bodies) == 2
-        assert all("Addressed in" in body and "/commit/" in body for body in bodies)
+        for body in bodies:
+            assert "Applied" in body or "Fixed in" in body
+            assert "Addressed in" not in body
 
 
 # ── attribution survives a history rewrite ─────────────────────────────────

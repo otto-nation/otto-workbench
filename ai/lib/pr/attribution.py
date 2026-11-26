@@ -476,9 +476,9 @@ class AddressingHistory:
     written, keyed the way `summary_rounds.comment_timestamps` keys it. A
     decomposed item has no review thread — looking its synthetic id up among
     threads can only ever miss — so without this the run could not date one side
-    of the comparison and every such row read as predating the review, whatever
-    commit made its point true. Omitting it is the honest reading for a caller
-    that has no comment listing, and leaves those rows worded as they were.
+    of the comparison. Missing dates now read as in-response when a SHA exists:
+    addressed is the claim that needs evidence. Omitting the map is the honest
+    reading for a caller that has no comment listing, and still counts as a fix.
     """
 
     def __init__(
@@ -548,7 +548,7 @@ class AddressingHistory:
         if handled_outside(entry):
             return ""
         sha = self._commit_for(entry)
-        if sha and self._postdates(sha, entry, thread):
+        if sha and self._postdates(sha, entry, thread, unknown_reads_as=False):
             return sha
         return ""
 
@@ -584,18 +584,24 @@ class AddressingHistory:
 
     def _postdates(
         self, sha: str, entry: CommentItem, thread: ReportThread | None,
+        *, unknown_reads_as: bool = True,
     ) -> bool:
         """Whether `sha` landed after the reviewer raised this entry's point.
 
-        Either timestamp missing reads as "no", which keeps the pre-existing
-        prefix: claiming credit for a fix is the assertion that needs evidence,
-        and there is none when the run cannot date one side of the comparison.
+        Addressed is the assertion that needs evidence: the commit must be
+        dated before the review. Missing dates do not prove the code predates
+        the review, so framing reads either timestamp missing as in-response
+        (`unknown_reads_as=True`). A citation is the stronger claim and keeps
+        the strict reading: an undated thread is not proven to postdate, so
+        `cited_commit` passes False and names nothing.
         """
         if sha not in self._committed_at:
             self._committed_at[sha] = commit_timestamp(self._wt_path, sha)
         landed_at = self._committed_at[sha]
         asked_at = self._asked_at(entry, thread)
-        return bool(landed_at and asked_at) and landed_at > asked_at
+        if not landed_at or not asked_at:
+            return unknown_reads_as
+        return landed_at > asked_at
 
     def _asked_at(self, entry: CommentItem, thread: ReportThread | None) -> float:
         """When the reviewer raised this entry's point, or 0.0 when unknown.

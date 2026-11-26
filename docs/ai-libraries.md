@@ -6699,13 +6699,14 @@ that a link renders as `[label](url)`, is not.
 
 ### core/memory.py
 
-Per-repo authored memory, keyed by shared git dir rather than cwd.
+Per-repo authored memory, keyed by origin when the clone has one.
 
 Memory topic files live under ``workbench_paths.memory_dir() / repo_key()``.
-The key is ``<canonical_slug[:64]>-<sha256(identity)[:8]>`` so three paths
-that collide under a bare slug — ``/Users/x/a-b/c``, ``/Users/x/a/b/c``,
-``/Users/x/a.b/c`` — still get three directories. Identity is
-``git_layout.shared_dir``, never Python's process-randomised ``hash()``.
+The key is ``<canonical_slug[:64]>-<sha256(identity)[:8]>`` so three values
+that collide under a bare slug still get three directories. Identity is the
+hosted origin (``host/owner/repo``) when ``remote.origin.url`` names one, so
+a clone that moves keeps its memory; otherwise ``git_layout.shared_dir``.
+Never Python's process-randomised ``hash()``.
 
 ### core/module_proxy.py
 

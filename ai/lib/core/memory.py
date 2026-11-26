@@ -1,10 +1,11 @@
-"""Per-repo authored memory, keyed by shared git dir rather than cwd.
+"""Per-repo authored memory, keyed by origin when the clone has one.
 
 Memory topic files live under ``workbench_paths.memory_dir() / repo_key()``.
-The key is ``<canonical_slug[:64]>-<sha256(identity)[:8]>`` so three paths
-that collide under a bare slug — ``/Users/x/a-b/c``, ``/Users/x/a/b/c``,
-``/Users/x/a.b/c`` — still get three directories. Identity is
-``git_layout.shared_dir``, never Python's process-randomised ``hash()``.
+The key is ``<canonical_slug[:64]>-<sha256(identity)[:8]>`` so three values
+that collide under a bare slug still get three directories. Identity is the
+hosted origin (``host/owner/repo``) when ``remote.origin.url`` names one, so
+a clone that moves keeps its memory; otherwise ``git_layout.shared_dir``.
+Never Python's process-randomised ``hash()``.
 """
 
 # doc-group: platform
@@ -18,6 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import unquote, urlparse
 
 import core.sessions
 import core.workbench_paths
@@ -25,6 +27,7 @@ import core.workbench_paths
 _WORKBENCH_LIB = Path(__file__).resolve().parent.parent.parent.parent / "lib"
 if _WORKBENCH_LIB.is_dir() and str(_WORKBENCH_LIB) not in sys.path:
     sys.path.insert(0, str(_WORKBENCH_LIB))
+from git_layout import git as git_query  # noqa: E402
 from git_layout import shared_dir  # noqa: E402
 
 FRONTMATTER_DELIMITER = "---"
@@ -35,25 +38,69 @@ STALE_DAYS = 90
 
 _SLUG_MAX = 64
 _DIGEST_LEN = 8
+_HOSTED_SCHEMES = frozenset({"http", "https", "ssh", "git"})
+
+
+def canonical_hosted_origin(url: str) -> str | None:
+    """``host/owner/repo`` for a hosted remote, or None for a local path.
+
+    SCP (``git@host:path``), ``ssh://``, ``https://`` and ``git://`` of one
+    repo collapse here so a clone that moved, or that switched SSH for HTTPS,
+    keeps the same memory directory. ``file://`` and a filesystem path fall
+    through to the shared-git-dir key: those remotes *are* the path.
+    """
+    url = url.strip()
+    if not url:
+        return None
+    host = path = ""
+    if "://" not in url and ":" in url:
+        left, _, right = url.partition(":")
+        if right and not right.startswith(("/", "\\")):
+            host = left.rsplit("@", 1)[-1]
+            path = right
+    else:
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in _HOSTED_SCHEMES:
+            return None
+        host = parsed.hostname or ""
+        path = unquote(parsed.path or "")
+    if not host or not path:
+        return None
+    path = path.strip("/")
+    if path.lower().endswith(".git"):
+        path = path[:-4]
+    path = path.strip("/")
+    if not path:
+        return None
+    return f"{host.lower()}/{path.lower()}"
+
+
+def origin_identity(directory: str) -> str | None:
+    """Hosted origin identity for *directory*, or None when it has none."""
+    url = git_query(directory, "config", "--get", "remote.origin.url")
+    if not url:
+        return None
+    return canonical_hosted_origin(url)
 
 
 def repo_key(repo_path: Path | str) -> str:
     """Filesystem-safe directory name for one repository's memory.
 
     ``canonical_slug`` alone is lossy: a hyphen, a slash and a dot all become
-    ``-``, so three repos share one directory and silently merge. The digest
-    of the shared git dir makes the map injective for those collisions.
+    ``-``, so three identities share one directory and silently merge. The
+    digest of the identity makes the map injective for those collisions.
+    Hosted origin wins so a moved clone keeps its directory; shared git dir
+    is the fallback when there is no origin.
     """
     directory = os.fspath(repo_path)
-    identity = shared_dir(directory)
-    if identity is None:
+    shared = shared_dir(directory)
+    if shared is None:
         raise ValueError(f"no shared git dir for {directory!r}")
-    # Both halves come off the identity, never off the path the caller passed.
-    # Every worktree resolves to one shared git dir, and so does the same repo
-    # reached through a symlinked parent — on macOS /tmp and /var are symlinks,
-    # so one repo has two spellings. Slugging the argument would vary the
-    # readable half while the digest held, which is the per-cwd keying this
-    # store exists to end.
+    # Origin is stable across clone-path moves; shared_dir is not. Both halves
+    # still come off one identity, never off the path the caller passed, so
+    # worktrees and symlink spellings of one repo stay one directory.
+    identity = origin_identity(directory) or shared
     slug = core.sessions.canonical_slug(identity)[:_SLUG_MAX]
     digest = hashlib.sha256(identity.encode()).hexdigest()[:_DIGEST_LEN]
     return f"{slug}-{digest}"

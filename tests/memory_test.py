@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
+from conftest import remote_repo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LIB_DIR = REPO_ROOT / "ai" / "lib"
@@ -44,6 +45,52 @@ def test_repo_key_raises_when_git_cannot_answer(monkeypatch):
     monkeypatch.setattr(core.memory, "shared_dir", lambda directory: None)
     with pytest.raises(ValueError, match="no shared git dir"):
         core.memory.repo_key("/Users/x/a-b/c")
+
+
+def test_repo_key_stable_when_clone_path_moves(tmp_path):
+    old = remote_repo(
+        tmp_path / "personal" / "otto-workbench",
+        "git@github.com:otto-nation/otto-workbench.git",
+    )
+    new = remote_repo(
+        tmp_path / "otto-nation" / "otto-workbench",
+        "git@github.com:otto-nation/otto-workbench.git",
+    )
+    assert core.memory.repo_key(old) == core.memory.repo_key(new)
+
+
+def test_repo_key_ssh_and_https_origin_match(tmp_path):
+    ssh = remote_repo(
+        tmp_path / "ssh", "git@github.com:usemaximum/maximum.git"
+    )
+    https = remote_repo(
+        tmp_path / "https", "https://github.com/usemaximum/maximum.git"
+    )
+    scheme = remote_repo(
+        tmp_path / "scheme", "ssh://git@github.com/usemaximum/maximum.git"
+    )
+    assert core.memory.repo_key(ssh) == core.memory.repo_key(https)
+    assert core.memory.repo_key(ssh) == core.memory.repo_key(scheme)
+
+
+def test_repo_key_distinguishes_different_origins(tmp_path):
+    workbench = remote_repo(
+        tmp_path / "wb", "git@github.com:otto-nation/otto-workbench.git"
+    )
+    maximum = remote_repo(
+        tmp_path / "max", "git@github.com:usemaximum/maximum.git"
+    )
+    assert core.memory.repo_key(workbench) != core.memory.repo_key(maximum)
+
+
+def test_repo_key_distinguishes_same_path_on_two_hosts(tmp_path):
+    github = remote_repo(
+        tmp_path / "gh", "git@github.com:acme/widget.git"
+    )
+    gitlab = remote_repo(
+        tmp_path / "gl", "git@gitlab.com:acme/widget.git"
+    )
+    assert core.memory.repo_key(github) != core.memory.repo_key(gitlab)
 
 
 def test_scan_topic_file_returns_none_for_a_vanished_file(tmp_path):

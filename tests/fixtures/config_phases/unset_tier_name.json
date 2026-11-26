@@ -17,11 +17,11 @@
   "phases": {
     "single": {
       "domain": "review",
-      "tier": "standard",
+      "tier": "deep",
       "model": null,
       "model_source": {
         "layer": "unset",
-        "key": "models.standard",
+        "key": "models.deep",
         "scope": null,
         "via": null
       },

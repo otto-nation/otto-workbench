@@ -17,22 +17,22 @@
   "phases": {
     "single": {
       "domain": "review",
-      "tier": "standard",
+      "tier": "deep",
       "model": {
         "provider": "anthropic",
-        "id": "claude-sonnet-5",
-        "level": "medium"
+        "id": "claude-opus-5",
+        "level": "high"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.standard",
+        "key": "models.deep",
         "scope": "global",
         "via": null
       },
-      "thinking": "medium",
+      "thinking": "high",
       "thinking_source": {
         "layer": "tier_model",
-        "key": "models.standard",
+        "key": "models.deep",
         "scope": "global",
         "via": null
       },

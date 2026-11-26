@@ -69,9 +69,11 @@ _SPECS: tuple[PhaseSpec, ...] = (
     # `single` and `synthesis` are the two phases a self-review prompts
     # differently: there is no PR description to read and no author to address,
     # so each names a template per mode rather than one for both.
+    # The single-agent path is the whole review, so it takes the same model as
+    # synthesis rather than the group agents' standard tier.
     PhaseSpec(
         Phase.SINGLE, PhaseDomain.REVIEW, "Review",
-        tier=Tier.STANDARD,
+        tier=Tier.DEEP,
         template={Mode.PR: "single-agent.md", Mode.SELF: "self-review.md"},
         thinking=Thinking.MEDIUM, max_turns=15,
     ),

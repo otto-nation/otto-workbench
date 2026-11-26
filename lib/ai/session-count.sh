@@ -216,7 +216,8 @@ _origin_url() {
 
 # _canonical_hosted_origin URL — host/owner/repo for a hosted remote, empty
 # (status 1) for a local path. canonical_hosted_origin() in ai/lib/core/memory.py
-# is the Python half.
+# is the Python half. Host drops the port the way urlparse().hostname does;
+# path drops query/fragment and percent-decodes.
 _canonical_hosted_origin() {
   local url="$1" host="" path="" rest scheme
   url="${url#"${url%%[![:space:]]*}"}"
@@ -235,6 +236,7 @@ _canonical_hosted_origin() {
     host="${rest%%/*}"
     path="${rest#*/}"
     [[ "$path" == "$rest" ]] && path=""
+    _canonical_hosted_drop_port host
   elif [[ "$url" == *:* ]]; then
     rest="${url#*:}"
     [[ "$rest" == /* || "$rest" == \\* ]] && return 1
@@ -244,6 +246,9 @@ _canonical_hosted_origin() {
   else
     return 1
   fi
+  path="${path%%\?*}"
+  path="${path%%#*}"
+  path="$(_canonical_hosted_unquote "$path")"
   [[ -n "$host" && -n "$path" ]] || return 1
   path="${path#/}"
   path="${path%/}"
@@ -256,6 +261,36 @@ _canonical_hosted_origin() {
   [[ -n "$path" ]] || return 1
   host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
   printf '%s/%s' "$host" "$path"
+}
+
+# _canonical_hosted_drop_port NAME — strip :port from the host in NAME, and
+# brackets from an IPv6 literal, matching urlparse().hostname.
+_canonical_hosted_drop_port() {
+  local -n __host=$1
+  if [[ "$__host" == \[* ]]; then
+    __host="${__host#\[}"
+    __host="${__host%%\]*}"
+    return 0
+  fi
+  [[ "$__host" == *:* ]] || return 0
+  __host="${__host%%:*}"
+}
+
+# _canonical_hosted_unquote S — percent-decode S the way urllib.parse.unquote does.
+_canonical_hosted_unquote() {
+  local s="$1" out="" hex byte
+  while [[ -n "$s" ]]; do
+    if [[ "$s" == %[[:xdigit:]][[:xdigit:]]* ]]; then
+      hex="${s:1:2}"
+      printf -v byte '%b' "\\x${hex}"
+      out+="$byte"
+      s="${s:3}"
+    else
+      out+="${s:0:1}"
+      s="${s:1}"
+    fi
+  done
+  printf '%s' "$out"
 }
 
 # _origin_identity DIR — hosted origin identity, or status 1 when DIR has none.

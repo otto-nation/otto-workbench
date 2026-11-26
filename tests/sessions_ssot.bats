@@ -366,11 +366,24 @@ make_memory() {
   [ "$(memdir_shell "$a")" = "$(memdir_python "$a")" ]
 }
 
+@test "both languages drop the port from an ssh:// origin" {
+  # urlparse().hostname drops :22; the shell half used to keep it, so the
+  # gate stamped github.com:22/org/repo while Python read github.com/org/repo.
+  local a="$TMPDIR/ported/otto-workbench" b="$TMPDIR/plain/otto-workbench"
+  mkdir -p "$a" "$b"
+  git -C "$a" init -q
+  git -C "$b" init -q
+  git -C "$a" remote add origin ssh://git@github.com:22/otto-nation/otto-workbench.git
+  git -C "$b" remote add origin git@github.com:otto-nation/otto-workbench.git
+  [ "$(memdir_shell "$a")" = "$(memdir_shell "$b")" ]
+  [ "$(memdir_python "$a")" = "$(memdir_python "$b")" ]
+  [ "$(memdir_shell "$a")" = "$(memdir_python "$a")" ]
+}
+
 @test "both languages agree on the memory key for one repo" {
-  # The forward direction the gates use. Both halves slug the repo path and
-  # digest the shared git dir; a drift in either sends the shell and Python to
-  # different directories for one repo, and the stamp lands where no scanner
-  # reads it.
+  # The no-origin fallback: both halves slug the shared git dir and digest
+  # it. Hosted origin is the usual identity (tests above); this repo has none,
+  # so a drift here still sends the shell and Python to different directories.
   local repo="$TMPDIR/keyrepo"
   mkdir -p "$repo"
   git -C "$repo" init -q

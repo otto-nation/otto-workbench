@@ -35,6 +35,7 @@ This file is agent identity and herdr IA, not that doc.
 - `herdr-core serve` loads mod JS at start. A load-backoff fix in tree does
   not apply until that process restarts.
 - `prs/workflows.js` 15s batch `status --list` poll is not load-gated.
-- Per-repo memory is keyed by shared git-dir path. Relocating the clone
-  leaves topic files under the old slug; `dream-scan --memory-dir` of the new
-  path is empty until those files are adopted.
+- Per-repo memory is keyed by hosted origin when the clone has one, else by
+  shared git-dir path. Relocating a clone with `remote.origin.url` keeps the
+  same directory; a leftover path-keyed slug is adopted by
+  `ai/claude/migrations/20261125-memory-key-origin.sh`.

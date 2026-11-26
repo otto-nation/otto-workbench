@@ -56,6 +56,18 @@ _make_project() {
   [[ "$status" -eq 0 ]]
 }
 
+@test "should-promote: disabled in config does not fire when otherwise due" {
+  local now
+  now=$(date +%s)
+  local eight_days_ago=$((now - 691200))
+  _make_project "project-b" "$eight_days_ago" 12
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf 'maintenance:\n  auto_tasks:\n    promote:\n      enabled: false\n' > "$WORKBENCH_CONFIG_DIR/config.yml"
+
+  run "$SHOULD_PROMOTE"
+  [[ "$status" -eq 1 ]]
+}
+
 @test "should-promote: both projects promoted recently → does not fire" {
   local now
   now=$(date +%s)

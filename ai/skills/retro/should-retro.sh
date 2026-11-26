@@ -21,7 +21,6 @@ _WB="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
 unset _WB
 
 _inside_auto_task && exit 1
-wb_auto_task_enabled retro || exit 1
 
 # _retro_undrained — a RETRO.md still holding proposals the sitting has not
 # marked drained. The next scan overwrites that file; fail closed until a
@@ -51,6 +50,7 @@ while IFS=$'\t' read -r memory_dir repo_dir; do
   [[ -n "$memory_dir" ]] || continue
 
   if _repo_has_enough_sessions "$repo_dir" "$last_retro" "$MIN_SESSIONS"; then
+    wb_auto_task_enabled retro || exit 1
     exit 0
   fi
 done < <(_memory_repos)

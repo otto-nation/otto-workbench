@@ -22,7 +22,6 @@ _WB="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
 unset _WB
 
 _inside_auto_task && exit 1
-wb_auto_task_enabled dream || exit 1
 
 DREAM_INTERVAL_HOURS=24
 MIN_SESSIONS=5
@@ -39,6 +38,7 @@ while IFS=$'\t' read -r memory_dir repo_dir; do
   [[ "$elapsed" -lt "$threshold_secs" ]] && continue
 
   if _repo_has_enough_sessions "$repo_dir" "$last_dream" "$MIN_SESSIONS"; then
+    wb_auto_task_enabled dream || exit 1
     exit 0
   fi
 done < <(_memory_repos)

@@ -67,6 +67,17 @@ _make_project() {
   [ "$output" = "full" ]
 }
 
+@test "wb_auto_task_enabled ignores a repo .workbench.yml that disables the task" {
+  printf 'maintenance:\n  auto_tasks:\n    dream:\n      enabled: true\n' > "$WORKBENCH_CONFIG_FILE"
+  _make_project 'maintenance:
+  auto_tasks:
+    dream:
+      enabled: false
+'
+  run wb_auto_task_enabled dream
+  [ "$status" -eq 0 ]
+}
+
 @test "wb_config_get prefers the project file over the global one" {
   printf 'models:\n  deep: sonnet\n' > "$WORKBENCH_CONFIG_FILE"
   _make_project 'models:

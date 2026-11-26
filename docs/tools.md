@@ -15,7 +15,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `record-filed-issue` | Records an issue filed by hand in the branch's follow-up ledger — called by both harnesses' post-execution hooks |
 | `report-agent-worktree` | Labels the agent's herdr terminal with the worktree a tool call targeted — called by both harnesses' post-tool and session-start hooks |
 | `agent-worktree` | Decides and publishes an agent's worktree label on its herdr terminal — reached through report-agent-worktree |
-| `pi-sessions` | Lists pi sessions with their title, TL;DR, worktrees, PRs and live RSS/idle, and closes a live one — read by the Sessions herdr panel and written to by the session-brief Pi extension |
+| `pi-sessions` | Lists pi and Claude Code sessions with their title, TL;DR, worktrees, PRs and live RSS/idle, and closes a live one — read by the Sessions herdr panel and written to by the session-brief Pi extension |
 | `pr` | Unified PR lifecycle CLI — creation, CI failures, code review, and review comments |
 | `review` | Run the configured review agent on a PR with local worktree checkout and iterative review support |
 | `otto-log` | Query the unified trail root and AI usage across otto-workbench scripts — audit trail plus cost and token stats |
@@ -61,6 +61,7 @@ Complete catalog of workbench scripts, installed tools, and shell aliases. Gener
 | `claude-bash-guard` | PreToolUse hook for the Bash tool — blocks command shapes that trigger unsuppressible permission prompts |
 | `claude-edit-guard` | PreToolUse hook for Edit/Write — blocks edits on main/master unless gitignored, and edits to a tree a validator holds |
 | `claude-session-lock` | Session hooks that record this session as editing its worktree — what stops an unattended fix pass committing over it |
+| `finish-guard` | Stop hook — blocks a turn that ends by offering to open a PR instead of opening it |
 | `reuse-mode-tracker` | Track /reuse lite|full|ultra commands via UserPromptSubmit hook |
 | `reuse-session-start` | SessionStart hook — inject reuse level and ceiling scan nudge |
 | `reuse-subagent-start` | SubagentStart hook — inject reuse level into spawned subagents |

@@ -25,8 +25,7 @@ Tool allowlists:
   Go navigation only, because a fix pass has no GitHub business. The extension's
   gh_pr_reply_comment, gh_pr_bulk_reply and gh_pr_post_comment are in neither
   list: our scripts own what reaches a PR, and naming a tool is the only way the
-  allowlist grants it. gh_ci_failures is withheld too: it dumps full job logs
-  into the prompt and has compacted sessions.
+  allowlist grants it.
 
 Pi CLI reference:
   -p / --print     Prompt mode (non-interactive, like claude -p)
@@ -101,7 +100,7 @@ PI_TOOLS = "bash,read,write,edit,grep,find,ls"
 # See the module docstring for why the posting tools are absent from both lists.
 PI_GITHUB_TOOLS = (
     "gh_pr_context,gh_pr_diff,gh_pr_unresolved_comments,"
-    "gh_merge_queue_failures"
+    "gh_ci_failures,gh_merge_queue_failures"
 )
 PI_RESEARCH_TOOLS = "web_search,web_fetch,docs_index,go_references,go_call_hierarchy"
 

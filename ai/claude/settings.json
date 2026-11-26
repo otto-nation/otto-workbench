@@ -122,6 +122,10 @@
         "hooks": [
           {
             "type": "command",
+            "command": "python3 $HOME/.local/bin/finish-guard 2>/dev/null || true"
+          },
+          {
+            "type": "command",
             "command": "bash $HOME/.claude/skills/dream/should-dream.sh && run-auto-task dream || true"
           },
           {

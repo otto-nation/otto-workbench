@@ -25,6 +25,11 @@ tools:
     visibility: hidden
     description: "Session hooks that record this session as editing its worktree — what stops an unattended fix pass committing over it"
 
+  - name: finish-guard
+    permission: false
+    visibility: hidden
+    description: "Stop hook — blocks a turn that ends by offering to open a PR instead of opening it"
+
   - name: reuse-mode-tracker
     permission: false
     visibility: hidden

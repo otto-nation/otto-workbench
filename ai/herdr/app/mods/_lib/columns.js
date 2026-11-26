@@ -1,8 +1,9 @@
 /**
  * Document lanes and list filters for the PR board.
  *
- * Python owns lane membership (`pr.lanes`); `laneOf` reads it. Filters hide
- * drafts and landed unless their chips are on.
+ * Python owns lane membership (`pr.lanes`); `laneOf` reads it. `isMine` is the one
+ * viewer-authorship predicate; board_model.js `tabList` applies the Show flags and
+ * splits Team from Mine on it.
  */
 
 export const TEAM_COLUMNS = [
@@ -71,11 +72,14 @@ export function filterOn(filters, key) {
   return DEFAULT_FILTERS[key] ?? false;
 }
 
+// The one viewer-authorship predicate. A document row's `isMine` (Python `row.is_mine`, which resolves the
+// viewer per repo for multi-host and multi-account setups) wins; the login comparison is the fallback for a
+// row without it, and never matches when either side is empty.
 export function isMine(pr, me) {
-  if (typeof pr.isMine === 'boolean') return pr.isMine;
-  const login = String(pr.author ?? '').toLowerCase();
-  const who = String(pr.viewer ?? me ?? '').toLowerCase();
-  return login === who;
+  if (typeof pr?.isMine === 'boolean') return pr.isMine;
+  const login = String(pr?.author ?? '').toLowerCase();
+  const who = String(pr?.viewer ?? me ?? '').toLowerCase();
+  return Boolean(who) && login === who;
 }
 
 // `loaded` lists every repo the board has loaded, even one with no open PRs; a saved selection
@@ -123,17 +127,6 @@ export function filterLabels(prs, labels, knownLabels) {
   const active = new Set([...(labels ?? [])].map(fold).filter((l) => known.has(l)));
   if (active.size === 0) return prs;
   return prs.filter((p) => (p.labels ?? []).some((n) => active.has(fold(n))));
-}
-
-export function filterPrs(prs, filters, me) {
-  const drafts = filterOn(filters, 'drafts');
-  const landed = filterOn(filters, 'landed');
-  // facets are _lib/filters.js facetView
-  return prs.filter((pr) => {
-    if (!drafts && pr.isDraft) return false;
-    if (!landed && laneOf(pr, 'team') === 'landed') return false;
-    return true;
-  });
 }
 
 // Bucket PRs into the given columns; unknown colOf keys are dropped.

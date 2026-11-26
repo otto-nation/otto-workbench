@@ -306,6 +306,13 @@ _live() {
   [ "$status" -ne 0 ]
 }
 
+@test "the shipped template does not drop gh_ci_failures" {
+  # usemaximum/pi-extensions#49 bounds the tool (50KB / spill). An empty
+  # defaultTools array would disable every built-in; omit the key instead.
+  run jq -e 'has("defaultTools")' "$REPO_ROOT/ai/pi/settings.json"
+  [ "$status" -ne 0 ]
+}
+
 # ── model settings from config.yml's models.* ─────────────────────────────────
 
 @test "the tiers and the session set Pi's model keys" {

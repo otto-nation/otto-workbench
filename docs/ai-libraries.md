@@ -5562,8 +5562,7 @@ Tool allowlists:
   Go navigation only, because a fix pass has no GitHub business. The extension's
   gh_pr_reply_comment, gh_pr_bulk_reply and gh_pr_post_comment are in neither
   list: our scripts own what reaches a PR, and naming a tool is the only way the
-  allowlist grants it. gh_ci_failures is withheld too: it dumps full job logs
-  into the prompt and has compacted sessions.
+  allowlist grants it.
 
 Pi CLI reference:
   -p / --print     Prompt mode (non-interactive, like claude -p)
@@ -8647,6 +8646,25 @@ bodies are included differ.
 Not: the store (`core.memory`), argument parsing, or the report layout
 each scan owns.
 
+### pi_sessions/claude.py
+
+Claude Code sessions, read into the same rows as pi's: transcripts, titles and live processes.
+
+A transcript is ``<root>/projects/<cwd-slug>/<session-id>.jsonl`` (``claude_root(env)``
+is ``$CLAUDE_CONFIG_DIR`` when set and non-empty, else ``~/.claude``). It carries no
+brief: the id is the file name, the cwd is the first entry that names one
+(``read_header(path)``), and the title is the latest ``custom-title`` entry (a name
+a person chose) else the latest ``ai-title`` (``read_titles(path, limit=)`` returns a
+``Titles``). ``transcripts(root)`` lists them sorted; ``find_transcript(root, key)``
+takes an absolute path or a session id.
+
+A running Claude Code records itself in ``<root>/sessions/<pid>.json`` (pid, session
+id, cwd). ``running(root, now)`` reads those back into ``Live`` facts keyed by
+transcript, the way ``pi_sessions.live.running`` does for pi — RSS from ``ps`` for a
+pid whose command is ``claude``, idle as *now* minus the transcript's mtime — with no
+herdr terminal, since Claude records none. ``close(root, session_id)`` sends SIGTERM
+to that process; the transcript stays.
+
 ### pi_sessions/facts.py
 
 Which worktrees and PRs a pi session touched, read from its own entries.
@@ -8678,7 +8696,12 @@ title its last brief recorded), newest first. ``show(root, key, live=)``
 is one session by id or path, whatever its age. A ``SessionRow`` carries the
 header, the tail's name and brief (``title_set``, ``tldr``, ``worktrees``,
 ``prs``, ``spend``) and the ``Live`` facts; ``to_json()`` is the row
-``pi-sessions list --json`` prints.
+``pi-sessions list --json`` prints. ``harness`` says which tool owns the session
+(``pi`` or ``claude``). ``list_claude(root, now=, since_days=, live=, include_all=)``
+and ``show_claude(root, key, live=)`` are the same two reads over Claude Code's
+transcripts (``pi_sessions.claude``): a Claude row has no brief, so it is listed when
+it is live, titled by a person, or recent and titled (every recent one with
+*include_all*).
 
 ### pi_sessions/live.py
 
@@ -8714,6 +8737,19 @@ one is None), else the name the brief recorded; with no brief in reach, the
 latest ``session_info`` seen. ``iter_entries(path)`` yields every entry, skipping
 the header and lines that do not parse. ``find_session(root, key)`` takes an
 absolute path or a session id.
+
+### pr/finish_offer.py
+
+Whether a turn ended by offering to open a PR instead of opening it.
+
+``offers_pr(message)`` is true when *message* asks or invites the user to have a
+PR opened ("want me to open the draft PR", "say if you want the PR") — the
+ending ``ai/guidelines/rules/general.md`` § Workflow forbids once a branch's
+implementation is complete. ``last_assistant_text(transcript)`` is the text of
+the last assistant message in a Claude Code transcript. ``should_block(message,
+cwd)`` is true when the turn offered a PR while *cwd* is on a feature branch with
+no open PR; a branch that is detached, is the default branch, or whose PR lookup
+failed is never blocked, because the guard only holds a rule it can see broken.
 
 ### pr/push_intent.py
 
@@ -9443,6 +9479,19 @@ Usage:
   eval-models --entry unchecked-error-go --runs 3
   eval-models --dry-run
 
+### cli/finish_guard.py
+
+Stop hook entry point: refuse to end a turn that offers to open a PR instead of opening it.
+
+Reads the hook payload from stdin. When the last assistant message offers a PR
+and the working directory is on a feature branch with none open
+(``pr.finish_offer.should_block``), prints the ``{"decision": "block"}`` reply
+that sends Claude back to open it. A payload with ``stop_hook_active`` is never
+blocked a second time, so a turn that still ends on an offer ends. Failure is
+left to the hook command's ``|| true`` in settings.json.
+
+Exit codes: 0 always.
+
 ### cli/locks.py
 
 Taking the run locks a `pr` command declares.
@@ -9575,7 +9624,7 @@ with a warning on stderr.
 
 ### cli/pi_sessions.py
 
-``pi-sessions`` — list pi sessions with their briefs, and act on live ones.
+``pi-sessions`` — list pi and Claude Code sessions, and act on live ones.
 
 Usage:
   pi-sessions list [--since DAYS] [--all] [--json]
@@ -9593,7 +9642,11 @@ prints ``{"worktrees", "prs"}`` for one session file: its worktrees
 cached ``pr board`` listing (``board.cache``, no GitHub call) merged with those
 its ``pr`` / ``gh pr`` commands named. ``live`` records or clears a pi process's
 live marker (``pi_sessions.live``); the session-brief Pi extension calls it.
-``close`` sends SIGTERM to the session's live pi; the file stays.
+``close`` sends SIGTERM to the session's live pi or Claude Code; the file stays.
+
+Claude Code sessions (``pi_sessions.claude``) list beside pi's with ``harness: "claude"``
+on the row and no brief; ``list`` and ``show`` read both, newest first, and ``close`` finds
+the id in either. Claude's root is ``$CLAUDE_CONFIG_DIR`` else ``~/.claude``.
 
 Exit codes: 0 done; 1 no such session, or not running here; 2 usage.
 

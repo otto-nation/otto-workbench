@@ -124,3 +124,14 @@ _js() {
   [ "$status" -eq 0 ]
   [ "$output" = '[{"ok":true},["pi-sessions","close","s1"],false,"pi-sessions: s1 is not running here"]' ]
 }
+
+@test "openPiSession: a closed Claude session starts claude --resume with the session label" {
+  _js '
+    const f = fake();
+    const res = await o.openPiSession(f.d, row({ harness: "claude", file: "/c/s1.jsonl" }));
+    const started = f.calls.exec[1];
+    out([res, started.includes("otto.session=s1"), started.slice(-3)]);
+  '
+  [ "$status" -eq 0 ]
+  [ "$output" = '[{"ok":true,"opened":"started"},true,["claude","--resume","s1"]]' ]
+}

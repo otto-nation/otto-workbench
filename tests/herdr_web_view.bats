@@ -32,15 +32,16 @@ const docRow = (name) => ({ presentation: fx.cases.find((c) => c.name === name).
   [ "$output" = '[true,false,false]' ]
 }
 
-@test "view: team tab hides drafts and landed by default; a Repo chip picks one repo; empty lanes hidden; no scope state" {
+@test "view: team tab hides the viewer's PRs, drafts and landed by default; a Repo chip picks one repo; empty lanes hidden; no scope state" {
   _web "$VIEW_FIX const v = await import(W + '/lib/view.js');
         const ui = v.DEFAULT_UI;
         const m = v.boardModel(snap, ui);
         const k = v.boardModel(snap, v.toggleFilter(ui, 'repo:acme/kit'));
         out({ cols: m.columns.map((c) => c.key + ':' + c.items.map((p) => p.number).join(',')), kit: k.columns.flatMap((c) => c.items.map((p) => p.number)),
+              mineOnTeam: m.list.some((p) => p.isMine),
               authors: m.authors, repos: m.repoSlugs, count: [m.filterCount, k.filterCount], ui: Object.keys(v.DEFAULT_UI) });"
   [ "$status" -eq 0 ]
-  [ "$output" = '{"cols":["open:8,108","reviewed:7,107"],"kit":[108,107],"authors":["dependabot[bot]","pat","you"],"repos":["acme/box","acme/kit"],"count":[0,1],"ui":["tab","theme","filters"]}' ]
+  [ "$output" = '{"cols":["open:8,108"],"kit":[108],"mineOnTeam":false,"authors":["dependabot[bot]","pat","you"],"repos":["acme/box","acme/kit"],"count":[0,1],"ui":["tab","theme","filters"]}' ]
 }
 
 @test "view: mine tab buckets the viewer's PRs from the document; Has Comments is the owed lane" {
@@ -75,7 +76,7 @@ const docRow = (name) => ({ presentation: fx.cases.find((c) => c.name === name).
         const nums = (m) => m.columns.flatMap((c) => c.items.map((p) => p.number)).sort((a, b) => a - b);
         out([nums(team), nums(mine), team.bar.tags.map((t) => t.text), team.bar.facets.map((f) => f.key), mine.bar.facets.map((f) => f.key)]);"
   [ "$status" -eq 0 ]
-  [ "$output" = '[[7,8],[7],["not kit","not bug","not cy","Bots hidden"],["show","repos","labels","authors"],["show","repos","labels"]]' ]
+  [ "$output" = '[[8],[7],["not kit","not bug","not cy","Bots hidden"],["show","repos","labels","authors"],["show","repos","labels"]]' ]
 }
 
 @test "view: card badges are text, status or tag (never pills), as prPresentation().badges" {
@@ -191,7 +192,7 @@ const docRow = (name) => ({ presentation: fx.cases.find((c) => c.name === name).
         const ui = { ...v.DEFAULT_UI, filters: { ...v.DEFAULT_UI.filters, empty: 'yes' } };
         out(v.boardModel(snap, ui).columns.map((c) => c.key));"
   [ "$status" -eq 0 ]
-  [ "$output" = '["open","reviewed"]' ]
+  [ "$output" = '["open"]' ]
 }
 
 @test "view: prUrl accepts only credential-free https; host is a hostname" {

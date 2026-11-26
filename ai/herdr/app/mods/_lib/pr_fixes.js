@@ -10,6 +10,7 @@
 
 import { blockReason } from './actions.js';
 import { COLUMN_BATCH } from './batch_launch.js';
+import { isMine } from './columns.js';
 
 // The step a fix runs is the one its lane's shortcut runs (batch_launch.js COLUMN_BATCH).
 const stepsOf = (lane) => COLUMN_BATCH[lane].steps;
@@ -29,7 +30,7 @@ const FIX_FOR = Object.freeze({
  * actions.js blockReason's words when any of them, `pr.busy` or `pr.lock` says so.
  */
 export function fixesFor(pr, { starting = false, busy = false, live = null } = {}) {
-  if (!pr?.isMine || pr.state === 'MERGED' || pr.state === 'CLOSED') return [];
+  if (!isMine(pr) || pr.state === 'MERGED' || pr.state === 'CLOSED') return [];
   const reason = blockReason({ starting, busy: busy || Boolean(pr.busy), live, lock: pr.lock ?? null });
   const seen = new Set();
   const out = [];

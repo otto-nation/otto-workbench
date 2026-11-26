@@ -40,7 +40,7 @@ component configures it and `wt-init` runs it.
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, diverge, dream, finishing-a-development-branch, git-workflow, issue-tracker, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review, self-review-fix, standup, subagents, test-verification, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, diverge, dream, finishing-a-development-branch, git-workflow, issue-tracker, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review, self-review-fix, session-postmortem, standup, subagents, test-verification, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -273,6 +273,18 @@ Run self-review and auto-fix findings. Wraps pr review --self --fix --push. Can 
 **Trigger:** Use when the user asks to self-review a branch, run a pre-merge review, or auto-fix review findings before creating a PR.
 **Skip:** Do not use for reviewing someone else's PR (use code-review or review instead). Do not use for addressing existing PR review comments (use pr-comments instead).
 
+### `/session-postmortem`
+
+Write a living local session postmortem on this machine. TRIGGER when: the user asks for a local or session postmortem, living notes for this session, or runs /session-postmortem. SKIP: Grafana IRM or production-incident writeups (repo postmortem skill; incident for triage); knowledge-base log lines (wiki-capture).
+
+```
+/session-postmortem
+```
+
+**Output:** `~/.local/state/workbench/sessions/<id>/POSTMORTEM.md`
+**Trigger:** Use when the user asks for a local or session postmortem, living notes for this session, or runs /session-postmortem.
+**Skip:** Do not use for Grafana IRM or production-incident writeups — that is the repo postmortem skill, or incident for triage. Do not use for knowledge-base log lines — that is wiki-capture.
+
 ### `/standup`
 
 Inventory the current user's PRs in this GitHub org and format a standup update (landed, waiting on review, approved, blocked, drafts). TRIGGER when: user asks for a standup, standup update, or what landed vs what they are working on. SKIP: reviewing a single PR (use code-review or pr-comments); sweeping many PRs with pr batch; filing or pushing.
@@ -402,9 +414,9 @@ competes with `job_start`/`run_in_background` as a way to spawn work.
 - Sync also installs the PR board mod (`ai/herdr/app/mods/prs`) into `~/.config/herdr-app/mods/` (and `~/.config/herdr-app-untrusted/mods/` once that exists, so both windows carry the same mods and layouts)
   as a real copy with `_lib/` and `_ui/` inside, keeps edits, and a `workbench` layout (main + PRs, Queue, Hosts and Sessions toggles that open the board, otto-queue, a per-machine health view and pi sessions as right-panel children, with a Full screen button on the board that gives the panel the whole work area; `herdr-app do layout.switch --name workbench`).
   Agents say where they work: in an interactive Pi or Claude Code session, `report-agent-worktree` claims the reached worktree in `workbench-session.lock` (so the board locks its PR and unattended fix passes back off) and, inside a herdr terminal, labels the terminal `otto.worktree=<worktree>` when a tool call targets a worktree other than the session's own checkout (`git -C`, `--repo-dir`, `cd`, `wt switch`, an edited file), clearing both when a session starts.
-  `sessions` lists pi sessions per machine — active in the last 9 days with a brief, a name or a live process, plus older named and live ones — grouped by worktree: title, TL;DR, PRs, live RSS and idle, and a close-candidate mark for live sessions idle over 16 h and over 200 MB, sorted first. Open brings the live terminal forward or starts `pi --session` in its cwd; Close ends a live session's process (the file stays); Rename names a closed one; Show older widens the window. The data is `pi-sessions list --json`, and the briefs come from the `session-brief` Pi extension ([extensions README](../ai/pi/extensions/README.md#session-brief)).
+  `sessions` lists pi and Claude Code sessions per machine (a `pi` or `claude` tag on each row; Claude rows carry the session's title, no TL;DR or PRs, and Open resumes them with `claude --resume`; Rename is pi's only) — active in the last 9 days with a brief, a name or a live process, plus older named and live ones — grouped by worktree: title, TL;DR, PRs, live RSS and idle, and a close-candidate mark for live sessions idle over 16 h and over 200 MB, sorted first. Open brings the live terminal forward or starts `pi --session` in its cwd; Close ends a live session's process (the file stays); Rename names a closed one; Show older widens the window. The data is `pi-sessions list --json` (Claude sessions from `$CLAUDE_CONFIG_DIR`, else `~/.claude`), and pi's briefs come from the `session-brief` Pi extension ([extensions README](../ai/pi/extensions/README.md#session-brief)).
   The board refreshes every 3 minutes (remote review listings every 15 s), and the refresh icon at the right of its header pulls everything now. While the machine being polled is busy (1-minute load per core at 1.5, or 3), that machine's timer refreshes (the board and its batch listings) run every 2nd (or 4th) time instead of every time; the refresh icon never waits. Linux only: where `/proc/loadavg` is unreadable every timer runs. The Queue panel lists otto-queue on this computer and every remote (polled every 15 s while shown, refresh icon to pull now). Each row is titled by the entry's label, else a readable queue key, else the command with its path cut to the script name, with `#id · class · key`, a failing exit and any retry below; clicking a row expands its full command, cwd, timings and the last 80 lines of its log, and a live row's Cancel asks for a confirm.
-  The board has This/All spaces; Team, Mine and the Batch page share one filter bar: Show (Drafts per tab, hidden by default; Landed; Empty lanes; Hide bots on Team), Repo when there is a choice, Label, and Author on Team; each value is included or hidden; active filters are removable tags with Clear filters; lanes with no PRs are hidden unless Empty lanes is on; in All spaces a Repo group filters by repository; a click opens the PR in the same pane with its review history and actions:
+  The board has This/All spaces; Team shows others' PRs and Mine shows yours, never the same PR on both; Team, Mine and the Batch page share one filter bar: Show (Drafts per tab, hidden by default; Landed; Empty lanes; Hide bots on Team), Repo when there is a choice, Label, and Author on Team; each value is included or hidden; active filters are removable tags with Clear filters; lanes with no PRs are hidden unless Empty lanes is on; in All spaces a Repo group filters by repository; a click opens the PR in the same pane with its review history and actions:
   review, re-run, recover, post, dismiss, cancel, and watch. Each but cancel and watch runs
   `pr review --pr N --repo-dir DIR` as a labelled `hc` terminal; watch shows the run output in the pane and can open it as a tab.
   A Files tab lists the PR's changed files (from `gh api …/pulls/N/files`, page 1 first then the rest in parallel) and shows a file's diff inline (first 1,500 lines); files marked `linguist-generated` in `.gitattributes` sort last and are left out of the header's file and line counts; Open for Review checks the PR out with `wt switch pr:N` and selects, or opens, a space on that worktree (this machine only).

@@ -1,4 +1,4 @@
-// Sessions: pi sessions on this machine and each remote — title, TL;DR, PRs, live RSS and idle.
+// Sessions: pi and Claude Code sessions on this machine and each remote — title, TL;DR, PRs, live RSS and idle.
 // No polling (T1-a): it loads on mount, when the panel comes on screen, on Refresh, and after an
 // action. Python owns every fact; _lib/sessions.js words and orders them.
 import { View } from "gpui-kit";

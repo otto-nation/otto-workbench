@@ -347,11 +347,18 @@ fi
 # full suite (_bats_selected empty) when the selector is unavailable or fails,
 # or when tests/test_helper.bash, which every suite loads, changed. A selector
 # that succeeds and selects nothing sets _bats_none, and the step is skipped
-# with a line saying so rather than silently.
+# with a line saying so rather than silently. A set over PREPUSH_FILE_CAP is
+# skipped the same way: CI runs the uncapped --changed set.
+#
+# 80 sits above typical diffs (18–42) and hub --direct (~47), below hub
+# transitive (366+) and a full-suite trigger (326 bats / 731 pytest).
+PREPUSH_FILE_CAP=80
+
 _select_bats() {
   _bats_selected=""
   _bats_label="tests"
   _bats_none=false
+  _bats_skip_detail=""
   [[ -x "$REPO_ROOT/bin/local/select-tests" ]] || return 0
   if ! _bats_selected=$("$REPO_ROOT/bin/local/select-tests" --base "$GIT_REMOTE/$_default_branch" 2>/dev/null); then
     _bats_selected=""
@@ -359,12 +366,70 @@ _select_bats() {
   fi
   if [[ -z "$_bats_selected" ]]; then
     _bats_none=true
+    _bats_skip_detail="none affected by this diff"
     return 0
   fi
   local count total
   count=$(echo "$_bats_selected" | wc -l | tr -d ' ')
   total=$(find "$REPO_ROOT/tests" -maxdepth 1 -name '*.bats' | wc -l | tr -d ' ')
   _bats_label="tests ($count/$total files)"
+  if (( count <= PREPUSH_FILE_CAP )); then
+    return 0
+  fi
+  _bats_none=true
+  _bats_selected=""
+  _bats_skip_detail="skipped: ${count} files over cap of ${PREPUSH_FILE_CAP}; CI will run them"
+  return 0
+}
+
+# _select_pytest — change-based pytest selection with the file cap above.
+# Sets _pytest_selected, _pytest_label, _pytest_none, and _pytest_skip_detail.
+# A selector that fails falls back to the whole suite (empty selected, none
+# false), matching _select_bats: an unknown set is not "none affected".
+_select_pytest() {
+  _pytest_selected=""
+  _pytest_label="pytest"
+  _pytest_none=false
+  _pytest_skip_detail=""
+  [[ -x "$REPO_ROOT/bin/local/select-pytest" ]] || return 0
+
+  local selector="$REPO_ROOT/bin/local/select-pytest"
+  local base="$GIT_REMOTE/$_default_branch"
+  local total count direct_count
+  local transitive="" direct=""
+
+  total=$("$selector" --all 2>/dev/null | wc -l | tr -d ' ') || total=0
+
+  if ! transitive=$("$selector" --base "$base" 2>/dev/null); then
+    return 0
+  fi
+  if [[ -z "$transitive" ]]; then
+    _pytest_none=true
+    _pytest_skip_detail="none affected by this diff"
+    return 0
+  fi
+
+  count=$(printf '%s\n' "$transitive" | wc -l | tr -d ' ')
+  _pytest_selected="$transitive"
+  _pytest_label="pytest ($count/$total files)"
+  if (( count <= PREPUSH_FILE_CAP )); then
+    return 0
+  fi
+
+  if direct=$("$selector" --base "$base" --direct 2>/dev/null) && [[ -n "$direct" ]]; then
+    direct_count=$(printf '%s\n' "$direct" | wc -l | tr -d ' ')
+    if (( direct_count <= PREPUSH_FILE_CAP )); then
+      _pytest_selected="$direct"
+      _pytest_label="pytest ($direct_count/$total files, direct)"
+      return 0
+    fi
+  fi
+
+  _pytest_none=true
+  _pytest_selected=""
+  _pytest_label="pytest"
+  _pytest_skip_detail="skipped: ${count} files over cap of ${PREPUSH_FILE_CAP}; CI will run them"
+  return 0
 }
 
 # _run_bats_step — runs the selected bats files (all of them when nothing
@@ -419,37 +484,9 @@ _run_bats_step() {
   fi
 }
 
-_select_bats
-if $_bats_none; then
-  _step "Running tests"
-  _pass "none affected by this diff"
-else
-  _run_bats_step
-fi
-
-# ── Pytest ──────────────────────────────────────────────────────────────────
-
-if ! command -v pytest >/dev/null 2>&1; then
-  warn "pytest not found — skipping Python tests (brew install pytest, or: mise use -g pipx:pytest[uvx_args=--with pytest-xdist])"
-else
-  # Change-based selection, the same shape as the bats step above: only the
-  # pytest files the diff can reach. Falls back to the whole suite when the
-  # selector is unavailable or when it reports a full-suite trigger.
-  _pytest_selected=""
-  _pytest_label="pytest"
-  if [[ -x "$REPO_ROOT/bin/local/select-pytest" ]]; then
-    _pytest_selected=$("$REPO_ROOT/bin/local/select-pytest" --base "$GIT_REMOTE/$_default_branch" 2>/dev/null) || _pytest_selected=""
-  fi
-  if [[ -n "$_pytest_selected" ]]; then
-    _pytest_file_count=$(echo "$_pytest_selected" | wc -l | tr -d ' ')
-    # From the selector, not a find spelled here: a second definition of "every
-    # test file" drifts from the first, and this one did — it read 193/187 once
-    # the selector learned to recurse into the tests package that a maxdepth 1
-    # find cannot see.
-    _pytest_total=$("$REPO_ROOT/bin/local/select-pytest" --all 2>/dev/null | wc -l | tr -d ' ')
-    _pytest_label="pytest ($_pytest_file_count/$_pytest_total files)"
-  fi
-
+# _run_pytest_step — runs the selected pytest files (all of them when nothing
+# narrowed the selection).
+_run_pytest_step() {
   # One invocation, built from a conditionally-populated array. Two copies of
   # the call differing only in the selection argument means two copies of the
   # failure handling, and a fix applied to only one of them is a gate that
@@ -474,6 +511,31 @@ else
   _pytest_elapsed=$(( SECONDS - _pytest_start ))
   _pytest_count=$(echo "$_pytest_output" | awk '/passed/{print $1}')
   _pass "${_pytest_count:-?} tests, ${_pytest_elapsed}s"
+}
+
+_select_bats
+if $_bats_none; then
+  _step "Running $_bats_label"
+  _pass "$_bats_skip_detail"
+else
+  _run_bats_step
+fi
+
+# ── Pytest ──────────────────────────────────────────────────────────────────
+
+if ! command -v pytest >/dev/null 2>&1; then
+  warn "pytest not found — skipping Python tests (brew install pytest, or: mise use -g pipx:pytest[uvx_args=--with pytest-xdist])"
+else
+  # Change-based selection with a local file cap (see _select_pytest). CI on
+  # pull_request still runs the transitive --changed set; a full-suite trigger
+  # that stays over the cap is skipped here rather than run unbounded.
+  _select_pytest
+  if $_pytest_none; then
+    _step "Running $_pytest_label"
+    _pass "$_pytest_skip_detail"
+  else
+    _run_pytest_step
+  fi
 fi
 
 # ── Tree unchanged ───────────────────────────────────────────────────────────

@@ -124,6 +124,11 @@ def marker_for(session_file: str, *, run: Callable = subprocess.run) -> Marker |
 
 def _rss_kb_if_pi(pid: int, run: Callable) -> int | None:
     """The pid's RSS in KB when it is running and is `pi`, else None (guards pid reuse)."""
+    return rss_kb_if_command(pid, "pi", run)
+
+
+def rss_kb_if_command(pid: int, command: str, run: Callable) -> int | None:
+    """The pid's RSS in KB when it is running and its command name is *command*, else None."""
     try:
         done = run(["ps", "-o", "rss=", "-o", "comm=", "-p", str(pid)], capture_output=True,
                    text=True, timeout=core.timeouts.LOCAL, check=False)
@@ -132,7 +137,7 @@ def _rss_kb_if_pi(pid: int, run: Callable) -> int | None:
     fields = (done.stdout or "").split()
     if done.returncode != 0 or len(fields) < 2 or not fields[0].isdigit():
         return None
-    return int(fields[0]) if os.path.basename(fields[1]) == "pi" else None
+    return int(fields[0]) if os.path.basename(fields[1]) == command else None
 
 
 def state(marker: Marker, now: float, *, run: Callable = subprocess.run) -> Live | None:

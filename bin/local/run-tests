@@ -155,7 +155,7 @@ Options:
                   when set (a fix pass's starting commit), else origin/main.
   --direct        With --changed: select pytest files by direct import only
                   (one hop through tests/ support modules). The fix pass's
-                  selection; the pre-push gate keeps the transitive closure.
+                  selection. Pre-push may fall back to this over its file cap.
   --              Pass every remaining argument through to the runner
   -h, --help      Show this help
 
@@ -580,7 +580,7 @@ CHANGED=false
 CHANGED_BASE=""
 
 # DIRECT — with --changed, ask select-pytest for direct importers only (--direct):
-# the fix pass's selection, where the transitive closure is the pre-push gate's.
+# the fix pass's selection. Pre-push may fall back to this over its file cap.
 DIRECT=false
 
 # NO_SELECTION_EXIT — what a fix pass's baseline re-run exits with rather than

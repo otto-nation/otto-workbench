@@ -5,6 +5,7 @@ import os
 import subprocess
 
 import cli.pi_sessions
+import pi_sessions.claude
 import pi_sessions.live
 import pr.target
 from board.cache import write
@@ -17,6 +18,7 @@ BRIEF = {"type": "custom", "customType": BRIEF_TYPE, "data": {"title_set": "T", 
 
 def _env(tmp_path, monkeypatch):
     monkeypatch.setenv("PI_CODING_AGENT_SESSION_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
     monkeypatch.setenv("WORKBENCH_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("WORKBENCH_CACHE_DIR", str(tmp_path / "cache"))
     monkeypatch.delenv("HC_TERMINAL_ID", raising=False)
@@ -110,3 +112,41 @@ def test_close_signals_the_live_pi(tmp_path, monkeypatch):
     monkeypatch.setattr(pi_sessions.live.os, "kill", lambda pid, sig: sent.append(pid))
     assert cli.pi_sessions.main(["close", "s1"]) == 0
     assert sent == [77]
+
+
+def _claude(tmp_path, monkeypatch, sid="c1", entries=({"type": "ai-title", "aiTitle": "Claude work"},)):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
+    path = tmp_path / "claude" / "projects" / "-w-a" / f"{sid}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lines = [{"type": "user", "cwd": "/w/a", "timestamp": "t"}, *entries]
+    path.write_text("".join(json.dumps(e) + "\n" for e in lines))
+    return path
+
+
+def test_list_json_carries_pi_and_claude_rows_with_their_harness(tmp_path, monkeypatch, capsys):
+    _env(tmp_path, monkeypatch)
+    _session(tmp_path)
+    _claude(tmp_path, monkeypatch)
+    assert cli.pi_sessions.main(["list", "--json"]) == 0
+    rows = json.loads(capsys.readouterr().out)["sessions"]
+    assert sorted((r["id"], r["harness"]) for r in rows) == [("c1", "claude"), ("s1", "pi")]
+
+
+def test_show_finds_a_claude_session(tmp_path, monkeypatch, capsys):
+    _env(tmp_path, monkeypatch)
+    _claude(tmp_path, monkeypatch)
+    assert cli.pi_sessions.main(["show", "c1", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["harness"] == "claude"
+
+
+def test_close_signals_a_live_claude(tmp_path, monkeypatch):
+    _env(tmp_path, monkeypatch)
+    _claude(tmp_path, monkeypatch)
+    record = tmp_path / "claude" / "sessions" / "88.json"
+    record.parent.mkdir(parents=True)
+    record.write_text(json.dumps({"pid": 88, "sessionId": "c1", "cwd": "/w/a"}))
+    sent = []
+    monkeypatch.setattr(pi_sessions.claude, "rss_kb_if_command", lambda pid, command, run: 1024)
+    monkeypatch.setattr(pi_sessions.claude.os, "kill", lambda pid, sig: sent.append(pid))
+    assert cli.pi_sessions.main(["close", "c1"]) == 0
+    assert sent == [88]

@@ -160,7 +160,8 @@ class TestRenderDeferredSummary:
         assert "auto fix" in body
         assert "complex" in body
         assert "premise disputed" in body
-        assert "1 need discussion" in body
+        assert "### Questions" in body
+        assert "need discussion" not in body
 
     def test_needs_human_settled_by_hand_renders_as_fixed(self, worktree):
         """--finish reconciles first, so the row credits the hand fix."""
@@ -325,7 +326,9 @@ class TestRenderDeferredSummary:
         assert not render.refused
         body = mock_post.call_args[0][2]
         assert "premise is wrong" in body
-        assert "1 need discussion" in body
+        assert "1 declined" in body
+        assert "Declined" in body
+        assert "need discussion" not in body
 
 
 class TestSummaryUsesPerThreadCommit:

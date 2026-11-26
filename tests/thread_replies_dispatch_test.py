@@ -23,6 +23,7 @@ import pr.comments
 import pr.thread_replies
 import pr.attribution
 import pr.permalinks
+from pr.fix import FixOutcome
 from pr.thread_models import CommentItem, ReportThread
 
 
@@ -186,6 +187,9 @@ class TestHandWrittenRepliesSurvive:
         "Suggestion reviewed and determined to be inapplicable.\n\nSee https://x/#L1.",
         "Deferred: fix it\n\nTracked in [ENG-1](https://linear.app/i/ENG-1).",
         "Deferred: fix it\n\nTracked in ENG-1.\n\nUnchanged at https://x/#L1.",
+        "Question: which one?",
+        "Question: which one?\n\nUnchanged at https://x/#L1.",
+        "Needs a person: which one?",
     ])
     def test_every_generated_shape_is_recognised(self, body):
         """A shape this misses is a reply the pass refuses to ever update again."""
@@ -527,3 +531,21 @@ class TestPostDeferredReplies:
             )
         assert count == 0
         mock_reply.assert_not_called()
+
+    def test_needs_human_posts_the_question(self):
+        """Inline NEEDS_HUMAN goes through Question:, not Needs a person:."""
+        entry = CommentItem(id="t1", summary="which one?")
+        threads_by_id = {
+            "t1": ReportThread(id="t1", comments=[{"databaseId": 111}]),
+        }
+        with patch("pr.comments.post_thread_reply", return_value=True) as mock_reply:
+            count = pr.thread_replies.post_deferred_replies(
+                [entry], threads_by_id, "owner/repo", 42,
+                "ENG-456", "https://linear.app/team/issue/ENG-456",
+                outcomes={"t1": FixOutcome.NEEDS_HUMAN},
+            )
+        assert count == 1
+        body = mock_reply.call_args[0][3]
+        assert body.startswith("Question: which one?")
+        assert "Needs a person:" not in body
+        assert "Tracked in" not in body

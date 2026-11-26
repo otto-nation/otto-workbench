@@ -12,13 +12,13 @@ against the digest its marker recorded rather than tracking a round number,
 because the round a reply was written in says nothing about whether it is still
 ours.
 
-Four builders sit on one driver. They look alike and are not: each reads a
+Five builders sit on one driver. They look alike and are not: each reads a
 different field, links through a different permalink helper with a different
 fallback, and words its log line differently. The differences are load-bearing
 and are named where they occur.
 
 The hand-written reply (`run_reply`, at the foot of this module) goes through
-the same upsert as all four. It used to post straight to the REST endpoint with
+the same upsert as all five. It used to post straight to the REST endpoint with
 no dedup on that path at all, which is how one thread ends up carrying three of
 our comments that contradict each other — so the one-per-thread rule is the
 module's, not the fix pass's.
@@ -77,6 +77,10 @@ DEFERRED_REPLY_PREFIX = "Deferred:"
 # one is "not now", the other is "this needs you", and filing the second under
 # the first misdescribes what was decided.
 NEEDS_HUMAN_REPLY_PREFIX = "Needs a person:"
+# The question a handed-back inline thread actually posts. Live PRs still
+# carry Needs a person:; both stay unhandled so --finish cannot treat either
+# as settling the thread.
+QUESTION_REPLY_PREFIX = "Question:"
 # Every opening line a generated reply can have. Ordered by nothing — this is a
 # membership test, used to tell our own template apart from a reply someone
 # rewrote by hand.
@@ -87,13 +91,16 @@ GENERATED_REPLY_PREFIXES = (
     DISMISSED_REPLY_PREFIX,
     DEFERRED_REPLY_PREFIX,
     NEEDS_HUMAN_REPLY_PREFIX,
+    QUESTION_REPLY_PREFIX,
 )
-# The subset that says the thread was handled. The deferral and needs-a-person
-# openings are deliberately absent: both say the opposite, and counting either
-# would make the thread reconcile itself on the second --finish. Derived rather
-# than listed, so a new generated opening joins this set instead of silently
-# missing it.
-_UNHANDLED_REPLY_PREFIXES = (DEFERRED_REPLY_PREFIX, NEEDS_HUMAN_REPLY_PREFIX)
+# The subset that says the thread was handled. The deferral, needs-a-person,
+# and question openings are deliberately absent: each says the opposite, and
+# counting any would make the thread reconcile itself on the second --finish.
+# Derived rather than listed, so a new generated opening joins this set instead
+# of silently missing it.
+_UNHANDLED_REPLY_PREFIXES = (
+    DEFERRED_REPLY_PREFIX, NEEDS_HUMAN_REPLY_PREFIX, QUESTION_REPLY_PREFIX,
+)
 HANDLED_REPLY_PREFIXES = tuple(
     prefix for prefix in GENERATED_REPLY_PREFIXES
     if prefix not in _UNHANDLED_REPLY_PREFIXES
@@ -637,6 +644,36 @@ def post_dismissed_replies(
     return posted
 
 
+def post_question_replies(
+    questions: list[CommentItem],
+    threads_by_id: dict[str, ReportThread],
+    repo: str,
+    pr_number: int,
+    wt_path: Path | None = None,
+    host: str = "",
+) -> int:
+    """Post the question on each handed-back inline thread. Returns count posted.
+
+    The thread stays open: a question is not a verdict. `rb-`/`ic-` ids have no
+    thread and `_post_thread_replies` skips them — the summary Questions
+    section is their post.
+    """
+    head_sha = git.client.head_sha(short=True, cwd=wt_path) if wt_path else ""
+
+    def body_fn(entry: CommentItem) -> str:
+        parts = [f"{QUESTION_REPLY_PREFIX} {entry.summary}"]
+        link = pr.permalinks.code_link(entry, repo, head_sha, wt_path, host=host)
+        if link:
+            parts.append(f"Unchanged at {link}.")
+        return "\n\n".join(parts)
+
+    posted = _post_thread_replies(
+        questions, threads_by_id, repo, pr_number, body_fn)
+    if posted:
+        core.log.info(f"Asked on {posted} thread(s)")
+    return posted
+
+
 def post_deferred_replies(
     deferred: list[CommentItem],
     threads_by_id: dict[str, ReportThread],
@@ -653,34 +690,44 @@ def post_deferred_replies(
     `outcomes` says which outcome each entry carries, by id. A `CommentItem`
     does not hold one — it is built *from* an outcome — so the caller that
     selected these threads is the only thing that knows whether a given entry
-    was deferred or handed to a person, and the two take different openings.
-    Absent, every reply reads as a deferral, which is what it was before
-    anything but deferrals could be filed.
+    was deferred or handed to a person. Inline `NEEDS_HUMAN` entries with a
+    `threads_by_id` row go through `post_question_replies`; `rb-`/`ic-` ids
+    have no thread and stay out. Absent, every remaining reply reads as a
+    deferral, which is what it was before anything but deferrals could be filed.
     """
+    questions = [
+        entry for entry in deferred
+        if (outcomes or {}).get(entry.id) is FixOutcome.NEEDS_HUMAN
+        and entry.id in threads_by_id
+    ]
+    remaining = [
+        entry for entry in deferred
+        if (outcomes or {}).get(entry.id) is not FixOutcome.NEEDS_HUMAN
+    ]
+    posted = 0
+    if questions:
+        posted += post_question_replies(
+            questions, threads_by_id, repo, pr_number, wt_path, host)
+    if not remaining:
+        return posted
+
     issue_ref = f"[{issue_id}]({issue_url})" if issue_url else issue_id
     head_sha = git.client.head_sha(short=True, cwd=wt_path) if wt_path else ""
 
     def body_fn(entry: CommentItem) -> str:
-        # The opening follows the outcome. A thread handed to a person is not a
-        # thread put off, and one reply template for both would tell the
-        # reviewer the wrong thing about half of them.
-        prefix = (
-            NEEDS_HUMAN_REPLY_PREFIX
-            if (outcomes or {}).get(entry.id) is FixOutcome.NEEDS_HUMAN
-            else DEFERRED_REPLY_PREFIX
-        )
-        parts = [f"{prefix} {entry.summary}", f"Tracked in {issue_ref}."]
-        # Both outcomes say the code still stands as the reviewer found it,
+        parts = [f"{DEFERRED_REPLY_PREFIX} {entry.summary}", f"Tracked in {issue_ref}."]
+        # A deferral says the code still stands as the reviewer found it,
         # which is a claim about the tree like any other — pin it.
         link = pr.permalinks.code_link(entry, repo, head_sha, wt_path, host=host)
         if link:
             parts.append(f"Unchanged at {link}.")
         return "\n\n".join(parts)
 
-    posted = _post_thread_replies(deferred, threads_by_id, repo, pr_number, body_fn)
-    if posted:
-        core.log.info(f"Replied on {posted} deferred thread(s)")
-    return posted
+    deferred_posted = _post_thread_replies(
+        remaining, threads_by_id, repo, pr_number, body_fn)
+    if deferred_posted:
+        core.log.info(f"Replied on {deferred_posted} deferred thread(s)")
+    return posted + deferred_posted
 
 
 def find_reply_target(

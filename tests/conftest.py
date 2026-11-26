@@ -293,7 +293,17 @@ def pytest_configure(config):
     collection — keeps those imports on the fallback table. The autouse
     fixture below re-applies the stub per test so a catalogue test cannot
     leak a live listing into the next one.
+
+    Drop inherited git overrides here rather than only in a session fixture:
+    xdist workers collect with the hook's `GIT_DIR` still set, and a module
+    import that shells out to git then answers the repository being pushed.
+    `GIT_CONFIG_PARAMETERS` is the other vector: a wrapping hooksPath (field-kit
+    hook-timings) arrives as `-c` through that variable and outranks both the
+    sandbox file and `GIT_CONFIG_COUNT`.
     """
+    for name in _GIT_HOOK_VARS:
+        os.environ.pop(name, None)
+    os.environ.pop("GIT_CONFIG_PARAMETERS", None)
     global _REAL_CATALOGUE_FOR, _REAL_CATALOGUE_TEXT, _REAL_PI_RESOLVE, _REAL_BASE_ENV
     if LIB_DIR not in sys.path:
         sys.path.insert(0, LIB_DIR)
@@ -1182,6 +1192,7 @@ def _disown_git_hooks(monkeypatch, tmp_path_factory):
     sandbox.touch()
     monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(sandbox))
     monkeypatch.setenv("GIT_CONFIG_SYSTEM", os.devnull)
+    monkeypatch.delenv("GIT_CONFIG_PARAMETERS", raising=False)
     monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
     monkeypatch.setenv("GIT_CONFIG_KEY_0", "core.hooksPath")
     monkeypatch.setenv("GIT_CONFIG_VALUE_0", os.devnull)
@@ -1196,7 +1207,10 @@ def live_git_hooks(monkeypatch):
     machine's global config stays sandboxed by the autouse fixture above, so
     what runs is the hook the test installed and never the developer's.
     """
-    for key in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
+    for key in (
+        "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0",
+        "GIT_CONFIG_PARAMETERS",
+    ):
         monkeypatch.delenv(key, raising=False)
 
 

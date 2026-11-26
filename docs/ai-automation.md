@@ -339,7 +339,7 @@ Build and maintain a compiled knowledge base — ingest sources, compile them in
 
 ### `/wiki-capture`
 
-Reviews the session that just ended for anything worth keeping and logs it to the knowledge base, without writing articles. TRIGGER when: a session ends in a repo with a knowledge base and a capture is due. SKIP: writing or editing articles (use wiki compile); one-off answers already in the codebase.
+Reviews sessions on disk since the last capture for anything worth keeping and logs it to the knowledge base, without writing articles. TRIGGER when: a capture is due in a repo with a knowledge base. SKIP: writing or editing articles (use wiki compile); one-off answers already in the codebase.
 
 ```
 /wiki-capture
@@ -347,7 +347,7 @@ Reviews the session that just ended for anything worth keeping and logs it to th
 
 **Output:** `SESSION_OBSERVATION entries appended to the knowledge base's _log.md`
 **Auto-trigger:** 24h (via Stop hook, or the maintenance timer)
-**Trigger:** Auto-triggers at session end in repos that have a knowledge base, once 24h and 3 sessions have both passed since the last capture.
+**Trigger:** Auto-triggers at session end in repos that have a knowledge base, once 24h and 3 sessions have both passed since the last capture. Reviews transcripts on disk for that repo, not the session that spawned the run.
 **Skip:** Never writes or edits an article — /wiki compile processes what this logs, deliberately.
 
 ### `/writing-skills`

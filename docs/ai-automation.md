@@ -250,7 +250,7 @@ Analyze PR review comments to identify gaps in coding rules. Fetches comments fr
 
 **Output:** `ai/memory/RETRO.md`
 **Auto-trigger:** 72h (via Stop hook, or the maintenance timer)
-**Trigger:** Run to analyze recent PR review comments for coding rule gaps, after a round of PR reviews has been completed, or when rule coverage feels incomplete. Auto-triggers once 72h and 5 sessions have both passed since the last run.
+**Trigger:** Run to analyze recent PR review comments for coding rule gaps, after a round of PR reviews has been completed, or when rule coverage feels incomplete. Auto-triggers once 72h and 5 sessions have both passed since the last run and the current RETRO.md is drained.
 **Skip:** Do not use when the user wants to address comments on a specific PR (use pr-comments instead). Do not use for memory consolidation (use dream instead).
 
 ### `/self-review`

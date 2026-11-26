@@ -19,8 +19,8 @@ repo's `AGENTS.md` for repo-specific conventions.
 
 Run manually with `/retro`. Auto-triggers via the Stop hook managed
 by `otto-workbench sync`, once 72 hours and 5 sessions have both passed since
-the last run — `should-retro.sh` gates on the two together, so three quiet days
-do not trigger one.
+the last run **and** the current `RETRO.md` is drained — `should-retro.sh`
+gates on all three, so an unread report is not overwritten.
 
 ---
 
@@ -302,9 +302,12 @@ Report: <workbench>/ai/memory/RETRO.md
 
 - **Read-only by default.** Retro never modifies rule files — it only writes the
   report. The user reviews and applies proposals manually.
-- **Idempotent.** Running retro twice overwrites RETRO.md with fresh results.
-  The report it replaces is not lost: `retro-complete.sh` archives each one to
-  `ai/memory/retro/<scan-id>.md` first. Read a past window's proposals from
-  there rather than re-deriving them from the same PRs.
+- **Drain before the next scan.** When the sitting is done — applied,
+  dismissed, or parked in an issue — add `<!-- drained: <scan-id> -->` to
+  `RETRO.md` (or remove the file). `should-retro.sh` stays closed until then.
+- **Idempotent after drain.** A later retro overwrites RETRO.md with fresh
+  results. The report it replaces is not lost: `retro-complete.sh` archives
+  each one to `ai/memory/retro/<scan-id>.md` first. Read a past window's
+  proposals from there rather than re-deriving them from the same PRs.
 - **No auto-escalation.** Retro does not create issues, PRs, or branches —
   it produces a document for human review.

@@ -20,6 +20,19 @@ unset _WB
 
 _inside_auto_task && exit 1
 
+# _retro_undrained — a RETRO.md still holding proposals the sitting has not
+# marked drained. The next scan overwrites that file; fail closed until a
+# human adds `<!-- drained: <scan-id> -->` or removes the report.
+_retro_undrained() {
+  [[ -f "${RETRO_REPORT_FILE:-}" ]] || return 1
+  if grep -q '<!-- drained:' "$RETRO_REPORT_FILE"; then
+    return 1
+  fi
+  return 0
+}
+
+_retro_undrained && exit 1
+
 RETRO_INTERVAL_HOURS=72
 MIN_SESSIONS=5
 

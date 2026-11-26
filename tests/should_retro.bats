@@ -17,6 +17,9 @@ setup() {
   mkdir -p "$TEST_HOME"
   export HOME="$TEST_HOME"
   gate_sandbox
+  # Isolate from the machine's real report. An undrained RETRO.md in the
+  # checkout must not fail-close every cooldown case.
+  export RETRO_REPORT_FILE="$TEST_HOME/RETRO.md"
   SHOULD_RETRO="$REPO_ROOT/ai/skills/retro/should-retro.sh"
 }
 
@@ -191,6 +194,36 @@ _one_day_ago() { printf '%s' "$(( $(date +%s) - 86400 ))"; }
   gate_sessions "$(gate_claude_dir "$repo/main")" 2
   gate_sessions "$(gate_claude_dir "$repo/feature-a")" 2
   gate_sessions "$(gate_pi_dir "$repo/feature-b")" 2
+
+  run "$SHOULD_RETRO"
+  [[ "$status" -eq 0 ]]
+}
+
+_write_undrained_report() {
+  mkdir -p "$(dirname "$RETRO_REPORT_FILE")"
+  cat > "$RETRO_REPORT_FILE" <<'EOF'
+# Retro Report
+<!-- generated: 2026-11-23 | scan-id: abc123 | window: since 2026-11-12 -->
+<!-- prs-analyzed: 1 | findings: 1 | proposals: 29 (21 global, 8 project) -->
+
+## Global Proposals
+EOF
+}
+
+@test "should-retro: undrained report blocks even when the cooldown has elapsed" {
+  _write_stamp "$(_four_days_ago)"
+  _make_project "test-proj" 6
+  _write_undrained_report
+
+  run "$SHOULD_RETRO"
+  [[ "$status" -eq 1 ]]
+}
+
+@test "should-retro: drained marker lets the cooldown fire" {
+  _write_stamp "$(_four_days_ago)"
+  _make_project "test-proj" 6
+  _write_undrained_report
+  printf '%s\n' '<!-- drained: abc123 -->' >> "$RETRO_REPORT_FILE"
 
   run "$SHOULD_RETRO"
   [[ "$status" -eq 0 ]]

@@ -52,8 +52,12 @@ than `last-wiki-capture`. The current session is omitted. Empty output is
 success — skip to step 5.
 
 Read each path. Human turns live in the records; skip automation preambles.
-Globbing `~/.claude/projects` finds only Claude Code's. Read the knowledge
-base's `_index.md` too, so an observation can name the article it bears on.
+Claude records are `type: user`; Pi records are `type: message` with
+`message.role: user`. `iter_user_messages` in `ai/lib/core/sessions.py`
+normalises both and drops automation prompts — use it (paths from the list
+script, messages from the helper). Globbing `~/.claude/projects` finds only
+Claude Code's. Read the knowledge base's `_index.md` too, so an observation
+can name the article it bears on.
 
 ## 3. Decide — conservatively
 

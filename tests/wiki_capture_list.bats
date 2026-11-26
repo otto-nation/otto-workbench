@@ -63,9 +63,24 @@ _run_list() {
   local dir
   dir="$(gate_pi_dir "$REPO")"
   mkdir -p "$dir"
-  printf '{"type":"message"}\n' > "$dir/keep.jsonl"
-  printf '{"type":"message"}\n' > "$dir/auto-task.jsonl"
+  printf '{"type":"message"}\n' > "$dir/20260101120000_keep.jsonl"
+  printf '{"type":"message"}\n' > "$dir/20260101120000_auto-task.jsonl"
   export PI_SESSION_ID="auto-task"
+
+  _run_list
+  [[ "$status" -eq 0 ]]
+  [[ "$output" == *"20260101120000_keep.jsonl"* ]]
+  [[ "$output" != *"20260101120000_auto-task.jsonl"* ]]
+}
+
+@test "wiki-capture-list: the current Claude session is omitted" {
+  _write_stamp "$(( $(date +%s) - 100 ))"
+  local dir
+  dir="$(gate_claude_dir "$REPO")"
+  mkdir -p "$dir"
+  printf '{"type":"user"}\n' > "$dir/keep.jsonl"
+  printf '{"type":"user"}\n' > "$dir/auto-task.jsonl"
+  export CLAUDE_CODE_SESSION_ID="auto-task"
 
   _run_list
   [[ "$status" -eq 0 ]]

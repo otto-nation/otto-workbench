@@ -31,7 +31,8 @@ while IFS= read -r session_dir; do
     [[ "$file_ts" -gt "$stamp" ]] || continue
     base="${session_file##*/}"
     base="${base%.jsonl}"
-    [[ -n "$exclude_pi" && "$base" == "$exclude_pi" ]] && continue
+    # Pi files are {timestamp}_{id}.jsonl; Claude files are {id}.jsonl.
+    [[ -n "$exclude_pi" && ( "$base" == "$exclude_pi" || "$base" == *_"$exclude_pi" ) ]] && continue
     [[ -n "$exclude_claude" && "$base" == "$exclude_claude" ]] && continue
     printf '%s\n' "$session_file"
   done

@@ -141,7 +141,7 @@ def test_no_tiers_is_data_not_failure(roots, monkeypatch, capsys):
     assert got["tiers"]["deep"] == {"value": None, "scope": None}
     single = got["phases"]["single"]
     assert single["model"] is None
-    assert single["model_source"] == _src("unset", "models.standard", None)
+    assert single["model_source"] == _src("unset", "models.deep", None)
     assert single["thinking_source"] == _src("spec", None, "default")
     assert got["phases"]["ci_fix"]["thinking_source"] == _src("unset", None, None)
 
@@ -181,7 +181,7 @@ def test_the_project_file_outranks_the_global_one(roots, monkeypatch, capsys):
     got = _render(CASES["project_outranks_global"], roots, monkeypatch, capsys)
     assert got["tiers"]["standard"] == {"value": "openai/gpt-6", "scope": "project"}
     assert got["tiers"]["deep"]["scope"] == "global"
-    assert got["phases"]["single"]["model_source"] == _src("tier", "models.standard", "project")
+    assert got["phases"]["single"]["model_source"] == _src("tier", "models.deep", "global")
 
 
 def test_a_tier_name_as_a_phase_value_borrows_that_tier(roots, monkeypatch, capsys):

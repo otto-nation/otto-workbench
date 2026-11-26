@@ -17,23 +17,23 @@
   "phases": {
     "single": {
       "domain": "review",
-      "tier": "standard",
+      "tier": "deep",
       "model": {
-        "provider": "openai",
-        "id": "gpt-6",
-        "level": null
+        "provider": "anthropic",
+        "id": "claude-opus-5",
+        "level": "high"
       },
       "model_source": {
         "layer": "tier",
-        "key": "models.standard",
-        "scope": "project",
+        "key": "models.deep",
+        "scope": "global",
         "via": null
       },
-      "thinking": "medium",
+      "thinking": "high",
       "thinking_source": {
-        "layer": "spec",
-        "key": null,
-        "scope": "default",
+        "layer": "tier_model",
+        "key": "models.deep",
+        "scope": "global",
         "via": null
       },
       "error": null

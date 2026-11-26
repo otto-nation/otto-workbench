@@ -17,7 +17,7 @@
   "phases": {
     "single": {
       "domain": "review",
-      "tier": "standard",
+      "tier": "deep",
       "model": {
         "provider": "anthropic",
         "id": "claude-opus-5",

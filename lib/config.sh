@@ -184,6 +184,18 @@ wb_config_get() {
   return 0
 }
 
+# wb_auto_task_enabled SKILL — 0 when SKILL may spawn, 1 when
+# maintenance.auto_tasks.<skill>.enabled is false. SKILL is the skill
+# directory name (wiki-capture); the config key uses an underscore.
+# Missing or unreadable config is enabled.
+wb_auto_task_enabled() {
+  local skill="$1" key value
+  [[ -n "$skill" ]] || return 0
+  key="maintenance.auto_tasks.$(printf '%s' "$skill" | tr '-' '_').enabled"
+  value="$(wb_config_get "$key" true 2>/dev/null)" || value=true
+  [[ "$value" == "true" ]]
+}
+
 # wb_config_harness_models — prints, as one JSON object, what the machine-wide
 # `models.*` say Claude Code's and Pi's settings should hold: `.claude` and `.pi`,
 # in the shape `config models` documents in `lib/config_cli.py`. Returns 1,

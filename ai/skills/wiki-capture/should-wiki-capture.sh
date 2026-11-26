@@ -31,10 +31,12 @@ set -e
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 _WB="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
 . "$_WB/lib/constants.sh"
+. "$_WB/lib/config.sh"
 . "$_WB/lib/ai/session-count.sh"
 unset _WB
 
 _inside_auto_task && exit 1
+wb_auto_task_enabled wiki-capture || exit 1
 
 CAPTURE_INTERVAL_HOURS=24
 MIN_SESSIONS=3

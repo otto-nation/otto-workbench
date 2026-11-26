@@ -86,6 +86,14 @@ _fresh_ts() { printf '%s' "$(( $(date +%s) - 3600 ))"; }
   [ "$status" -eq 0 ]
 }
 
+@test "disabled in config is not due when otherwise due" {
+  _make_sessions 3
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf 'maintenance:\n  auto_tasks:\n    wiki_capture:\n      enabled: false\n' > "$WORKBENCH_CONFIG_DIR/config.yml"
+  _run_gate
+  [ "$status" -eq 1 ]
+}
+
 @test "a stamp older than the interval is due" {
   # Session count well clear of the minimum, so only the interval is under test.
   _make_sessions 10 "$(_stale_ts)"

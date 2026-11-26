@@ -55,6 +55,18 @@ _make_project() {
   [[ "$status" -eq 0 ]]
 }
 
+@test "should-dream: disabled in config does not fire when otherwise due" {
+  local now
+  now=$(date +%s)
+  local forty_eight_hours_ago=$((now - 172800))
+  _make_project "project-b" "$forty_eight_hours_ago" 6
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf 'maintenance:\n  auto_tasks:\n    dream:\n      enabled: false\n' > "$WORKBENCH_CONFIG_DIR/config.yml"
+
+  run "$SHOULD_DREAM"
+  [[ "$status" -eq 1 ]]
+}
+
 @test "should-dream: both projects dreamed recently → does not fire" {
   local now
   now=$(date +%s)

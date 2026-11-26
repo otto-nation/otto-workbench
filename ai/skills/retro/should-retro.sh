@@ -16,10 +16,12 @@ set -e
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 _WB="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
 . "$_WB/lib/constants.sh"
+. "$_WB/lib/config.sh"
 . "$_WB/lib/ai/session-count.sh"
 unset _WB
 
 _inside_auto_task && exit 1
+wb_auto_task_enabled retro || exit 1
 
 # _retro_undrained — a RETRO.md still holding proposals the sitting has not
 # marked drained. The next scan overwrites that file; fail closed until a

@@ -217,6 +217,10 @@ Every key any of them accepts:
 | `maintenance.prune.go_cache_gb` | integer | `15` |
 | `maintenance.prune.mise` | boolean | `false` |
 | `maintenance.prune.docker` | boolean | `false` |
+| `maintenance.auto_tasks.dream.enabled` | boolean | `true` |
+| `maintenance.auto_tasks.promote.enabled` | boolean | `true` |
+| `maintenance.auto_tasks.retro.enabled` | boolean | `true` |
+| `maintenance.auto_tasks.wiki_capture.enabled` | boolean | `true` |
 | `maintenance.disk_pct` | integer | `85` |
 | `reaper.enabled` | boolean | `true` |
 | `reaper.grace_s` | integer | `30` |
@@ -242,7 +246,7 @@ Every key any of them accepts:
 
 `github.ssh_over_443` may only be written at global scope: it describes the network this machine is on, never the repo, and a repo's .workbench.yml is read by everyone who clones it.
 
-`maintenance.disk_pct`, `maintenance.prune.docker`, `maintenance.prune.go_cache`, `maintenance.prune.go_cache_gb` and `maintenance.prune.mise` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
+`maintenance.auto_tasks.dream.enabled`, `maintenance.auto_tasks.promote.enabled`, `maintenance.auto_tasks.retro.enabled`, `maintenance.auto_tasks.wiki_capture.enabled`, `maintenance.disk_pct`, `maintenance.prune.docker`, `maintenance.prune.go_cache`, `maintenance.prune.go_cache_gb` and `maintenance.prune.mise` may only be written at global scope: maintenance runs once per machine on its timer, from no repo in particular, so a repo's value would never be the one it read.
 
 `queue.heavy_repos` may only be written at global scope: the queue guard decides per machine which repos are admitted, so a repo cannot opt itself in or out.
 
@@ -329,6 +333,7 @@ into `config.yml` by `bin/migrations/20260814-unify-workbench-config.sh`.
 | `wb_config_ensure_file [FILE]` | create FILE holding just the modeline, when it does not already exist. |
 | `wb_config_split_record RECORD SCOPE_OUT VALUE_OUT DIR_OUT` | the three fields of one `otto-workbench config get` record, assigned to the named variables. |
 | `wb_config_get KEY [DEFAULT]` | a dotted config key resolved for the repo the caller is standing in, or DEFAULT when no scope sets it. Returns 1, printing why, when KEY is not one the config surface defines. |
+| `wb_auto_task_enabled SKILL` | 0 when SKILL may spawn, 1 when maintenance.auto_tasks.<skill>.enabled is false. SKILL is the skill directory name (wiki-capture); the config key uses an underscore. Missing or unreadable config is enabled. |
 | `wb_config_harness_models` | prints, as one JSON object, what the machine-wide `models.*` say Claude Code's and Pi's settings should hold: `.claude` and `.pi`, in the shape `config models` documents in `lib/config_cli.py`. Returns 1, printing why, when the config names a tier it leaves unset or cannot be read. |
 | `wb_config_harness_context [LISTING]` | prints, as one JSON object, what the machine-wide `context.compact_at` says Claude Code's and Pi's compaction settings should hold, in the shape `config context` documents in `lib/config_cli.py`. LISTING is a `pi --list-models` listing; without one the Pi half is empty. Returns 1, printing why, when the config cannot be read. |
 | `wb_pi_catalogue [PYTHON]` | prints the bounded `pi --list-models` listing on stdout. PYTHON is the interpreter that runs `lib/config_cli.py`; omitted, `python3` on PATH is used. Returns 1, printing why on stderr, when the listing cannot be read. |

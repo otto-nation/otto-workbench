@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # should-retro.sh — checks whether a retro analysis is due.
 # Returns 0 (true) if 72+ hours AND 5+ sessions (in any repo with memory/)
-# since last retro. Repos without memory/ are skipped — they have no session
-# activity to measure.
-# Returns 1 (false) otherwise.
+# since last retro AND the current RETRO.md is drained (or absent).
+# Repos without memory/ are skipped — they have no session activity to
+# measure. Returns 1 (false) otherwise, including when RETRO.md still
+# holds undrained proposals (checked first).
 # Uses a global timestamp ($RETRO_STAMP_FILE) since retro scans across all repos.
 #
 # Sessions are counted per repo across every harness and every worktree — see

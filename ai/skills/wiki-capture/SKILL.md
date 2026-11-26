@@ -1,9 +1,9 @@
 ---
 name: wiki-capture
-description: "Reviews the session that just ended for anything worth keeping and logs it to the knowledge base, without writing articles. TRIGGER when: a session ends in a repo with a knowledge base and a capture is due. SKIP: writing or editing articles (use wiki compile); one-off answers already in the codebase."
+description: "Reviews sessions on disk since the last capture for anything worth keeping and logs it to the knowledge base, without writing articles. TRIGGER when: a capture is due in a repo with a knowledge base. SKIP: writing or editing articles (use wiki compile); one-off answers already in the codebase."
 source: otto-workbench/ai/skills/wiki-capture/SKILL.md
 invocation: "/wiki-capture"
-trigger: "Auto-triggers at session end in repos that have a knowledge base, once 24h and 3 sessions have both passed since the last capture."
+trigger: "Auto-triggers at session end in repos that have a knowledge base, once 24h and 3 sessions have both passed since the last capture. Reviews transcripts on disk for that repo, not the session that spawned the run."
 skip: "Never writes or edits an article — /wiki compile processes what this logs, deliberately."
 output: "SESSION_OBSERVATION entries appended to the knowledge base's _log.md"
 lifecycle_cadence: "24h"
@@ -12,8 +12,9 @@ lifecycle_scope: per-project
 
 # Wiki Capture
 
-Passive knowledge capture. The session that just ended is reviewed for anything
-durable, and what turns up is **logged** — never written into an article.
+Passive knowledge capture. Transcripts for this repo since the last capture are
+reviewed for anything durable, and what turns up is **logged** — never written
+into an article.
 
 Capture runs at session end once the repo is both 24 hours and 3 sessions past
 its last one — `should-wiki-capture.sh` gates on the two together, so a single
@@ -39,17 +40,20 @@ Exit 2 means there is none. Say nothing and stop — do not create one.
 
 ## 2. Read what happened
 
-Read the session that just ended — you are in it, so its turns are already in
-context, and nothing needs to be read off disk to review them. Read the
-knowledge base's `_index.md` too, so an observation can name the article it
-bears on.
+A maintenance spawn and a Stop-hook auto-task are new sessions with no work
+context. Review the repo's transcripts on disk, not the session you are in.
 
-To reach transcripts on disk anyway — reviewing a run that is not this one —
-use `ai/lib/core/sessions.py`, which finds them across every harness:
-`discover_sessions(Path.home())` newest-first, `iter_user_messages(session)`
-for the human turns with automation preambles dropped. Globbing
-`~/.claude/projects` finds only Claude Code's, and most sessions on this
-machine are Pi's.
+```bash
+bash ~/.agents/skills/wiki-capture/wiki-capture-list.sh
+```
+
+One absolute path per line, every harness, every worktree of this repo, newer
+than `last-wiki-capture`. The current session is omitted. Empty output is
+success — skip to step 5.
+
+Read each path. Human turns live in the records; skip automation preambles.
+Globbing `~/.claude/projects` finds only Claude Code's. Read the knowledge
+base's `_index.md` too, so an observation can name the article it bears on.
 
 ## 3. Decide — conservatively
 

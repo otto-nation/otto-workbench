@@ -46,12 +46,13 @@ _key() {
 }
 
 _run_migration() {
+  local repo="$1"
   WORKBENCH_DIR="$REPO_ROOT" run bash -c "
     PROJECTS_EXCLUDED_PREFIXES=('$TMPDIR/state' '$TMPDIR/data')
     . '$REPO_ROOT/lib/ui.sh'
     . '$REPO_ROOT/lib/migrations.sh'
     . '$MIGRATION'
-    migration_20261125_memory_key_origin
+    migration_20261125_memory_key_origin '$repo'
   "
 }
 
@@ -72,7 +73,7 @@ _run_migration() {
       project_register '$repo'
       record_project_repo_ids
     "
-  _run_migration
+  _run_migration "$repo"
   [ "$status" -eq 0 ]
   [ -f "$WORKBENCH_DATA_DIR/memory/$new/MEMORY.md" ]
   [ ! -e "$WORKBENCH_DATA_DIR/memory/$old" ]
@@ -97,7 +98,7 @@ _run_migration() {
       project_register '$live'
       record_project_repo_ids
     "
-  _run_migration
+  _run_migration "$live"
   [ "$status" -eq 0 ]
   [ -f "$WORKBENCH_DATA_DIR/memory/$dest/MEMORY.md" ]
   [ "$(cat "$WORKBENCH_DATA_DIR/memory/$dest/MEMORY.md")" = kept ]
@@ -118,7 +119,7 @@ _run_migration() {
       project_register '$repo'
       record_project_repo_ids
     "
-  _run_migration
+  _run_migration "$repo"
   [ "$status" -eq "$MIGRATION_NOOP" ]
   [ -f "$WORKBENCH_DATA_DIR/memory/$key/MEMORY.md" ]
 }
@@ -139,8 +140,33 @@ _run_migration() {
       project_register '$repo'
       record_project_repo_ids
     "
-  _run_migration
+  _run_migration "$repo"
   [ "$status" -eq "$MIGRATION_NOOP" ]
   [ "$(cat "$WORKBENCH_DATA_DIR/memory/$new/MEMORY.md")" = new ]
   [ -f "$WORKBENCH_DATA_DIR/memory/$old/MEMORY.md" ]
+}
+
+@test "adopts a leftover whose slug has no --git-- infix" {
+  # Truncation of a long shared-dir slug drops --git-- before the digest.
+  # Matching still has to find the basename as a hyphen-delimited token.
+  local live="$TMPDIR/new/maximum"
+  local leftover="--Users-isaacg-git-maximum-deadbeef"
+  mkdir -p "$WORKBENCH_DATA_DIR/memory/$leftover"
+  echo kept > "$WORKBENCH_DATA_DIR/memory/$leftover/MEMORY.md"
+
+  _init_repo "$live" "git@github.com:usemaximum/maximum.git"
+  local dest
+  dest="$(_key _repo_key "$live")"
+  PROJECTS_EXCLUDED_PREFIXES=("$TMPDIR/state" "$TMPDIR/data") \
+    bash -c "
+      . '$REPO_ROOT/lib/ui.sh'
+      . '$REPO_ROOT/lib/migrations.sh'
+      project_register '$live'
+      record_project_repo_ids
+    "
+  _run_migration "$live"
+  [ "$status" -eq 0 ]
+  [ -f "$WORKBENCH_DATA_DIR/memory/$dest/MEMORY.md" ]
+  [ "$(cat "$WORKBENCH_DATA_DIR/memory/$dest/MEMORY.md")" = kept ]
+  [ ! -e "$WORKBENCH_DATA_DIR/memory/$leftover" ]
 }

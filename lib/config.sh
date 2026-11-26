@@ -191,8 +191,17 @@ wb_config_get() {
 wb_auto_task_enabled() {
   local skill="$1" key value
   [[ -n "$skill" ]] || return 0
-  key="maintenance.auto_tasks.$(printf '%s' "$skill" | tr '-' '_').enabled"
-  value="$(wb_config_get "$key" true 2>/dev/null)" || value=true
+  [[ -f "$WORKBENCH_CONFIG_FILE" ]] || return 0
+  case "$skill" in
+    dream) key="$MAINTENANCE_AUTO_TASKS_DREAM_ENABLED_CONFIG_KEY" ;;
+    promote) key="$MAINTENANCE_AUTO_TASKS_PROMOTE_ENABLED_CONFIG_KEY" ;;
+    retro) key="$MAINTENANCE_AUTO_TASKS_RETRO_ENABLED_CONFIG_KEY" ;;
+    wiki-capture) key="$MAINTENANCE_AUTO_TASKS_WIKI_CAPTURE_ENABLED_CONFIG_KEY" ;;
+    *) return 0 ;;
+  esac
+  # Read from `/` so a repo or container `.workbench.yml` cannot override the
+  # machine-only flag (project writes are refused; reads still merge).
+  value="$(cd / && wb_config_get "$key" true 2>/dev/null)" || value=true
   [[ "$value" == "true" ]]
 }
 

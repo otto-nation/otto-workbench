@@ -370,7 +370,6 @@ _run_tasks() {
   grep -q -- '--foreground promote$' "$QUEUE_CALLS"
 }
 
-# passes-at-base: a machine without the queue must keep today's spawn
 @test "a disabled skill is skipped and the next due skill is spawned" {
   mkdir -p "$WORKBENCH_CONFIG_DIR"
   printf 'maintenance:\n  auto_tasks:\n    promote:\n      enabled: false\n' > "$WORKBENCH_CONFIG_DIR/config.yml"
@@ -395,6 +394,7 @@ _run_tasks() {
   [ ! -f "$SPAWN_LOG" ]
 }
 
+# passes-at-base: a machine without the queue must keep today's spawn
 @test "with no otto-queue the task is spawned detached" {
   QUEUE_BIN="$TEST_HOME/no-such-otto-queue"
   _stub_gate dream 0

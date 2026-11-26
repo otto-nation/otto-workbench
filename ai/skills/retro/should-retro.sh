@@ -16,6 +16,7 @@ set -e
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 _WB="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
 . "$_WB/lib/constants.sh"
+. "$_WB/lib/config.sh"
 . "$_WB/lib/ai/session-count.sh"
 unset _WB
 
@@ -49,6 +50,7 @@ while IFS=$'\t' read -r memory_dir repo_dir; do
   [[ -n "$memory_dir" ]] || continue
 
   if _repo_has_enough_sessions "$repo_dir" "$last_retro" "$MIN_SESSIONS"; then
+    wb_auto_task_enabled retro || exit 1
     exit 0
   fi
 done < <(_memory_repos)

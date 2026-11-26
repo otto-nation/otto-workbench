@@ -370,6 +370,30 @@ _run_tasks() {
   grep -q -- '--foreground promote$' "$QUEUE_CALLS"
 }
 
+@test "a disabled skill is skipped and the next due skill is spawned" {
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf 'maintenance:\n  auto_tasks:\n    promote:\n      enabled: false\n' > "$WORKBENCH_CONFIG_DIR/config.yml"
+  _stub_gate dream 0
+  _stub_gate promote 0
+  _stub_gate retro 1
+  _stub_gate wiki-capture 1
+  _run_tasks
+  [ "$(wc -l < "$SPAWN_LOG" | tr -d ' ')" = "1" ]
+  grep -q '^dream ' "$SPAWN_LOG"
+}
+
+@test "a disabled wiki-capture is not spawned" {
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf 'maintenance:\n  auto_tasks:\n    wiki_capture:\n      enabled: false\n' > "$WORKBENCH_CONFIG_DIR/config.yml"
+  _stub_gate dream 1
+  _stub_gate promote 1
+  _stub_gate retro 1
+  _stub_gate wiki-capture 0
+  gate_repo "wiki-repo"
+  _run_tasks
+  [ ! -f "$SPAWN_LOG" ]
+}
+
 # passes-at-base: a machine without the queue must keep today's spawn
 @test "with no otto-queue the task is spawned detached" {
   QUEUE_BIN="$TEST_HOME/no-such-otto-queue"

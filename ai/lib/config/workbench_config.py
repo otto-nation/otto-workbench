@@ -172,6 +172,10 @@ MAINTENANCE_PRUNE_GO_CACHE_GB_KEY = "maintenance.prune.go_cache_gb"
 MAINTENANCE_PRUNE_MISE_KEY = "maintenance.prune.mise"
 MAINTENANCE_PRUNE_DOCKER_KEY = "maintenance.prune.docker"
 MAINTENANCE_DISK_PCT_KEY = "maintenance.disk_pct"
+MAINTENANCE_AUTO_TASKS_DREAM_ENABLED_KEY = "maintenance.auto_tasks.dream.enabled"
+MAINTENANCE_AUTO_TASKS_PROMOTE_ENABLED_KEY = "maintenance.auto_tasks.promote.enabled"
+MAINTENANCE_AUTO_TASKS_RETRO_ENABLED_KEY = "maintenance.auto_tasks.retro.enabled"
+MAINTENANCE_AUTO_TASKS_WIKI_CAPTURE_ENABLED_KEY = "maintenance.auto_tasks.wiki_capture.enabled"
 # Read from bash by maintenance/bin/reap-hung; lib/constants.sh spells the same
 # strings and tests/config.bats cross-validates every pair.
 REAPER_ENABLED_KEY = "reaper.enabled"
@@ -703,8 +707,34 @@ class MaintenancePruneConfig:
 
 
 @dataclass(frozen=True)
+class AutoTaskConfig:
+    """Whether this named auto-task may spawn.
+
+    Missing means enabled. Cadence stays in the skill and its ``should-*.sh``
+    gate; this flag is only on or off. Machine-wide: the timer and the Stop
+    hook both read it, from no repo in particular.
+    """
+
+    enabled: bool = field(default=True, metadata={"scope": _MACHINE_ONLY})
+
+
+@dataclass(frozen=True)
+class MaintenanceAutoTasksConfig:
+    """On/off for the four auto-tasks the timer and the Stop hook share.
+
+    Keys are the skill names with hyphens as underscores (``wiki_capture``
+    for wiki-capture). A skill not listed here is not an auto-task.
+    """
+
+    dream: AutoTaskConfig = field(default_factory=AutoTaskConfig)
+    promote: AutoTaskConfig = field(default_factory=AutoTaskConfig)
+    retro: AutoTaskConfig = field(default_factory=AutoTaskConfig)
+    wiki_capture: AutoTaskConfig = field(default_factory=AutoTaskConfig)
+
+
+@dataclass(frozen=True)
 class MaintenanceConfig:
-    """Machine-wide cache cleanup and the disk-pressure trigger that forces it.
+    """Machine-wide cache cleanup, auto-task on/off, and disk-pressure.
 
     ``disk_pct`` is the home-filesystem used-percent at which prune-caches
     enters pressure mode. Maintenance runs once per machine on its timer,
@@ -712,6 +742,7 @@ class MaintenanceConfig:
     """
 
     prune: MaintenancePruneConfig = field(default_factory=MaintenancePruneConfig)
+    auto_tasks: MaintenanceAutoTasksConfig = field(default_factory=MaintenanceAutoTasksConfig)
     disk_pct: int = field(default=85, metadata={"scope": _MACHINE_ONLY})
 
     def __post_init__(self):

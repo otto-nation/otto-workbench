@@ -69,6 +69,16 @@ _one_day_ago() { printf '%s' "$(( $(date +%s) - 86400 ))"; }
   [[ "$status" -eq 0 ]]
 }
 
+@test "should-retro: disabled in config does not fire when otherwise due" {
+  _write_stamp "$(_four_days_ago)"
+  _make_project "test-proj" 6
+  mkdir -p "$WORKBENCH_CONFIG_DIR"
+  printf 'maintenance:\n  auto_tasks:\n    retro:\n      enabled: false\n' > "$WORKBENCH_CONFIG_DIR/config.yml"
+
+  run "$SHOULD_RETRO"
+  [[ "$status" -eq 1 ]]
+}
+
 @test "should-retro: recent (1 day ago) → does not fire" {
   local one_day_ago
   one_day_ago=$(_one_day_ago)

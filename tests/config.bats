@@ -67,6 +67,17 @@ _make_project() {
   [ "$output" = "full" ]
 }
 
+@test "wb_auto_task_enabled ignores a repo .workbench.yml that disables the task" {
+  printf 'maintenance:\n  auto_tasks:\n    dream:\n      enabled: true\n' > "$WORKBENCH_CONFIG_FILE"
+  _make_project 'maintenance:
+  auto_tasks:
+    dream:
+      enabled: false
+'
+  run wb_auto_task_enabled dream
+  [ "$status" -eq 0 ]
+}
+
 @test "wb_config_get prefers the project file over the global one" {
   printf 'models:\n  deep: sonnet\n' > "$WORKBENCH_CONFIG_FILE"
   _make_project 'models:
@@ -177,6 +188,10 @@ print(workbench_config.$1, end='')
   [ "$MAINTENANCE_PRUNE_MISE_CONFIG_KEY" = "$(resolve_python MAINTENANCE_PRUNE_MISE_KEY)" ]
   [ "$MAINTENANCE_PRUNE_DOCKER_CONFIG_KEY" = "$(resolve_python MAINTENANCE_PRUNE_DOCKER_KEY)" ]
   [ "$MAINTENANCE_DISK_PCT_CONFIG_KEY" = "$(resolve_python MAINTENANCE_DISK_PCT_KEY)" ]
+  [ "$MAINTENANCE_AUTO_TASKS_DREAM_ENABLED_CONFIG_KEY" = "$(resolve_python MAINTENANCE_AUTO_TASKS_DREAM_ENABLED_KEY)" ]
+  [ "$MAINTENANCE_AUTO_TASKS_PROMOTE_ENABLED_CONFIG_KEY" = "$(resolve_python MAINTENANCE_AUTO_TASKS_PROMOTE_ENABLED_KEY)" ]
+  [ "$MAINTENANCE_AUTO_TASKS_RETRO_ENABLED_CONFIG_KEY" = "$(resolve_python MAINTENANCE_AUTO_TASKS_RETRO_ENABLED_KEY)" ]
+  [ "$MAINTENANCE_AUTO_TASKS_WIKI_CAPTURE_ENABLED_CONFIG_KEY" = "$(resolve_python MAINTENANCE_AUTO_TASKS_WIKI_CAPTURE_ENABLED_KEY)" ]
   [ "$REAPER_ENABLED_CONFIG_KEY" = "$(resolve_python REAPER_ENABLED_KEY)" ]
   [ "$REAPER_GRACE_S_CONFIG_KEY" = "$(resolve_python REAPER_GRACE_S_KEY)" ]
   [ "$REAPER_MAX_MINUTES_LINT_CONFIG_KEY" = "$(resolve_python REAPER_MAX_MINUTES_LINT_KEY)" ]

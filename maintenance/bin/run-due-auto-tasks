@@ -47,6 +47,8 @@ _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 _WB="$(cd "$(dirname "$_SELF")/../.." && pwd)"
 # shellcheck source=../../lib/constants.sh
 . "$_WB/lib/constants.sh"
+# shellcheck source=../../lib/config.sh
+. "$_WB/lib/config.sh"
 # project_repo_leaders, for the per-repo half. It pulls git_layout.sh itself and
 # needs nothing from ui.sh, which this deliberately avoids: there is no terminal
 # on the timer and ui.sh drags in the whole interactive framework.
@@ -120,6 +122,7 @@ _spawn() {
 _run_global_gates() {
   local skill
   for skill in promote retro dream; do
+    wb_auto_task_enabled "$skill" || continue
     _gate_due "$skill" || continue
     log "Auto-task due: $skill"
     _spawn "$skill" "auto-task:$skill:$period" || log "WARNING: run-auto-task $skill failed (non-fatal)"
@@ -132,6 +135,7 @@ _run_global_gates() {
 # spawn inherits the leader worktree as its cwd, which is how the headless
 # session resolves the right knowledge base and settles the right cooldown.
 _run_wiki_capture_gate() {
+  wb_auto_task_enabled wiki-capture || return 1
   # `id` is written by the split and deliberately not read — the path is what a
   # spawn runs in, and the stamp is keyed off the repo behind it downstream.
   # shellcheck disable=SC2034

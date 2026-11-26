@@ -31,6 +31,7 @@ set -e
 _SELF="$(readlink "${BASH_SOURCE[0]}" 2>/dev/null || echo "${BASH_SOURCE[0]}")"
 _WB="$(git -C "$(dirname "$_SELF")" rev-parse --show-toplevel)"
 . "$_WB/lib/constants.sh"
+. "$_WB/lib/config.sh"
 . "$_WB/lib/ai/session-count.sh"
 unset _WB
 
@@ -59,6 +60,7 @@ threshold_secs=$((CAPTURE_INTERVAL_HOURS * 3600))
 [[ $((now - last_capture)) -lt "$threshold_secs" ]] && exit 1
 
 _repo_has_enough_sessions "$repo_dir" "$last_capture" "$MIN_SESSIONS" || exit 1
+wb_auto_task_enabled wiki-capture || exit 1
 
 # Last, and only for a repo that has otherwise qualified: `wiki path` exits 2
 # when there is no knowledge base, which is the ordinary answer rather than a

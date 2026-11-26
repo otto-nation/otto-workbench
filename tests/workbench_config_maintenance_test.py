@@ -27,6 +27,10 @@ def test_maintenance_defaults(roots):
     assert cfg.maintenance.prune.mise is False
     assert cfg.maintenance.prune.docker is False
     assert cfg.maintenance.disk_pct == 85
+    assert cfg.maintenance.auto_tasks.dream.enabled is True
+    assert cfg.maintenance.auto_tasks.promote.enabled is True
+    assert cfg.maintenance.auto_tasks.retro.enabled is True
+    assert cfg.maintenance.auto_tasks.wiki_capture.enabled is True
 
 
 def test_a_nested_value_is_read_from_the_global_file(roots):
@@ -88,5 +92,31 @@ def test_every_maintenance_key_is_on_the_surface():
         config.workbench_config.MAINTENANCE_PRUNE_MISE_KEY,
         config.workbench_config.MAINTENANCE_PRUNE_DOCKER_KEY,
         config.workbench_config.MAINTENANCE_DISK_PCT_KEY,
+        config.workbench_config.MAINTENANCE_AUTO_TASKS_DREAM_ENABLED_KEY,
+        config.workbench_config.MAINTENANCE_AUTO_TASKS_PROMOTE_ENABLED_KEY,
+        config.workbench_config.MAINTENANCE_AUTO_TASKS_RETRO_ENABLED_KEY,
+        config.workbench_config.MAINTENANCE_AUTO_TASKS_WIKI_CAPTURE_ENABLED_KEY,
     ):
         assert config.workbench_config.defines_key(key)
+
+
+def test_a_disabled_auto_task_is_read_from_the_global_file(roots):
+    config_root, project = roots
+    _write(config_root / config.workbench_config.CONFIG_NAME, """
+maintenance:
+  auto_tasks:
+    dream:
+      enabled: false
+""")
+    cfg = config.workbench_config.load_config(project)
+    assert cfg.maintenance.auto_tasks.dream.enabled is False
+    assert cfg.maintenance.auto_tasks.promote.enabled is True
+
+
+def test_an_auto_task_flag_is_refused_at_project_scope(roots):
+    _, project = roots
+    with pytest.raises(config.workbench_config.ConfigScopeError):
+        config.workbench_config_write.set_project_value(
+            config.workbench_config.MAINTENANCE_AUTO_TASKS_DREAM_ENABLED_KEY,
+            "false", project,
+        )

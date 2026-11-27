@@ -49,7 +49,10 @@ Run `wiki path` when a task looks like it has been investigated before. It print
 project's knowledge base directory, or exits 2 when there is none — in which case there is
 nothing here to do. When one exists, read its `_index.md` and open any article bearing on
 the task before starting. Unlike the artifacts above, this one is authored: it holds what
-previous sessions concluded, not a regenerated view of the tree.
+previous sessions concluded, not a regenerated view of the tree. An empty index is not
+"nothing here to do": log a `QUERY_GAP` or `SESSION_OBSERVATION` naming the missing
+topic, or `/wiki ingest` a source. `wiki-capture` only logs against existing articles,
+so an empty wiki stays empty until something is ingested.
 
 During the session, append an entry to the knowledge base's `_log.md` when you find
 something that contradicts an article, fills a gap, or supersedes what is recorded:

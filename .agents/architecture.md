@@ -1,4 +1,4 @@
-<!-- last-reviewed: 2026-11-19 -->
+<!-- last-reviewed: 2026-11-27 -->
 # Architecture Context
 
 otto-workbench is a dotfiles / developer-environment manager (install, sync,
@@ -10,6 +10,11 @@ This file is agent identity and herdr IA, not that doc.
 - Herdr workbench UI is `ai/herdr/app/` (mods + `layouts/workbench.jq`), not
   the homelab Ovis client and not the PR-board web release on the NAS.
 - Issue tracker for this repo is GitHub.
+- This repo has no Taskfile and does not use go-task. GitHub
+  PATs for `pr` commands live in `$WORKBENCH_CONFIG_DIR/github.env`
+  (or `<repo>/.workbench/github.env` per repo), not
+  `~/.config/task/taskfile.env` or `.taskfile/taskfile.env`.
+  <!-- added by /architecture 2026-11-27 -->
 
 ## Herdr navigation
 
@@ -26,7 +31,16 @@ This file is agent identity and herdr IA, not that doc.
   `shared("sessions.machine")` over `_lib/machine_nav.js`.
 - Sessions groups rows on a machine page by first worktree else cwd
   (`_lib/sessions.js` `groupsOf`).
+- Sessions lists Pi and Claude Code sessions per machine, not Pi-only.
+  Claude rows have no TL;DR, PR tags, or Rename.
+  <!-- added by /architecture 2026-11-27 -->
 - PRs is a board across repos, not a machine drill.
+- PRs: Team is other people's PRs, Mine is the viewer's; the same PR is
+  never on both.
+  <!-- added by /architecture 2026-11-27 -->
+- Settings edits this machine's model config. Picker writes mark the
+  pane dirty; `Sync` (`otto-workbench ai sync`) applies them.
+  <!-- added by /architecture 2026-11-27 -->
 - Mods have no cross-mod navigation (`mods/AGENTS.md` § Queue). Panel switches
   are the hub tiles plus the one tab-bar toggle.
 

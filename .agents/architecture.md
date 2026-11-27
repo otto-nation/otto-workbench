@@ -11,8 +11,9 @@ This file is agent identity and herdr IA, not that doc.
   the homelab Ovis client and not the PR-board web release on the NAS.
 - Issue tracker for this repo is GitHub.
 - This repo has no Taskfile and does not use go-task. GitHub
-  PATs for `pr` commands live in `$WORKBENCH_CONFIG_DIR/github.env`,
-  not `.taskfile/taskfile.env`.
+  PATs for `pr` commands live in `$WORKBENCH_CONFIG_DIR/github.env`
+  (or `<repo>/.workbench/github.env` per repo), not
+  `~/.config/task/taskfile.env` or `.taskfile/taskfile.env`.
   <!-- added by /architecture 2026-11-27 -->
 
 ## Herdr navigation

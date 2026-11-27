@@ -51,13 +51,18 @@ nothing here to do. When one exists, read its `_index.md` and open any article b
 the task before starting. Unlike the artifacts above, this one is authored: it holds what
 previous sessions concluded, not a regenerated view of the tree. An empty index is not
 "nothing here to do": log a `QUERY_GAP` or `SESSION_OBSERVATION` naming the missing
-topic, or `/wiki ingest` a source. `wiki-capture` only logs against existing articles,
-so an empty wiki stays empty until something is ingested.
+topic, and offer `/wiki ingest` to the user (or `/wiki ingest --no-compile` if only
+staging a source). Do not run ingest as a side effect of unrelated work. `wiki-capture`
+only logs against existing articles, so an empty wiki stays empty until a session
+ingests a source or logs an observation for `/wiki compile`.
 
 During the session, append an entry to the knowledge base's `_log.md` when you find
-something that contradicts an article, fills a gap, or supersedes what is recorded:
+something that contradicts an article, fills a gap, or supersedes what is recorded.
+Both kinds use `[DATE] KIND:` at the start of the line (optional leading bullet):
 
 ```
+[DATE] QUERY_GAP: "{question}"
+
 [DATE] SESSION_OBSERVATION: {what was learned}
   Context: {what prompted it}
   Articles: [[existing-article]] if any

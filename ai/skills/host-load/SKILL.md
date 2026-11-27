@@ -25,19 +25,39 @@ Announce: "Using host-load to diagnose <name>."
   `ai/herdr/app/mods/_lib/hosts_load.js` `loadHealth` runs
 - Invent severity words or cutoffs. `ok` / `loaded` / `strained` and their
   reasons come from `severityOf` in `ai/herdr/app/mods/_lib/hosts.js`
+- Run `herdr` (agents have no permission; it is not the Hosts card source)
 
 ## 1. Resolve the name
 
-Hosts cards are machines: this computer first, then `herdr machine list`
-(the same remotes `_lib/machines.js` `remoteOns` polls). A slash path
-(`agent/agent-maximum`) or a `machine-user` token (`homelab-agent-maximum`)
-is not a card.
+Hosts cards are machines in herdr-core's per-session `machines.json` (the
+same remotes `_lib/machines.js` `remoteOns` polls). Read those files; do
+not run `herdr machine list`.
+
+```bash
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}"
+cat "$STATE/herdr-core/default/machines.json" "$STATE/herdr-core/untrusted/machines.json"
+```
+
+Each file is a list of cards with `name`, SSH `target`, and `layout`. Skip
+`layout === "unavailable"`. Main and untrusted windows keep disjoint lists;
+read both so a card from either session is visible. The card `name` is what
+the Hosts panel shows; `target` is the SSH host for section 2.
+
+Match an exact card `name` first. A slash path (`agent/agent-maximum`) or a
+hyphenated `<card>-<user>` token (`homelab-agent-maximum`) can still be a
+card if it appears as `name` in those files — treat that as the host, no
+user filter.
+
+When the token is not an exact card:
 
 - An exact machine name (or "this computer" / "this laptop") → that host,
   no user filter
-- Otherwise the last path segment is a Linux user. The first segment is the
-  machine when it matches a Hosts card; if it does not, pick the one strained
-  or loaded host, and stop to ask when more than one is
+- A `/` path: last segment is the Linux user; first segment is the machine
+  when it matches a Hosts card
+- A hyphenated token: if it starts with a Hosts-card `name` plus `-`, that
+  card is the machine and the remainder is the Linux user
+- If the machine segment does not match a card, pick the one strained or
+  loaded host, and stop to ask when more than one is
 
 ## 2. Fetch `host-health --json`
 
@@ -49,15 +69,19 @@ host-health --json
 ```
 
 On another herdr machine the panel uses herdr `exec` with `{on: NAME}`, which
-loads workbench env then runs `host-health --json`. From a shell:
+loads workbench env then runs `host-health --json` (`REMOTE_PREAMBLE` in
+`ai/herdr/app/mods/_lib/board_data.js`). Non-interactive SSH does not source
+`~/.zshrc` or put `~/.local/bin` on `PATH`, so `ssh NAME host-health --json`
+exits 127 on a healthy synced host. From a shell, match the preamble
+(single-quoted so local `$HOME` is not expanded):
 
 ```bash
-ssh NAME host-health --json
+ssh NAME '. "$HOME/.config/zsh/env.sh" && workbench_env && host-health --json'
 ```
 
-`NAME` is the Hosts card / `herdr machine list` name when that is also an
-SSH host. A document without an object `load` and a `procs` key is outdated
-(`hosts_load.js`); report that and stop.
+`NAME` is the Hosts card `name` when that is also an SSH host, otherwise
+the card's `target`. A document without an object `load` and a `procs` key
+is outdated (`hosts_load.js`); report that and stop.
 
 ## 3. Classify with Hosts thresholds
 
@@ -82,21 +106,31 @@ From that JSON only, in this order:
 1. `procs.top_cpu` and `procs.top_mem` (what `topProcesses` draws)
 2. `heavy` (`golangci-lint`, `go`, `gh`, `tasks`)
 3. `queue` (`running` / `queued`, or `busy: true` while the ledger is locked)
+4. `disk.home` / `disk.docker` when disk is a Hosts reason
+5. `arc` (ZFS ARC) when memory is a Hosts reason — ARC counts inside used
+   memory and is owned by no process in `procs.top_mem`
 
 If a Linux user was named, keep rows whose `user` equals that name. Linux
 `ps` may truncate (`agent-m+` for `agent-maximum`) — treat a truncated
 `user` as a match when it is a prefix of the named user plus `+`.
 
-When the named user is absent from both tops, one follow-up is allowed:
+When the named user is absent from both tops, one follow-up is allowed, on
+the same host as section 2. Remote Linux (GNU `ps`):
 
 ```bash
-ps -u USER -o pid,user,pcpu,pmem,etime,stat,command --sort=-pcpu
+ssh NAME '. "$HOME/.config/zsh/env.sh" && workbench_env && ps -u USER -o pid,user,pcpu,pmem,etime,stat,command --sort=-pcpu'
 ```
 
-Replace `USER` with the resolved Linux user. Do not broaden to `ps aux`.
-Say whether the work is live (a current pre-commit, `tsc`, queue job) or
-leftover (days-old probe, idle agent). Stop at the consumers that explain
-the Hosts reasons.
+Local macOS (BSD `ps`; `--sort` is illegal there):
+
+```bash
+ps -r -u USER -o pid,user,pcpu,pmem,etime,stat,command
+```
+
+Replace `USER` with the resolved Linux user and `NAME` with the resolved
+SSH host. Do not broaden to `ps aux`. Say whether the work is live (a
+current pre-commit, `tsc`, queue job) or leftover (days-old probe, idle
+agent). Stop at the consumers that explain the Hosts reasons.
 
 ## 5. Report
 

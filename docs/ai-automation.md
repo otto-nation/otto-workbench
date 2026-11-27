@@ -40,7 +40,7 @@ component configures it and `wt-init` runs it.
 - `~/.claude/CLAUDE.md` — coding guidelines
 - `~/.claude/rules/` — language and tool-specific rules (symlinked)
 
-**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, diverge, dream, finishing-a-development-branch, git-workflow, issue-tracker, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review, self-review-fix, session-postmortem, standup, subagents, test-verification, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
+**Skills:** analyze-project, anatomy, architecture, ceiling-debt, ci-failures, diverge, dream, finishing-a-development-branch, git-workflow, host-load, issue-tracker, machine, pr-batch, pr-comments, pr-rebase, promote, reference, retro, self-review, self-review-fix, session-postmortem, standup, subagents, test-verification, using-git-worktrees, wiki, wiki-capture, writing-skills — see [Skill Reference](#skill-reference) for invocation, output, and lifecycle details.
 
 **Agents:**
 
@@ -160,6 +160,16 @@ Git and PR procedures: creating and describing a PR with pr create, the PR templ
 ```
 **Trigger:** Use before opening, describing or pushing to a PR, rebasing, answering review comments, starting work on an existing branch, or debugging a failed git command.
 **Skip:** Do not use for the always-on prohibitions, which are already in context, or for work that touches no branch or PR.
+
+### `/host-load`
+
+Diagnose why a herdr Hosts card or Linux user is loaded/strained — read-only, using host-health --json and the Hosts mod thresholds. TRIGGER when: a herdr host, machine, space, or user looks loaded, strained, or under heavy load (agent/agent-maximum, Hosts panel, swap/load on a workbench box). SKIP: production service outage (incident); code bug (debugger); killing or reaping processes.
+
+```
+/host-load
+```
+**Trigger:** Use when a herdr host, machine, space, or Linux user looks loaded, strained, or under heavy load, including Hosts-panel status and names like agent/agent-maximum.
+**Skip:** Do not use for a production service outage (use incident) or a code bug (use debugger). Do not kill, reap, or restart anything.
 
 ### `/issue-tracker`
 

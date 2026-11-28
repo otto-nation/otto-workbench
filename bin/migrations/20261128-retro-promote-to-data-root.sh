@@ -19,8 +19,10 @@ _move_report() {
     warn "  $(basename "$dest") already at $dest — left in $src"
     return 0
   fi
-  mkdir -p "$(dirname "$dest")"
-  mv "$src" "$dest"
+  if ! mkdir -p "$(dirname "$dest")" || ! mv "$src" "$dest"; then
+    warn "  failed to move $(basename "$src") to $dest"
+    return 1
+  fi
   __r_moved=$(( __r_moved + 1 ))
 }
 
@@ -28,28 +30,32 @@ _move_report() {
 # archive directory. Same clash rule as _move_report.
 _move_archive_files() {
   local src_dir="$1" dest_dir="$2" moved_ref="$3"
-  local path had_nullglob
+  local path restore_nullglob=false failed=0
 
   [[ -d "$src_dir" ]] || return 0
-  had_nullglob=$(shopt -p nullglob)
+  shopt -q nullglob || restore_nullglob=true
   shopt -s nullglob
   for path in "$src_dir"/*.md; do
-    _move_report "$path" "$dest_dir/$(basename "$path")" "$moved_ref"
+    _move_report "$path" "$dest_dir/$(basename "$path")" "$moved_ref" || failed=1
   done
-  eval "$had_nullglob"
+  if [[ "$restore_nullglob" == true ]]; then
+    shopt -u nullglob
+  fi
   rmdir "$src_dir" 2>/dev/null || true
+  (( failed == 0 )) || return 1
 }
 
 migration_20261128_retro_promote_to_data_root() {
-  local src_root moved=0
+  local src_root moved=0 failed=0
   src_root="${WORKBENCH_STABLE_DIR:-$WORKBENCH_DIR}/ai/memory"
 
   [[ -d "$src_root" ]] || return "$MIGRATION_NOOP"
 
-  _move_report "$src_root/RETRO.md" "$RETRO_DIR/RETRO.md" moved
-  _move_archive_files "$src_root/retro" "$RETRO_ARCHIVE_DIR" moved
-  _move_report "$src_root/PROMOTE.md" "$PROMOTE_DIR/PROMOTE.md" moved
+  _move_report "$src_root/RETRO.md" "$RETRO_DIR/RETRO.md" moved || failed=1
+  _move_archive_files "$src_root/retro" "$RETRO_ARCHIVE_DIR" moved || failed=1
+  _move_report "$src_root/PROMOTE.md" "$PROMOTE_DIR/PROMOTE.md" moved || failed=1
 
+  (( failed == 0 )) || return 1
   (( moved > 0 )) || return "$MIGRATION_NOOP"
   return 0
 }

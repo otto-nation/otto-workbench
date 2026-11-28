@@ -17,6 +17,7 @@ teardown() {
 
 _run_mig() {
   bash -c '
+    set -e
     success() { echo "OK $*"; }
     warn()    { echo "WARN $*"; }
     WORKBENCH_DIR="$2"
@@ -25,9 +26,7 @@ _run_mig() {
     WORKBENCH_STABLE_DIR="$3"
     WORKBENCH_DATA_DIR="$4"
     . "$WORKBENCH_DIR/lib/migrations.sh"
-    RETRO_DIR="$4/retro"
-    RETRO_ARCHIVE_DIR="$4/retro/archive"
-    PROMOTE_DIR="$4/promote"
+    . "$WORKBENCH_DIR/lib/constants.sh"
     . "$1"
     migration_20261128_retro_promote_to_data_root
   ' _ "$MIG" "$REPO_ROOT" "$STABLE" "$DATA"
@@ -55,8 +54,20 @@ _run_mig() {
   printf 'checkout copy\n' > "$STABLE/ai/memory/RETRO.md"
 
   run _run_mig
+  [ "$status" -eq 3 ]
+  [[ "$output" == *"WARN"* ]]
   grep -qx 'already there' "$DATA/retro/RETRO.md"
   grep -qx 'checkout copy' "$STABLE/ai/memory/RETRO.md"
+}
+
+@test "returns 1 when a report cannot be moved onto the data root" {
+  printf 'live retro\n' > "$STABLE/ai/memory/RETRO.md"
+  printf 'not a directory\n' > "$DATA/retro"
+
+  run _run_mig
+  [ "$status" -eq 1 ]
+  [[ "$output" == *"WARN"* ]]
+  grep -qx 'live retro' "$STABLE/ai/memory/RETRO.md"
 }
 
 @test "is a no-op when the checkout has no reports" {

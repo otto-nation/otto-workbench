@@ -517,6 +517,31 @@ YML
   [[ "$report" != "$dir"/* ]]
 }
 
+@test "PROMOTE_REPORT_FILE is the path the promote skill declares it writes" {
+  local declared resolved data
+  declared=$(awk '
+    NR==1 && /^---$/ { in_fm=1; next }
+    in_fm && /^---$/ { exit }
+    in_fm && /^output:/ {
+      sub(/^output:[[:space:]]*/, "")
+      gsub(/"/, "")
+      print
+      exit
+    }' "$REPO_ROOT/ai/skills/promote/SKILL.md")
+  resolved=$(resolve_constants PROMOTE_REPORT_FILE)
+  data=$(resolve_constants WORKBENCH_DATA_DIR)
+
+  [ "$declared" = "\$WORKBENCH_DATA_DIR/promote/PROMOTE.md" ]
+  [ "$resolved" = "$data/promote/PROMOTE.md" ]
+}
+
+@test "the promote report is not inside the workbench checkout" {
+  local report dir
+  report=$(resolve_constants PROMOTE_REPORT_FILE)
+  dir=$(resolve_constants WORKBENCH_DIR)
+  [[ "$report" != "$dir"/* ]]
+}
+
 @test "the retro archive sits beside the report it archives" {
   local report archive
   report=$(resolve_constants RETRO_REPORT_FILE)

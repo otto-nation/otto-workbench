@@ -104,7 +104,7 @@ def cache_dir(consumer: str | None = None) -> Path:
 
 
 def data_dir(consumer: str | None = None) -> Path:
-    """Authored data the workbench cannot regenerate: ``wiki/``, ``memory/``.
+    """Authored data the workbench cannot regenerate: ``wiki/``, ``memory/``, ``retro/``, ``promote/``.
 
     Apart from the state root in what losing it costs. Everything under state
     is written by a tool and can be written again — ``ai/lib/review/gc.py``

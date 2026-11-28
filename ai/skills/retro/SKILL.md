@@ -192,8 +192,9 @@ the source PR comment and PR number as evidence for each proposal.
 **Goal:** Write the report and record the timestamp.
 
 Write `RETRO.md` to `$RETRO_REPORT_FILE`. That is
-`$WORKBENCH_DATA_DIR/retro/RETRO.md`, defaulting to
-`~/.local/share/workbench/retro/RETRO.md` when `WORKBENCH_DATA_DIR` is unset.
+`$WORKBENCH_DATA_DIR/retro/RETRO.md`, else
+`$XDG_DATA_HOME/workbench/retro/RETRO.md` when `WORKBENCH_DATA_DIR` is unset,
+else `~/.local/share/workbench/retro/RETRO.md`.
 Create the directory if needed. Never write into a workbench git checkout
 (`ai/memory/`, `main/`, or `$OTTO_WORKBENCH`).
 

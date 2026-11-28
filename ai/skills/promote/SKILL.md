@@ -5,7 +5,7 @@ source: otto-workbench/ai/skills/promote/SKILL.md
 invocation: "/promote"
 trigger: "Run to evaluate accumulated memories for promotion into workbench artifacts, or after dream has consolidated several sessions of corrections and decisions. Auto-triggers once 7 days and 10 sessions have both passed since the last run."
 skip: "Do not use when the user wants to directly edit a rule or script — just edit it. Do not use for memory consolidation (use dream instead)."
-output: "ai/memory/PROMOTE.md"
+output: "$WORKBENCH_DATA_DIR/promote/PROMOTE.md"
 lifecycle_cadence: "7 days"
 lifecycle_scope: per-project
 ---
@@ -141,13 +141,11 @@ The memory is stale, redundant, or already covered by an existing artifact.
 
 **Goal:** Write a promotion report with concrete, actionable proposals.
 
-Write `PROMOTE.md` to the workbench memory directory (`ai/memory/PROMOTE.md` relative
-to the workbench root). Determine the workbench path from the `WORKBENCH_DIR`
-environment variable if a caller has set one, or default to
-`~/git/personal/otto-nation/otto-workbench/main`.
-
-The trailing `main` is the worktree, not the directory above it: that one is the
-bare-repo container, where a report is tracked by nothing and reached by no review.
+Write `PROMOTE.md` to `$PROMOTE_REPORT_FILE`. That is
+`$WORKBENCH_DATA_DIR/promote/PROMOTE.md`, defaulting to
+`~/.local/share/workbench/promote/PROMOTE.md` when `WORKBENCH_DATA_DIR` is unset.
+Create the directory if needed. Never write into a workbench git checkout
+(`ai/memory/`, `main/`, or `$WORKBENCH_DIR`).
 
 ### Report format
 
@@ -226,7 +224,7 @@ bash ~/.agents/skills/promote/promote-complete.sh
 Print a one-line summary:
 ```
 Promote complete: N memories evaluated, N promotions proposed (P1: N, P2: N, P3: N, P4: N), N skipped, N conflicts.
-Report: <workbench root>/ai/memory/PROMOTE.md
+Report: $WORKBENCH_DATA_DIR/promote/PROMOTE.md
 ```
 
 ---

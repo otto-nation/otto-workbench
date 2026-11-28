@@ -419,14 +419,24 @@ RULES_GLOB="*.md"
 GENERATED_RULES_DIR="$WORKBENCH_STATE_DIR/rules"
 
 AI_MEMORY_BACKUP_DIR="$WORKBENCH_DIR/ai/memory"
-# The retro report, and the archive of the ones it replaces. RETRO.md is a
-# single file every run overwrites. should-retro.sh fails closed while that
-# file exists without a `<!-- drained: -->` marker, so a sitting that has not
-# applied or dismissed the proposals is not buried by the next scan.
-# retro-complete.sh still copies the outgoing report here, keyed by the scan
-# that produced it, before anything can replace it.
-RETRO_REPORT_FILE="${RETRO_REPORT_FILE:-$AI_MEMORY_BACKUP_DIR/RETRO.md}"
-RETRO_ARCHIVE_DIR="$AI_MEMORY_BACKUP_DIR/retro"
+# Authored retro and promote reports. Under the data root, not the checkout: a
+# retro is machine-local analysis with no producer to re-run, and writing it
+# into WORKBENCH_DIR lands in whichever worktree sourced constants.sh (usually
+# main/). Distinct from AI_MEMORY_BACKUP_DIR, which is the gitignored copy of
+# per-repo memory topics for machine-to-machine restore.
+#
+# RETRO.md is a single file every run overwrites. should-retro.sh fails closed
+# while that file exists without a `<!-- drained: -->` marker, so a sitting
+# that has not applied or dismissed the proposals is not buried by the next
+# scan. retro-complete.sh still copies the outgoing report into
+# RETRO_ARCHIVE_DIR, keyed by the scan that produced it, before anything can
+# replace it. The Python half is workbench_paths.retro_dir() /
+# promote_dir(); tests/workbench_roots.bats holds the pairs.
+RETRO_DIR="$WORKBENCH_DATA_DIR/retro"
+RETRO_REPORT_FILE="${RETRO_REPORT_FILE:-$RETRO_DIR/RETRO.md}"
+RETRO_ARCHIVE_DIR="$RETRO_DIR/archive"
+PROMOTE_DIR="$WORKBENCH_DATA_DIR/promote"
+PROMOTE_REPORT_FILE="${PROMOTE_REPORT_FILE:-$PROMOTE_DIR/PROMOTE.md}"
 CLAUDE_SRC_DIR="$WORKBENCH_DIR/ai/claude"
 PI_SRC_DIR="$WORKBENCH_DIR/ai/pi"
 # PI_SETTINGS_SRC carries only non-model scalars (thinking level, packages).

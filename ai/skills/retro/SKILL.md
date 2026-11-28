@@ -5,7 +5,7 @@ source: otto-workbench/ai/skills/retro/SKILL.md
 invocation: "/retro"
 trigger: "Run to analyze recent PR review comments for coding rule gaps, after a round of PR reviews has been completed, or when rule coverage feels incomplete. Auto-triggers once 72h and 5 sessions have both passed since the last run and the current RETRO.md is drained."
 skip: "Do not use when the user wants to address comments on a specific PR (use pr-comments instead). Do not use for memory consolidation (use dream instead)."
-output: "ai/memory/RETRO.md"
+output: "$WORKBENCH_DATA_DIR/retro/RETRO.md"
 lifecycle_cadence: "72h"
 lifecycle_scope: global
 ---
@@ -191,9 +191,11 @@ the source PR comment and PR number as evidence for each proposal.
 
 **Goal:** Write the report and record the timestamp.
 
-Write `RETRO.md` to the workbench memory directory (`ai/memory/RETRO.md` relative
-to the workbench root). Determine the workbench path from the `OTTO_WORKBENCH`
-environment variable, or default to `~/git/personal/otto-nation/otto-workbench/main`.
+Write `RETRO.md` to `$RETRO_REPORT_FILE`. That is
+`$WORKBENCH_DATA_DIR/retro/RETRO.md`, defaulting to
+`~/.local/share/workbench/retro/RETRO.md` when `WORKBENCH_DATA_DIR` is unset.
+Create the directory if needed. Never write into a workbench git checkout
+(`ai/memory/`, `main/`, or `$OTTO_WORKBENCH`).
 
 ### Report format
 
@@ -277,7 +279,7 @@ other scan — a debug run, or a retro that was started and abandoned — is
 refused rather than honoured, and the completion fails without banking the scan
 window. Trace an unexpected record with `otto-log show <its scan-id>`.
 
-The same script first copies `RETRO.md` to `ai/memory/retro/<scan-id>.md`. It
+The same script first copies `RETRO.md` to `$WORKBENCH_DATA_DIR/retro/archive/<scan-id>.md`. It
 does that before the consume and before the stamp, so a completion refused for
 a mismatched record still leaves the analysis on disk — the next `retro-scan`
 overwrites `RETRO.md` regardless of how this run ended. An archive entry is
@@ -293,7 +295,7 @@ discard.
 Print a one-line summary:
 ```
 Retro complete: N PRs analyzed, N findings, N proposals (N global, N project).
-Report: <workbench>/ai/memory/RETRO.md
+Report: $WORKBENCH_DATA_DIR/retro/RETRO.md
 ```
 
 ---
@@ -307,7 +309,7 @@ Report: <workbench>/ai/memory/RETRO.md
   `RETRO.md` (or remove the file). `should-retro.sh` stays closed until then.
 - **Idempotent after drain.** A later retro overwrites RETRO.md with fresh
   results. The report it replaces is not lost: `retro-complete.sh` archives
-  each one to `ai/memory/retro/<scan-id>.md` first. Read a past window's
+  each one to `$WORKBENCH_DATA_DIR/retro/archive/<scan-id>.md` first. Read a past window's
   proposals from there rather than re-deriving them from the same PRs.
 - **No auto-escalation.** Retro does not create issues, PRs, or branches —
   it produces a document for human review.

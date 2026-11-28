@@ -38,9 +38,10 @@ fi
 
 # ── Archive the report ──────────────────────────────────────────────────────
 # First, and unconditionally: the next `retro-scan` overwrites RETRO.md whether
-# or not this completion succeeds, and ai/memory/ is gitignored, so an
-# un-archived report has no second copy to recover from. Archiving before the
-# consume means a refused record still leaves the analysis on disk — the
+# or not this completion succeeds, and the report lives under the data root (not
+# a git checkout), so an un-archived report has no second copy to recover from.
+# Archiving before the consume means a refused record still leaves the analysis
+# on disk — the
 # failure this ordering protects against is losing the work, not losing the
 # stamp.
 

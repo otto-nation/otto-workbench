@@ -335,12 +335,28 @@ print(core.workbench_paths.gates_dir() / retro.scan.LAST_RETRO_NAME, end='')
   [ "$(resolve_constants WORKBENCH_MEMORY_DIR)" = "$(resolve_python memory_dir)" ]
 }
 
+@test "bash and Python agree on the retro and promote dirs" {
+  [ "$(resolve_constants RETRO_DIR)" = "$(resolve_python retro_dir)" ]
+  [ "$(resolve_constants PROMOTE_DIR)" = "$(resolve_python promote_dir)" ]
+}
+
 @test "the memory dir rides along when the data root moves" {
   export WORKBENCH_DATA_DIR="$TMPDIR/explicit-data"
   local root="$TMPDIR/explicit-data/memory"
 
   [ "$(resolve_constants WORKBENCH_MEMORY_DIR)" = "$root" ]
   [ "$(resolve_python memory_dir)" = "$root" ]
+}
+
+@test "the retro and promote dirs ride along when the data root moves" {
+  export WORKBENCH_DATA_DIR="$TMPDIR/explicit-data"
+  local retro="$TMPDIR/explicit-data/retro"
+  local promote="$TMPDIR/explicit-data/promote"
+
+  [ "$(resolve_constants RETRO_DIR)" = "$retro" ]
+  [ "$(resolve_python retro_dir)" = "$retro" ]
+  [ "$(resolve_constants PROMOTE_DIR)" = "$promote" ]
+  [ "$(resolve_python promote_dir)" = "$promote" ]
 }
 
 @test "the retro stamp rides along when the state root moves" {
@@ -477,7 +493,7 @@ YML
   # Read the frontmatter block with awk rather than handing the whole markdown
   # file to yq, which is how validate-skills reads these and the only form that
   # survives a body containing colons.
-  local declared resolved
+  local declared resolved data
   declared=$(awk '
     NR==1 && /^---$/ { in_fm=1; next }
     in_fm && /^---$/ { exit }
@@ -488,10 +504,42 @@ YML
       exit
     }' "$REPO_ROOT/ai/skills/retro/SKILL.md")
   resolved=$(resolve_constants RETRO_REPORT_FILE)
+  data=$(resolve_constants WORKBENCH_DATA_DIR)
 
-  [ -n "$declared" ]
-  # The frontmatter is workbench-relative; the constant is absolute.
-  [ "$resolved" = "$REPO_ROOT/$declared" ]
+  [ "$declared" = "\$WORKBENCH_DATA_DIR/retro/RETRO.md" ]
+  [ "$resolved" = "$data/retro/RETRO.md" ]
+}
+
+@test "the retro report is not inside the workbench checkout" {
+  local report dir
+  report=$(resolve_constants RETRO_REPORT_FILE)
+  dir=$(resolve_constants WORKBENCH_DIR)
+  [[ "$report" != "$dir"/* ]]
+}
+
+@test "PROMOTE_REPORT_FILE is the path the promote skill declares it writes" {
+  local declared resolved data
+  declared=$(awk '
+    NR==1 && /^---$/ { in_fm=1; next }
+    in_fm && /^---$/ { exit }
+    in_fm && /^output:/ {
+      sub(/^output:[[:space:]]*/, "")
+      gsub(/"/, "")
+      print
+      exit
+    }' "$REPO_ROOT/ai/skills/promote/SKILL.md")
+  resolved=$(resolve_constants PROMOTE_REPORT_FILE)
+  data=$(resolve_constants WORKBENCH_DATA_DIR)
+
+  [ "$declared" = "\$WORKBENCH_DATA_DIR/promote/PROMOTE.md" ]
+  [ "$resolved" = "$data/promote/PROMOTE.md" ]
+}
+
+@test "the promote report is not inside the workbench checkout" {
+  local report dir
+  report=$(resolve_constants PROMOTE_REPORT_FILE)
+  dir=$(resolve_constants WORKBENCH_DIR)
+  [[ "$report" != "$dir"/* ]]
 }
 
 @test "the retro archive sits beside the report it archives" {

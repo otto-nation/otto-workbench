@@ -19,6 +19,7 @@ setup() {
   RETRO_CONSUME="$REPO_ROOT/ai/bin/retro-consume"
   RETRO_COMPLETE="$REPO_ROOT/ai/skills/retro/retro-complete.sh"
   sandbox_state_dir
+  export WORKBENCH_DATA_DIR="$TMPDIR/data"
   REVIEWS="$TMPDIR/state/reviews"
   RECORD="$TMPDIR/state/retro-consumed-reviews.json"
   mkdir -p "$REVIEWS"
@@ -260,80 +261,75 @@ PY
 
 # ── retro-complete archives the report it is completing ─────────────────────
 #
-# RETRO.md is one file the next scan overwrites, and ai/memory/ is gitignored,
-# so a proposal not acted on before the next retro has no second copy anywhere.
-# That has already cost one window's proposals and their evidence.
+# RETRO.md is one file the next scan overwrites, and it lives under the data
+# root, so a proposal not acted on before the next retro has no second copy
+# anywhere. That has already cost one window's proposals and their evidence.
 
-# _fake_workbench — a WORKBENCH_DIR under $TMPDIR holding a RETRO.md.
-# The archive path derives from WORKBENCH_DIR, so without this the tests would
-# write into the real ai/memory/retro/.
-_fake_workbench() {
+# _fake_report — a RETRO.md under the sandboxed data root. The archive path
+# derives from WORKBENCH_DATA_DIR, so without this the tests would write into
+# the real ~/.local/share/workbench/retro/.
+_fake_report() {
   local body="${1:-# Retro Report}"
-  mkdir -p "$TMPDIR/workbench/ai/memory"
-  printf '%s\n' "$body" > "$TMPDIR/workbench/ai/memory/RETRO.md"
+  mkdir -p "$WORKBENCH_DATA_DIR/retro"
+  printf '%s\n' "$body" > "$WORKBENCH_DATA_DIR/retro/RETRO.md"
 }
 
 @test "retro-complete archives the report under the scan that produced it" {
   mkdir -p "$TMPDIR/home/.claude"
   _make_review "mine-self-branch"
   _write_record "$SCAN_C" "mine-self-branch"
-  _fake_workbench "# Retro Report
+  _fake_report "# Retro Report
 proposal 1: a rule nobody has applied yet"
 
-  HOME="$TMPDIR/home" WORKBENCH_DIR="$TMPDIR/workbench" \
-    run "$RETRO_COMPLETE" "$SCAN_C"
+  HOME="$TMPDIR/home" run "$RETRO_COMPLETE" "$SCAN_C"
   [[ "$status" -eq 0 ]]
-  local archived="$TMPDIR/workbench/ai/memory/retro/$SCAN_C.md"
+  local archived="$WORKBENCH_DATA_DIR/retro/archive/$SCAN_C.md"
   [[ -f "$archived" ]]
   grep -q "a rule nobody has applied yet" "$archived"
   # The live report is copied, not moved — the summary still points at it.
-  [[ -f "$TMPDIR/workbench/ai/memory/RETRO.md" ]]
+  [[ -f "$WORKBENCH_DATA_DIR/retro/RETRO.md" ]]
 }
 
 @test "a refused completion still archives the analysis" {
   mkdir -p "$TMPDIR/home/.claude"
   _make_review "other-branch-review"
   _write_record "$SCAN_A" "other-branch-review"
-  _fake_workbench "# Retro Report
+  _fake_report "# Retro Report
 evidence that outlives a mismatched record"
 
-  HOME="$TMPDIR/home" WORKBENCH_DIR="$TMPDIR/workbench" \
-    run "$RETRO_COMPLETE" "$SCAN_B"
+  HOME="$TMPDIR/home" run "$RETRO_COMPLETE" "$SCAN_B"
   [[ "$status" -ne 0 ]]
   # The window is still unbanked, but the work is not lost with it.
   [[ ! -f "$WORKBENCH_STATE_DIR/gates/last-retro" ]]
-  grep -q "evidence that outlives" "$TMPDIR/workbench/ai/memory/retro/$SCAN_B.md"
+  grep -q "evidence that outlives" "$WORKBENCH_DATA_DIR/retro/archive/$SCAN_B.md"
 }
 
 @test "a second completion keeps the archive written while the analysis was fresh" {
   mkdir -p "$TMPDIR/home/.claude"
   _make_review "mine-self-branch"
   _write_record "$SCAN_C" "mine-self-branch"
-  _fake_workbench "# Retro Report
+  _fake_report "# Retro Report
 the original analysis"
 
-  HOME="$TMPDIR/home" WORKBENCH_DIR="$TMPDIR/workbench" \
-    run "$RETRO_COMPLETE" "$SCAN_C"
+  HOME="$TMPDIR/home" run "$RETRO_COMPLETE" "$SCAN_C"
   [[ "$status" -eq 0 ]]
 
   _write_record "$SCAN_C" "mine-self-branch"
   _make_review "mine-self-branch"
-  _fake_workbench "# Retro Report
+  _fake_report "# Retro Report
 a later overwrite that must not win"
 
-  HOME="$TMPDIR/home" WORKBENCH_DIR="$TMPDIR/workbench" \
-    run "$RETRO_COMPLETE" "$SCAN_C"
+  HOME="$TMPDIR/home" run "$RETRO_COMPLETE" "$SCAN_C"
   [[ "$status" -eq 0 ]]
-  grep -q "the original analysis" "$TMPDIR/workbench/ai/memory/retro/$SCAN_C.md"
+  grep -q "the original analysis" "$WORKBENCH_DATA_DIR/retro/archive/$SCAN_C.md"
 }
 
 @test "retro-complete is fine when there is no report to archive" {
-  mkdir -p "$TMPDIR/home/.claude" "$TMPDIR/workbench/ai/memory"
+  mkdir -p "$TMPDIR/home/.claude"
   _make_review "mine-self-branch"
   _write_record "$SCAN_C" "mine-self-branch"
 
-  HOME="$TMPDIR/home" WORKBENCH_DIR="$TMPDIR/workbench" \
-    run "$RETRO_COMPLETE" "$SCAN_C"
+  HOME="$TMPDIR/home" run "$RETRO_COMPLETE" "$SCAN_C"
   [[ "$status" -eq 0 ]]
   [[ -f "$WORKBENCH_STATE_DIR/gates/last-retro" ]]
 }
@@ -342,12 +338,11 @@ a later overwrite that must not win"
   mkdir -p "$TMPDIR/home/.claude"
   _make_review "mine-self-branch"
   _write_record "$SCAN_C" "mine-self-branch"
-  _fake_workbench "# Retro Report"
+  _fake_report "# Retro Report"
   # A file where the archive directory needs to be: mkdir -p fails on it.
-  printf 'not a directory\n' > "$TMPDIR/workbench/ai/memory/retro"
+  printf 'not a directory\n' > "$WORKBENCH_DATA_DIR/retro/archive"
 
-  HOME="$TMPDIR/home" WORKBENCH_DIR="$TMPDIR/workbench" \
-    run "$RETRO_COMPLETE" "$SCAN_C"
+  HOME="$TMPDIR/home" run "$RETRO_COMPLETE" "$SCAN_C"
   [[ "$status" -ne 0 ]]
   [[ "$output" == *"could not archive"* ]]
   # The window is not banked on a run whose analysis was never preserved.

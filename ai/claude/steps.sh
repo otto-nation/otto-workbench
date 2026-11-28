@@ -570,11 +570,12 @@ step_claude_restore_memory() {
   for slug_dir in "$backup_dir"/*/; do
     [[ -d "$slug_dir" ]] || continue
     slug=$(basename "$slug_dir")
-    # Not every directory under ai/memory/ is a repo key. The retro archive
-    # (ai/memory/retro/) and the machine profile backup (ai/memory/machine/)
-    # live here too, and a repo key is always a path-derived name starting
-    # with '-'. Restoring a non-key directory would invent a memory directory
-    # and fill it with files that are not any repo's memory.
+    # Not every directory under ai/memory/ is a repo key. The machine profile
+    # backup (ai/memory/machine/) lives here, and a leftover retro archive
+    # (ai/memory/retro/) may until the 20261128 migration moves it. A repo key
+    # is always a path-derived name starting with '-'. Restoring a non-key
+    # directory would invent a memory directory and fill it with files that
+    # are not any repo's memory.
     [[ "$slug" == -* ]] || continue
     dest_base="$WORKBENCH_MEMORY_DIR/$slug"
     # Only restore if memory dir is absent or empty — never overwrite existing session learning

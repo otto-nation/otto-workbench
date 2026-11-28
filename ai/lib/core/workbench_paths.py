@@ -41,6 +41,11 @@ GATES_DIRNAME = "gates"
 # Subtree of the data root for authored per-repo memory. Distinct from the
 # state-root joins above because losing it has no producer to re-run.
 MEMORY_DIRNAME = "memory"
+# Machine-wide authored reports. Same root as memory, not a git checkout:
+# writing them into WORKBENCH_DIR lands in whichever worktree sourced the
+# constants (usually main/).
+RETRO_DIRNAME = "retro"
+PROMOTE_DIRNAME = "promote"
 
 # The registry of repos on this machine that use the workbench. ``lib/
 # constants.sh`` spells the same filename as PROJECTS_REGISTRY_NAME;
@@ -99,7 +104,7 @@ def cache_dir(consumer: str | None = None) -> Path:
 
 
 def data_dir(consumer: str | None = None) -> Path:
-    """Authored data the workbench cannot regenerate: ``wiki/``, ``memory/``.
+    """Authored data the workbench cannot regenerate: ``wiki/``, ``memory/``, ``retro/``, ``promote/``.
 
     Apart from the state root in what losing it costs. Everything under state
     is written by a tool and can be written again — ``ai/lib/review/gc.py``
@@ -160,6 +165,27 @@ def memory_dir() -> Path:
     this value.
     """
     return data_dir(MEMORY_DIRNAME)
+
+
+def retro_dir() -> Path:
+    """Authored retro reports (``RETRO.md`` and the per-scan archive).
+
+    Under the data root rather than the checkout: a retro is machine-local
+    analysis, and writing it into ``WORKBENCH_DIR`` lands in whichever
+    worktree sourced the constants (usually main/). Bash reaches the same
+    directory through ``RETRO_DIR`` in ``lib/constants.sh``, which
+    ``tests/workbench_roots.bats`` holds to this value.
+    """
+    return data_dir(RETRO_DIRNAME)
+
+
+def promote_dir() -> Path:
+    """Authored promote reports (``PROMOTE.md``).
+
+    Same placement as ``retro_dir``: machine-local, not a git checkout.
+    Bash reaches the same directory through ``PROMOTE_DIR``.
+    """
+    return data_dir(PROMOTE_DIRNAME)
 
 
 def projects_registry() -> Path:

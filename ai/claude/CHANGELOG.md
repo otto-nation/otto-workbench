@@ -1,5 +1,29 @@
 # Changelog
 
+## [2.1.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v2.0.0...otto-ai-tools-v2.1.0) (2026-11-28)
+
+
+### Features
+
+* **agents:** implement architecture discovery and narrative storage ([#2148](https://github.com/otto-nation/otto-workbench/issues/2148)) ([17394d8](https://github.com/otto-nation/otto-workbench/commit/17394d884ecf0ebe4ea02c8a98f44289e4aceecc))
+* **ai:** add a standup skill for org-wide PR inventory ([#2185](https://github.com/otto-nation/otto-workbench/issues/2185)) ([ca69fa8](https://github.com/otto-nation/otto-workbench/commit/ca69fa8de2d270c7f6b72e4b8ee24858996bb4c4))
+* **ai:** add session-postmortem skill ([#2201](https://github.com/otto-nation/otto-workbench/issues/2201)) ([d19863f](https://github.com/otto-nation/otto-workbench/commit/d19863fc227d79243e069223b72084799c2d22b6))
+* **claude:** block a Stop that offers a PR instead of opening it ([#2196](https://github.com/otto-nation/otto-workbench/issues/2196)) ([176b768](https://github.com/otto-nation/otto-workbench/commit/176b7684c3d83be46023f0a2577ad1775aa495dc))
+* **host-load:** diagnose loaded herdr hosts from host-health ([#2209](https://github.com/otto-nation/otto-workbench/issues/2209)) ([d00ce72](https://github.com/otto-nation/otto-workbench/commit/d00ce72ad204369ff3f9522f1522eeb66f7cc526))
+* **pi-sessions:** add pi session briefs and the herdr Sessions panel ([#2131](https://github.com/otto-nation/otto-workbench/issues/2131)) ([26f2860](https://github.com/otto-nation/otto-workbench/commit/26f2860ebdacd704aababe5d14e9afad0d9a87e4))
+
+
+### Bug Fixes
+
+* **ai:** write retro and promote reports to the data root ([#2212](https://github.com/otto-nation/otto-workbench/issues/2212)) ([7810301](https://github.com/otto-nation/otto-workbench/commit/7810301e4bd53452f8d321328639f38494c12f28))
+* **memory:** key authored memory by hosted origin ([#2204](https://github.com/otto-nation/otto-workbench/issues/2204)) ([eba0071](https://github.com/otto-nation/otto-workbench/commit/eba0071c516a44a44d153b7e9042d48676b469cc))
+
+
+### Code Refactoring
+
+* **ai:** move agent protocols to ai/agents ([#2182](https://github.com/otto-nation/otto-workbench/issues/2182)) ([6071c5e](https://github.com/otto-nation/otto-workbench/commit/6071c5e8242faace2d2d2d71e0169a712263b339))
+* **rules:** load procedural rules on demand as skills ([#2174](https://github.com/otto-nation/otto-workbench/issues/2174)) ([da38b5e](https://github.com/otto-nation/otto-workbench/commit/da38b5ecb1840a083181cca76face362c4868b62))
+
 ## [2.0.0](https://github.com/otto-nation/otto-workbench/compare/otto-ai-tools-v1.42.0...otto-ai-tools-v2.0.0) (2026-11-17)
 
 

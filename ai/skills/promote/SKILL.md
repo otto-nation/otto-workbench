@@ -142,8 +142,9 @@ The memory is stale, redundant, or already covered by an existing artifact.
 **Goal:** Write a promotion report with concrete, actionable proposals.
 
 Write `PROMOTE.md` to `$PROMOTE_REPORT_FILE`. That is
-`$WORKBENCH_DATA_DIR/promote/PROMOTE.md`, defaulting to
-`~/.local/share/workbench/promote/PROMOTE.md` when `WORKBENCH_DATA_DIR` is unset.
+`$WORKBENCH_DATA_DIR/promote/PROMOTE.md`, else
+`$XDG_DATA_HOME/workbench/promote/PROMOTE.md` when `WORKBENCH_DATA_DIR` is unset,
+else `~/.local/share/workbench/promote/PROMOTE.md`.
 Create the directory if needed. Never write into a workbench git checkout
 (`ai/memory/`, `main/`, or `$WORKBENCH_DIR`).
 

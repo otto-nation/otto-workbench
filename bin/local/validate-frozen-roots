@@ -49,8 +49,13 @@ ROOTS = frozenset({
     'config_dir',
     'state_dir',
     'cache_dir',
+    'data_dir',
     'trail_dir',
     'reviews_dir',
+    'gates_dir',
+    'memory_dir',
+    'retro_dir',
+    'promote_dir',
     'projects_registry',
 })
 
